@@ -1,0 +1,17 @@
+# Runtime directories
+projects/
+runs/
+tmp/
+.claude/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Binary
+agent-runner
+
+# OS files
+.DS_Store
