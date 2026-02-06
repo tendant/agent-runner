@@ -166,3 +166,8 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
+
+// Handler returns the HTTP handler for use in tests
+func (s *Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}

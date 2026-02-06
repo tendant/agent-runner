@@ -166,12 +166,21 @@ func (m *Manager) CreateJob(project, instruction string, paths []string, commitM
 	return job, nil
 }
 
-// GetJob retrieves a job by ID
+// GetJob retrieves a snapshot of a job by ID
 func (m *Manager) GetJob(jobID string) (*Job, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	job, exists := m.jobs[jobID]
-	return job, exists
+	if !exists {
+		return nil, false
+	}
+	// Return a copy to avoid data races with background goroutines
+	snapshot := *job
+	if job.Result != nil {
+		resultCopy := *job.Result
+		snapshot.Result = &resultCopy
+	}
+	return &snapshot, true
 }
 
 // UpdateStatus updates the status of a job
@@ -230,6 +239,22 @@ func (m *Manager) SetJobResult(jobID string, result *JobResult) error {
 	}
 
 	job.Result = result
+	return nil
+}
+
+// SetJobLogFile sets the log file path on a job's result
+func (m *Manager) SetJobLogFile(jobID, logFile string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, exists := m.jobs[jobID]
+	if !exists {
+		return fmt.Errorf("job %s not found", jobID)
+	}
+
+	if job.Result != nil {
+		job.Result.LogFile = logFile
+	}
 	return nil
 }
 

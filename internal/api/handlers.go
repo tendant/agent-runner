@@ -123,14 +123,19 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture response values before spawning goroutine to avoid data race
+	jobID := job.ID
+	jobStatus := job.Status
+	jobProject := job.Project
+
 	// Start execution in background
 	go h.executeJob(job, projectPath)
 
 	// Return 202 Accepted with job info
 	h.writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"job_id":  job.ID,
-		"status":  job.Status,
-		"project": job.Project,
+		"job_id":  jobID,
+		"status":  jobStatus,
+		"project": jobProject,
 	})
 }
 
@@ -204,47 +209,58 @@ func (h *Handlers) HandleGetProjects(w http.ResponseWriter, r *http.Request) {
 
 // executeJob runs the full job execution pipeline
 func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
+	// Capture job fields into locals to avoid data races with concurrent readers.
+	// After this point, never read from the job pointer — use these locals instead.
+	jobID := job.ID
+	jobProject := job.Project
+	jobInstruction := job.Instruction
+	jobPaths := job.Paths
+	jobCommitMessage := job.CommitMessage
+	jobAuthor := job.Author
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(h.config.MaxRuntimeSeconds)*time.Second)
 	defer cancel()
 
 	startTime := time.Now()
 
 	logData := &logging.RunLogData{
-		JobID:       job.ID,
-		Project:     job.Project,
-		Instruction: job.Instruction,
+		JobID:       jobID,
+		Project:     jobProject,
+		Instruction: jobInstruction,
 	}
 
+	var logFileResult string
 	defer func() {
 		// Always write run log
 		logData.Duration = int(time.Since(startTime).Seconds())
 		logFile, _ := h.runLogger.WriteRunLog(logData)
+		logFileResult = logFile
 
-		if job.Result != nil {
-			job.Result.LogFile = logFile
+		if logFileResult != "" {
+			h.jobManager.SetJobLogFile(jobID, logFileResult)
 		}
 	}()
 
 	// Update status to running
-	h.jobManager.UpdateStatus(job.ID, jobs.StatusRunning)
+	h.jobManager.UpdateStatus(jobID, jobs.StatusRunning)
 
 	// Step 1: Fetch and reset the source project
 	if err := h.gitOps.FetchAndReset(ctx, projectPath); err != nil {
-		h.failJob(job, logData, "Failed to prepare git repository: "+err.Error(), "GIT_NETWORK_ERROR")
+		h.failJob(jobID, logData, "Failed to prepare git repository: "+err.Error(), "GIT_NETWORK_ERROR")
 		return
 	}
 
 	// Step 2: Prepare workspace
-	workspacePath, err := h.workspaceManager.PrepareWorkspace(projectPath, job.ID)
+	workspacePath, err := h.workspaceManager.PrepareWorkspace(projectPath, jobID)
 	if err != nil {
-		h.failJob(job, logData, "Failed to prepare workspace: "+err.Error(), "")
+		h.failJob(jobID, logData, "Failed to prepare workspace: "+err.Error(), "")
 		return
 	}
-	h.jobManager.SetWorkspacePath(job.ID, workspacePath)
+	h.jobManager.SetWorkspacePath(jobID, workspacePath)
 	defer h.workspaceManager.CleanupWorkspace(workspacePath)
 
 	// Step 3: Execute Claude Code
-	result, executionLog, err := h.executor.ExecuteWithLog(ctx, workspacePath, job.Instruction)
+	result, executionLog, err := h.executor.ExecuteWithLog(ctx, workspacePath, jobInstruction)
 	logData.ExecutionLog = executionLog
 
 	if err != nil {
@@ -252,7 +268,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 		if strings.Contains(err.Error(), "TIMEOUT") {
 			errorCode = "TIMEOUT"
 		}
-		h.failJob(job, logData, err.Error(), errorCode)
+		h.failJob(jobID, logData, err.Error(), errorCode)
 		return
 	}
 	_ = result // result.Output available if needed
@@ -260,12 +276,12 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	// Step 4: Get changed files
 	changedFiles, err := h.gitOps.GetChangedFiles(ctx, workspacePath)
 	if err != nil {
-		h.failJob(job, logData, "Failed to get changed files: "+err.Error(), "")
+		h.failJob(jobID, logData, "Failed to get changed files: "+err.Error(), "")
 		return
 	}
 
 	if len(changedFiles) == 0 {
-		h.failJob(job, logData, "No changes were made by Claude Code", "")
+		h.failJob(jobID, logData, "No changes were made by Claude Code", "")
 		return
 	}
 
@@ -275,9 +291,9 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	}
 
 	// Step 5: Validate diff
-	h.jobManager.UpdateStatus(job.ID, jobs.StatusValidating)
+	h.jobManager.UpdateStatus(jobID, jobs.StatusValidating)
 
-	validationErr := h.validator.ValidateDiff(changedFiles, job.Paths)
+	validationErr := h.validator.ValidateDiff(changedFiles, jobPaths)
 	if validationErr != nil {
 		logData.ValidationOK = false
 		logData.ValidationError = &logging.ValidationResult{
@@ -285,7 +301,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 			Message: validationErr.Message,
 			Files:   validationErr.Files,
 		}
-		h.failJob(job, logData, validationErr.Message, validationErr.Code)
+		h.failJob(jobID, logData, validationErr.Message, validationErr.Code)
 		return
 	}
 	logData.ValidationOK = true
@@ -298,16 +314,16 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	}
 
 	// Step 7: Commit
-	h.jobManager.UpdateStatus(job.ID, jobs.StatusPushing)
+	h.jobManager.UpdateStatus(jobID, jobs.StatusPushing)
 
-	commitMessage := job.CommitMessage
+	commitMessage := jobCommitMessage
 	if commitMessage == "" {
-		commitMessage = h.generateCommitMessage(changedFiles, job.Instruction)
+		commitMessage = h.generateCommitMessage(changedFiles, jobInstruction)
 	}
 
-	commitHash, err := h.gitOps.Commit(ctx, workspacePath, commitMessage, job.Author, job.Instruction)
+	commitHash, err := h.gitOps.Commit(ctx, workspacePath, commitMessage, jobAuthor, jobInstruction)
 	if err != nil {
-		h.failJob(job, logData, "Failed to commit: "+err.Error(), "")
+		h.failJob(jobID, logData, "Failed to commit: "+err.Error(), "")
 		return
 	}
 	logData.Commit = commitHash
@@ -322,7 +338,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 		} else {
 			errorCode = "GIT_NETWORK_ERROR"
 		}
-		h.failJob(job, logData, err.Error(), errorCode)
+		h.failJob(jobID, logData, err.Error(), errorCode)
 		return
 	}
 
@@ -331,7 +347,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	branch, _ := h.gitOps.GetCurrentBranch(ctx, workspacePath)
 	logData.Branch = branch
 
-	h.jobManager.SetJobResult(job.ID, &jobs.JobResult{
+	h.jobManager.SetJobResult(jobID, &jobs.JobResult{
 		Commit:       commitHash,
 		ChangedFiles: changedFiles,
 		DiffSummary: jobs.DiffSummary{
@@ -340,14 +356,14 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 		},
 		Duration: int(time.Since(startTime).Seconds()),
 	})
-	h.jobManager.UpdateStatus(job.ID, jobs.StatusCompleted)
+	h.jobManager.UpdateStatus(jobID, jobs.StatusCompleted)
 }
 
-func (h *Handlers) failJob(job *jobs.Job, logData *logging.RunLogData, errorMsg, errorCode string) {
+func (h *Handlers) failJob(jobID string, logData *logging.RunLogData, errorMsg, errorCode string) {
 	logData.Status = "failed"
 	logData.Error = errorMsg
 	logData.ErrorCode = errorCode
-	h.jobManager.SetJobError(job.ID, errorMsg, errorCode)
+	h.jobManager.SetJobError(jobID, errorMsg, errorCode)
 }
 
 func (h *Handlers) generateCommitMessage(changedFiles []string, instruction string) string {
