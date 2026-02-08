@@ -10,13 +10,7 @@ import (
 
 // AgentRequest represents the POST /agent request body
 type AgentRequest struct {
-	Project             string   `json:"project"`
-	PromptFile          string   `json:"prompt_file"`
-	Paths               []string `json:"paths"`
-	MaxIterations       int      `json:"max_iterations,omitempty"`
-	MaxTotalSeconds     int      `json:"max_total_seconds,omitempty"`
-	Author              string   `json:"author,omitempty"`
-	CommitMessagePrefix string   `json:"commit_message_prefix,omitempty"`
+	Message string `json:"message"`
 }
 
 // HandleStartAgent handles POST /agent — start a new agent session
@@ -32,54 +26,45 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
-	if req.Project == "" {
-		h.writeError(w, http.StatusBadRequest, "project is required")
+	if req.Message == "" {
+		h.writeError(w, http.StatusBadRequest, "message is required")
 		return
 	}
-	if req.PromptFile == "" {
-		h.writeError(w, http.StatusBadRequest, "prompt_file is required")
+
+	// Derive config from agent settings
+	project := h.config.Agent.DefaultProject
+	if project == "" {
+		h.writeError(w, http.StatusInternalServerError, "agent not configured: AGENT_DEFAULT_PROJECT is required")
 		return
 	}
-	if len(req.Paths) == 0 {
-		h.writeError(w, http.StatusBadRequest, "paths is required")
+
+	paths := h.config.Agent.Paths
+	if len(paths) == 0 {
+		h.writeError(w, http.StatusInternalServerError, "agent not configured: AGENT_PATHS is required")
 		return
 	}
 
 	// Check if project is allowed
-	if !h.config.IsProjectAllowed(req.Project) {
+	if !h.config.IsProjectAllowed(project) {
 		h.writeError(w, http.StatusBadRequest, "project not in allowed_projects")
 		return
 	}
 
 	// Check if project exists
-	projectPath := filepath.Join(h.config.ProjectsRoot, req.Project)
+	projectPath := filepath.Join(h.config.ProjectsRoot, project)
 	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
 		h.writeError(w, http.StatusBadRequest, "project directory not found")
 		return
 	}
 
-	// Apply defaults
-	author := req.Author
-	if author == "" {
-		author = "claude-agent"
-	}
-	commitPrefix := req.CommitMessagePrefix
-	if commitPrefix == "" {
-		commitPrefix = "[agent]"
-	}
-	maxIter := req.MaxIterations
-	if maxIter <= 0 {
-		maxIter = h.config.Agent.MaxIterations
-	}
-	maxSeconds := req.MaxTotalSeconds
-	if maxSeconds <= 0 {
-		maxSeconds = h.config.Agent.MaxTotalSeconds
-	}
+	author := h.config.Agent.Author
+	commitPrefix := h.config.Agent.CommitPrefix
+	maxIter := h.config.Agent.MaxIterations
+	maxSeconds := h.config.Agent.MaxTotalSeconds
 
 	// Create session (acquires project lock)
 	session, err := h.agentManager.CreateSession(
-		req.Project, req.PromptFile, req.Paths,
+		project, req.Message, paths,
 		author, commitPrefix, maxIter, maxSeconds,
 	)
 	if err != nil {
@@ -100,7 +85,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, map[string]any{
 		"session_id": sessionID,
 		"status":     "running",
-		"project":    req.Project,
+		"project":    project,
 	})
 }
 

@@ -1,31 +1,16 @@
 package main
 
 import (
-	"flag"
 	"log"
-	"os"
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	flag.Parse()
-
-	// Load configuration
-	var cfg *config.Config
-	var err error
-
-	if _, statErr := os.Stat(*configPath); os.IsNotExist(statErr) {
-		log.Printf("Config file %s not found, using defaults", *configPath)
-		cfg = config.DefaultConfig()
-	} else {
-		cfg, err = config.Load(*configPath)
-		if err != nil {
-			log.Fatalf("Failed to load config: %v", err)
-		}
-		log.Printf("Loaded config from %s", *configPath)
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	// Log configuration summary
@@ -41,6 +26,9 @@ func main() {
 	}
 	if cfg.API.APIKey != "" {
 		log.Printf("API key authentication: enabled")
+	}
+	if cfg.Agent.DefaultProject != "" {
+		log.Printf("Agent default project: %s", cfg.Agent.DefaultProject)
 	}
 
 	// Create and start server

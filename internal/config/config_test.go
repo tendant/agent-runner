@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -26,6 +24,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.API.Bind != "127.0.0.1:8080" {
 		t.Errorf("expected Bind 127.0.0.1:8080, got %s", cfg.API.Bind)
+	}
+	if cfg.Agent.Author != "claude-agent" {
+		t.Errorf("expected Agent.Author claude-agent, got %s", cfg.Agent.Author)
+	}
+	if cfg.Agent.CommitPrefix != "[agent]" {
+		t.Errorf("expected Agent.CommitPrefix [agent], got %s", cfg.Agent.CommitPrefix)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should pass validation, got: %v", err)
@@ -123,28 +127,67 @@ func TestIsProjectAllowed_NoPartialMatch(t *testing.T) {
 	}
 }
 
-func TestLoad_ValidYAML(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-
-	content := `
-projects_root: /tmp/projects
-runs_root: /tmp/runs
-tmp_root: /tmp/workspaces
-max_runtime_seconds: 600
-max_concurrent_jobs: 10
-api:
-  bind: "0.0.0.0:9090"
-  api_key: "secret123"
-allowed_projects:
-  - project-a
-  - project-b
-`
-	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
+func TestLoadFromEnv_Defaults(t *testing.T) {
+	// Clear all env vars that LoadFromEnv reads
+	for _, key := range []string{
+		"PROJECTS_ROOT", "RUNS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
+		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
+		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
+		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
+		"BIND", "API_KEY",
+		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
+		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
+		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
+	} {
+		t.Setenv(key, "")
+	}
+	// Unset them fully so envOrDefault returns defaults
+	for _, key := range []string{
+		"PROJECTS_ROOT", "RUNS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
+		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
+		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
+		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
+		"BIND", "API_KEY",
+		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
+		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
+		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
+	} {
+		t.Setenv(key, "")
 	}
 
-	cfg, err := Load(cfgPath)
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.MaxRuntimeSeconds != 300 {
+		t.Errorf("expected default MaxRuntimeSeconds 300, got %d", cfg.MaxRuntimeSeconds)
+	}
+	if cfg.MaxConcurrentJobs != 5 {
+		t.Errorf("expected default MaxConcurrentJobs 5, got %d", cfg.MaxConcurrentJobs)
+	}
+	if cfg.API.Bind != "127.0.0.1:8080" {
+		t.Errorf("expected default Bind, got %s", cfg.API.Bind)
+	}
+}
+
+func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
+	t.Setenv("PROJECTS_ROOT", "/tmp/projects")
+	t.Setenv("RUNS_ROOT", "/tmp/runs")
+	t.Setenv("TMP_ROOT", "/tmp/workspaces")
+	t.Setenv("MAX_RUNTIME_SECONDS", "600")
+	t.Setenv("MAX_CONCURRENT_JOBS", "10")
+	t.Setenv("BIND", "0.0.0.0:9090")
+	t.Setenv("API_KEY", "secret123")
+	t.Setenv("ALLOWED_PROJECTS", "project-a,project-b")
+	t.Setenv("AGENT_DEFAULT_PROJECT", "my-proj")
+	t.Setenv("AGENT_PATHS", "src/,docs/")
+	t.Setenv("AGENT_AUTHOR", "my-bot")
+	t.Setenv("AGENT_COMMIT_PREFIX", "[auto]")
+
+	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,71 +210,59 @@ allowed_projects:
 	if len(cfg.AllowedProjects) != 2 {
 		t.Errorf("expected 2 allowed projects, got %d", len(cfg.AllowedProjects))
 	}
+	if cfg.Agent.DefaultProject != "my-proj" {
+		t.Errorf("expected my-proj, got %s", cfg.Agent.DefaultProject)
+	}
+	if len(cfg.Agent.Paths) != 2 {
+		t.Errorf("expected 2 agent paths, got %d", len(cfg.Agent.Paths))
+	}
+	if cfg.Agent.Author != "my-bot" {
+		t.Errorf("expected my-bot, got %s", cfg.Agent.Author)
+	}
+	if cfg.Agent.CommitPrefix != "[auto]" {
+		t.Errorf("expected [auto], got %s", cfg.Agent.CommitPrefix)
+	}
 }
 
-func TestLoad_OverridesDefaults(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
+func TestLoadFromEnv_InvalidConfig(t *testing.T) {
+	t.Setenv("PROJECTS_ROOT", "")
+	t.Setenv("MAX_RUNTIME_SECONDS", "0")
 
-	// Only override some fields — rest should keep defaults
-	content := `
-max_runtime_seconds: 120
-`
-	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
+	_, err := LoadFromEnv()
+	if err == nil {
+		t.Error("expected validation error for zero max_runtime_seconds")
 	}
+}
 
-	cfg, err := Load(cfgPath)
+func TestLoadFromEnv_BoolParsing(t *testing.T) {
+	t.Setenv("VALIDATION_BLOCK_BINARY_FILES", "true")
+	t.Setenv("STARTUP_CLEANUP_STALE_JOBS", "false")
+
+	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.MaxRuntimeSeconds != 120 {
-		t.Errorf("expected 120, got %d", cfg.MaxRuntimeSeconds)
+	if !cfg.Validation.BlockBinaryFiles {
+		t.Error("expected BlockBinaryFiles to be true")
 	}
-	// Defaults should be preserved
-	if cfg.ProjectsRoot != "./projects" {
-		t.Errorf("expected default ProjectsRoot, got %s", cfg.ProjectsRoot)
-	}
-	if cfg.MaxConcurrentJobs != 5 {
-		t.Errorf("expected default MaxConcurrentJobs 5, got %d", cfg.MaxConcurrentJobs)
+	if cfg.StartupCleanupStaleJobs {
+		t.Error("expected StartupCleanupStaleJobs to be false")
 	}
 }
 
-func TestLoad_InvalidYAML(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
+func TestLoadFromEnv_SliceParsing(t *testing.T) {
+	t.Setenv("ALLOWED_PROJECTS", "a, b , c")
 
-	if err := os.WriteFile(cfgPath, []byte("{{{{invalid yaml"), 0644); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Error("expected error for invalid YAML")
+	if len(cfg.AllowedProjects) != 3 {
+		t.Fatalf("expected 3 projects, got %d", len(cfg.AllowedProjects))
 	}
-}
-
-func TestLoad_MissingFile(t *testing.T) {
-	_, err := Load("/nonexistent/path/config.yaml")
-	if err == nil {
-		t.Error("expected error for missing file")
-	}
-}
-
-func TestLoad_InvalidConfig(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.yaml")
-
-	content := `
-projects_root: ""
-`
-	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
-	}
-
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Error("expected validation error for empty projects_root")
+	if cfg.AllowedProjects[0] != "a" || cfg.AllowedProjects[1] != "b" || cfg.AllowedProjects[2] != "c" {
+		t.Errorf("unexpected projects: %v", cfg.AllowedProjects)
 	}
 }

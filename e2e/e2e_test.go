@@ -85,6 +85,13 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":1000}'
 			Bind:   "127.0.0.1:0",
 			APIKey: "",
 		},
+		Agent: config.AgentConfig{
+			MaxIterations:       50,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
+		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
 	}
@@ -265,6 +272,13 @@ echo '{"result":"Done"}'
 			Bind:   "127.0.0.1:0",
 			APIKey: "",
 		},
+		Agent: config.AgentConfig{
+			MaxIterations:       50,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
+		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
 	}
@@ -323,6 +337,13 @@ func TestE2E_ApiKeyAuth(t *testing.T) {
 		API: config.APIConfig{
 			Bind:   "127.0.0.1:0",
 			APIKey: "secret-key-123",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       50,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
@@ -420,6 +441,13 @@ echo '{"result":"Done"}'
 		API: config.APIConfig{
 			Bind:   "127.0.0.1:0",
 			APIKey: "",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       50,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,

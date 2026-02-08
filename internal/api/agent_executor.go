@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ const maxConsecutiveFailures = 5
 func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 	sessionID := session.ID
 	project := session.Project
-	promptFile := session.PromptFile
+	message := session.Message
 	paths := session.Paths
 	authorName := session.Author
 	commitPrefix := session.CommitMessagePrefix
@@ -40,7 +39,7 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 			Project:      project,
 			Status:       string(snap.Status),
 			Duration:     int(time.Since(startTime).Seconds()),
-			PromptFile:   promptFile,
+			Message:      message,
 			Author:       authorName,
 			TotalCommits: snap.TotalCommits,
 			Error:        snap.Error,
@@ -61,6 +60,13 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 			log.Printf("Agent log written: %s", logFile)
 		}
 	}()
+
+	// Resolve prompt: read template file and inject message, or use message directly
+	prompt, err := h.resolvePrompt(message)
+	if err != nil {
+		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
+		return
+	}
 
 	// Step 1: Fetch and reset the source project
 	ctx := context.Background()
@@ -105,18 +111,39 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 			return
 		}
 
-		result := h.executeIteration(ctx, liveSession, workspacePath, promptFile, paths, commitPrefix, authorName, i, deadline)
+		result := h.executeIteration(ctx, liveSession, workspacePath, prompt, paths, commitPrefix, authorName, i, deadline)
 		liveSession.AddIteration(result)
 	}
 
 	h.agentManager.CompleteSession(sessionID)
 }
 
+// resolvePrompt reads the prompt template file and injects the message,
+// or returns the message directly if no template is configured.
+func (h *Handlers) resolvePrompt(message string) (string, error) {
+	templatePath := h.config.Agent.PromptFile
+	if templatePath == "" {
+		return message, nil
+	}
+
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read prompt template %s: %w", templatePath, err)
+	}
+
+	template := strings.TrimSpace(string(data))
+	if template == "" {
+		return "", fmt.Errorf("prompt template file is empty")
+	}
+
+	return strings.ReplaceAll(template, "{{MESSAGE}}", message), nil
+}
+
 // executeIteration runs a single iteration of the agent loop
 func (h *Handlers) executeIteration(
 	ctx context.Context,
 	session *agent.Session,
-	workspacePath, promptFile string,
+	workspacePath, prompt string,
 	paths []string,
 	commitPrefix, author string,
 	iteration int,
@@ -147,22 +174,7 @@ func (h *Handlers) executeIteration(
 	iterCtx, cancel := context.WithTimeout(ctx, iterTimeout)
 	defer cancel()
 
-	// Step 1: Read prompt file from workspace
-	promptPath := filepath.Join(workspacePath, promptFile)
-	promptData, err := os.ReadFile(promptPath)
-	if err != nil {
-		result.Status = agent.IterationStatusError
-		result.Error = fmt.Sprintf("failed to read prompt file %s: %v", promptFile, err)
-		return result
-	}
-	prompt := strings.TrimSpace(string(promptData))
-	if prompt == "" {
-		result.Status = agent.IterationStatusError
-		result.Error = "prompt file is empty"
-		return result
-	}
-
-	// Step 2: Execute Claude Code
+	// Execute Claude Code with resolved prompt
 	_, _, execErr := h.executor.ExecuteWithLog(iterCtx, workspacePath, prompt)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
@@ -172,7 +184,7 @@ func (h *Handlers) executeIteration(
 		return result
 	}
 
-	// Step 3: Check for changes
+	// Check for changes
 	changedFiles, err := h.gitOps.GetChangedFiles(iterCtx, workspacePath)
 	if err != nil {
 		result.Status = agent.IterationStatusError
@@ -187,7 +199,7 @@ func (h *Handlers) executeIteration(
 
 	result.ChangedFiles = changedFiles
 
-	// Step 4: Validate diff
+	// Validate diff
 	validationErr := h.validator.ValidateDiff(changedFiles, paths)
 	if validationErr != nil {
 		result.Status = agent.IterationStatusValidation
@@ -197,7 +209,7 @@ func (h *Handlers) executeIteration(
 		return result
 	}
 
-	// Step 5: Commit
+	// Commit
 	commitMsg := fmt.Sprintf("%s iteration %d", commitPrefix, iteration)
 	commitHash, err := h.gitOps.Commit(iterCtx, workspacePath, commitMsg, author, "")
 	if err != nil {
@@ -208,7 +220,7 @@ func (h *Handlers) executeIteration(
 	}
 	result.Commit = commitHash
 
-	// Step 6: Push (with pull --rebase on conflict)
+	// Push (with pull --rebase on conflict)
 	if err := h.gitOps.Push(iterCtx, workspacePath); err != nil {
 		if strings.Contains(err.Error(), "GIT_PUSH_CONFLICT") {
 			// Try pull --rebase then push again

@@ -40,10 +40,6 @@ func setupAgentE2E(t *testing.T) *e2eEnv {
 	runCmd(t, projectPath, "git", "config", "user.name", "Test")
 
 	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test Project\n"), 0644)
-
-	// Create AGENT_PROMPT.md in the project
-	os.WriteFile(filepath.Join(projectPath, "AGENT_PROMPT.md"), []byte("Write a new file with some content."), 0644)
-
 	runCmd(t, projectPath, "git", "add", "-A")
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial commit")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
@@ -92,9 +88,13 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
 			APIKey: "",
 		},
 		Agent: config.AgentConfig{
-			MaxIterations:       10,
+			MaxIterations:       5,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
+			DefaultProject:      "test-project",
+			Paths:               []string{"*.txt", "*.md"},
+			Author:              "test-agent",
+			CommitPrefix:        "[agent]",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
@@ -176,13 +176,9 @@ func TestE2E_AgentMultiIteration(t *testing.T) {
 	env := setupAgentE2E(t)
 	defer env.server.Close()
 
-	// Start agent with max 5 iterations
+	// Start agent with simplified message-only request
 	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"project":       "test-project",
-		"prompt_file":   "AGENT_PROMPT.md",
-		"paths":         []string{"*.txt", "*.md"},
-		"max_iterations": 5,
-		"author":        "test-agent",
+		"message": "Write a new file with some content.",
 	})
 
 	if code != http.StatusAccepted {
@@ -279,7 +275,6 @@ func TestE2E_AgentGracefulStop(t *testing.T) {
 	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
 	runCmd(t, projectPath, "git", "config", "user.name", "Test")
 	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	os.WriteFile(filepath.Join(projectPath, "AGENT_PROMPT.md"), []byte("Create a file"), 0644)
 	runCmd(t, projectPath, "git", "add", "-A")
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
@@ -317,6 +312,10 @@ echo '{"result":"Done"}'
 			MaxIterations:       50,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
+			DefaultProject:      "test-project",
+			Paths:               []string{"*.txt", "*.md"},
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
@@ -326,12 +325,9 @@ echo '{"result":"Done"}'
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// Start agent with many iterations
+	// Start agent with simplified message-only request
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
-		"project":        "test-project",
-		"prompt_file":    "AGENT_PROMPT.md",
-		"paths":          []string{"*.txt", "*.md"},
-		"max_iterations": 50,
+		"message": "Create a file",
 	})
 
 	if code != http.StatusAccepted {
@@ -377,10 +373,7 @@ func TestE2E_AgentProjectLocking(t *testing.T) {
 
 	// Start first agent
 	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"project":        "test-project",
-		"prompt_file":    "AGENT_PROMPT.md",
-		"paths":          []string{"*.txt"},
-		"max_iterations": 3,
+		"message": "Write some files",
 	})
 	if code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d", code)
@@ -391,10 +384,7 @@ func TestE2E_AgentProjectLocking(t *testing.T) {
 
 	// Second agent on same project should get 409
 	code2, _ := postAgent(t, env.server.URL, map[string]interface{}{
-		"project":        "test-project",
-		"prompt_file":    "AGENT_PROMPT.md",
-		"paths":          []string{"*.txt"},
-		"max_iterations": 3,
+		"message": "Write more files",
 	})
 	if code2 != http.StatusConflict {
 		t.Errorf("expected 409 (locked), got %d", code2)
@@ -413,4 +403,97 @@ func TestE2E_AgentProjectLocking(t *testing.T) {
 	// Wait for first agent to finish
 	sessionID := resp["session_id"].(string)
 	pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
+}
+
+func TestE2E_AgentWithPromptTemplate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	baseDir := t.TempDir()
+
+	bareRepo := filepath.Join(baseDir, "origin.git")
+	projectsDir := filepath.Join(baseDir, "projects")
+	runsDir := filepath.Join(baseDir, "runs")
+	tmpDir := filepath.Join(baseDir, "tmp")
+	mockBinDir := filepath.Join(baseDir, "mock-bin")
+
+	os.MkdirAll(projectsDir, 0755)
+	os.MkdirAll(runsDir, 0755)
+	os.MkdirAll(tmpDir, 0755)
+	os.MkdirAll(mockBinDir, 0755)
+
+	runCmd(t, "", "git", "init", "--bare", bareRepo)
+
+	projectPath := filepath.Join(projectsDir, "test-project")
+	runCmd(t, "", "git", "clone", bareRepo, projectPath)
+	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
+	runCmd(t, projectPath, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
+	runCmd(t, projectPath, "git", "add", "-A")
+	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
+	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+
+	// Mock claude that creates a file
+	mockClaude := filepath.Join(mockBinDir, "claude")
+	mockScript := `#!/bin/bash
+echo "content" > "output.txt"
+echo '{"result":"Done"}'
+`
+	os.WriteFile(mockClaude, []byte(mockScript), 0755)
+	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+
+	// Create prompt template file
+	promptFile := filepath.Join(baseDir, "prompt.md")
+	os.WriteFile(promptFile, []byte("You are a helpful assistant.\n\nTask: {{MESSAGE}}"), 0644)
+
+	cfg := &config.Config{
+		ProjectsRoot:             projectsDir,
+		RunsRoot:                 runsDir,
+		TmpRoot:                  tmpDir,
+		AllowedProjects:          []string{},
+		MaxRuntimeSeconds:        60,
+		MaxConcurrentJobs:        5,
+		GitPushRetries:           1,
+		GitPushRetryDelaySeconds: 0,
+		Validation: config.ValidationConfig{
+			BlockBinaryFiles: false,
+			BlockedPaths:     []string{},
+		},
+		API: config.APIConfig{
+			Bind:   "127.0.0.1:0",
+			APIKey: "",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       1,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			DefaultProject:      "test-project",
+			Paths:               []string{"*.txt", "*.md"},
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
+			PromptFile:          promptFile,
+		},
+		JobRetentionSeconds:     3600,
+		StartupCleanupStaleJobs: false,
+	}
+
+	srv := api.NewServer(cfg)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	code, resp := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "Fix the login bug",
+	})
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, ts.URL, sessionID, 30*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
 }

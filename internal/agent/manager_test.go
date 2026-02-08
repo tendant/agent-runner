@@ -35,7 +35,7 @@ func TestCreateSession_Success(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, err := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, err := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,12 +62,12 @@ func TestCreateSession_ProjectLocked(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	_, err := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	_, err := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	if err != nil {
 		t.Fatalf("first session should succeed: %v", err)
 	}
 
-	_, err = mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	_, err = mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	if err == nil {
 		t.Fatal("expected error for locked project")
 	}
@@ -77,7 +77,7 @@ func TestGetSession_Exists(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	created, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	created, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	snap, exists := mgr.GetSession(created.ID)
 	if !exists {
@@ -102,7 +102,7 @@ func TestStopSession(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	if err := mgr.StopSession(session.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,7 +127,7 @@ func TestCompleteSession(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.CompleteSession(session.ID)
 
 	snap, _ := mgr.GetSession(session.ID)
@@ -148,7 +148,7 @@ func TestFailSession(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.FailSession(session.ID, "something went wrong")
 
 	snap, _ := mgr.GetSession(session.ID)
@@ -169,7 +169,7 @@ func TestSession_AddIteration(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	// Use direct session for mutations
 	live, _ := mgr.GetSessionDirect(session.ID)
@@ -199,7 +199,7 @@ func TestSession_ConsecutiveFailures(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	// Success resets counter
@@ -232,7 +232,7 @@ func TestSession_ToResponse(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	live.AddIteration(IterationResult{
@@ -265,7 +265,7 @@ func TestSession_StopRequested(t *testing.T) {
 	locker := newMockLocker()
 	mgr := NewManager(locker)
 
-	session, _ := mgr.CreateSession("proj", "PROMPT.md", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	if live.StopRequested() {

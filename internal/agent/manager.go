@@ -30,7 +30,7 @@ func NewManager(locker ProjectLocker) *Manager {
 }
 
 // CreateSession creates a new agent session and acquires the project lock
-func (m *Manager) CreateSession(project, promptFile string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
+func (m *Manager) CreateSession(project, message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()
 
 	// Acquire project lock
@@ -41,7 +41,7 @@ func (m *Manager) CreateSession(project, promptFile string, paths []string, auth
 	session := &Session{
 		ID:                  sessionID,
 		Project:             project,
-		PromptFile:          promptFile,
+		Message:             message,
 		Paths:               paths,
 		Author:              author,
 		CommitMessagePrefix: commitPrefix,

@@ -52,7 +52,7 @@ type AgentLogData struct {
 	Project     string
 	Status      string
 	Duration    int
-	PromptFile  string
+	Message     string
 	Author      string
 	Iterations  []AgentIterationLog
 	TotalCommits int
@@ -129,7 +129,7 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 	sb.WriteString(fmt.Sprintf("**Session ID:** %s  \n", data.SessionID))
 	sb.WriteString(fmt.Sprintf("**Project:** %s  \n", data.Project))
 	sb.WriteString(fmt.Sprintf("**Status:** %s  \n", data.Status))
-	sb.WriteString(fmt.Sprintf("**Prompt File:** %s  \n", data.PromptFile))
+	sb.WriteString(fmt.Sprintf("**Message:** %s  \n", data.Message))
 	sb.WriteString(fmt.Sprintf("**Author:** %s  \n", data.Author))
 	if data.Duration > 0 {
 		sb.WriteString(fmt.Sprintf("**Duration:** %ds  \n", data.Duration))

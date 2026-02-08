@@ -3,59 +3,66 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/joho/godotenv"
 )
 
 // Config represents the application configuration
 type Config struct {
 	// Directory paths
-	ProjectsRoot string `yaml:"projects_root"`
-	RunsRoot     string `yaml:"runs_root"`
-	TmpRoot      string `yaml:"tmp_root"`
+	ProjectsRoot string
+	RunsRoot     string
+	TmpRoot      string
 
 	// Project allowlist
-	AllowedProjects []string `yaml:"allowed_projects"`
+	AllowedProjects []string
 
 	// Execution limits
-	MaxRuntimeSeconds  int `yaml:"max_runtime_seconds"`
-	MaxConcurrentJobs  int `yaml:"max_concurrent_jobs"`
+	MaxRuntimeSeconds int
+	MaxConcurrentJobs int
 
 	// Git settings
-	GitPushRetries           int `yaml:"git_push_retries"`
-	GitPushRetryDelaySeconds int `yaml:"git_push_retry_delay_seconds"`
+	GitPushRetries           int
+	GitPushRetryDelaySeconds int
 
 	// Validation settings
-	Validation ValidationConfig `yaml:"validation"`
+	Validation ValidationConfig
 
 	// API settings
-	API APIConfig `yaml:"api"`
+	API APIConfig
 
 	// Agent mode settings
-	Agent AgentConfig `yaml:"agent"`
+	Agent AgentConfig
 
 	// Cleanup settings
-	JobRetentionSeconds      int  `yaml:"job_retention_seconds"`
-	StartupCleanupStaleJobs  bool `yaml:"startup_cleanup_stale_jobs"`
+	JobRetentionSeconds     int
+	StartupCleanupStaleJobs bool
 }
 
 // AgentConfig contains agent mode settings
 type AgentConfig struct {
-	MaxIterations       int `yaml:"max_iterations"`
-	MaxTotalSeconds     int `yaml:"max_total_seconds"`
-	MaxIterationSeconds int `yaml:"max_iteration_seconds"`
+	MaxIterations       int
+	MaxTotalSeconds     int
+	MaxIterationSeconds int
+	PromptFile          string   // Path to prompt template on disk
+	Paths               []string // Comma-separated allowed paths
+	DefaultProject      string
+	Author              string
+	CommitPrefix        string
 }
 
 // ValidationConfig contains diff validation settings
 type ValidationConfig struct {
-	BlockBinaryFiles bool     `yaml:"block_binary_files"`
-	BlockedPaths     []string `yaml:"blocked_paths"`
+	BlockBinaryFiles bool
+	BlockedPaths     []string
 }
 
 // APIConfig contains HTTP API settings
 type APIConfig struct {
-	Bind   string `yaml:"bind"`
-	APIKey string `yaml:"api_key"`
+	Bind   string
+	APIKey string
 }
 
 // DefaultConfig returns a configuration with default values
@@ -87,24 +94,47 @@ func DefaultConfig() *Config {
 			MaxIterations:       50,
 			MaxTotalSeconds:     3600,
 			MaxIterationSeconds: 300,
+			Author:              "claude-agent",
+			CommitPrefix:        "[agent]",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
 	}
 }
 
-// Load reads configuration from a YAML file
-func Load(path string) (*Config, error) {
+// LoadFromEnv loads configuration from environment variables and an optional .env file
+func LoadFromEnv() (*Config, error) {
+	// Load .env file if present (silently ignore missing)
+	_ = godotenv.Load()
+
 	cfg := DefaultConfig()
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
+	cfg.ProjectsRoot = envOrDefault("PROJECTS_ROOT", cfg.ProjectsRoot)
+	cfg.RunsRoot = envOrDefault("RUNS_ROOT", cfg.RunsRoot)
+	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
+	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
+	cfg.MaxRuntimeSeconds = envIntOrDefault("MAX_RUNTIME_SECONDS", cfg.MaxRuntimeSeconds)
+	cfg.MaxConcurrentJobs = envIntOrDefault("MAX_CONCURRENT_JOBS", cfg.MaxConcurrentJobs)
+	cfg.GitPushRetries = envIntOrDefault("GIT_PUSH_RETRIES", cfg.GitPushRetries)
+	cfg.GitPushRetryDelaySeconds = envIntOrDefault("GIT_PUSH_RETRY_DELAY_SECONDS", cfg.GitPushRetryDelaySeconds)
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
-	}
+	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)
+	cfg.Validation.BlockedPaths = envSliceOrDefault("VALIDATION_BLOCKED_PATHS", cfg.Validation.BlockedPaths)
+
+	cfg.API.Bind = envOrDefault("BIND", cfg.API.Bind)
+	cfg.API.APIKey = envOrDefault("API_KEY", cfg.API.APIKey)
+
+	cfg.Agent.PromptFile = envOrDefault("AGENT_PROMPT_FILE", cfg.Agent.PromptFile)
+	cfg.Agent.Paths = envSliceOrDefault("AGENT_PATHS", cfg.Agent.Paths)
+	cfg.Agent.DefaultProject = envOrDefault("AGENT_DEFAULT_PROJECT", cfg.Agent.DefaultProject)
+	cfg.Agent.Author = envOrDefault("AGENT_AUTHOR", cfg.Agent.Author)
+	cfg.Agent.CommitPrefix = envOrDefault("AGENT_COMMIT_PREFIX", cfg.Agent.CommitPrefix)
+	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)
+	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
+	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
+
+	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
+	cfg.StartupCleanupStaleJobs = envBoolOrDefault("STARTUP_CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -147,4 +177,44 @@ func (c *Config) IsProjectAllowed(project string) bool {
 		}
 	}
 	return false
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envBoolOrDefault(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func envSliceOrDefault(key string, fallback []string) []string {
+	if v := os.Getenv(key); v != "" {
+		parts := strings.Split(v, ",")
+		result := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				result = append(result, p)
+			}
+		}
+		return result
+	}
+	return fallback
 }

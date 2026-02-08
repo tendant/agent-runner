@@ -41,7 +41,7 @@ type Session struct {
 
 	ID                   string            `json:"session_id"`
 	Project              string            `json:"project"`
-	PromptFile           string            `json:"prompt_file"`
+	Message              string            `json:"message"`
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
 	CommitMessagePrefix  string            `json:"commit_message_prefix"`
@@ -131,7 +131,7 @@ func (s *Session) Snapshot() *Session {
 	snap := &Session{
 		ID:                  s.ID,
 		Project:             s.Project,
-		PromptFile:          s.PromptFile,
+		Message:             s.Message,
 		Paths:               append([]string{}, s.Paths...),
 		Author:              s.Author,
 		CommitMessagePrefix: s.CommitMessagePrefix,
