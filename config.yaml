@@ -33,6 +33,12 @@ api:
   bind: "127.0.0.1:8080"
   api_key: ""  # Optional; if set, required in X-API-Key header
 
+# Agent mode settings
+agent:
+  max_iterations: 50
+  max_total_seconds: 3600
+  max_iteration_seconds: 300
+
 # Cleanup
 job_retention_seconds: 3600
 startup_cleanup_stale_jobs: true

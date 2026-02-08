@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -21,6 +22,7 @@ import (
 type Handlers struct {
 	config           *config.Config
 	jobManager       *jobs.Manager
+	agentManager     *agent.Manager
 	gitOps           *git.Operations
 	executor         *executor.Executor
 	validator        *executor.Validator
@@ -32,6 +34,7 @@ type Handlers struct {
 func NewHandlers(
 	cfg *config.Config,
 	jobManager *jobs.Manager,
+	agentManager *agent.Manager,
 	gitOps *git.Operations,
 	exec *executor.Executor,
 	validator *executor.Validator,
@@ -41,6 +44,7 @@ func NewHandlers(
 	return &Handlers{
 		config:           cfg,
 		jobManager:       jobManager,
+		agentManager:     agentManager,
 		gitOps:           gitOps,
 		executor:         exec,
 		validator:        validator,

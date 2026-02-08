@@ -46,6 +46,29 @@ type ValidationResult struct {
 	Files   []string
 }
 
+// AgentLogData contains data for writing an agent session log
+type AgentLogData struct {
+	SessionID   string
+	Project     string
+	Status      string
+	Duration    int
+	PromptFile  string
+	Author      string
+	Iterations  []AgentIterationLog
+	TotalCommits int
+	Error       string
+}
+
+// AgentIterationLog captures one iteration for the log
+type AgentIterationLog struct {
+	Iteration    int
+	Status       string
+	Commit       string
+	ChangedFiles []string
+	Error        string
+	DurationSecs int
+}
+
 // RunLogger handles markdown run log generation
 type RunLogger struct {
 	RunsRoot string
@@ -77,6 +100,68 @@ func (l *RunLogger) WriteRunLog(data *RunLogData) (string, error) {
 	}
 
 	return filepath, nil
+}
+
+// WriteAgentLog writes a markdown log file for an agent session
+func (l *RunLogger) WriteAgentLog(data *AgentLogData) (string, error) {
+	if err := os.MkdirAll(l.RunsRoot, 0755); err != nil {
+		return "", fmt.Errorf("failed to create runs directory: %w", err)
+	}
+
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("%s_agent_%s.md", timestamp, data.Project)
+	fp := filepath.Join(l.RunsRoot, filename)
+
+	content := l.generateAgentMarkdown(data, timestamp)
+
+	if err := os.WriteFile(fp, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write agent log: %w", err)
+	}
+
+	return fp, nil
+}
+
+func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("# Agent Session - %s\n\n", strings.ReplaceAll(timestamp, "_", " ")))
+
+	sb.WriteString(fmt.Sprintf("**Session ID:** %s  \n", data.SessionID))
+	sb.WriteString(fmt.Sprintf("**Project:** %s  \n", data.Project))
+	sb.WriteString(fmt.Sprintf("**Status:** %s  \n", data.Status))
+	sb.WriteString(fmt.Sprintf("**Prompt File:** %s  \n", data.PromptFile))
+	sb.WriteString(fmt.Sprintf("**Author:** %s  \n", data.Author))
+	if data.Duration > 0 {
+		sb.WriteString(fmt.Sprintf("**Duration:** %ds  \n", data.Duration))
+	}
+	sb.WriteString(fmt.Sprintf("**Total Commits:** %d\n\n", data.TotalCommits))
+
+	if data.Error != "" {
+		sb.WriteString("## Error\n\n")
+		sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", data.Error))
+	}
+
+	if len(data.Iterations) > 0 {
+		sb.WriteString("## Iterations\n\n")
+		for _, iter := range data.Iterations {
+			sb.WriteString(fmt.Sprintf("### Iteration %d — %s\n\n", iter.Iteration, iter.Status))
+			if iter.Commit != "" {
+				sb.WriteString(fmt.Sprintf("- **Commit:** `%s`\n", iter.Commit))
+			}
+			if len(iter.ChangedFiles) > 0 {
+				sb.WriteString("- **Files:**\n")
+				for _, f := range iter.ChangedFiles {
+					sb.WriteString(fmt.Sprintf("  - `%s`\n", f))
+				}
+			}
+			if iter.Error != "" {
+				sb.WriteString(fmt.Sprintf("- **Error:** %s\n", iter.Error))
+			}
+			sb.WriteString(fmt.Sprintf("- **Duration:** %ds\n\n", iter.DurationSecs))
+		}
+	}
+
+	return sb.String()
 }
 
 func (l *RunLogger) generateMarkdown(data *RunLogData, timestamp string) string {

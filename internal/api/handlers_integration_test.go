@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -41,13 +42,14 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.TmpRoot = tmpDir
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	agentManager := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor()
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)
 
-	handlers := NewHandlers(cfg, jobManager, gitOps, exec, validator, workspaceManager, runLogger)
+	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
 
 	return &testEnv{
 		handlers:    handlers,
@@ -156,12 +158,13 @@ func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-project"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	agentMgr := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor()
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)
-	handlers := NewHandlers(cfg, jobManager, gitOps, exec, validator, workspaceManager, runLogger)
+	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
 	w := postJSON(handlers.HandleRun, map[string]interface{}{
 		"project":     "not-allowed",
@@ -269,12 +272,13 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	cfg.MaxConcurrentJobs = 1
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	agentMgr := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor()
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)
-	handlers := NewHandlers(cfg, jobManager, gitOps, exec, validator, workspaceManager, runLogger)
+	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
 	// Create fake projects
 	os.MkdirAll(filepath.Join(projectsDir, "project-a", ".git"), 0755)
@@ -453,12 +457,13 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-only"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	agentMgr := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor()
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)
-	handlers := NewHandlers(cfg, jobManager, gitOps, exec, validator, workspaceManager, runLogger)
+	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
 	// Create two projects, only one in allowlist
 	os.MkdirAll(filepath.Join(projectsDir, "allowed-only", ".git"), 0755)

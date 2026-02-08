@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -27,13 +29,14 @@ type Server struct {
 func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	agentManager := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor()
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)
 
-	handlers := NewHandlers(cfg, jobManager, gitOps, exec, validator, workspaceManager, runLogger)
+	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
 
 	// Setup router
 	mux := http.NewServeMux()
@@ -41,6 +44,14 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/job/", handlers.HandleGetJob)
 	mux.HandleFunc("/status/", handlers.HandleGetStatus)
 	mux.HandleFunc("/projects", handlers.HandleGetProjects)
+	mux.HandleFunc("/agent", handlers.HandleStartAgent)
+	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/stop") {
+			handlers.HandleStopAgent(w, r)
+		} else {
+			handlers.HandleGetAgent(w, r)
+		}
+	})
 
 	// Apply middleware
 	var handler http.Handler = mux

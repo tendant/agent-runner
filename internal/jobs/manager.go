@@ -348,6 +348,33 @@ func (m *Manager) cleanupExpiredJobs() {
 	}
 }
 
+// AcquireProjectLock acquires a project lock for an external holder (e.g., agent sessions).
+// Returns an error if the project is already locked.
+func (m *Manager) AcquireProjectLock(project, holderID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if lock, exists := m.locks[project]; exists {
+		return fmt.Errorf("project %s is locked by %s", project, lock.JobID)
+	}
+
+	m.locks[project] = &Lock{
+		JobID:    holderID,
+		LockedAt: time.Now(),
+	}
+	return nil
+}
+
+// ReleaseProjectLock releases a project lock held by an external holder.
+func (m *Manager) ReleaseProjectLock(project, holderID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if lock, exists := m.locks[project]; exists && lock.JobID == holderID {
+		delete(m.locks, project)
+	}
+}
+
 // GetRunningJobIDs returns IDs of all currently running jobs (for startup cleanup)
 func (m *Manager) GetRunningJobIDs() []string {
 	m.mu.RLock()

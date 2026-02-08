@@ -31,9 +31,19 @@ type Config struct {
 	// API settings
 	API APIConfig `yaml:"api"`
 
+	// Agent mode settings
+	Agent AgentConfig `yaml:"agent"`
+
 	// Cleanup settings
 	JobRetentionSeconds      int  `yaml:"job_retention_seconds"`
 	StartupCleanupStaleJobs  bool `yaml:"startup_cleanup_stale_jobs"`
+}
+
+// AgentConfig contains agent mode settings
+type AgentConfig struct {
+	MaxIterations       int `yaml:"max_iterations"`
+	MaxTotalSeconds     int `yaml:"max_total_seconds"`
+	MaxIterationSeconds int `yaml:"max_iteration_seconds"`
 }
 
 // ValidationConfig contains diff validation settings
@@ -72,6 +82,11 @@ func DefaultConfig() *Config {
 		API: APIConfig{
 			Bind:   "127.0.0.1:8080",
 			APIKey: "",
+		},
+		Agent: AgentConfig{
+			MaxIterations:       50,
+			MaxTotalSeconds:     3600,
+			MaxIterationSeconds: 300,
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,

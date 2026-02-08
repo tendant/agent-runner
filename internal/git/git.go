@@ -200,6 +200,36 @@ func (o *Operations) GetCurrentBranch(ctx context.Context, repoPath string) (str
 	return strings.TrimSpace(string(output)), nil
 }
 
+// RevertChanges discards all changes in the working tree (git checkout . && git clean -fd)
+func (o *Operations) RevertChanges(ctx context.Context, repoPath string) error {
+	if err := o.runGitCommand(ctx, repoPath, "checkout", "."); err != nil {
+		return fmt.Errorf("git checkout failed: %w", err)
+	}
+	if err := o.runGitCommand(ctx, repoPath, "clean", "-fd"); err != nil {
+		return fmt.Errorf("git clean failed: %w", err)
+	}
+	return nil
+}
+
+// PullRebase pulls from origin with rebase strategy
+func (o *Operations) PullRebase(ctx context.Context, repoPath string) error {
+	if err := o.runGitCommand(ctx, repoPath, "pull", "--rebase", "origin", "HEAD"); err != nil {
+		return fmt.Errorf("git pull --rebase failed: %w", err)
+	}
+	return nil
+}
+
+// ConfigureAuthor sets the git user.name and user.email for a repository
+func (o *Operations) ConfigureAuthor(ctx context.Context, repoPath, author string) error {
+	if err := o.runGitCommand(ctx, repoPath, "config", "user.name", author); err != nil {
+		return fmt.Errorf("git config user.name failed: %w", err)
+	}
+	if err := o.runGitCommand(ctx, repoPath, "config", "user.email", author+"@bot.local"); err != nil {
+		return fmt.Errorf("git config user.email failed: %w", err)
+	}
+	return nil
+}
+
 func (o *Operations) getDefaultBranch(ctx context.Context, repoPath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = repoPath
