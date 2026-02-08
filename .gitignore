@@ -18,3 +18,5 @@ agent-runner
 
 # OS files
 .DS_Store
+
+prompt.md
