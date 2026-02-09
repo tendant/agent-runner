@@ -36,6 +36,9 @@ type Config struct {
 	// Agent mode settings
 	Agent AgentConfig
 
+	// Telegram bot settings
+	Telegram TelegramConfig
+
 	// Cleanup settings
 	JobRetentionSeconds     int
 	StartupCleanupStaleJobs bool
@@ -51,6 +54,12 @@ type AgentConfig struct {
 	DefaultProject      string
 	Author              string
 	CommitPrefix        string
+}
+
+// TelegramConfig contains Telegram bot settings
+type TelegramConfig struct {
+	BotToken string
+	ChatID   int64
 }
 
 // ValidationConfig contains diff validation settings
@@ -133,6 +142,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 
+	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
+	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)
+
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("STARTUP_CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
 
@@ -189,6 +201,15 @@ func envOrDefault(key, fallback string) string {
 func envIntOrDefault(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envInt64OrDefault(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

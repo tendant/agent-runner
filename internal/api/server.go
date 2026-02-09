@@ -16,13 +16,15 @@ import (
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/telegram"
 )
 
 // Server represents the HTTP API server
 type Server struct {
-	config     *config.Config
-	httpServer *http.Server
-	handlers   *Handlers
+	config      *config.Config
+	httpServer  *http.Server
+	handlers    *Handlers
+	telegramBot *telegram.Bot
 }
 
 // NewServer creates a new API server
@@ -60,6 +62,13 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
+	// Create Telegram bot (nil if not configured)
+	agentStarter := NewAgentStarterAdapter(handlers)
+	telegramBot, err := telegram.New(cfg.Telegram, agentStarter)
+	if err != nil {
+		log.Printf("Warning: failed to create Telegram bot: %v", err)
+	}
+
 	return &Server{
 		config: cfg,
 		httpServer: &http.Server{
@@ -69,7 +78,8 @@ func NewServer(cfg *config.Config) *Server {
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-		handlers: handlers,
+		handlers:    handlers,
+		telegramBot: telegramBot,
 	}
 }
 
@@ -97,6 +107,11 @@ func (s *Server) Start() error {
 		<-quit
 		log.Println("Server is shutting down...")
 
+		// Stop Telegram bot first
+		if s.telegramBot != nil {
+			s.telegramBot.Stop()
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -106,6 +121,11 @@ func (s *Server) Start() error {
 		}
 		close(done)
 	}()
+
+	// Start Telegram bot
+	if s.telegramBot != nil {
+		s.telegramBot.Start(context.Background())
+	}
 
 	log.Printf("Server starting on %s", s.config.API.Bind)
 

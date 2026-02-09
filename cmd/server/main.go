@@ -30,6 +30,9 @@ func main() {
 	if cfg.Agent.DefaultProject != "" {
 		log.Printf("Agent default project: %s", cfg.Agent.DefaultProject)
 	}
+	if cfg.Telegram.BotToken != "" {
+		log.Printf("Telegram bot: enabled")
+	}
 
 	// Create and start server
 	server := api.NewServer(cfg)

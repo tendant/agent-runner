@@ -138,6 +138,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
 	} {
 		t.Setenv(key, "")
@@ -152,6 +153,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
 	} {
 		t.Setenv(key, "")
@@ -248,6 +250,40 @@ func TestLoadFromEnv_BoolParsing(t *testing.T) {
 	}
 	if cfg.StartupCleanupStaleJobs {
 		t.Error("expected StartupCleanupStaleJobs to be false")
+	}
+}
+
+func TestLoadFromEnv_TelegramConfig(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF")
+	t.Setenv("TELEGRAM_CHAT_ID", "-1001234567890")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Telegram.BotToken != "123456:ABC-DEF" {
+		t.Errorf("expected bot token 123456:ABC-DEF, got %s", cfg.Telegram.BotToken)
+	}
+	if cfg.Telegram.ChatID != -1001234567890 {
+		t.Errorf("expected chat ID -1001234567890, got %d", cfg.Telegram.ChatID)
+	}
+}
+
+func TestLoadFromEnv_TelegramConfigDefaults(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "")
+	t.Setenv("TELEGRAM_CHAT_ID", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Telegram.BotToken != "" {
+		t.Errorf("expected empty bot token, got %s", cfg.Telegram.BotToken)
+	}
+	if cfg.Telegram.ChatID != 0 {
+		t.Errorf("expected chat ID 0, got %d", cfg.Telegram.ChatID)
 	}
 }
 

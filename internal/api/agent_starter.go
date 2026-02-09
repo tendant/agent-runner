@@ -1,0 +1,72 @@
+package api
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/agent-runner/agent-runner/internal/agent"
+)
+
+// AgentStarter is the interface used by the Telegram bot to start and poll agent sessions.
+type AgentStarter interface {
+	StartAgent(message string) (sessionID string, err error)
+	GetAgentSession(sessionID string) (*agent.Session, bool)
+}
+
+// AgentStarterAdapter bridges the Telegram bot to the existing agent creation logic.
+type AgentStarterAdapter struct {
+	handlers *Handlers
+}
+
+// NewAgentStarterAdapter creates an adapter that delegates to Handlers.
+func NewAgentStarterAdapter(h *Handlers) *AgentStarterAdapter {
+	return &AgentStarterAdapter{handlers: h}
+}
+
+// StartAgent validates config, creates an agent session, and starts the background loop.
+func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
+	h := a.handlers
+
+	project := h.config.Agent.DefaultProject
+	if project == "" {
+		return "", fmt.Errorf("agent not configured: AGENT_DEFAULT_PROJECT is required")
+	}
+
+	paths := h.config.Agent.Paths
+	if len(paths) == 0 {
+		return "", fmt.Errorf("agent not configured: AGENT_PATHS is required")
+	}
+
+	if !h.config.IsProjectAllowed(project) {
+		return "", fmt.Errorf("project not in allowed_projects")
+	}
+
+	projectPath := filepath.Join(h.config.ProjectsRoot, project)
+	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("project directory not found")
+	}
+
+	author := h.config.Agent.Author
+	commitPrefix := h.config.Agent.CommitPrefix
+	maxIter := h.config.Agent.MaxIterations
+	maxSeconds := h.config.Agent.MaxTotalSeconds
+
+	session, err := h.agentManager.CreateSession(
+		project, message, paths,
+		author, commitPrefix, maxIter, maxSeconds,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	sessionID := session.ID
+	go h.executeAgent(session, projectPath)
+
+	return sessionID, nil
+}
+
+// GetAgentSession returns a snapshot of an agent session.
+func (a *AgentStarterAdapter) GetAgentSession(sessionID string) (*agent.Session, bool) {
+	return a.handlers.agentManager.GetSession(sessionID)
+}
