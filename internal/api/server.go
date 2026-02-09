@@ -64,10 +64,7 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Create Telegram bot (nil if not configured)
 	agentStarter := NewAgentStarterAdapter(handlers)
-	telegramBot, err := telegram.New(cfg.Telegram, agentStarter)
-	if err != nil {
-		log.Printf("Warning: failed to create Telegram bot: %v", err)
-	}
+	telegramBot := telegram.New(cfg.Telegram, agentStarter)
 
 	return &Server{
 		config: cfg,
@@ -124,7 +121,9 @@ func (s *Server) Start() error {
 
 	// Start Telegram bot
 	if s.telegramBot != nil {
-		s.telegramBot.Start(context.Background())
+		if err := s.telegramBot.Start(context.Background()); err != nil {
+			log.Printf("Warning: %v", err)
+		}
 	}
 
 	log.Printf("Server starting on %s", s.config.API.Bind)

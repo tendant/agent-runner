@@ -21,33 +21,38 @@ type AgentStarter interface {
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
-	api     *tgbotapi.BotAPI
+	token   string
 	chatID  int64
 	starter AgentStarter
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+
+	api    *tgbotapi.BotAPI
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // New creates a new Telegram bot. Returns nil if the token is empty.
-func New(cfg config.TelegramConfig, starter AgentStarter) (*Bot, error) {
+// The actual API connection is deferred to Start().
+func New(cfg config.TelegramConfig, starter AgentStarter) *Bot {
 	if cfg.BotToken == "" {
-		return nil, nil
-	}
-
-	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Telegram bot: %w", err)
+		return nil
 	}
 
 	return &Bot{
-		api:     api,
+		token:   cfg.BotToken,
 		chatID:  cfg.ChatID,
 		starter: starter,
-	}, nil
+	}
 }
 
-// Start begins long-polling for Telegram updates. Non-blocking.
-func (b *Bot) Start(ctx context.Context) {
+// Start connects to the Telegram API and begins long-polling. Non-blocking.
+// Returns an error if the bot token is invalid.
+func (b *Bot) Start(ctx context.Context) error {
+	api, err := tgbotapi.NewBotAPI(b.token)
+	if err != nil {
+		return fmt.Errorf("failed to connect to Telegram: %w", err)
+	}
+	b.api = api
+
 	ctx, b.cancel = context.WithCancel(ctx)
 
 	u := tgbotapi.NewUpdate(0)
@@ -75,6 +80,7 @@ func (b *Bot) Start(ctx context.Context) {
 	}()
 
 	log.Printf("Telegram bot started (@%s)", b.api.Self.UserName)
+	return nil
 }
 
 // Stop gracefully shuts down the bot.
@@ -82,7 +88,9 @@ func (b *Bot) Stop() {
 	if b.cancel != nil {
 		b.cancel()
 	}
-	b.api.StopReceivingUpdates()
+	if b.api != nil {
+		b.api.StopReceivingUpdates()
+	}
 	b.wg.Wait()
 	log.Println("Telegram bot stopped")
 }

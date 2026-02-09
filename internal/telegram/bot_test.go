@@ -9,12 +9,22 @@ import (
 )
 
 func TestNew_EmptyToken(t *testing.T) {
-	bot, err := New(config.TelegramConfig{}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	bot := New(config.TelegramConfig{}, nil)
 	if bot != nil {
 		t.Error("expected nil bot for empty token")
+	}
+}
+
+func TestNew_WithToken(t *testing.T) {
+	bot := New(config.TelegramConfig{BotToken: "fake-token", ChatID: 12345}, nil)
+	if bot == nil {
+		t.Fatal("expected non-nil bot for non-empty token")
+	}
+	if bot.token != "fake-token" {
+		t.Errorf("expected token fake-token, got %s", bot.token)
+	}
+	if bot.chatID != 12345 {
+		t.Errorf("expected chatID 12345, got %d", bot.chatID)
 	}
 }
 
