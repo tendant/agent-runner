@@ -3,6 +3,7 @@
 
 # Runtime directories
 projects/
+origins/
 runs/
 tmp/
 .claude/
