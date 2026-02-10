@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,16 +15,16 @@ import (
 
 const maxConsecutiveFailures = 5
 
-// executeAgent runs the agent iteration loop
-func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
+// executeAgent runs the agent iteration loop.
+// Claude handles all git operations via the prompt — the loop just runs Claude
+// in the workspace and records results.
+func (h *Handlers) executeAgent(session *agent.Session) {
 	sessionID := session.ID
 	project := session.Project
 	message := session.Message
-	paths := session.Paths
-	authorName := session.Author
-	commitPrefix := session.CommitMessagePrefix
 	maxIter := session.MaxIterations
 	maxSeconds := session.MaxTotalSeconds
+	authorName := session.Author
 
 	startTime := time.Now()
 	deadline := startTime.Add(time.Duration(maxSeconds) * time.Second)
@@ -32,6 +33,11 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 
 	defer func() {
+		// Cache repos back to projects for future runs
+		if liveSession.WorkspacePath != "" {
+			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ProjectsRoot)
+		}
+
 		// Write agent audit log
 		snap := liveSession.Snapshot()
 		logData := &logging.AgentLogData{
@@ -68,28 +74,22 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 		return
 	}
 
-	// Step 1: Fetch and reset the source project
-	ctx := context.Background()
-	if err := h.gitOps.FetchAndReset(ctx, projectPath); err != nil {
-		h.agentManager.FailSession(sessionID, "Failed to prepare git repository: "+err.Error())
-		return
-	}
-
-	// Step 2: Prepare persistent workspace
-	workspacePath, err := h.workspaceManager.PrepareWorkspace(projectPath, sessionID)
+	// Prepare agent workspace with repos/ structure
+	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
+		h.config.ProjectsRoot, sessionID, project, h.config.Agent.SharedRepos,
+	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return
 	}
+	liveSession.SetWorkspacePath(workspacePath)
 	defer h.workspaceManager.CleanupWorkspace(workspacePath)
 
-	// Configure git author in workspace
-	if err := h.gitOps.ConfigureAuthor(ctx, workspacePath, authorName); err != nil {
-		h.agentManager.FailSession(sessionID, "Failed to configure git author: "+err.Error())
-		return
-	}
+	// Claude runs in the repos/ subdirectory
+	reposPath := filepath.Join(workspacePath, "repos")
 
 	// Iteration loop
+	ctx := context.Background()
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal
 		if liveSession.StopRequested() {
@@ -111,7 +111,7 @@ func (h *Handlers) executeAgent(session *agent.Session, projectPath string) {
 			return
 		}
 
-		result := h.executeIteration(ctx, liveSession, workspacePath, prompt, paths, commitPrefix, authorName, i, deadline)
+		result := h.executeIteration(ctx, reposPath, prompt, i, deadline)
 		liveSession.AddIteration(result)
 	}
 
@@ -139,13 +139,11 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	return strings.ReplaceAll(template, "{{MESSAGE}}", message), nil
 }
 
-// executeIteration runs a single iteration of the agent loop
+// executeIteration runs a single iteration of the agent loop.
+// It just runs Claude and records success or error — no git operations.
 func (h *Handlers) executeIteration(
 	ctx context.Context,
-	session *agent.Session,
 	workspacePath, prompt string,
-	paths []string,
-	commitPrefix, author string,
 	iteration int,
 	deadline time.Time,
 ) agent.IterationResult {
@@ -179,66 +177,7 @@ func (h *Handlers) executeIteration(
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
-		// Revert any partial changes
-		h.gitOps.RevertChanges(ctx, workspacePath)
 		return result
-	}
-
-	// Check for changes
-	changedFiles, err := h.gitOps.GetChangedFiles(iterCtx, workspacePath)
-	if err != nil {
-		result.Status = agent.IterationStatusError
-		result.Error = fmt.Sprintf("failed to get changed files: %v", err)
-		return result
-	}
-
-	if len(changedFiles) == 0 {
-		result.Status = agent.IterationStatusNoChanges
-		return result
-	}
-
-	result.ChangedFiles = changedFiles
-
-	// Validate diff
-	validationErr := h.validator.ValidateDiff(changedFiles, paths)
-	if validationErr != nil {
-		result.Status = agent.IterationStatusValidation
-		result.Error = validationErr.Message
-		// Revert invalid changes
-		h.gitOps.RevertChanges(ctx, workspacePath)
-		return result
-	}
-
-	// Commit
-	commitMsg := fmt.Sprintf("%s iteration %d", commitPrefix, iteration)
-	commitHash, err := h.gitOps.Commit(iterCtx, workspacePath, commitMsg, author, "")
-	if err != nil {
-		result.Status = agent.IterationStatusError
-		result.Error = fmt.Sprintf("commit failed: %v", err)
-		h.gitOps.RevertChanges(ctx, workspacePath)
-		return result
-	}
-	result.Commit = commitHash
-
-	// Push (with pull --rebase on conflict)
-	if err := h.gitOps.Push(iterCtx, workspacePath); err != nil {
-		if strings.Contains(err.Error(), "GIT_PUSH_CONFLICT") {
-			// Try pull --rebase then push again
-			if rebaseErr := h.gitOps.PullRebase(iterCtx, workspacePath); rebaseErr != nil {
-				result.Status = agent.IterationStatusError
-				result.Error = fmt.Sprintf("push conflict, rebase failed: %v", rebaseErr)
-				return result
-			}
-			if retryErr := h.gitOps.Push(iterCtx, workspacePath); retryErr != nil {
-				result.Status = agent.IterationStatusError
-				result.Error = fmt.Sprintf("push failed after rebase: %v", retryErr)
-				return result
-			}
-		} else {
-			result.Status = agent.IterationStatusError
-			result.Error = fmt.Sprintf("push failed: %v", err)
-			return result
-		}
 	}
 
 	result.Status = agent.IterationStatusSuccess

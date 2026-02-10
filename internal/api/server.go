@@ -12,6 +12,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
@@ -62,9 +63,12 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
-	// Create Telegram bot (nil if not configured)
+	// Create conversation components for Telegram bot
+	convManager := conversation.NewManager()
+	analyzer := conversation.NewAnalyzer(exec)
 	agentStarter := NewAgentStarterAdapter(handlers)
-	telegramBot := telegram.New(cfg.Telegram, agentStarter)
+	projLister := &projectLister{cfg: cfg}
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, projLister)
 
 	return &Server{
 		config: cfg,
@@ -200,4 +204,23 @@ func (rw *responseWriter) WriteHeader(code int) {
 // Handler returns the HTTP handler for use in tests
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
+}
+
+// projectLister implements telegram.ProjectLister by scanning the projects directory.
+type projectLister struct {
+	cfg *config.Config
+}
+
+func (p *projectLister) ListAvailableProjects() []string {
+	var projects []string
+	entries, err := os.ReadDir(p.cfg.ProjectsRoot)
+	if err != nil {
+		return projects
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && p.cfg.IsProjectAllowed(entry.Name()) {
+			projects = append(projects, entry.Name())
+		}
+	}
+	return projects
 }

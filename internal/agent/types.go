@@ -116,6 +116,13 @@ func (s *Session) Fail(err string) {
 	s.ElapsedSeconds = int(now.Sub(s.StartedAt).Seconds())
 }
 
+// SetWorkspacePath stores the workspace path on the session.
+func (s *Session) SetWorkspacePath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.WorkspacePath = path
+}
+
 // GetConsecutiveFailures returns the current consecutive failure count
 func (s *Session) GetConsecutiveFailures() int {
 	s.mu.RLock()

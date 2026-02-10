@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -82,13 +80,6 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project exists
-	projectPath := filepath.Join(h.config.ProjectsRoot, project)
-	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-		h.writeError(w, http.StatusBadRequest, "project directory not found")
-		return
-	}
-
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
 	maxIter := h.config.Agent.MaxIterations
@@ -112,7 +103,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := session.ID
 
 	// Start agent loop in background
-	go h.executeAgent(session, projectPath)
+	go h.executeAgent(session)
 
 	h.writeJSON(w, http.StatusAccepted, map[string]any{
 		"session_id": sessionID,

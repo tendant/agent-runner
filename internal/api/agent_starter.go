@@ -2,8 +2,6 @@ package api
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 )
@@ -51,11 +49,6 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 		return "", fmt.Errorf("project not in allowed_projects")
 	}
 
-	projectPath := filepath.Join(h.config.ProjectsRoot, project)
-	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("project directory not found")
-	}
-
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
 	maxIter := h.config.Agent.MaxIterations
@@ -70,7 +63,7 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	}
 
 	sessionID := session.ID
-	go h.executeAgent(session, projectPath)
+	go h.executeAgent(session)
 
 	return sessionID, nil
 }
