@@ -33,7 +33,7 @@ func NewServer(cfg *config.Config) *Server {
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	agentManager := agent.NewManager(jobManager)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	exec := executor.NewExecutor()
+	exec := executor.NewExecutor(cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.RunsRoot)

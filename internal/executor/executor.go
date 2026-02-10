@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 )
 
 // ClaudeOutput represents the JSON output from Claude Code CLI
@@ -24,21 +25,28 @@ type ExecutionResult struct {
 }
 
 // Executor handles Claude Code CLI execution
-type Executor struct{}
+type Executor struct {
+	Model    string
+	MaxTurns int
+}
 
 // NewExecutor creates a new Claude Code executor
-func NewExecutor() *Executor {
-	return &Executor{}
+func NewExecutor(model string, maxTurns int) *Executor {
+	return &Executor{Model: model, MaxTurns: maxTurns}
 }
 
 // Execute runs Claude Code CLI with the given instruction in the workspace
 func (e *Executor) Execute(ctx context.Context, workspacePath, instruction string) (*ExecutionResult, error) {
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print",
-		"--dangerously-skip-permissions",
-		"--output-format", "json",
-		instruction,
-	)
+	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "json"}
+	if e.Model != "" {
+		args = append(args, "--model", e.Model)
+	}
+	if e.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(e.MaxTurns))
+	}
+	args = append(args, instruction)
+
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workspacePath
 
 	var stdout, stderr bytes.Buffer

@@ -27,6 +27,9 @@ func main() {
 	if cfg.API.APIKey != "" {
 		log.Printf("API key authentication: enabled")
 	}
+	if cfg.Agent.Model != "" {
+		log.Printf("Agent model: %s", cfg.Agent.Model)
+	}
 	if cfg.Agent.DefaultProject != "" {
 		log.Printf("Agent default project: %s", cfg.Agent.DefaultProject)
 	}

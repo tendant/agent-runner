@@ -31,6 +31,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Agent.CommitPrefix != "[agent]" {
 		t.Errorf("expected Agent.CommitPrefix [agent], got %s", cfg.Agent.CommitPrefix)
 	}
+	if cfg.Agent.MaxTurns != 50 {
+		t.Errorf("expected Agent.MaxTurns 50, got %d", cfg.Agent.MaxTurns)
+	}
+	if cfg.Agent.Model != "" {
+		t.Errorf("expected Agent.Model empty, got %s", cfg.Agent.Model)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should pass validation, got: %v", err)
 	}
@@ -138,6 +144,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
 	} {
@@ -153,6 +160,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
 	} {
@@ -188,6 +196,8 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	t.Setenv("AGENT_PATHS", "src/,docs/")
 	t.Setenv("AGENT_AUTHOR", "my-bot")
 	t.Setenv("AGENT_COMMIT_PREFIX", "[auto]")
+	t.Setenv("AGENT_MODEL", "qwen3-coder:30b")
+	t.Setenv("AGENT_MAX_TURNS", "100")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -223,6 +233,12 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	}
 	if cfg.Agent.CommitPrefix != "[auto]" {
 		t.Errorf("expected [auto], got %s", cfg.Agent.CommitPrefix)
+	}
+	if cfg.Agent.Model != "qwen3-coder:30b" {
+		t.Errorf("expected qwen3-coder:30b, got %s", cfg.Agent.Model)
+	}
+	if cfg.Agent.MaxTurns != 100 {
+		t.Errorf("expected 100, got %d", cfg.Agent.MaxTurns)
 	}
 }
 
