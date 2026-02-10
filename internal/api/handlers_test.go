@@ -133,6 +133,66 @@ func TestGenerateCommitMessage_ShortInstruction(t *testing.T) {
 	}
 }
 
+func TestParseProjectTag_Found(t *testing.T) {
+	project, msg := parseProjectTag("@my-site fix the bug")
+	if project != "my-site" {
+		t.Errorf("expected project 'my-site', got '%s'", project)
+	}
+	if msg != "fix the bug" {
+		t.Errorf("expected 'fix the bug', got '%s'", msg)
+	}
+}
+
+func TestParseProjectTag_MiddleOfMessage(t *testing.T) {
+	project, msg := parseProjectTag("fix @my-site the bug")
+	if project != "my-site" {
+		t.Errorf("expected project 'my-site', got '%s'", project)
+	}
+	if msg != "fix the bug" {
+		t.Errorf("expected 'fix the bug', got '%s'", msg)
+	}
+}
+
+func TestParseProjectTag_EndOfMessage(t *testing.T) {
+	project, msg := parseProjectTag("fix the bug @my-site")
+	if project != "my-site" {
+		t.Errorf("expected project 'my-site', got '%s'", project)
+	}
+	if msg != "fix the bug" {
+		t.Errorf("expected 'fix the bug', got '%s'", msg)
+	}
+}
+
+func TestParseProjectTag_NotFound(t *testing.T) {
+	project, msg := parseProjectTag("fix the bug")
+	if project != "" {
+		t.Errorf("expected empty project, got '%s'", project)
+	}
+	if msg != "fix the bug" {
+		t.Errorf("expected original message, got '%s'", msg)
+	}
+}
+
+func TestParseProjectTag_WithDots(t *testing.T) {
+	project, msg := parseProjectTag("@my.site.v2 deploy")
+	if project != "my.site.v2" {
+		t.Errorf("expected 'my.site.v2', got '%s'", project)
+	}
+	if msg != "deploy" {
+		t.Errorf("expected 'deploy', got '%s'", msg)
+	}
+}
+
+func TestParseProjectTag_WithUnderscore(t *testing.T) {
+	project, msg := parseProjectTag("@my_project do stuff")
+	if project != "my_project" {
+		t.Errorf("expected 'my_project', got '%s'", project)
+	}
+	if msg != "do stuff" {
+		t.Errorf("expected 'do stuff', got '%s'", msg)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsString(s, substr))
 }

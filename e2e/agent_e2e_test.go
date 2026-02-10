@@ -497,3 +497,144 @@ echo '{"result":"Done"}'
 		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
 	}
 }
+
+func TestE2E_AgentExplicitProject(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	env := setupAgentE2E(t)
+	defer env.server.Close()
+
+	// Start agent with explicit project field
+	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
+		"message": "Write a file",
+		"project": "test-project",
+	})
+
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	// Verify the response reports the correct project
+	if project, _ := resp["project"].(string); project != "test-project" {
+		t.Errorf("expected project 'test-project', got '%s'", project)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+}
+
+func TestE2E_AgentProjectTag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	env := setupAgentE2E(t)
+	defer env.server.Close()
+
+	// Start agent with @project tag in message
+	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
+		"message": "@test-project Write a file",
+	})
+
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	if project, _ := resp["project"].(string); project != "test-project" {
+		t.Errorf("expected project 'test-project', got '%s'", project)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+}
+
+func TestE2E_AgentExplicitProjectOverridesTag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	env := setupAgentE2E(t)
+	defer env.server.Close()
+
+	// Explicit project should win over @tag
+	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
+		"message": "@nonexistent Write a file",
+		"project": "test-project",
+	})
+
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	if project, _ := resp["project"].(string); project != "test-project" {
+		t.Errorf("expected project 'test-project', got '%s'", project)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+}
+
+func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	baseDir := t.TempDir()
+	projectsDir := filepath.Join(baseDir, "projects")
+	runsDir := filepath.Join(baseDir, "runs")
+	tmpDir := filepath.Join(baseDir, "tmp")
+
+	os.MkdirAll(projectsDir, 0755)
+	os.MkdirAll(runsDir, 0755)
+	os.MkdirAll(tmpDir, 0755)
+
+	cfg := &config.Config{
+		ProjectsRoot:    projectsDir,
+		RunsRoot:        runsDir,
+		TmpRoot:         tmpDir,
+		AllowedProjects: []string{},
+		MaxRuntimeSeconds: 60,
+		MaxConcurrentJobs: 5,
+		Agent: config.AgentConfig{
+			MaxIterations:   1,
+			MaxTotalSeconds: 60,
+			DefaultProject:  "", // No default
+			Paths:           []string{"*.txt"},
+		},
+	}
+
+	srv := api.NewServer(cfg)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// No project field, no @tag, no default → should fail
+	code, resp := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "do stuff",
+	})
+
+	if code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %v", code, resp)
+	}
+
+	errMsg, _ := resp["error"].(string)
+	if errMsg == "" {
+		t.Error("expected error message about no project")
+	}
+}
