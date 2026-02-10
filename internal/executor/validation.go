@@ -104,7 +104,8 @@ func (v *Validator) ValidateDiff(changedFiles []string, allowedPaths []string) *
 	}
 
 	// Check against allowed paths
-	if len(allowedPaths) > 0 {
+	// Empty allowedPaths or a single "*" entry means all paths are allowed
+	if len(allowedPaths) > 0 && !(len(allowedPaths) == 1 && allowedPaths[0] == "*") {
 		var pathViolations []string
 		for _, file := range changedFiles {
 			if !v.isPathAllowed(file, allowedPaths) {
