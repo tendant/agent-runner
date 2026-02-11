@@ -16,6 +16,7 @@ tmp/
 
 # Binary
 agent-runner
+server
 
 # OS files
 .DS_Store
