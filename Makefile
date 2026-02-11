@@ -1,6 +1,6 @@
 BINARY := agent-runner
 CMD := ./cmd/server
-PREFIX := /usr/local
+PREFIX := $(shell go env GOPATH)
 
 .DEFAULT_GOAL := help
 .PHONY: build install clean test help
@@ -23,7 +23,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  build    Build the $(BINARY) binary"
-	@echo "  install  Install to $(PREFIX)/bin"
+	@echo "  install  Install to $$(go env GOPATH)/bin"
 	@echo "  clean    Remove built binary"
 	@echo "  test     Run tests with race detector"
 	@echo "  help     Show this help"
