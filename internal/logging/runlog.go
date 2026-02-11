@@ -48,15 +48,17 @@ type ValidationResult struct {
 
 // AgentLogData contains data for writing an agent session log
 type AgentLogData struct {
-	SessionID   string
-	Project     string
-	Status      string
-	Duration    int
-	Message     string
-	Author      string
-	Iterations  []AgentIterationLog
+	SessionID    string
+	Project      string
+	Status       string
+	Duration     int
+	Message      string
+	Author       string
+	Iterations   []AgentIterationLog
 	TotalCommits int
-	Error       string
+	Error        string
+	Plan         string // JSON string of planner output (if enabled)
+	Review       string // JSON string of reviewer output (if enabled)
 }
 
 // AgentIterationLog captures one iteration for the log
@@ -141,6 +143,13 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 		sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", data.Error))
 	}
 
+	if data.Plan != "" {
+		sb.WriteString("## Plan\n\n")
+		sb.WriteString("```json\n")
+		sb.WriteString(data.Plan)
+		sb.WriteString("\n```\n\n")
+	}
+
 	if len(data.Iterations) > 0 {
 		sb.WriteString("## Iterations\n\n")
 		for _, iter := range data.Iterations {
@@ -159,6 +168,13 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 			}
 			sb.WriteString(fmt.Sprintf("- **Duration:** %ds\n\n", iter.DurationSecs))
 		}
+	}
+
+	if data.Review != "" {
+		sb.WriteString("## Review\n\n")
+		sb.WriteString("```json\n")
+		sb.WriteString(data.Review)
+		sb.WriteString("\n```\n\n")
 	}
 
 	return sb.String()

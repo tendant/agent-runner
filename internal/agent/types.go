@@ -57,6 +57,8 @@ type Session struct {
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	ConsecutiveFailures  int               `json:"-"`
+	PlanJSON             any               `json:"-"`
+	ReviewJSON           any               `json:"-"`
 
 	stopRequested bool
 }
@@ -130,6 +132,20 @@ func (s *Session) GetConsecutiveFailures() int {
 	return s.ConsecutiveFailures
 }
 
+// SetPlanResult stores the planner output on the session.
+func (s *Session) SetPlanResult(plan any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PlanJSON = plan
+}
+
+// SetReviewResult stores the reviewer output on the session.
+func (s *Session) SetReviewResult(review any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ReviewJSON = review
+}
+
 // Snapshot returns a deep copy of the session for safe concurrent reading
 func (s *Session) Snapshot() *Session {
 	s.mu.RLock()
@@ -152,6 +168,8 @@ func (s *Session) Snapshot() *Session {
 		CompletedAt:         s.CompletedAt,
 		Error:               s.Error,
 		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
+		PlanJSON:            s.PlanJSON,
+		ReviewJSON:          s.ReviewJSON,
 	}
 	copy(snap.Iterations, s.Iterations)
 
@@ -185,6 +203,12 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if len(s.Iterations) > 0 {
 		resp["iterations"] = s.Iterations
+	}
+	if s.PlanJSON != nil {
+		resp["plan"] = s.PlanJSON
+	}
+	if s.ReviewJSON != nil {
+		resp["review"] = s.ReviewJSON
 	}
 
 	return resp

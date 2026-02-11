@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/subagent"
 )
 
 const maxConsecutiveFailures = 5
@@ -60,6 +62,17 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				DurationSecs: iter.DurationSecs,
 			})
 		}
+		// Include plan/review in audit log
+		if snap.PlanJSON != nil {
+			if data, err := json.Marshal(snap.PlanJSON); err == nil {
+				logData.Plan = string(data)
+			}
+		}
+		if snap.ReviewJSON != nil {
+			if data, err := json.Marshal(snap.ReviewJSON); err == nil {
+				logData.Review = string(data)
+			}
+		}
 		if logFile, err := h.runLogger.WriteAgentLog(logData); err != nil {
 			log.Printf("Failed to write agent log: %v", err)
 		} else {
@@ -68,7 +81,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}()
 
 	// Resolve prompt: read template file and inject message, or use message directly
-	prompt, err := h.resolvePrompt(message)
+	preamble, err := h.resolvePrompt(message)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
 		return
@@ -87,9 +100,24 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Claude runs in the repos/ subdirectory
 	reposPath := filepath.Join(workspacePath, "repos")
-
-	// Iteration loop
 	ctx := context.Background()
+
+	// Phase 1: Planner (optional, non-fatal)
+	var plan *subagent.PlanResult
+	if h.config.Agent.PlannerEnabled {
+		log.Printf("Agent %s: running planner", sessionID)
+		planner := subagent.NewPlanner(h.executor)
+		plan, err = planner.Plan(ctx, reposPath, message)
+		if err != nil {
+			log.Printf("Agent %s: planner failed (non-fatal): %v", sessionID, err)
+		} else {
+			log.Printf("Agent %s: planner produced %d steps", sessionID, len(plan.Steps))
+			liveSession.SetPlanResult(plan)
+		}
+	}
+
+	// Phase 2: Iteration loop with dynamic prompts
+	promptBuilder := subagent.NewPromptBuilder(preamble)
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal
 		if liveSession.StopRequested() {
@@ -111,8 +139,29 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			return
 		}
 
-		result := h.executeIteration(ctx, reposPath, prompt, i, deadline)
+		// Build prompt: dynamic (with plan/state) or static (backward compat)
+		var iterPrompt string
+		if h.config.Agent.PlannerEnabled {
+			iterPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message)
+		} else {
+			iterPrompt = promptBuilder.BuildStatic(message)
+		}
+
+		result := h.executeIteration(ctx, reposPath, iterPrompt, i, deadline)
 		liveSession.AddIteration(result)
+	}
+
+	// Phase 3: Reviewer (optional, non-fatal)
+	if h.config.Agent.ReviewerEnabled {
+		log.Printf("Agent %s: running reviewer", sessionID)
+		reviewer := subagent.NewReviewer(h.executor)
+		review, reviewErr := reviewer.Review(ctx, reposPath, message, plan)
+		if reviewErr != nil {
+			log.Printf("Agent %s: reviewer failed (non-fatal): %v", sessionID, reviewErr)
+		} else {
+			log.Printf("Agent %s: reviewer score=%d complete=%v", sessionID, review.Score, review.Complete)
+			liveSession.SetReviewResult(review)
+		}
 	}
 
 	h.agentManager.CompleteSession(sessionID)

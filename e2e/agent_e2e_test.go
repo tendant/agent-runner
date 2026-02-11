@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -617,5 +618,161 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	errMsg, _ := resp["error"].(string)
 	if errMsg == "" {
 		t.Error("expected error message about no project")
+	}
+}
+
+func TestE2E_AgentWithPlanner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	baseDir := t.TempDir()
+
+	bareRepo := filepath.Join(baseDir, "origin.git")
+	projectsDir := filepath.Join(baseDir, "projects")
+	runsDir := filepath.Join(baseDir, "runs")
+	tmpDir := filepath.Join(baseDir, "tmp")
+	mockBinDir := filepath.Join(baseDir, "mock-bin")
+
+	os.MkdirAll(projectsDir, 0755)
+	os.MkdirAll(runsDir, 0755)
+	os.MkdirAll(tmpDir, 0755)
+	os.MkdirAll(mockBinDir, 0755)
+
+	runCmd(t, "", "git", "init", "--bare", bareRepo)
+
+	projectPath := filepath.Join(projectsDir, "test-project")
+	runCmd(t, "", "git", "clone", bareRepo, projectPath)
+	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
+	runCmd(t, projectPath, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
+	runCmd(t, projectPath, "git", "add", "-A")
+	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
+	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+
+	// Mock claude that returns plan JSON on invocation 1, normal execution afterwards
+	counterFile := filepath.Join(baseDir, "counter")
+	os.WriteFile(counterFile, []byte("0"), 0644)
+
+	mockClaude := filepath.Join(mockBinDir, "claude")
+	mockScript := fmt.Sprintf(`#!/bin/bash
+COUNTER_FILE="%s"
+count=$(cat "$COUNTER_FILE")
+next=$((count + 1))
+echo "$next" > "$COUNTER_FILE"
+
+if [ "$next" -eq 1 ]; then
+    # First invocation is the planner — return plan JSON
+    echo '{"result":"{\"summary\":\"Test plan\",\"steps\":[{\"id\":\"1\",\"description\":\"Create file\",\"done\":false},{\"id\":\"2\",\"description\":\"Add content\",\"done\":false}],\"approach\":\"Direct implementation\"}"}'
+else
+    # Subsequent invocations are iteration work
+    echo "content for iteration $next" > "work_${next}.txt"
+    echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
+fi
+`, counterFile)
+
+	os.WriteFile(mockClaude, []byte(mockScript), 0755)
+	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+
+	cfg := &config.Config{
+		ProjectsRoot:             projectsDir,
+		RunsRoot:                 runsDir,
+		TmpRoot:                  tmpDir,
+		AllowedProjects:          []string{},
+		MaxRuntimeSeconds:        60,
+		MaxConcurrentJobs:        5,
+		GitPushRetries:           1,
+		GitPushRetryDelaySeconds: 0,
+		Validation: config.ValidationConfig{
+			BlockBinaryFiles: false,
+			BlockedPaths:     []string{},
+		},
+		API: config.APIConfig{
+			Bind:   "127.0.0.1:0",
+			APIKey: "",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       3,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			DefaultProject:      "test-project",
+			Paths:               []string{"*.txt", "*.md"},
+			Author:              "test-agent",
+			CommitPrefix:        "[agent]",
+			PlannerEnabled:      true,
+		},
+		JobRetentionSeconds:     3600,
+		StartupCleanupStaleJobs: false,
+	}
+
+	srv := api.NewServer(cfg)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	code, resp := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "Create some test files",
+	})
+
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, ts.URL, sessionID, 60*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+
+	// Verify plan is included in the response
+	planData, hasPlan := result["plan"]
+	if !hasPlan {
+		t.Fatal("expected plan in response")
+	}
+
+	planMap, ok := planData.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected plan to be a map, got %T", planData)
+	}
+
+	if summary, _ := planMap["summary"].(string); summary != "Test plan" {
+		t.Errorf("expected plan summary 'Test plan', got '%s'", summary)
+	}
+
+	steps, ok := planMap["steps"].([]interface{})
+	if !ok || len(steps) != 2 {
+		t.Errorf("expected 2 plan steps, got %v", planMap["steps"])
+	}
+
+	// Verify iterations ran (should be 3 since planner is separate)
+	iterations, ok := result["iterations"].([]interface{})
+	if !ok {
+		t.Fatal("expected iterations in response")
+	}
+	if len(iterations) != 3 {
+		t.Fatalf("expected 3 iterations, got %d", len(iterations))
+	}
+
+	// Verify audit log was written and contains plan
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		t.Fatalf("failed to read runs dir: %v", err)
+	}
+	foundAgentLog := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			data, _ := os.ReadFile(filepath.Join(runsDir, entry.Name()))
+			content := string(data)
+			if !foundAgentLog {
+				foundAgentLog = true
+				if !strings.Contains(content, "## Plan") {
+					t.Error("expected Plan section in audit log")
+				}
+			}
+		}
+	}
+	if !foundAgentLog {
+		t.Error("expected agent audit log file")
 	}
 }

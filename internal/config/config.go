@@ -57,6 +57,8 @@ type AgentConfig struct {
 	Model               string   // Optional: --model flag for Claude CLI (e.g., "qwen3-coder:30b")
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
+	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
+	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 }
 
 // TelegramConfig contains Telegram bot settings
@@ -148,6 +150,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
+	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
+	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)

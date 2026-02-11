@@ -1,0 +1,126 @@
+package subagent
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestPromptBuilder_BuildStatic(t *testing.T) {
+	pb := NewPromptBuilder("You are a helpful assistant.\n\nTask: Do something")
+	result := pb.BuildStatic("ignored message")
+
+	if result != "You are a helpful assistant.\n\nTask: Do something" {
+		t.Errorf("expected preamble unchanged, got '%s'", result)
+	}
+}
+
+func TestPromptBuilder_Build_WithPlanNoPreamble(t *testing.T) {
+	dir := t.TempDir()
+
+	pb := NewPromptBuilder("Base prompt here")
+	plan := &PlanResult{
+		Summary:  "Fix the login bug",
+		Approach: "Modify auth handler",
+		Steps: []PlanStep{
+			{ID: "1", Description: "Find the bug", Done: true},
+			{ID: "2", Description: "Fix the handler", Files: []string{"auth.go"}, Done: false},
+			{ID: "3", Description: "Add tests", Done: false},
+		},
+	}
+
+	result := pb.Build(context.Background(), dir, plan, 2, "fix login")
+
+	if !strings.Contains(result, "Base prompt here") {
+		t.Error("expected preamble in output")
+	}
+	if !strings.Contains(result, "## Plan") {
+		t.Error("expected plan section")
+	}
+	if !strings.Contains(result, "[x] 1: Find the bug") {
+		t.Error("expected checked step 1")
+	}
+	if !strings.Contains(result, "[ ] 2: Fix the handler (auth.go)") {
+		t.Error("expected unchecked step 2 with files")
+	}
+	if !strings.Contains(result, "**Iteration:** 2") {
+		t.Error("expected iteration number")
+	}
+	if !strings.Contains(result, "**Goal:** Fix the login bug") {
+		t.Error("expected summary")
+	}
+}
+
+func TestPromptBuilder_Build_NilPlan(t *testing.T) {
+	dir := t.TempDir()
+
+	pb := NewPromptBuilder("Do the work")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+
+	if !strings.Contains(result, "Do the work") {
+		t.Error("expected preamble in output")
+	}
+	if strings.Contains(result, "## Plan") {
+		t.Error("did not expect plan section with nil plan")
+	}
+	if !strings.Contains(result, "**Iteration:** 1") {
+		t.Error("expected iteration number")
+	}
+}
+
+func TestPromptBuilder_Build_WithTodo(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create TODO.md
+	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] First task\n- [x] Done task\n"), 0644)
+
+	pb := NewPromptBuilder("preamble")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+
+	if !strings.Contains(result, "## Current TODO.md") {
+		t.Error("expected TODO section")
+	}
+	if !strings.Contains(result, "First task") {
+		t.Error("expected TODO content")
+	}
+}
+
+func TestPromptBuilder_Build_WithGitRepo(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a repo with a commit
+	repoDir := filepath.Join(dir, "my-app")
+	os.MkdirAll(repoDir, 0755)
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	cmd = exec.Command("git", "config", "user.email", "test@test.com")
+	cmd.Dir = repoDir
+	cmd.Run()
+	cmd = exec.Command("git", "config", "user.name", "Test")
+	cmd.Dir = repoDir
+	cmd.Run()
+	os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("hello"), 0644)
+	cmd = exec.Command("git", "add", "-A")
+	cmd.Dir = repoDir
+	cmd.Run()
+	cmd = exec.Command("git", "commit", "-m", "Initial commit")
+	cmd.Dir = repoDir
+	cmd.Run()
+
+	pb := NewPromptBuilder("preamble")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+
+	if !strings.Contains(result, "## Recent Commits") {
+		t.Error("expected commits section")
+	}
+	if !strings.Contains(result, "my-app: ") {
+		t.Error("expected commit with repo prefix")
+	}
+}
