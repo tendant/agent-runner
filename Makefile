@@ -2,6 +2,7 @@ BINARY := agent-runner
 CMD := ./cmd/server
 PREFIX := /usr/local
 
+.DEFAULT_GOAL := help
 .PHONY: build install clean test help
 
 build:
