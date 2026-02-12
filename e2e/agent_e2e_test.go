@@ -754,25 +754,30 @@ fi
 		t.Fatalf("expected 3 iterations, got %d", len(iterations))
 	}
 
-	// Verify audit log was written and contains plan
-	entries, err := os.ReadDir(runsDir)
-	if err != nil {
-		t.Fatalf("failed to read runs dir: %v", err)
-	}
-	foundAgentLog := false
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			data, _ := os.ReadFile(filepath.Join(runsDir, entry.Name()))
-			content := string(data)
-			if !foundAgentLog {
-				foundAgentLog = true
-				if !strings.Contains(content, "## Plan") {
-					t.Error("expected Plan section in audit log")
-				}
+	// Verify audit log was written and contains plan.
+	// The log is written in a defer after CompleteSession, so retry briefly.
+	var logContent string
+	for retry := 0; retry < 10; retry++ {
+		entries, err := os.ReadDir(runsDir)
+		if err != nil {
+			t.Fatalf("failed to read runs dir: %v", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				data, _ := os.ReadFile(filepath.Join(runsDir, entry.Name()))
+				logContent = string(data)
+				break
 			}
 		}
+		if logContent != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if !foundAgentLog {
-		t.Error("expected agent audit log file")
+	if logContent == "" {
+		t.Fatal("expected agent audit log file")
+	}
+	if !strings.Contains(logContent, "## Plan") {
+		t.Error("expected Plan section in audit log")
 	}
 }

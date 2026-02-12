@@ -111,6 +111,7 @@ func DefaultConfig() *Config {
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
+		PlannerEnabled:      true,
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
