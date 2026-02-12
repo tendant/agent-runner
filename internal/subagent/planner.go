@@ -8,7 +8,9 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 )
 
-const plannerPrompt = `You are a planning agent. Analyze the workspace and the user's request, then produce a structured plan.
+const plannerPrompt = `You are a planning agent. Analyze the workspace, the prompt template instructions, and the user's request, then produce a structured plan.
+
+CRITICAL: If a prompt template is provided above, your plan MUST follow its workflow exactly. The template defines the required steps (e.g., creating repos, infrastructure setup, git operations). Do NOT skip or simplify steps from the template. Include ALL steps the template requires, even if the workspace already has some repos.
 
 You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
 {
@@ -21,12 +23,13 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation) in this e
 }
 
 Rules:
-- Produce 3-10 concrete, actionable steps
+- Produce 3-15 concrete, actionable steps
 - Each step should be small enough to complete in one iteration
 - Include relevant file paths in the "files" array when known
 - All steps start with "done": false
 - The summary should capture the goal, not the method
 - The approach should describe the strategy at a high level
+- Steps must cover the FULL workflow from the prompt template, including infrastructure, git operations, and deployment setup
 `
 
 // Planner is a sub-agent that produces a structured plan before the iteration loop.
