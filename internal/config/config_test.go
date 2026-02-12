@@ -141,7 +141,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
 		"BIND", "API_KEY",
-		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
+		"AGENT_PROMPT_FILE", "AGENT_PATHS",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
@@ -157,7 +157,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
 		"BIND", "API_KEY",
-		"AGENT_PROMPT_FILE", "AGENT_PATHS", "AGENT_DEFAULT_PROJECT",
+		"AGENT_PROMPT_FILE", "AGENT_PATHS",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
 		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
@@ -192,7 +192,6 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	t.Setenv("BIND", "0.0.0.0:9090")
 	t.Setenv("API_KEY", "secret123")
 	t.Setenv("ALLOWED_PROJECTS", "project-a,project-b")
-	t.Setenv("AGENT_DEFAULT_PROJECT", "my-proj")
 	t.Setenv("AGENT_PATHS", "src/,docs/")
 	t.Setenv("AGENT_AUTHOR", "my-bot")
 	t.Setenv("AGENT_COMMIT_PREFIX", "[auto]")
@@ -221,9 +220,6 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	}
 	if len(cfg.AllowedProjects) != 2 {
 		t.Errorf("expected 2 allowed projects, got %d", len(cfg.AllowedProjects))
-	}
-	if cfg.Agent.DefaultProject != "my-proj" {
-		t.Errorf("expected my-proj, got %s", cfg.Agent.DefaultProject)
 	}
 	if len(cfg.Agent.Paths) != 2 {
 		t.Errorf("expected 2 agent paths, got %d", len(cfg.Agent.Paths))

@@ -22,7 +22,6 @@ const maxConsecutiveFailures = 5
 // in the workspace and records results.
 func (h *Handlers) executeAgent(session *agent.Session) {
 	sessionID := session.ID
-	project := session.Project
 	message := session.Message
 	maxIter := session.MaxIterations
 	maxSeconds := session.MaxTotalSeconds
@@ -45,7 +44,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		snap := liveSession.Snapshot()
 		logData := &logging.AgentLogData{
 			SessionID:    sessionID,
-			Project:      project,
 			Status:       string(snap.Status),
 			Duration:     int(time.Since(startTime).Seconds()),
 			Message:      message,
@@ -98,7 +96,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Prepare agent workspace with repos/ structure
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
-		h.config.ProjectsRoot, sessionID, project, h.config.Agent.SharedRepos,
+		h.config.ProjectsRoot, sessionID, h.config.Agent.SharedRepos,
 	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())

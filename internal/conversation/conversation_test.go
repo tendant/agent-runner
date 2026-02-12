@@ -137,14 +137,3 @@ func TestConversation_SetPlan(t *testing.T) {
 	}
 }
 
-func TestConversation_Project(t *testing.T) {
-	conv := &Conversation{
-		State:    StateGathering,
-		Messages: []Message{},
-	}
-
-	conv.SetProject("my-site")
-	if conv.GetProject() != "my-site" {
-		t.Errorf("expected my-site, got %s", conv.GetProject())
-	}
-}

@@ -42,7 +42,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.TmpRoot = tmpDir
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentManager := agent.NewManager(jobManager)
+	agentManager := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -158,7 +158,7 @@ func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-project"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentMgr := agent.NewManager(jobManager)
+	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -272,7 +272,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	cfg.MaxConcurrentJobs = 1
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentMgr := agent.NewManager(jobManager)
+	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -457,7 +457,7 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-only"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentMgr := agent.NewManager(jobManager)
+	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)

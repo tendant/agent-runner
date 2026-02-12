@@ -8,41 +8,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// ProjectLocker is the interface for project locking (satisfied by jobs.Manager)
-type ProjectLocker interface {
-	AcquireProjectLock(project, holderID string) error
-	ReleaseProjectLock(project, holderID string)
-}
-
 // Manager manages agent sessions
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
-	locker   ProjectLocker
 }
 
 // NewManager creates a new agent session manager
-func NewManager(locker ProjectLocker) *Manager {
+func NewManager() *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
-		locker:   locker,
 	}
 }
 
-// CreateSession creates a new agent session and acquires the project lock
-func (m *Manager) CreateSession(project, message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
+// CreateSession creates a new agent session
+func (m *Manager) CreateSession(message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()
-
-	// Acquire project lock (skip if no project specified)
-	if project != "" {
-		if err := m.locker.AcquireProjectLock(project, sessionID); err != nil {
-			return nil, fmt.Errorf("project %s is locked: %w", project, err)
-		}
-	}
 
 	session := &Session{
 		ID:                  sessionID,
-		Project:             project,
 		Message:             message,
 		Paths:               paths,
 		Author:              author,
@@ -87,7 +71,7 @@ func (m *Manager) StopSession(sessionID string) error {
 	return nil
 }
 
-// CompleteSession marks a session as done and releases the project lock
+// CompleteSession marks a session as done
 func (m *Manager) CompleteSession(sessionID string) {
 	m.mu.RLock()
 	session, exists := m.sessions[sessionID]
@@ -98,12 +82,9 @@ func (m *Manager) CompleteSession(sessionID string) {
 	}
 
 	session.Complete()
-	if session.Project != "" {
-		m.locker.ReleaseProjectLock(session.Project, sessionID)
-	}
 }
 
-// FailSession marks a session as failed and releases the project lock
+// FailSession marks a session as failed
 func (m *Manager) FailSession(sessionID, errMsg string) {
 	m.mu.RLock()
 	session, exists := m.sessions[sessionID]
@@ -114,9 +95,6 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 	}
 
 	session.Fail(errMsg)
-	if session.Project != "" {
-		m.locker.ReleaseProjectLock(session.Project, sessionID)
-	}
 }
 
 // GetSessionDirect returns the live session pointer (for the executor loop to mutate)

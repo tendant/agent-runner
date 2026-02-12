@@ -92,7 +92,6 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
 			MaxIterations:       5,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
-			DefaultProject:      "test-project",
 			Paths:               []string{"*.txt", "*.md"},
 			Author:              "test-agent",
 			CommitPrefix:        "[agent]",
@@ -294,7 +293,6 @@ echo '{"result":"Done"}'
 			MaxIterations:       50,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
-			DefaultProject:      "test-project",
 			Paths:               []string{"*.txt", "*.md"},
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
@@ -343,48 +341,6 @@ echo '{"result":"Done"}'
 	if len(iterations) == 0 {
 		t.Error("expected at least one iteration before stop")
 	}
-}
-
-func TestE2E_AgentProjectLocking(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode")
-	}
-
-	env := setupAgentE2E(t)
-	defer env.server.Close()
-
-	// Start first agent
-	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"message": "Write some files",
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d", code)
-	}
-
-	// Give it a moment to acquire the lock
-	time.Sleep(100 * time.Millisecond)
-
-	// Second agent on same project should get 409
-	code2, _ := postAgent(t, env.server.URL, map[string]interface{}{
-		"message": "Write more files",
-	})
-	if code2 != http.StatusConflict {
-		t.Errorf("expected 409 (locked), got %d", code2)
-	}
-
-	// Also, a regular job should get 409
-	code3, _ := postRun(t, env.server.URL, map[string]interface{}{
-		"project":     "test-project",
-		"instruction": "do stuff",
-		"paths":       []string{"*.txt"},
-	})
-	if code3 != http.StatusConflict {
-		t.Errorf("expected 409 for job during agent, got %d", code3)
-	}
-
-	// Wait for first agent to finish
-	sessionID := resp["session_id"].(string)
-	pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
 }
 
 func TestE2E_AgentWithPromptTemplate(t *testing.T) {
@@ -450,7 +406,6 @@ echo '{"result":"Done"}'
 			MaxIterations:       1,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
-			DefaultProject:      "test-project",
 			Paths:               []string{"*.txt", "*.md"},
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
@@ -473,99 +428,6 @@ echo '{"result":"Done"}'
 
 	sessionID := resp["session_id"].(string)
 	result := pollAgentUntilDone(t, ts.URL, sessionID, 30*time.Second)
-
-	status, _ := result["status"].(string)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
-	}
-}
-
-func TestE2E_AgentExplicitProject(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode")
-	}
-
-	env := setupAgentE2E(t)
-	defer env.server.Close()
-
-	// Start agent with explicit project field
-	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"message": "Write a file",
-		"project": "test-project",
-	})
-
-	if code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %v", code, resp)
-	}
-
-	// Verify the response reports the correct project
-	if project, _ := resp["project"].(string); project != "test-project" {
-		t.Errorf("expected project 'test-project', got '%s'", project)
-	}
-
-	sessionID := resp["session_id"].(string)
-	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
-
-	status, _ := result["status"].(string)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
-	}
-}
-
-func TestE2E_AgentProjectTag(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode")
-	}
-
-	env := setupAgentE2E(t)
-	defer env.server.Close()
-
-	// Start agent with @project tag in message
-	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"message": "@test-project Write a file",
-	})
-
-	if code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %v", code, resp)
-	}
-
-	if project, _ := resp["project"].(string); project != "test-project" {
-		t.Errorf("expected project 'test-project', got '%s'", project)
-	}
-
-	sessionID := resp["session_id"].(string)
-	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
-
-	status, _ := result["status"].(string)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
-	}
-}
-
-func TestE2E_AgentExplicitProjectOverridesTag(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode")
-	}
-
-	env := setupAgentE2E(t)
-	defer env.server.Close()
-
-	// Explicit project should win over @tag
-	code, resp := postAgent(t, env.server.URL, map[string]interface{}{
-		"message": "@nonexistent Write a file",
-		"project": "test-project",
-	})
-
-	if code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %v", code, resp)
-	}
-
-	if project, _ := resp["project"].(string); project != "test-project" {
-		t.Errorf("expected project 'test-project', got '%s'", project)
-	}
-
-	sessionID := resp["session_id"].(string)
-	result := pollAgentUntilDone(t, env.server.URL, sessionID, 30*time.Second)
 
 	status, _ := result["status"].(string)
 	if status != "completed" {
@@ -597,7 +459,6 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 		Agent: config.AgentConfig{
 			MaxIterations:   1,
 			MaxTotalSeconds: 60,
-			DefaultProject:  "", // No default
 			Paths:           []string{"*.txt"},
 		},
 	}
@@ -606,7 +467,7 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// No project field, no @tag, no default → should still work (project is optional)
+	// No project concept — should work with just a message
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
 		"message": "do stuff",
 	})
@@ -615,9 +476,9 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 		t.Fatalf("expected 202, got %d: %v", code, resp)
 	}
 
-	project, _ := resp["project"].(string)
-	if project != "" {
-		t.Errorf("expected empty project, got %q", project)
+	sessionID, _ := resp["session_id"].(string)
+	if sessionID == "" {
+		t.Error("expected session_id in response")
 	}
 }
 
@@ -695,7 +556,6 @@ fi
 			MaxIterations:       3,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
-			DefaultProject:      "test-project",
 			Paths:               []string{"*.txt", "*.md"},
 			Author:              "test-agent",
 			CommitPrefix:        "[agent]",

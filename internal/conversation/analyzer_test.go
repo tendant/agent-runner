@@ -5,7 +5,7 @@ import (
 )
 
 func TestParseAnalysisResult_DirectJSON(t *testing.T) {
-	input := `{"action":"ask","message":"What framework?","project":""}`
+	input := `{"action":"ask","message":"What framework?"}`
 	result, err := parseAnalysisResult(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -20,7 +20,7 @@ func TestParseAnalysisResult_DirectJSON(t *testing.T) {
 
 func TestParseAnalysisResult_EmbeddedJSON(t *testing.T) {
 	input := `Here is my response:
-{"action":"plan","message":"I will create a Hugo site","project":"my-site"}
+{"action":"plan","message":"I will create a Hugo site"}
 Done.`
 	result, err := parseAnalysisResult(input)
 	if err != nil {
@@ -29,13 +29,10 @@ Done.`
 	if result.Action != "plan" {
 		t.Errorf("expected action 'plan', got %q", result.Action)
 	}
-	if result.Project != "my-site" {
-		t.Errorf("expected project 'my-site', got %q", result.Project)
-	}
 }
 
 func TestParseAnalysisResult_WithWhitespace(t *testing.T) {
-	input := `  {"action":"ask","message":"Which project?","project":""}  `
+	input := `  {"action":"ask","message":"Which project?"}  `
 	result, err := parseAnalysisResult(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -54,7 +51,7 @@ func TestParseAnalysisResult_NoJSON(t *testing.T) {
 }
 
 func TestParseAnalysisResult_EmptyAction(t *testing.T) {
-	input := `{"action":"","message":"test","project":""}`
+	input := `{"action":"","message":"test"}`
 	_, err := parseAnalysisResult(input)
 	if err == nil {
 		t.Error("expected error for empty action")

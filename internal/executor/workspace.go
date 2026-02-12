@@ -83,10 +83,8 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 }
 
 // PrepareAgentWorkspace creates a workspace with a repos/ subdirectory.
-// It pre-populates repos from the projects cache:
-//   - The project repo (if cached in projectsRoot/{project}/)
-//   - Shared repos (if cached in projectsRoot/{repo}/)
-func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID, project string, sharedRepos []string) (string, error) {
+// It pre-populates shared repos from the projects cache.
+func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID string, sharedRepos []string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -98,22 +96,10 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID, projec
 		return "", fmt.Errorf("failed to create repos directory: %w", err)
 	}
 
-	// Pre-populate the project repo from cache (if it exists)
-	if project != "" {
-		cachedProject := filepath.Join(projectsRoot, project)
-		if info, err := os.Stat(cachedProject); err == nil && info.IsDir() {
-			dst := filepath.Join(reposPath, project)
-			if err := copyDir(cachedProject, dst); err != nil {
-				return "", fmt.Errorf("failed to copy cached project %s: %w", project, err)
-			}
-			log.Printf("Agent workspace: pre-populated project %s from cache", project)
-		}
-	}
-
 	// Pre-populate shared repos from cache
 	for _, repo := range sharedRepos {
-		if repo == "" || repo == project {
-			continue // skip empty or already-copied project
+		if repo == "" {
+			continue
 		}
 		cachedRepo := filepath.Join(projectsRoot, repo)
 		if info, err := os.Stat(cachedRepo); err == nil && info.IsDir() {

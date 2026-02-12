@@ -51,7 +51,6 @@ type AgentConfig struct {
 	MaxIterationSeconds int
 	PromptFile          string   // Path to prompt template on disk
 	Paths               []string // Comma-separated allowed paths
-	DefaultProject      string
 	Author              string
 	CommitPrefix        string
 	Model               string   // Optional: --model flag for Claude CLI (e.g., "qwen3-coder:30b")
@@ -142,7 +141,6 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.Agent.PromptFile = envOrDefault("AGENT_PROMPT_FILE", cfg.Agent.PromptFile)
 	cfg.Agent.Paths = envSliceOrDefault("AGENT_PATHS", cfg.Agent.Paths)
-	cfg.Agent.DefaultProject = envOrDefault("AGENT_DEFAULT_PROJECT", cfg.Agent.DefaultProject)
 	cfg.Agent.Author = envOrDefault("AGENT_AUTHOR", cfg.Agent.Author)
 	cfg.Agent.CommitPrefix = envOrDefault("AGENT_COMMIT_PREFIX", cfg.Agent.CommitPrefix)
 	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)

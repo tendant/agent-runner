@@ -30,9 +30,6 @@ func main() {
 	if cfg.Agent.Model != "" {
 		log.Printf("Agent model: %s", cfg.Agent.Model)
 	}
-	if cfg.Agent.DefaultProject != "" {
-		log.Printf("Agent default project: %s", cfg.Agent.DefaultProject)
-	}
 	if cfg.Agent.PromptFile != "" {
 		log.Printf("Agent prompt file: %s", cfg.Agent.PromptFile)
 	} else {

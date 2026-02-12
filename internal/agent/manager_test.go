@@ -4,46 +4,15 @@ import (
 	"testing"
 )
 
-// mockLocker implements ProjectLocker for tests
-type mockLocker struct {
-	locked map[string]string // project -> holderID
-}
-
-func newMockLocker() *mockLocker {
-	return &mockLocker{locked: make(map[string]string)}
-}
-
-func (m *mockLocker) AcquireProjectLock(project, holderID string) error {
-	if _, exists := m.locked[project]; exists {
-		return &lockError{project: project}
-	}
-	m.locked[project] = holderID
-	return nil
-}
-
-func (m *mockLocker) ReleaseProjectLock(project, holderID string) {
-	if holder, exists := m.locked[project]; exists && holder == holderID {
-		delete(m.locked, project)
-	}
-}
-
-type lockError struct{ project string }
-
-func (e *lockError) Error() string { return "project " + e.project + " is locked" }
-
 func TestCreateSession_Success(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, err := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, err := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if session.ID == "" {
 		t.Error("expected non-empty session ID")
-	}
-	if session.Project != "proj" {
-		t.Errorf("expected project 'proj', got '%s'", session.Project)
 	}
 	if session.Status != SessionStatusRunning {
 		t.Errorf("expected status running, got %s", session.Status)
@@ -51,33 +20,12 @@ func TestCreateSession_Success(t *testing.T) {
 	if session.MaxIterations != 10 {
 		t.Errorf("expected max_iterations 10, got %d", session.MaxIterations)
 	}
-
-	// Project should be locked
-	if _, exists := locker.locked["proj"]; !exists {
-		t.Error("expected project to be locked")
-	}
-}
-
-func TestCreateSession_ProjectLocked(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
-
-	_, err := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
-	if err != nil {
-		t.Fatalf("first session should succeed: %v", err)
-	}
-
-	_, err = mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
-	if err == nil {
-		t.Fatal("expected error for locked project")
-	}
 }
 
 func TestGetSession_Exists(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	created, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	created, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	snap, exists := mgr.GetSession(created.ID)
 	if !exists {
@@ -89,8 +37,7 @@ func TestGetSession_Exists(t *testing.T) {
 }
 
 func TestGetSession_NotFound(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
 	_, exists := mgr.GetSession("nonexistent")
 	if exists {
@@ -99,10 +46,9 @@ func TestGetSession_NotFound(t *testing.T) {
 }
 
 func TestStopSession(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	if err := mgr.StopSession(session.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,8 +61,7 @@ func TestStopSession(t *testing.T) {
 }
 
 func TestStopSession_NotFound(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
 	if err := mgr.StopSession("nonexistent"); err == nil {
 		t.Error("expected error for nonexistent session")
@@ -124,10 +69,9 @@ func TestStopSession_NotFound(t *testing.T) {
 }
 
 func TestCompleteSession(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.CompleteSession(session.ID)
 
 	snap, _ := mgr.GetSession(session.ID)
@@ -137,18 +81,12 @@ func TestCompleteSession(t *testing.T) {
 	if snap.CompletedAt == nil {
 		t.Error("expected CompletedAt to be set")
 	}
-
-	// Project should be unlocked
-	if _, exists := locker.locked["proj"]; exists {
-		t.Error("expected project to be unlocked after completion")
-	}
 }
 
 func TestFailSession(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.FailSession(session.ID, "something went wrong")
 
 	snap, _ := mgr.GetSession(session.ID)
@@ -158,18 +96,12 @@ func TestFailSession(t *testing.T) {
 	if snap.Error != "something went wrong" {
 		t.Errorf("expected error message, got '%s'", snap.Error)
 	}
-
-	// Project should be unlocked
-	if _, exists := locker.locked["proj"]; exists {
-		t.Error("expected project to be unlocked after failure")
-	}
 }
 
 func TestSession_AddIteration(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
 	// Use direct session for mutations
 	live, _ := mgr.GetSessionDirect(session.ID)
@@ -196,10 +128,9 @@ func TestSession_AddIteration(t *testing.T) {
 }
 
 func TestSession_ConsecutiveFailures(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	// Success resets counter
@@ -229,10 +160,9 @@ func TestSession_ConsecutiveFailures(t *testing.T) {
 }
 
 func TestSession_ToResponse(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	live.AddIteration(IterationResult{
@@ -247,9 +177,6 @@ func TestSession_ToResponse(t *testing.T) {
 	if resp["session_id"] != session.ID {
 		t.Errorf("unexpected session_id: %v", resp["session_id"])
 	}
-	if resp["project"] != "proj" {
-		t.Errorf("unexpected project: %v", resp["project"])
-	}
 	if resp["status"] != SessionStatusRunning {
 		t.Errorf("unexpected status: %v", resp["status"])
 	}
@@ -262,10 +189,9 @@ func TestSession_ToResponse(t *testing.T) {
 }
 
 func TestSession_StopRequested(t *testing.T) {
-	locker := newMockLocker()
-	mgr := NewManager(locker)
+	mgr := NewManager()
 
-	session, _ := mgr.CreateSession("proj", "fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
 
 	if live.StopRequested() {

@@ -11,9 +11,8 @@ import (
 
 // AnalysisResult is the structured response from the analyzer.
 type AnalysisResult struct {
-	Action  string `json:"action"`  // "ask", "plan", or "execute"
+	Action  string `json:"action"`  // "ask" or "plan"
 	Message string `json:"message"` // question text or plan text
-	Project string `json:"project"` // resolved project name (may be empty)
 }
 
 // Analyzer uses Claude CLI to analyze conversation messages and decide the next action.
@@ -27,8 +26,8 @@ func NewAnalyzer(exec *executor.Executor) *Analyzer {
 }
 
 // Analyze sends the conversation history to Claude and gets a structured response.
-func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation, availableProjects []string) (*AnalysisResult, error) {
-	prompt := a.buildPrompt(conv, availableProjects)
+func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
+	prompt := a.buildPrompt(conv)
 
 	// Use a temporary directory for execution (no workspace needed for analysis)
 	result, err := a.executor.Execute(ctx, "/tmp", prompt)
@@ -50,39 +49,23 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation, availablePro
 	return analysisResult, nil
 }
 
-func (a *Analyzer) buildPrompt(conv *Conversation, availableProjects []string) string {
+func (a *Analyzer) buildPrompt(conv *Conversation) string {
 	var sb strings.Builder
 
 	sb.WriteString(`You are a conversation analyzer for an agent system. Your job is to analyze the user's messages and decide the next action.
 
 You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
-{"action": "ask|plan", "message": "your response text", "project": "project-name-or-empty"}
+{"action": "ask|plan", "message": "your response text"}
 
 Rules:
 - action "ask": You need more information. "message" should be a clarifying question.
-- action "plan": You have enough information to propose a plan. "message" should be a clear plan description that includes the project name.
+- action "plan": You have enough information to propose a plan. "message" should be a clear plan description of what will be done.
 - NEVER use action "execute" — only "ask" or "plan".
-- If the user hasn't specified which project to work on and it's not obvious, ASK.
 - If the task is ambiguous or missing key details, ASK.
 - When you have enough info, propose a PLAN with a clear description of what will be done.
 - Keep questions and plans concise but informative.
-- If the user mentions a project name that matches an available project, use it.
-- For new projects (not in the list), suggest a project name in the "project" field.
 
 `)
-
-	sb.WriteString("Available projects: ")
-	if len(availableProjects) == 0 {
-		sb.WriteString("(none yet)")
-	} else {
-		sb.WriteString(strings.Join(availableProjects, ", "))
-	}
-	sb.WriteString("\n\n")
-
-	currentProject := conv.GetProject()
-	if currentProject != "" {
-		fmt.Fprintf(&sb, "Currently selected project: %s\n\n", currentProject)
-	}
 
 	sb.WriteString("Conversation history:\n")
 	for _, msg := range conv.GetMessages() {

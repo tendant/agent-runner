@@ -41,7 +41,6 @@ type Session struct {
 	mu sync.RWMutex
 
 	ID                   string            `json:"session_id"`
-	Project              string            `json:"project"`
 	Message              string            `json:"message"`
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
@@ -154,7 +153,6 @@ func (s *Session) Snapshot() *Session {
 
 	snap := &Session{
 		ID:                  s.ID,
-		Project:             s.Project,
 		Message:             s.Message,
 		Paths:               append([]string{}, s.Paths...),
 		Author:              s.Author,
@@ -187,7 +185,6 @@ func (s *Session) Snapshot() *Session {
 func (s *Session) ToResponse() map[string]any {
 	resp := map[string]any{
 		"session_id":        s.ID,
-		"project":           s.Project,
 		"status":            s.Status,
 		"current_iteration": s.CurrentIteration,
 		"total_commits":     s.TotalCommits,

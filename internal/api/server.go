@@ -32,7 +32,7 @@ type Server struct {
 func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentManager := agent.NewManager(jobManager)
+	agentManager := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor(cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -67,8 +67,7 @@ func NewServer(cfg *config.Config) *Server {
 	convManager := conversation.NewManager()
 	analyzer := conversation.NewAnalyzer(exec)
 	agentStarter := NewAgentStarterAdapter(handlers)
-	projLister := &projectLister{cfg: cfg}
-	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, projLister)
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
 
 	return &Server{
 		config: cfg,
@@ -206,21 +205,3 @@ func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
-// projectLister implements telegram.ProjectLister by scanning the projects directory.
-type projectLister struct {
-	cfg *config.Config
-}
-
-func (p *projectLister) ListAvailableProjects() []string {
-	var projects []string
-	entries, err := os.ReadDir(p.cfg.ProjectsRoot)
-	if err != nil {
-		return projects
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && p.cfg.IsProjectAllowed(entry.Name()) {
-			projects = append(projects, entry.Name())
-		}
-	}
-	return projects
-}

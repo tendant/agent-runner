@@ -29,7 +29,6 @@ type Conversation struct {
 
 	ID        string
 	ChatID    int64
-	Project   string // may be empty until resolved
 	State     State
 	Messages  []Message
 	Plan      string // generated plan text
@@ -71,21 +70,6 @@ func (c *Conversation) GetMessages() []Message {
 	msgs := make([]Message, len(c.Messages))
 	copy(msgs, c.Messages)
 	return msgs
-}
-
-// GetProject returns the resolved project name.
-func (c *Conversation) GetProject() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.Project
-}
-
-// SetProject sets the resolved project name.
-func (c *Conversation) SetProject(project string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Project = project
-	c.UpdatedAt = time.Now()
 }
 
 // SetPlan stores the generated plan text and transitions to confirming state.

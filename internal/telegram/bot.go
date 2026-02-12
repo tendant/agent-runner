@@ -20,11 +20,6 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
-// ProjectLister returns the list of available project names.
-type ProjectLister interface {
-	ListAvailableProjects() []string
-}
-
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
 	token   string
@@ -33,7 +28,6 @@ type Bot struct {
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
-	projLister  ProjectLister
 
 	api    *tgbotapi.BotAPI
 	cancel context.CancelFunc
@@ -42,7 +36,7 @@ type Bot struct {
 
 // New creates a new Telegram bot. Returns nil if the token is empty.
 // The actual API connection is deferred to Start().
-func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, projLister ProjectLister) *Bot {
+func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer) *Bot {
 	if cfg.BotToken == "" {
 		return nil
 	}
@@ -53,7 +47,6 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,
-		projLister:  projLister,
 	}
 }
 
@@ -172,17 +165,9 @@ func (b *Bot) handleConfirmation(chatID int64, conv *conversation.Conversation) 
 	b.send(chatID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
-	// Build the enriched message from the plan + conversation context
-	project := conv.GetProject()
 	plan := conv.GetPlan()
 
-	// Include @project tag so the starter routes correctly
-	enrichedMessage := plan
-	if project != "" {
-		enrichedMessage = fmt.Sprintf("@%s %s", project, plan)
-	}
-
-	sessionID, err := b.starter.StartAgent(enrichedMessage)
+	sessionID, err := b.starter.StartAgent(plan)
 	if err != nil {
 		conv.SetState(conversation.StateGathering)
 		b.send(chatID, fmt.Sprintf("Failed to start agent: %s", err))
@@ -205,12 +190,7 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	var projects []string
-	if b.projLister != nil {
-		projects = b.projLister.ListAvailableProjects()
-	}
-
-	result, err := b.analyzer.Analyze(ctx, conv, projects)
+	result, err := b.analyzer.Analyze(ctx, conv)
 	if err != nil {
 		log.Printf("Telegram: analyzer error: %v", err)
 		b.send(chatID, "Sorry, I had trouble understanding that. Could you rephrase?")
@@ -220,15 +200,9 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	switch result.Action {
 	case "ask":
 		conv.AddMessage("assistant", result.Message)
-		if result.Project != "" {
-			conv.SetProject(result.Project)
-		}
 		b.send(chatID, result.Message)
 
 	case "plan":
-		if result.Project != "" {
-			conv.SetProject(result.Project)
-		}
 		conv.SetPlan(result.Message)
 		conv.AddMessage("assistant", result.Message)
 		b.send(chatID, result.Message+"\n\nProceed? (yes/no)")

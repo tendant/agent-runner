@@ -23,27 +23,12 @@ func NewAgentStarterAdapter(h *Handlers) *AgentStarterAdapter {
 }
 
 // StartAgent validates config, creates an agent session, and starts the background loop.
-// It parses @project-name from the message if present, falling back to DefaultProject.
 func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	h := a.handlers
-
-	// Parse @project tag from message
-	tagProject, cleanMessage := parseProjectTag(message)
-	project := tagProject
-	if project != "" {
-		message = cleanMessage
-	}
-	if project == "" {
-		project = h.config.Agent.DefaultProject
-	}
 
 	paths := h.config.Agent.Paths
 	if len(paths) == 0 {
 		return "", fmt.Errorf("agent not configured: AGENT_PATHS is required")
-	}
-
-	if project != "" && !h.config.IsProjectAllowed(project) {
-		return "", fmt.Errorf("project not in allowed_projects")
 	}
 
 	author := h.config.Agent.Author
@@ -52,7 +37,7 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	maxSeconds := h.config.Agent.MaxTotalSeconds
 
 	session, err := h.agentManager.CreateSession(
-		project, message, paths,
+		message, paths,
 		author, commitPrefix, maxIter, maxSeconds,
 	)
 	if err != nil {

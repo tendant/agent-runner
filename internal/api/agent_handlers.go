@@ -3,33 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strings"
 )
 
 // AgentRequest represents the POST /agent request body
 type AgentRequest struct {
 	Message string `json:"message"`
-	Project string `json:"project"` // Optional: explicit project override
-}
-
-var projectTagRe = regexp.MustCompile(`@([\w.\-]+)`)
-
-// parseProjectTag extracts @project-name from message text.
-// Returns the project name and the message with the tag stripped.
-// If no tag found, returns empty project and original message.
-func parseProjectTag(message string) (string, string) {
-	match := projectTagRe.FindStringSubmatchIndex(message)
-	if match == nil {
-		return "", message
-	}
-	project := message[match[2]:match[3]]
-	before := message[:match[0]]
-	after := message[match[1]:]
-	// Collapse whitespace at the join point
-	cleaned := strings.TrimSpace(before) + " " + strings.TrimSpace(after)
-	cleaned = strings.TrimSpace(cleaned)
-	return project, cleaned
 }
 
 // HandleStartAgent handles POST /agent — start a new agent session
@@ -50,29 +29,9 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve project: explicit field > @project tag > default
-	message := req.Message
-	project := req.Project
-	if project == "" {
-		tagProject, cleanMessage := parseProjectTag(message)
-		if tagProject != "" {
-			project = tagProject
-			message = cleanMessage
-		}
-	}
-	if project == "" {
-		project = h.config.Agent.DefaultProject
-	}
-
 	paths := h.config.Agent.Paths
 	if len(paths) == 0 {
 		h.writeError(w, http.StatusInternalServerError, "agent not configured: AGENT_PATHS is required")
-		return
-	}
-
-	// Check if project is allowed (skip if no project)
-	if project != "" && !h.config.IsProjectAllowed(project) {
-		h.writeError(w, http.StatusBadRequest, "project not in allowed_projects")
 		return
 	}
 
@@ -81,16 +40,12 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	maxIter := h.config.Agent.MaxIterations
 	maxSeconds := h.config.Agent.MaxTotalSeconds
 
-	// Create session (acquires project lock)
+	// Create session
 	session, err := h.agentManager.CreateSession(
-		project, message, paths,
+		req.Message, paths,
 		author, commitPrefix, maxIter, maxSeconds,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "locked") {
-			h.writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
-			return
-		}
 		h.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -104,7 +59,6 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusAccepted, map[string]any{
 		"session_id": sessionID,
 		"status":     "running",
-		"project":    project,
 	})
 }
 
