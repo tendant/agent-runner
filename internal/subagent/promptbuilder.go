@@ -31,7 +31,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 
 	// Plan with checkboxes
 	if plan != nil && len(plan.Steps) > 0 {
-		sb.WriteString("## Plan\n\n")
+		sb.WriteString("## Plan (guide only — follow the workflow instructions above)\n\n")
 		if plan.Summary != "" {
 			sb.WriteString(fmt.Sprintf("**Goal:** %s\n", plan.Summary))
 		}
@@ -50,6 +50,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
+		sb.WriteString("**Important:** The instructions above are the source of truth. This plan is a rough guide — do not skip steps from the workflow instructions even if they are not listed in the plan.\n\n")
 	}
 
 	// TODO.md contents
