@@ -96,7 +96,7 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if project exists
-	projectPath := filepath.Join(h.config.ProjectsRoot, req.Project)
+	projectPath := filepath.Join(h.config.ReposRoot, req.Project)
 	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
 		h.writeError(w, http.StatusBadRequest, "project directory not found")
 		return
@@ -191,12 +191,12 @@ func (h *Handlers) HandleGetProjects(w http.ResponseWriter, r *http.Request) {
 
 	// Get list of actual projects from disk
 	var projects []string
-	entries, err := os.ReadDir(h.config.ProjectsRoot)
+	entries, err := os.ReadDir(h.config.ReposRoot)
 	if err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() {
 				// Check if it's a git repo
-				gitPath := filepath.Join(h.config.ProjectsRoot, entry.Name(), ".git")
+				gitPath := filepath.Join(h.config.ReposRoot, entry.Name(), ".git")
 				if _, err := os.Stat(gitPath); err == nil {
 					if h.config.IsProjectAllowed(entry.Name()) {
 						projects = append(projects, entry.Name())

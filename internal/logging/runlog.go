@@ -74,27 +74,27 @@ type AgentIterationLog struct {
 
 // RunLogger handles markdown run log generation
 type RunLogger struct {
-	RunsRoot string
+	LogsRoot string
 }
 
 // NewRunLogger creates a new run logger
-func NewRunLogger(runsRoot string) *RunLogger {
+func NewRunLogger(logsRoot string) *RunLogger {
 	return &RunLogger{
-		RunsRoot: runsRoot,
+		LogsRoot: logsRoot,
 	}
 }
 
 // WriteRunLog writes a markdown log file for a job execution
 func (l *RunLogger) WriteRunLog(data *RunLogData) (string, error) {
-	// Ensure runs directory exists
-	if err := os.MkdirAll(l.RunsRoot, 0755); err != nil {
-		return "", fmt.Errorf("failed to create runs directory: %w", err)
+	// Ensure logs directory exists
+	if err := os.MkdirAll(l.LogsRoot, 0755); err != nil {
+		return "", fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
 	// Generate filename with timestamp
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	filename := fmt.Sprintf("%s_%s.md", timestamp, data.Project)
-	filepath := filepath.Join(l.RunsRoot, filename)
+	filepath := filepath.Join(l.LogsRoot, filename)
 
 	content := l.generateMarkdown(data, timestamp)
 
@@ -107,13 +107,13 @@ func (l *RunLogger) WriteRunLog(data *RunLogData) (string, error) {
 
 // WriteAgentLog writes a markdown log file for an agent session
 func (l *RunLogger) WriteAgentLog(data *AgentLogData) (string, error) {
-	if err := os.MkdirAll(l.RunsRoot, 0755); err != nil {
-		return "", fmt.Errorf("failed to create runs directory: %w", err)
+	if err := os.MkdirAll(l.LogsRoot, 0755); err != nil {
+		return "", fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	filename := fmt.Sprintf("%s_agent_%s.md", timestamp, data.SessionID)
-	fp := filepath.Join(l.RunsRoot, filename)
+	fp := filepath.Join(l.LogsRoot, filename)
 
 	content := l.generateAgentMarkdown(data, timestamp)
 

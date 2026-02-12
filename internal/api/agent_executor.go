@@ -37,7 +37,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	defer func() {
 		// Cache repos back to projects for future runs
 		if liveSession.WorkspacePath != "" {
-			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ProjectsRoot)
+			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
 		}
 
 		// Write agent audit log
@@ -96,7 +96,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Prepare agent workspace with repos/ structure
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
-		h.config.ProjectsRoot, sessionID, h.config.Agent.SharedRepos,
+		h.config.ReposRoot, sessionID, h.config.Agent.SharedRepos,
 	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())

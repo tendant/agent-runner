@@ -12,8 +12,8 @@ import (
 // Config represents the application configuration
 type Config struct {
 	// Directory paths
-	ProjectsRoot string
-	RunsRoot     string
+	ReposRoot string
+	LogsRoot  string
 	TmpRoot      string
 
 	// Project allowlist
@@ -81,8 +81,8 @@ type APIConfig struct {
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
 	return &Config{
-		ProjectsRoot:             "./projects",
-		RunsRoot:                 "./runs",
+		ReposRoot:                "./repos",
+		LogsRoot:                 "./logs",
 		TmpRoot:                  "./tmp",
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
@@ -124,8 +124,8 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg := DefaultConfig()
 
-	cfg.ProjectsRoot = envOrDefault("PROJECTS_ROOT", cfg.ProjectsRoot)
-	cfg.RunsRoot = envOrDefault("RUNS_ROOT", cfg.RunsRoot)
+	cfg.ReposRoot = envOrDefault("REPOS_ROOT", cfg.ReposRoot)
+	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("MAX_RUNTIME_SECONDS", cfg.MaxRuntimeSeconds)
@@ -167,11 +167,11 @@ func LoadFromEnv() (*Config, error) {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.ProjectsRoot == "" {
-		return fmt.Errorf("projects_root is required")
+	if c.ReposRoot == "" {
+		return fmt.Errorf("repos_root is required")
 	}
-	if c.RunsRoot == "" {
-		return fmt.Errorf("runs_root is required")
+	if c.LogsRoot == "" {
+		return fmt.Errorf("logs_root is required")
 	}
 	if c.TmpRoot == "" {
 		return fmt.Errorf("tmp_root is required")

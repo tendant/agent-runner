@@ -14,8 +14,8 @@ func main() {
 	}
 
 	// Log configuration summary
-	log.Printf("Projects root: %s", cfg.ProjectsRoot)
-	log.Printf("Runs root: %s", cfg.RunsRoot)
+	log.Printf("Repos root: %s", cfg.ReposRoot)
+	log.Printf("Logs root: %s", cfg.LogsRoot)
 	log.Printf("Tmp root: %s", cfg.TmpRoot)
 	log.Printf("Max runtime: %ds", cfg.MaxRuntimeSeconds)
 	log.Printf("Max concurrent jobs: %d", cfg.MaxConcurrentJobs)

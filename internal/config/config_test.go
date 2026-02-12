@@ -7,11 +7,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.ProjectsRoot != "./projects" {
-		t.Errorf("expected ProjectsRoot ./projects, got %s", cfg.ProjectsRoot)
+	if cfg.ReposRoot != "./repos" {
+		t.Errorf("expected ReposRoot ./repos, got %s", cfg.ReposRoot)
 	}
-	if cfg.RunsRoot != "./runs" {
-		t.Errorf("expected RunsRoot ./runs, got %s", cfg.RunsRoot)
+	if cfg.LogsRoot != "./logs" {
+		t.Errorf("expected LogsRoot ./logs, got %s", cfg.LogsRoot)
 	}
 	if cfg.TmpRoot != "./tmp" {
 		t.Errorf("expected TmpRoot ./tmp, got %s", cfg.TmpRoot)
@@ -42,19 +42,19 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestValidate_EmptyProjectsRoot(t *testing.T) {
+func TestValidate_EmptyReposRoot(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.ProjectsRoot = ""
+	cfg.ReposRoot = ""
 	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for empty ProjectsRoot")
+		t.Error("expected error for empty ReposRoot")
 	}
 }
 
-func TestValidate_EmptyRunsRoot(t *testing.T) {
+func TestValidate_EmptyLogsRoot(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RunsRoot = ""
+	cfg.LogsRoot = ""
 	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for empty RunsRoot")
+		t.Error("expected error for empty LogsRoot")
 	}
 }
 
@@ -136,7 +136,7 @@ func TestIsProjectAllowed_NoPartialMatch(t *testing.T) {
 func TestLoadFromEnv_Defaults(t *testing.T) {
 	// Clear all env vars that LoadFromEnv reads
 	for _, key := range []string{
-		"PROJECTS_ROOT", "RUNS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
+		"REPOS_ROOT", "LOGS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
 		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
@@ -152,7 +152,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	}
 	// Unset them fully so envOrDefault returns defaults
 	for _, key := range []string{
-		"PROJECTS_ROOT", "RUNS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
+		"REPOS_ROOT", "LOGS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
 		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
@@ -184,8 +184,8 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 }
 
 func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
-	t.Setenv("PROJECTS_ROOT", "/tmp/projects")
-	t.Setenv("RUNS_ROOT", "/tmp/runs")
+	t.Setenv("REPOS_ROOT", "/tmp/repos")
+	t.Setenv("LOGS_ROOT", "/tmp/logs")
 	t.Setenv("TMP_ROOT", "/tmp/workspaces")
 	t.Setenv("MAX_RUNTIME_SECONDS", "600")
 	t.Setenv("MAX_CONCURRENT_JOBS", "10")
@@ -203,8 +203,8 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.ProjectsRoot != "/tmp/projects" {
-		t.Errorf("expected /tmp/projects, got %s", cfg.ProjectsRoot)
+	if cfg.ReposRoot != "/tmp/repos" {
+		t.Errorf("expected /tmp/repos, got %s", cfg.ReposRoot)
 	}
 	if cfg.MaxRuntimeSeconds != 600 {
 		t.Errorf("expected 600, got %d", cfg.MaxRuntimeSeconds)
@@ -239,7 +239,7 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 }
 
 func TestLoadFromEnv_InvalidConfig(t *testing.T) {
-	t.Setenv("PROJECTS_ROOT", "")
+	t.Setenv("REPOS_ROOT", "")
 	t.Setenv("MAX_RUNTIME_SECONDS", "0")
 
 	_, err := LoadFromEnv()

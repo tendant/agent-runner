@@ -83,8 +83,8 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 }
 
 // PrepareAgentWorkspace creates a workspace with a repos/ subdirectory.
-// It pre-populates shared repos from the projects cache.
-func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID string, sharedRepos []string) (string, error) {
+// It pre-populates shared repos from the persistent repo cache.
+func (w *WorkspaceManager) PrepareAgentWorkspace(reposRoot, sessionID string, sharedRepos []string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -101,7 +101,7 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID string,
 		if repo == "" {
 			continue
 		}
-		cachedRepo := filepath.Join(projectsRoot, repo)
+		cachedRepo := filepath.Join(reposRoot, repo)
 		if info, err := os.Stat(cachedRepo); err == nil && info.IsDir() {
 			dst := filepath.Join(reposPath, repo)
 			if err := copyDir(cachedRepo, dst); err != nil {
@@ -115,8 +115,8 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(projectsRoot, sessionID string,
 	return workspacePath, nil
 }
 
-// CacheReposBack copies repos from workspace/repos/ back to projectsRoot/ for future runs.
-func (w *WorkspaceManager) CacheReposBack(workspacePath, projectsRoot string) {
+// CacheReposBack copies repos from workspace/repos/ back to reposRoot/ for future runs.
+func (w *WorkspaceManager) CacheReposBack(workspacePath, reposRoot string) {
 	reposPath := filepath.Join(workspacePath, "repos")
 	entries, err := os.ReadDir(reposPath)
 	if err != nil {
@@ -128,7 +128,7 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, projectsRoot string) {
 			continue
 		}
 		src := filepath.Join(reposPath, entry.Name())
-		dst := filepath.Join(projectsRoot, entry.Name())
+		dst := filepath.Join(reposRoot, entry.Name())
 
 		// Remove old cache and replace with updated version
 		os.RemoveAll(dst)
@@ -136,7 +136,7 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, projectsRoot string) {
 			log.Printf("Agent workspace: warning: failed to cache repo %s: %v", entry.Name(), err)
 			continue
 		}
-		log.Printf("Agent workspace: cached repo %s back to projects", entry.Name())
+		log.Printf("Agent workspace: cached repo %s back to repos", entry.Name())
 	}
 }
 

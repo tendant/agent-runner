@@ -37,7 +37,7 @@ func NewServer(cfg *config.Config) *Server {
 	exec := executor.NewExecutor(cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
-	runLogger := logging.NewRunLogger(cfg.RunsRoot)
+	runLogger := logging.NewRunLogger(cfg.LogsRoot)
 
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
 
@@ -142,8 +142,8 @@ func (s *Server) Start() error {
 
 func (s *Server) ensureDirectories() error {
 	dirs := []string{
-		s.config.ProjectsRoot,
-		s.config.RunsRoot,
+		s.config.ReposRoot,
+		s.config.LogsRoot,
 		s.config.TmpRoot,
 	}
 
