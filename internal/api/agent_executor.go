@@ -84,6 +84,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}()
 
 	// Resolve prompt: read template file and inject message, or use message directly
+	promptFile := h.config.Agent.PromptFile
+	if promptFile != "" {
+		log.Printf("Agent %s: prompt file: %s", sessionID, promptFile)
+	} else {
+		log.Printf("Agent %s: no prompt file configured, using message directly", sessionID)
+	}
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())

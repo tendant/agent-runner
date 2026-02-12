@@ -33,6 +33,11 @@ func main() {
 	if cfg.Agent.DefaultProject != "" {
 		log.Printf("Agent default project: %s", cfg.Agent.DefaultProject)
 	}
+	if cfg.Agent.PromptFile != "" {
+		log.Printf("Agent prompt file: %s", cfg.Agent.PromptFile)
+	} else {
+		log.Printf("Agent prompt file: none (using message directly)")
+	}
 	if cfg.Telegram.BotToken != "" {
 		log.Printf("Telegram bot: enabled")
 	}
