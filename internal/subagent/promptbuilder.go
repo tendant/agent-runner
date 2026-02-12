@@ -76,9 +76,8 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 		sb.WriteString("\n```\n\n")
 	}
 
-	// Iteration metadata
-	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n\n", iteration))
-	sb.WriteString("Continue working on the task. Pick up where you left off and make progress on the next unchecked step in the plan.\n")
+	// Iteration metadata — no workflow instructions here; the preamble drives behavior
+	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n", iteration))
 
 	return sb.String()
 }
