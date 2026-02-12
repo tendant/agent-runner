@@ -63,10 +63,6 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	if project == "" {
 		project = h.config.Agent.DefaultProject
 	}
-	if project == "" {
-		h.writeError(w, http.StatusBadRequest, "no project specified: use 'project' field, @project-name in message, or set AGENT_DEFAULT_PROJECT")
-		return
-	}
 
 	paths := h.config.Agent.Paths
 	if len(paths) == 0 {
@@ -74,8 +70,8 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project is allowed
-	if !h.config.IsProjectAllowed(project) {
+	// Check if project is allowed (skip if no project)
+	if project != "" && !h.config.IsProjectAllowed(project) {
 		h.writeError(w, http.StatusBadRequest, "project not in allowed_projects")
 		return
 	}

@@ -606,18 +606,18 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// No project field, no @tag, no default → should fail
+	// No project field, no @tag, no default → should still work (project is optional)
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
 		"message": "do stuff",
 	})
 
-	if code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %v", code, resp)
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
 	}
 
-	errMsg, _ := resp["error"].(string)
-	if errMsg == "" {
-		t.Error("expected error message about no project")
+	project, _ := resp["project"].(string)
+	if project != "" {
+		t.Errorf("expected empty project, got %q", project)
 	}
 }
 

@@ -36,16 +36,13 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	if project == "" {
 		project = h.config.Agent.DefaultProject
 	}
-	if project == "" {
-		return "", fmt.Errorf("no project specified: use @project-name in message or set AGENT_DEFAULT_PROJECT")
-	}
 
 	paths := h.config.Agent.Paths
 	if len(paths) == 0 {
 		return "", fmt.Errorf("agent not configured: AGENT_PATHS is required")
 	}
 
-	if !h.config.IsProjectAllowed(project) {
+	if project != "" && !h.config.IsProjectAllowed(project) {
 		return "", fmt.Errorf("project not in allowed_projects")
 	}
 

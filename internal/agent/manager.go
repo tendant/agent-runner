@@ -33,9 +33,11 @@ func NewManager(locker ProjectLocker) *Manager {
 func (m *Manager) CreateSession(project, message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()
 
-	// Acquire project lock
-	if err := m.locker.AcquireProjectLock(project, sessionID); err != nil {
-		return nil, fmt.Errorf("project %s is locked: %w", project, err)
+	// Acquire project lock (skip if no project specified)
+	if project != "" {
+		if err := m.locker.AcquireProjectLock(project, sessionID); err != nil {
+			return nil, fmt.Errorf("project %s is locked: %w", project, err)
+		}
 	}
 
 	session := &Session{
@@ -96,7 +98,9 @@ func (m *Manager) CompleteSession(sessionID string) {
 	}
 
 	session.Complete()
-	m.locker.ReleaseProjectLock(session.Project, sessionID)
+	if session.Project != "" {
+		m.locker.ReleaseProjectLock(session.Project, sessionID)
+	}
 }
 
 // FailSession marks a session as failed and releases the project lock
@@ -110,7 +114,9 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 	}
 
 	session.Fail(errMsg)
-	m.locker.ReleaseProjectLock(session.Project, sessionID)
+	if session.Project != "" {
+		m.locker.ReleaseProjectLock(session.Project, sessionID)
+	}
 }
 
 // GetSessionDirect returns the live session pointer (for the executor loop to mutate)
