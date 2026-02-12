@@ -32,18 +32,21 @@ Rules:
 // Planner is a sub-agent that produces a structured plan before the iteration loop.
 type Planner struct {
 	executor *executor.Executor
+	preamble string // prompt template content for context
 }
 
 // NewPlanner creates a new planner sub-agent.
-func NewPlanner(exec *executor.Executor) *Planner {
-	return &Planner{executor: exec}
+// The preamble is the resolved prompt template content, giving the planner
+// visibility into the user's workflow instructions.
+func NewPlanner(exec *executor.Executor, preamble string) *Planner {
+	return &Planner{executor: exec, preamble: preamble}
 }
 
 // Plan runs the planner against the workspace and returns a structured plan.
 func (p *Planner) Plan(ctx context.Context, reposPath, message string) (*PlanResult, error) {
 	state := ReadWorkspaceState(ctx, reposPath)
 
-	prompt := p.buildPrompt(state, message)
+	prompt := p.BuildPrompt(state, message)
 
 	result, err := p.executor.Execute(ctx, reposPath, prompt)
 	if err != nil {
@@ -64,8 +67,16 @@ func (p *Planner) Plan(ctx context.Context, reposPath, message string) (*PlanRes
 	return plan, nil
 }
 
-func (p *Planner) buildPrompt(state WorkspaceState, message string) string {
+// BuildPrompt builds the full planner prompt (exported for logging/debugging).
+func (p *Planner) BuildPrompt(state WorkspaceState, message string) string {
 	var sb strings.Builder
+
+	// Inject preamble so the planner sees the user's workflow instructions
+	if p.preamble != "" {
+		sb.WriteString("## Context from prompt template\n\n")
+		sb.WriteString(p.preamble)
+		sb.WriteString("\n\n")
+	}
 
 	sb.WriteString(plannerPrompt)
 	sb.WriteString("\n")

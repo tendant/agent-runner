@@ -33,6 +33,7 @@ type IterationResult struct {
 	ChangedFiles []string        `json:"changed_files,omitempty"`
 	Error        string          `json:"error,omitempty"`
 	DurationSecs int             `json:"duration_seconds"`
+	Prompt       string          `json:"-"` // prompt sent to Claude (excluded from API response)
 }
 
 // Session represents an agent session that runs multiple iterations

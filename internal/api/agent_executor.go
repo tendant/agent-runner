@@ -33,6 +33,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
+	var plannerPromptText string
 
 	defer func() {
 		// Cache repos back to projects for future runs
@@ -60,8 +61,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				ChangedFiles: iter.ChangedFiles,
 				Error:        iter.Error,
 				DurationSecs: iter.DurationSecs,
+				Prompt:       iter.Prompt,
 			})
 		}
+		logData.PlannerPrompt = plannerPromptText
 		// Include plan/review in audit log
 		if snap.PlanJSON != nil {
 			if data, err := json.Marshal(snap.PlanJSON); err == nil {
@@ -102,11 +105,16 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	reposPath := filepath.Join(workspacePath, "repos")
 	ctx := context.Background()
 
+	log.Printf("Agent %s: resolved preamble (%d chars)", sessionID, len(preamble))
+
 	// Phase 1: Planner (optional, non-fatal)
 	var plan *subagent.PlanResult
 	if h.config.Agent.PlannerEnabled {
 		log.Printf("Agent %s: running planner", sessionID)
-		planner := subagent.NewPlanner(h.executor)
+		planner := subagent.NewPlanner(h.executor, preamble)
+		plannerState := subagent.ReadWorkspaceState(ctx, reposPath)
+		plannerPromptText = planner.BuildPrompt(plannerState, message)
+		log.Printf("Agent %s: planner prompt (%d chars)", sessionID, len(plannerPromptText))
 		plan, err = planner.Plan(ctx, reposPath, message)
 		if err != nil {
 			log.Printf("Agent %s: planner failed (non-fatal): %v", sessionID, err)
@@ -146,8 +154,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		} else {
 			iterPrompt = promptBuilder.BuildStatic(message)
 		}
+		log.Printf("Agent %s: iteration %d prompt (%d chars)", sessionID, i, len(iterPrompt))
 
 		result := h.executeIteration(ctx, reposPath, iterPrompt, i, deadline)
+		result.Prompt = iterPrompt
 		liveSession.AddIteration(result)
 	}
 
