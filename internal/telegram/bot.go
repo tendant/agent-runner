@@ -162,12 +162,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		// Not a clear yes/no — treat as continued conversation
 	}
 
-	// Analyze conversation via Claude
+	// Analyze conversation via Claude (slow — acknowledge first)
+	b.send(chatID, "Thinking...")
 	b.handleAnalysis(chatID, conv)
 }
 
 // handleConfirmation starts the agent after the user confirms the plan.
 func (b *Bot) handleConfirmation(chatID int64, conv *conversation.Conversation) {
+	b.send(chatID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
 	// Build the enriched message from the plan + conversation context
