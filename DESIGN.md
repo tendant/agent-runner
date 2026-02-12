@@ -50,11 +50,11 @@ Execution is **asynchronous**. The API returns a job ID immediately; clients pol
 /claude-wrapper/
   ├── api/
   │   └── server.go (or app.py)
-  ├── projects/
+  ├── repos/
   │   ├── site-a/
   │   ├── site-b/
   │   └── site-c/
-  ├── runs/
+  ├── logs/
   │   └── 2026-02-02_21-04-33_site-a.md
   ├── tmp/
   │   └── job-<uuid>/
@@ -65,9 +65,9 @@ Execution is **asynchronous**. The API returns a job ID immediately; clients pol
 
 | Directory | Purpose | Lifecycle |
 |-----------|---------|-----------|
-| `projects/` | Long-lived Git working copies | Persistent |
+| `repos/` | Persistent repo cache (jobs working copies, agent cache) | Persistent |
 | `tmp/` | Ephemeral per-request workspaces | Cleaned after each job |
-| `runs/` | Markdown execution logs (audit trail) | Persistent |
+| `logs/` | Markdown execution logs (audit trail) | Persistent |
 
 ---
 
@@ -93,7 +93,7 @@ Initiates a Claude Code execution against a project. Returns immediately with a 
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `project` | Yes | Must exist under `projects/` and be in `allowed_projects` |
+| `project` | Yes | Must exist under `repos/` and be in `allowed_projects` |
 | `instruction` | Yes | Natural language task for Claude Code |
 | `paths` | Yes | Allowlist of editable directories/files |
 | `commit_message` | No | If omitted, auto-generated from instruction + diff summary |
@@ -151,7 +151,7 @@ Poll for job status and results.
     "insertions": 120,
     "deletions": 0
   },
-  "log_file": "runs/2026-02-02_21-04-33_site-a.md",
+  "log_file": "logs/2026-02-02_21-04-33_site-a.md",
   "duration_seconds": 87
 }
 ```
@@ -165,7 +165,7 @@ Poll for job status and results.
   "project": "site-a",
   "error": "Push failed: remote contains commits not present locally",
   "error_code": "GIT_PUSH_CONFLICT",
-  "log_file": "runs/2026-02-02_21-04-33_site-a.md"
+  "log_file": "logs/2026-02-02_21-04-33_site-a.md"
 }
 ```
 
@@ -239,13 +239,13 @@ Behavior:
 
 ```bash
 # Ensure clean state
-cd projects/site-a
+cd repos/site-a
 git fetch origin
 git reset --hard origin/main
 git clean -fdx
 
 # Copy to isolated workspace
-cp -R projects/site-a tmp/job-uuid
+cp -R repos/site-a tmp/job-uuid
 cd tmp/job-uuid
 ```
 
@@ -450,8 +450,8 @@ var (
 
 ```yaml
 # Directory paths
-projects_root: ./projects
-runs_root: ./runs
+repos_root: ./repos
+logs_root: ./logs
 tmp_root: ./tmp
 
 # Project allowlist

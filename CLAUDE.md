@@ -22,8 +22,8 @@ This is **Claude Code v1 - Local API Wrapper**, an HTTP API that wraps Claude Co
 ```
 /claude-wrapper/
   ├── api/              # HTTP API server
-  ├── projects/         # Long-lived Git working copies
-  ├── runs/             # Markdown execution logs (audit trail)
+  ├── repos/            # Persistent repo cache (jobs working copies, agent cache)
+  ├── logs/             # Markdown execution logs (audit trail)
   ├── tmp/              # Ephemeral per-request workspaces
   └── config.yaml       # Configuration file
 ```
