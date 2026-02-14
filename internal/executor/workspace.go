@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -112,20 +113,10 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(reposRoot, sessionID string, sh
 			}
 			log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
 
-			// Configure git remote if git host/org are set
+			// Ensure git remote origin matches expected URL
 			if gitHost != "" && gitOrg != "" {
-				remoteURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
-				setRemote := exec.Command("git", "remote", "set-url", "origin", remoteURL)
-				setRemote.Dir = dst
-				if err := setRemote.Run(); err != nil {
-					// If set-url fails (no remote yet), try adding it
-					addRemote := exec.Command("git", "remote", "add", "origin", remoteURL)
-					addRemote.Dir = dst
-					if addErr := addRemote.Run(); addErr != nil {
-						log.Printf("Agent workspace: warning: failed to set git remote for %s: %v", repo, addErr)
-					}
-				}
-				log.Printf("Agent workspace: set git remote for %s to %s", repo, remoteURL)
+				expectedURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+				configureGitRemote(dst, repo, expectedURL)
 			}
 		}
 	}
@@ -155,6 +146,38 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, reposRoot string) {
 			continue
 		}
 		log.Printf("Agent workspace: cached repo %s back to repos", entry.Name())
+	}
+}
+
+// configureGitRemote ensures the origin remote matches the expected URL.
+// It checks the current URL first and only updates if different.
+func configureGitRemote(repoPath, repoName, expectedURL string) {
+	// Check current remote URL
+	getURL := exec.Command("git", "remote", "get-url", "origin")
+	getURL.Dir = repoPath
+	out, err := getURL.Output()
+	if err == nil {
+		currentURL := strings.TrimSpace(string(out))
+		if currentURL == expectedURL {
+			log.Printf("Agent workspace: git remote for %s already correct: %s", repoName, expectedURL)
+			return
+		}
+		// Remote exists but URL differs — update it
+		log.Printf("Agent workspace: updating git remote for %s: %s → %s", repoName, currentURL, expectedURL)
+		setURL := exec.Command("git", "remote", "set-url", "origin", expectedURL)
+		setURL.Dir = repoPath
+		if err := setURL.Run(); err != nil {
+			log.Printf("Agent workspace: warning: failed to update git remote for %s: %v", repoName, err)
+		}
+		return
+	}
+
+	// No remote — add it
+	log.Printf("Agent workspace: adding git remote for %s: %s", repoName, expectedURL)
+	addRemote := exec.Command("git", "remote", "add", "origin", expectedURL)
+	addRemote.Dir = repoPath
+	if err := addRemote.Run(); err != nil {
+		log.Printf("Agent workspace: warning: failed to add git remote for %s: %v", repoName, err)
 	}
 }
 
