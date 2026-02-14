@@ -11,7 +11,7 @@ import (
 
 // AnalysisResult is the structured response from the analyzer.
 type AnalysisResult struct {
-	Action  string `json:"action"`  // "ask" or "plan"
+	Action  string `json:"action"`  // "ask", "plan", or "execute"
 	Message string `json:"message"` // question text or plan text
 }
 
@@ -55,15 +55,14 @@ func (a *Analyzer) buildPrompt(conv *Conversation) string {
 	sb.WriteString(`You are a conversation analyzer for an agent system. Your job is to analyze the user's messages and decide the next action.
 
 You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
-{"action": "ask|plan", "message": "your response text"}
+{"action": "ask|plan|execute", "message": "your response text"}
 
 Rules:
-- action "ask": You need more information. "message" should be a clarifying question.
-- action "plan": You have enough information to propose a plan. "message" should be a clear plan description of what will be done.
-- NEVER use action "execute" — only "ask" or "plan".
-- When you have enough info, propose a PLAN with a clear description of what will be done.
-- Keep questions and plans concise but informative.
-- BIAS TOWARD ACTION: if the user's intent is clear (e.g. "add client X", "create Y"), propose a plan immediately. Do NOT ask clarifying questions for missing optional details — the agent will use sensible defaults. Only ask if the core request is truly ambiguous.
+- action "execute": The user's request is a common, well-known command and you are certain what needs to be done. Skip confirmation and run immediately. "message" should be a brief description of what will be done (e.g. "Adding client Acme Corp", "Searching conflicts for Acme").
+- action "plan": You have enough information but the task is complex or unusual enough to warrant user confirmation. "message" should describe what will be done.
+- action "ask": You need more information because the core request is truly ambiguous. "message" should be a clarifying question.
+- BIAS TOWARD ACTION: prefer "execute" for straightforward, common actions (add, search, list, delete, update). Use "plan" only for complex or multi-step tasks. Use "ask" only when the core request is truly ambiguous.
+- Keep messages concise but informative.
 
 `)
 

@@ -200,6 +200,12 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	}
 
 	switch result.Action {
+	case "execute":
+		// High-confidence action — skip confirmation, run immediately
+		conv.AddMessage("assistant", result.Message)
+		b.send(chatID, result.Message)
+		b.handleConfirmation(chatID, conv)
+
 	case "ask":
 		conv.AddMessage("assistant", result.Message)
 		b.send(chatID, result.Message)
