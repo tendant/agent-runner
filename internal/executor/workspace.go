@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -84,7 +85,8 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 
 // PrepareAgentWorkspace creates a workspace with a repos/ subdirectory.
 // It pre-populates shared repos from the persistent repo cache.
-func (w *WorkspaceManager) PrepareAgentWorkspace(reposRoot, sessionID string, sharedRepos []string) (string, error) {
+// If gitHost and gitOrg are set, it configures the git remote origin for each repo.
+func (w *WorkspaceManager) PrepareAgentWorkspace(reposRoot, sessionID string, sharedRepos []string, gitHost, gitOrg string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -109,6 +111,22 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(reposRoot, sessionID string, sh
 				continue
 			}
 			log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
+
+			// Configure git remote if git host/org are set
+			if gitHost != "" && gitOrg != "" {
+				remoteURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+				setRemote := exec.Command("git", "remote", "set-url", "origin", remoteURL)
+				setRemote.Dir = dst
+				if err := setRemote.Run(); err != nil {
+					// If set-url fails (no remote yet), try adding it
+					addRemote := exec.Command("git", "remote", "add", "origin", remoteURL)
+					addRemote.Dir = dst
+					if addErr := addRemote.Run(); addErr != nil {
+						log.Printf("Agent workspace: warning: failed to set git remote for %s: %v", repo, addErr)
+					}
+				}
+				log.Printf("Agent workspace: set git remote for %s to %s", repo, remoteURL)
+			}
 		}
 	}
 

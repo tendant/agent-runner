@@ -24,6 +24,8 @@ type Config struct {
 	MaxConcurrentJobs int
 
 	// Git settings
+	GitHost                  string // e.g. "git.memochat.ai"
+	GitOrg                   string // e.g. "sites"
 	GitPushRetries           int
 	GitPushRetryDelaySeconds int
 
@@ -130,6 +132,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("MAX_RUNTIME_SECONDS", cfg.MaxRuntimeSeconds)
 	cfg.MaxConcurrentJobs = envIntOrDefault("MAX_CONCURRENT_JOBS", cfg.MaxConcurrentJobs)
+	cfg.GitHost = envOrDefault("GIT_HOST", cfg.GitHost)
+	cfg.GitOrg = envOrDefault("GIT_ORG", cfg.GitOrg)
 	cfg.GitPushRetries = envIntOrDefault("GIT_PUSH_RETRIES", cfg.GitPushRetries)
 	cfg.GitPushRetryDelaySeconds = envIntOrDefault("GIT_PUSH_RETRY_DELAY_SECONDS", cfg.GitPushRetryDelaySeconds)
 
