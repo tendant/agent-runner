@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -86,6 +87,19 @@ func (c *Conversation) GetPlan() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.Plan
+}
+
+// GetUserMessage returns the concatenation of all user messages in the conversation.
+func (c *Conversation) GetUserMessage() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var parts []string
+	for _, msg := range c.Messages {
+		if msg.Role == "user" {
+			parts = append(parts, msg.Content)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // Manager manages active conversations keyed by Telegram chat ID.

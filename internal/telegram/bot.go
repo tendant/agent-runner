@@ -165,9 +165,11 @@ func (b *Bot) handleConfirmation(chatID int64, conv *conversation.Conversation) 
 	b.send(chatID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
-	plan := conv.GetPlan()
+	// Send the original user message to the agent, not the analyzer's plan text.
+	// The agent prompt template knows how to interpret raw user requests.
+	message := conv.GetUserMessage()
 
-	sessionID, err := b.starter.StartAgent(plan)
+	sessionID, err := b.starter.StartAgent(message)
 	if err != nil {
 		conv.SetState(conversation.StateGathering)
 		b.send(chatID, fmt.Sprintf("Failed to start agent: %s", err))
