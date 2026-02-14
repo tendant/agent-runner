@@ -61,9 +61,9 @@ Rules:
 - action "ask": You need more information. "message" should be a clarifying question.
 - action "plan": You have enough information to propose a plan. "message" should be a clear plan description of what will be done.
 - NEVER use action "execute" — only "ask" or "plan".
-- If the task is ambiguous or missing key details, ASK.
 - When you have enough info, propose a PLAN with a clear description of what will be done.
 - Keep questions and plans concise but informative.
+- BIAS TOWARD ACTION: if the user's intent is clear (e.g. "add client X", "create Y"), propose a plan immediately. Do NOT ask clarifying questions for missing optional details — the agent will use sensible defaults. Only ask if the core request is truly ambiguous.
 
 `)
 
