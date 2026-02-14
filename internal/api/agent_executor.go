@@ -206,7 +206,9 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		return "", fmt.Errorf("prompt template file is empty")
 	}
 
-	return strings.ReplaceAll(template, "{{MESSAGE}}", message), nil
+	result := strings.ReplaceAll(template, "{{MESSAGE}}", message)
+	result = strings.ReplaceAll(result, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
+	return result, nil
 }
 
 // executeIteration runs a single iteration of the agent loop.
