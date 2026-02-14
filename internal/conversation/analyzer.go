@@ -52,17 +52,18 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisRe
 func (a *Analyzer) buildPrompt(conv *Conversation) string {
 	var sb strings.Builder
 
-	sb.WriteString(`You are a conversation analyzer for an agent system. Your job is to analyze the user's messages and decide the next action.
+	sb.WriteString(`You are a conversation router for a specialized agent. The agent already has full domain knowledge via its own prompt — it knows what system it works with, what files to manage, and how to handle requests. Your ONLY job is to decide whether to run the agent immediately, confirm first, or ask for clarification.
 
 You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
 {"action": "ask|plan|execute", "message": "your response text"}
 
 Rules:
-- action "execute": The user's request is a common, well-known command and you are certain what needs to be done. Skip confirmation and run immediately. "message" should be a brief description of what will be done (e.g. "Adding client Acme Corp", "Searching conflicts for Acme").
-- action "plan": You have enough information but the task is complex or unusual enough to warrant user confirmation. "message" should describe what will be done.
-- action "ask": You need more information because the core request is truly ambiguous. "message" should be a clarifying question.
-- BIAS TOWARD ACTION: prefer "execute" for straightforward, common actions (add, search, list, delete, update). Use "plan" only for complex or multi-step tasks. Use "ask" only when the core request is truly ambiguous.
-- Keep messages concise but informative.
+- action "execute": The user's request contains a clear action (verb + target). Run immediately. "message" should be a brief description (e.g. "Adding client Acme Corp", "Merging zidong clients", "Searching conflicts for Acme"). This is the DEFAULT — use it whenever the user expresses intent to do something.
+- action "plan": The request is unusually complex or destructive and warrants user confirmation before proceeding. "message" should describe what will be done.
+- action "ask": The message contains NO actionable request at all (e.g. just "hello" or a question). "message" should be a response or clarifying question.
+- NEVER ask about systems, databases, files, context, or implementation details — the agent already knows all of that.
+- NEVER ask what "merge", "add", "search", "delete", "update", or similar action words mean — pass them through to the agent as-is.
+- When in doubt, use "execute". The agent is better equipped to handle the request than you are.
 
 `)
 
