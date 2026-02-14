@@ -195,7 +195,11 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	result, err := b.analyzer.Analyze(ctx, conv)
 	if err != nil {
 		log.Printf("Telegram: analyzer error: %v", err)
-		b.send(chatID, "Sorry, I had trouble understanding that. Could you rephrase?")
+		if ctx.Err() == context.DeadlineExceeded {
+			b.send(chatID, "Sorry, the request timed out. Please try again.")
+		} else {
+			b.send(chatID, "Sorry, I had trouble understanding that. Could you rephrase?")
+		}
 		return
 	}
 

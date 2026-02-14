@@ -30,11 +30,17 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	reposDir := filepath.Join(dir, "repos")
 	logsDir := filepath.Join(dir, "logs")
-	tmpDir := filepath.Join(dir, "tmp")
+
+	// Use a separate temp dir for workspaces so background goroutines
+	// from executeJob don't race with t.TempDir() cleanup.
+	tmpDir, err := os.MkdirTemp("", "agent-runner-test-tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 
 	os.MkdirAll(reposDir, 0755)
 	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
 
 	cfg := config.DefaultConfig()
 	cfg.ReposRoot = reposDir
@@ -42,6 +48,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.TmpRoot = tmpDir
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	t.Cleanup(jobManager.Stop)
 	agentManager := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -158,6 +165,7 @@ func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-project"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	t.Cleanup(jobManager.Stop)
 	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -272,6 +280,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	cfg.MaxConcurrentJobs = 1
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	t.Cleanup(jobManager.Stop)
 	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -457,6 +466,7 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 	cfg.AllowedProjects = []string{"allowed-only"}
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
+	t.Cleanup(jobManager.Stop)
 	agentMgr := agent.NewManager()
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)

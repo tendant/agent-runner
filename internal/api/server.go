@@ -26,6 +26,8 @@ type Server struct {
 	httpServer  *http.Server
 	handlers    *Handlers
 	telegramBot *telegram.Bot
+	jobManager  *jobs.Manager
+	convManager *conversation.Manager
 }
 
 // NewServer creates a new API server
@@ -80,6 +82,8 @@ func NewServer(cfg *config.Config) *Server {
 		},
 		handlers:    handlers,
 		telegramBot: telegramBot,
+		jobManager:  jobManager,
+		convManager: convManager,
 	}
 }
 
@@ -111,6 +115,8 @@ func (s *Server) Start() error {
 		if s.telegramBot != nil {
 			s.telegramBot.Stop()
 		}
+		s.convManager.Stop()
+		s.jobManager.Stop()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

@@ -110,6 +110,7 @@ type Manager struct {
 	locks               map[string]*Lock
 	jobRetentionSeconds int
 	maxConcurrentJobs   int
+	stopCh              chan struct{}
 }
 
 // NewManager creates a new job manager
@@ -119,9 +120,20 @@ func NewManager(jobRetentionSeconds, maxConcurrentJobs int) *Manager {
 		locks:               make(map[string]*Lock),
 		jobRetentionSeconds: jobRetentionSeconds,
 		maxConcurrentJobs:   maxConcurrentJobs,
+		stopCh:              make(chan struct{}),
 	}
 	go m.cleanupLoop()
 	return m
+}
+
+// Stop stops the cleanup loop. Safe to call multiple times.
+func (m *Manager) Stop() {
+	select {
+	case <-m.stopCh:
+		// already stopped
+	default:
+		close(m.stopCh)
+	}
 }
 
 // CreateJob creates a new job and returns its ID
@@ -331,8 +343,13 @@ func (m *Manager) cleanupLoop() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		m.cleanupExpiredJobs()
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.cleanupExpiredJobs()
+		}
 	}
 }
 
