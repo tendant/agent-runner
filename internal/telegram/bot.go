@@ -269,6 +269,14 @@ func FormatIteration(iter agent.IterationResult) string {
 	default:
 		fmt.Fprintf(&sb, "Iteration %d: %s", iter.Iteration, iter.Status)
 	}
+	if iter.Output != "" {
+		// Truncate long output for Telegram (4096 char limit)
+		output := iter.Output
+		if len(output) > 3000 {
+			output = output[:3000] + "\n... (truncated)"
+		}
+		fmt.Fprintf(&sb, "\n\n%s", output)
+	}
 	return sb.String()
 }
 

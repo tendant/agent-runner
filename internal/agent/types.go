@@ -31,6 +31,7 @@ type IterationResult struct {
 	Status       IterationStatus `json:"status"`
 	Commit       string          `json:"commit,omitempty"`
 	ChangedFiles []string        `json:"changed_files,omitempty"`
+	Output       string          `json:"output,omitempty"` // Claude's result text
 	Error        string          `json:"error,omitempty"`
 	DurationSecs int             `json:"duration_seconds"`
 	Prompt       string          `json:"-"` // prompt sent to Claude (excluded from API response)

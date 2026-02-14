@@ -243,13 +243,16 @@ func (h *Handlers) executeIteration(
 	defer cancel()
 
 	// Execute Claude Code with resolved prompt
-	_, _, execErr := h.executor.ExecuteWithLog(iterCtx, workspacePath, prompt)
+	execResult, _, execErr := h.executor.ExecuteWithLog(iterCtx, workspacePath, prompt)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
 		return result
 	}
 
+	if execResult != nil {
+		result.Output = execResult.Output
+	}
 	result.Status = agent.IterationStatusSuccess
 	return result
 }
