@@ -35,7 +35,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	var plannerPromptText string
 
 	defer func() {
-		// Cache repos back to projects for future runs
+		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
 		}
@@ -79,6 +79,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		} else {
 			log.Printf("Agent log written: %s", logFile)
 		}
+
+		// Cleanup workspace after cache-back and logging are done
+		if liveSession.WorkspacePath != "" {
+			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath)
+		}
 	}()
 
 	// Resolve prompt: read template file and inject message, or use message directly
@@ -103,7 +108,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		return
 	}
 	liveSession.SetWorkspacePath(workspacePath)
-	defer h.workspaceManager.CleanupWorkspace(workspacePath)
+	// NOTE: cleanup is done in the top-level defer (after CacheReposBack), not here.
+	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
+	// before cache-back can copy from it.
 
 	// Claude runs in the repos/ subdirectory
 	reposPath := filepath.Join(workspacePath, "repos")
