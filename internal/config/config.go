@@ -41,6 +41,9 @@ type Config struct {
 	// Telegram bot settings
 	Telegram TelegramConfig
 
+	// Stream bot settings
+	Stream StreamConfig
+
 	// Cleanup settings
 	JobRetentionSeconds     int
 	StartupCleanupStaleJobs bool
@@ -66,6 +69,13 @@ type AgentConfig struct {
 type TelegramConfig struct {
 	BotToken string
 	ChatID   int64
+}
+
+// StreamConfig contains agent-stream bot settings
+type StreamConfig struct {
+	ServerURL       string   // STREAM_SERVER_URL
+	BotToken        string   // STREAM_BOT_TOKEN (pre-registered bot JWT)
+	ConversationIDs []string // STREAM_CONVERSATION_IDS
 }
 
 // ValidationConfig contains diff validation settings
@@ -158,6 +168,10 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)
+
+	cfg.Stream.ServerURL = envOrDefault("STREAM_SERVER_URL", "")
+	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
+	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
 
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("STARTUP_CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)

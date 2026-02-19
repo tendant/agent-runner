@@ -29,7 +29,7 @@ type Conversation struct {
 	mu sync.Mutex
 
 	ID        string
-	ChatID    int64
+	ChatID    string
 	State     State
 	Messages  []Message
 	Plan      string // generated plan text
@@ -110,10 +110,10 @@ func (c *Conversation) GetUserMessage() string {
 
 const conversationIdleTimeout = 30 * time.Minute
 
-// Manager manages active conversations keyed by Telegram chat ID.
+// Manager manages active conversations keyed by chat/channel ID.
 type Manager struct {
 	mu            sync.RWMutex
-	conversations map[int64]*Conversation
+	conversations map[string]*Conversation
 	nextID        int
 	stopCh        chan struct{}
 }
@@ -121,7 +121,7 @@ type Manager struct {
 // NewManager creates a new conversation manager.
 func NewManager() *Manager {
 	m := &Manager{
-		conversations: make(map[int64]*Conversation),
+		conversations: make(map[string]*Conversation),
 		stopCh:        make(chan struct{}),
 	}
 	go m.cleanupLoop()
@@ -171,7 +171,7 @@ func (m *Manager) evictStale() {
 
 // GetOrCreate returns the active conversation for a chat, creating one if none exists
 // or the previous one is completed.
-func (m *Manager) GetOrCreate(chatID int64) *Conversation {
+func (m *Manager) GetOrCreate(chatID string) *Conversation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -195,7 +195,7 @@ func (m *Manager) GetOrCreate(chatID int64) *Conversation {
 }
 
 // Get returns the active conversation for a chat, if any.
-func (m *Manager) Get(chatID int64) (*Conversation, bool) {
+func (m *Manager) Get(chatID string) (*Conversation, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	conv, ok := m.conversations[chatID]
@@ -206,7 +206,7 @@ func (m *Manager) Get(chatID int64) (*Conversation, bool) {
 }
 
 // Complete marks the conversation for a chat as completed.
-func (m *Manager) Complete(chatID int64) {
+func (m *Manager) Complete(chatID string) {
 	m.mu.RLock()
 	conv, ok := m.conversations[chatID]
 	m.mu.RUnlock()

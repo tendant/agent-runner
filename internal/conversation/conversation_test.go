@@ -13,12 +13,12 @@ func TestNewManager(t *testing.T) {
 
 func TestGetOrCreate_CreatesNew(t *testing.T) {
 	m := NewManager()
-	conv := m.GetOrCreate(12345)
+	conv := m.GetOrCreate("12345")
 	if conv == nil {
 		t.Fatal("expected non-nil conversation")
 	}
-	if conv.ChatID != 12345 {
-		t.Errorf("expected chatID 12345, got %d", conv.ChatID)
+	if conv.ChatID != "12345" {
+		t.Errorf("expected chatID 12345, got %s", conv.ChatID)
 	}
 	if conv.GetState() != StateGathering {
 		t.Errorf("expected gathering state, got %s", conv.GetState())
@@ -27,8 +27,8 @@ func TestGetOrCreate_CreatesNew(t *testing.T) {
 
 func TestGetOrCreate_ReturnsSame(t *testing.T) {
 	m := NewManager()
-	conv1 := m.GetOrCreate(12345)
-	conv2 := m.GetOrCreate(12345)
+	conv1 := m.GetOrCreate("12345")
+	conv2 := m.GetOrCreate("12345")
 	if conv1 != conv2 {
 		t.Error("expected same conversation object")
 	}
@@ -36,10 +36,10 @@ func TestGetOrCreate_ReturnsSame(t *testing.T) {
 
 func TestGetOrCreate_NewAfterCompleted(t *testing.T) {
 	m := NewManager()
-	conv1 := m.GetOrCreate(12345)
+	conv1 := m.GetOrCreate("12345")
 	conv1.SetState(StateCompleted)
 
-	conv2 := m.GetOrCreate(12345)
+	conv2 := m.GetOrCreate("12345")
 	if conv1 == conv2 {
 		t.Error("expected new conversation after completion")
 	}
@@ -50,8 +50,8 @@ func TestGetOrCreate_NewAfterCompleted(t *testing.T) {
 
 func TestGetOrCreate_DifferentChats(t *testing.T) {
 	m := NewManager()
-	conv1 := m.GetOrCreate(111)
-	conv2 := m.GetOrCreate(222)
+	conv1 := m.GetOrCreate("111")
+	conv2 := m.GetOrCreate("222")
 	if conv1 == conv2 {
 		t.Error("expected different conversations for different chats")
 	}
@@ -59,7 +59,7 @@ func TestGetOrCreate_DifferentChats(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	m := NewManager()
-	conv, ok := m.Get(99999)
+	conv, ok := m.Get("99999")
 	if ok || conv != nil {
 		t.Error("expected nil for unknown chat")
 	}
@@ -67,10 +67,10 @@ func TestGet_NotFound(t *testing.T) {
 
 func TestGet_Completed(t *testing.T) {
 	m := NewManager()
-	conv := m.GetOrCreate(12345)
+	conv := m.GetOrCreate("12345")
 	conv.SetState(StateCompleted)
 
-	got, ok := m.Get(12345)
+	got, ok := m.Get("12345")
 	if ok || got != nil {
 		t.Error("expected nil for completed conversation")
 	}
@@ -78,8 +78,8 @@ func TestGet_Completed(t *testing.T) {
 
 func TestComplete(t *testing.T) {
 	m := NewManager()
-	conv := m.GetOrCreate(12345)
-	m.Complete(12345)
+	conv := m.GetOrCreate("12345")
+	m.Complete("12345")
 	if conv.GetState() != StateCompleted {
 		t.Errorf("expected completed, got %s", conv.GetState())
 	}
@@ -136,4 +136,3 @@ func TestConversation_SetPlan(t *testing.T) {
 		t.Errorf("expected confirming state, got %s", conv.GetState())
 	}
 }
-

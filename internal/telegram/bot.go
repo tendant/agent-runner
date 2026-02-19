@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -108,16 +109,19 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	tgChatID := msg.Chat.ID
+	chatID := strconv.FormatInt(tgChatID, 10)
+
 	// Handle /start command
 	if msg.IsCommand() && msg.Command() == "start" {
-		b.send(msg.Chat.ID, "Agent Runner bot ready. Send a message to start a conversation.")
+		b.send(tgChatID, "Agent Runner bot ready. Send a message to start a conversation.")
 		return
 	}
 
 	// Handle /cancel command — reset conversation
 	if msg.IsCommand() && msg.Command() == "cancel" {
-		b.convManager.Complete(msg.Chat.ID)
-		b.send(msg.Chat.ID, "Conversation cancelled. Send a new message to start over.")
+		b.convManager.Complete(chatID)
+		b.send(tgChatID, "Conversation cancelled. Send a new message to start over.")
 		return
 	}
 
@@ -125,8 +129,6 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	if text == "" {
 		return
 	}
-
-	chatID := msg.Chat.ID
 
 	// Get or create conversation
 	conv := b.convManager.GetOrCreate(chatID)
@@ -136,33 +138,33 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	// If currently executing, tell the user to wait
 	if state == conversation.StateExecuting {
-		b.send(chatID, "Agent is currently running. Please wait for it to finish.")
+		b.send(tgChatID, "Agent is currently running. Please wait for it to finish.")
 		return
 	}
 
 	// If confirming, check for yes/no
 	if state == conversation.StateConfirming {
 		if isConfirmation(text) {
-			b.handleConfirmation(chatID, conv)
+			b.handleConfirmation(tgChatID, chatID, conv)
 			return
 		}
 		if isDenial(text) {
 			conv.SetState(conversation.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
-			b.send(chatID, "OK, what would you like to change?")
+			b.send(tgChatID, "OK, what would you like to change?")
 			return
 		}
 		// Not a clear yes/no — treat as continued conversation
 	}
 
 	// Analyze conversation via Claude (slow — acknowledge first)
-	b.send(chatID, "Thinking...")
-	b.handleAnalysis(chatID, conv)
+	b.send(tgChatID, "Thinking...")
+	b.handleAnalysis(tgChatID, chatID, conv)
 }
 
 // handleConfirmation starts the agent after the user confirms the plan.
-func (b *Bot) handleConfirmation(chatID int64, conv *conversation.Conversation) {
-	b.send(chatID, "Starting agent...")
+func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversation.Conversation) {
+	b.send(tgChatID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
 	// Send the original user message to the agent, not the analyzer's plan text.
@@ -172,23 +174,23 @@ func (b *Bot) handleConfirmation(chatID int64, conv *conversation.Conversation) 
 	sessionID, err := b.starter.StartAgent(message)
 	if err != nil {
 		conv.SetState(conversation.StateGathering)
-		b.send(chatID, fmt.Sprintf("Failed to start agent: %s", err))
+		b.send(tgChatID, fmt.Sprintf("Failed to start agent: %s", err))
 		return
 	}
 
-	b.send(chatID, fmt.Sprintf("Agent session started: `%s`", sessionID))
+	b.send(tgChatID, fmt.Sprintf("Agent session started: `%s`", sessionID))
 
 	// Poll and report in background
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
-		b.pollAndReport(chatID, sessionID)
+		b.pollAndReport(tgChatID, sessionID)
 		b.convManager.Complete(chatID)
 	}()
 }
 
 // handleAnalysis calls the analyzer to decide the next action.
-func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
+func (b *Bot) handleAnalysis(tgChatID int64, chatID string, conv *conversation.Conversation) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -196,9 +198,9 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	if err != nil {
 		log.Printf("Telegram: analyzer error: %v", err)
 		if ctx.Err() == context.DeadlineExceeded {
-			b.send(chatID, "Sorry, the request timed out. Please try again.")
+			b.send(tgChatID, "Sorry, the request timed out. Please try again.")
 		} else {
-			b.send(chatID, "Sorry, I had trouble understanding that. Could you rephrase?")
+			b.send(tgChatID, "Sorry, I had trouble understanding that. Could you rephrase?")
 		}
 		return
 	}
@@ -207,26 +209,26 @@ func (b *Bot) handleAnalysis(chatID int64, conv *conversation.Conversation) {
 	case "execute":
 		// High-confidence action — skip confirmation, run immediately
 		conv.AddMessage("assistant", result.Message)
-		b.send(chatID, result.Message)
-		b.handleConfirmation(chatID, conv)
+		b.send(tgChatID, result.Message)
+		b.handleConfirmation(tgChatID, chatID, conv)
 
 	case "ask":
 		conv.AddMessage("assistant", result.Message)
-		b.send(chatID, result.Message)
+		b.send(tgChatID, result.Message)
 
 	case "plan":
 		conv.SetPlan(result.Message)
 		conv.AddMessage("assistant", result.Message)
-		b.send(chatID, result.Message+"\n\nProceed? (yes/no)")
+		b.send(tgChatID, result.Message+"\n\nProceed? (yes/no)")
 
 	default:
 		// Unknown action — treat as "ask"
 		conv.AddMessage("assistant", result.Message)
-		b.send(chatID, result.Message)
+		b.send(tgChatID, result.Message)
 	}
 }
 
-func (b *Bot) pollAndReport(chatID int64, sessionID string) {
+func (b *Bot) pollAndReport(tgChatID int64, sessionID string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -235,19 +237,19 @@ func (b *Bot) pollAndReport(chatID int64, sessionID string) {
 	for range ticker.C {
 		session, exists := b.starter.GetAgentSession(sessionID)
 		if !exists {
-			b.send(chatID, "Session not found.")
+			b.send(tgChatID, "Session not found.")
 			return
 		}
 
 		// Report new iterations incrementally
 		for i := reported; i < len(session.Iterations); i++ {
-			b.send(chatID, FormatIteration(session.Iterations[i]))
+			b.send(tgChatID, FormatIteration(session.Iterations[i]))
 		}
 		reported = len(session.Iterations)
 
 		// Check if session is done
 		if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-			b.send(chatID, FormatFinalResult(session))
+			b.send(tgChatID, FormatFinalResult(session))
 			return
 		}
 	}

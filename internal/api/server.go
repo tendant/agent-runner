@@ -17,6 +17,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 )
 
@@ -26,6 +27,7 @@ type Server struct {
 	httpServer  *http.Server
 	handlers    *Handlers
 	telegramBot *telegram.Bot
+	streamBot   *stream.Bot
 	jobManager  *jobs.Manager
 	convManager *conversation.Manager
 }
@@ -70,6 +72,7 @@ func NewServer(cfg *config.Config) *Server {
 	analyzer := conversation.NewAnalyzer(exec)
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
+	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
 
 	return &Server{
 		config: cfg,
@@ -82,6 +85,7 @@ func NewServer(cfg *config.Config) *Server {
 		},
 		handlers:    handlers,
 		telegramBot: telegramBot,
+		streamBot:   streamBot,
 		jobManager:  jobManager,
 		convManager: convManager,
 	}
@@ -111,7 +115,10 @@ func (s *Server) Start() error {
 		<-quit
 		log.Println("Server is shutting down...")
 
-		// Stop Telegram bot first
+		// Stop bots first
+		if s.streamBot != nil {
+			s.streamBot.Stop()
+		}
 		if s.telegramBot != nil {
 			s.telegramBot.Stop()
 		}
@@ -132,6 +139,13 @@ func (s *Server) Start() error {
 	if s.telegramBot != nil {
 		if err := s.telegramBot.Start(context.Background()); err != nil {
 			log.Printf("Warning: %v", err)
+		}
+	}
+
+	// Start stream bot
+	if s.streamBot != nil {
+		if err := s.streamBot.Start(context.Background()); err != nil {
+			log.Printf("Warning: stream bot: %v", err)
 		}
 	}
 
