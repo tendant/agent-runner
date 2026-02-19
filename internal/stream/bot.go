@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +192,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 }
 
 // resolveFiles downloads files and returns their content formatted for the message.
-// Text files are inlined; binary files are described by name and size.
+// Text files are inlined; binary files are saved to a temp directory and referenced by path.
 func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 	var parts []string
 
@@ -204,11 +206,37 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 		if isTextContent(file.ContentType) {
 			parts = append(parts, fmt.Sprintf("--- File: %s ---\n%s\n--- End: %s ---", file.Filename, string(file.Data), file.Filename))
 		} else {
-			parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes)]", file.Filename, file.ContentType, len(file.Data)))
+			// Save binary file to temp dir so the agent can access it
+			path, err := saveToTemp(file)
+			if err != nil {
+				log.Printf("Stream bot: failed to save file %s: %v", file.Filename, err)
+				parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) — failed to save]", file.Filename, file.ContentType, len(file.Data)))
+				continue
+			}
+			log.Printf("Stream bot: saved file %s to %s", file.Filename, path)
+			parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) saved to: %s]", file.Filename, file.ContentType, len(file.Data), path))
 		}
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// saveToTemp writes a downloaded file to a temp directory and returns the path.
+func saveToTemp(file *DownloadedFile) (string, error) {
+	dir := filepath.Join(os.TempDir(), "agent-runner-files")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+
+	// Use a unique prefix to avoid collisions
+	safeName := filepath.Base(file.Filename)
+	path := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().UnixMilli(), safeName))
+
+	if err := os.WriteFile(path, file.Data, 0644); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+
+	return path, nil
 }
 
 // isTextContent returns true if the content type is text-based.
