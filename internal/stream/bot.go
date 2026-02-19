@@ -82,7 +82,10 @@ func (b *Bot) Stop() {
 
 // listenConversation connects to SSE for a single conversation and processes events.
 func (b *Bot) listenConversation(ctx context.Context, convID string) {
-	var afterSeq int64
+	// Catch up: connect from seq 0, drain all existing events to find
+	// the latest seq without processing them, so we only handle new messages.
+	afterSeq := b.catchUpSeq(ctx, convID)
+	log.Printf("Stream bot: caught up on %s, starting from seq %d", convID, afterSeq)
 
 	for {
 		select {
@@ -115,6 +118,33 @@ func (b *Bot) listenConversation(ctx context.Context, convID string) {
 		case <-ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// catchUpSeq connects to SSE from seq 0, drains all existing events, and
+// returns the latest seq so the bot only processes new messages.
+func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
+	catchUpCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	events, err := b.client.StreamEvents(catchUpCtx, convID, 0)
+	if err != nil {
+		log.Printf("Stream bot: catch-up failed for %s: %v", convID, err)
+		return 0
+	}
+
+	var maxSeq int64
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return maxSeq
+			}
+			maxSeq = event.Seq
+		case <-time.After(2 * time.Second):
+			// No events for 2s — we've caught up
+			return maxSeq
 		}
 	}
 }
@@ -175,6 +205,12 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 			b.emitFinal(ctx, convID, resp)
 			return
 		}
+	}
+
+	// If no analyzer is configured, skip analysis and execute directly
+	if b.analyzer == nil {
+		b.handleConfirmation(ctx, convID, conv)
+		return
 	}
 
 	b.emitThinking(ctx, convID, "Thinking...")
@@ -269,15 +305,15 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 // Event emission helpers
 
 func (b *Bot) emitThinking(ctx context.Context, convID, msg string) {
-	b.emit(ctx, convID, "status.thinking", map[string]string{"text": msg})
+	b.emit(ctx, convID, "status.thinking", map[string]string{"message": msg})
 }
 
 func (b *Bot) emitDelta(ctx context.Context, convID, text string) {
-	b.emit(ctx, convID, "assistant.delta", map[string]string{"text": text})
+	b.emit(ctx, convID, "assistant.delta", map[string]string{"delta": text})
 }
 
 func (b *Bot) emitFinal(ctx context.Context, convID, text string) {
-	b.emit(ctx, convID, "assistant.final", map[string]string{"text": text})
+	b.emit(ctx, convID, "assistant.final", map[string]string{"content": text})
 }
 
 func (b *Bot) emit(ctx context.Context, convID, eventType string, payload interface{}) {
