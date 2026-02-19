@@ -151,8 +151,9 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 
 // messagePayload is the shape of a message.created event payload.
 type messagePayload struct {
-	UserID  string `json:"user_id"`
-	Content string `json:"content"`
+	UserID  string   `json:"user_id"`
+	Content string   `json:"content"`
+	FileIDs []string `json:"file_ids,omitempty"`
 }
 
 func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event) {
@@ -168,11 +169,69 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 	}
 
 	text := strings.TrimSpace(msg.Content)
+
+	// Download and inline any attached files
+	if len(msg.FileIDs) > 0 {
+		fileContent := b.resolveFiles(ctx, msg.FileIDs)
+		if fileContent != "" {
+			if text != "" {
+				text = text + "\n\n" + fileContent
+			} else {
+				text = fileContent
+			}
+		}
+	}
+
 	if text == "" {
 		return
 	}
 
 	b.handleMessage(ctx, convID, text)
+}
+
+// resolveFiles downloads files and returns their content formatted for the message.
+// Text files are inlined; binary files are described by name and size.
+func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
+	var parts []string
+
+	for _, fileID := range fileIDs {
+		file, err := b.client.DownloadFile(ctx, fileID)
+		if err != nil {
+			log.Printf("Stream bot: failed to download file %s: %v", fileID, err)
+			continue
+		}
+
+		if isTextContent(file.ContentType) {
+			parts = append(parts, fmt.Sprintf("--- File: %s ---\n%s\n--- End: %s ---", file.Filename, string(file.Data), file.Filename))
+		} else {
+			parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes)]", file.Filename, file.ContentType, len(file.Data)))
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// isTextContent returns true if the content type is text-based.
+func isTextContent(contentType string) bool {
+	if strings.HasPrefix(contentType, "text/") {
+		return true
+	}
+	textTypes := []string{
+		"application/json",
+		"application/xml",
+		"application/javascript",
+		"application/x-yaml",
+		"application/yaml",
+		"application/toml",
+		"application/x-sh",
+		"application/sql",
+	}
+	for _, t := range textTypes {
+		if strings.HasPrefix(contentType, t) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +69,56 @@ func (c *Client) EmitEvent(ctx context.Context, conversationID, eventType string
 	}
 
 	return nil
+}
+
+// DownloadedFile holds the result of downloading a file.
+type DownloadedFile struct {
+	Data        []byte
+	Filename    string
+	ContentType string
+}
+
+// DownloadFile downloads a file by ID, returning its content, filename, and content type.
+func (c *Client) DownloadFile(ctx context.Context, fileID string) (*DownloadedFile, error) {
+	url := fmt.Sprintf("%s/v1/files/%s", c.serverURL, fileID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download file: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Limit download to 10MB
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read file body: %w", err)
+	}
+
+	// Extract filename from Content-Disposition header
+	filename := fileID
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn := params["filename"]; fn != "" {
+				filename = fn
+			}
+		}
+	}
+
+	return &DownloadedFile{
+		Data:        data,
+		Filename:    filename,
+		ContentType: resp.Header.Get("Content-Type"),
+	}, nil
 }
 
 // StreamEvents opens an SSE connection and returns a channel of events.
