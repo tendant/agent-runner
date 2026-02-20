@@ -276,7 +276,7 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	state := conv.GetState()
 
 	if state == conversation.StateExecuting {
-		b.emitFinal(ctx, convID, "Agent is currently running. Please wait for it to finish.")
+		b.emitFinal(ctx, convID, "Message queued — I'll process it after the current task finishes.")
 		return
 	}
 
@@ -342,6 +342,17 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
+		}
+
+		// If user sent messages during execution, process them now
+		if conv.ClearPendingInput() {
+			conv.SetState(conversation.StateGathering)
+			if b.analyzer == nil {
+				b.handleConfirmation(context.Background(), convID, conv)
+			} else {
+				b.handleAnalysis(context.Background(), convID, conv)
+			}
+			return
 		}
 
 		b.convManager.Complete(convID)

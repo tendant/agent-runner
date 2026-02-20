@@ -136,9 +136,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	state := conv.GetState()
 
-	// If currently executing, tell the user to wait
+	// If currently executing, queue the message
 	if state == conversation.StateExecuting {
-		b.send(tgChatID, "Agent is currently running. Please wait for it to finish.")
+		b.send(tgChatID, "Message queued — I'll process it after the current task finishes.")
 		return
 	}
 
@@ -203,6 +203,14 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
+		}
+
+		// If user sent messages during execution, process them now
+		if conv.ClearPendingInput() {
+			conv.SetState(conversation.StateGathering)
+			b.send(tgChatID, "Processing queued messages...")
+			b.handleAnalysis(tgChatID, chatID, conv)
+			return
 		}
 
 		b.convManager.Complete(chatID)

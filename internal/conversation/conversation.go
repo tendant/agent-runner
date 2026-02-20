@@ -28,19 +28,21 @@ type Message struct {
 type Conversation struct {
 	mu sync.Mutex
 
-	ID        string
-	ChatID    string
-	State     State
-	Messages  []Message
-	Plan      string // generated plan text
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	ChatID       string
+	State        State
+	Messages     []Message
+	Plan         string // generated plan text
+	pendingInput bool   // true if user sent messages during execution
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 const maxMessages = 20
 
 // AddMessage appends a message to the conversation and updates the timestamp.
 // Trims the oldest messages if the history exceeds maxMessages.
+// If the conversation is executing and the message is from a user, marks pending input.
 func (c *Conversation) AddMessage(role, content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -51,6 +53,9 @@ func (c *Conversation) AddMessage(role, content string) {
 	})
 	if len(c.Messages) > maxMessages {
 		c.Messages = c.Messages[len(c.Messages)-maxMessages:]
+	}
+	if role == "user" && c.State == StateExecuting {
+		c.pendingInput = true
 	}
 	c.UpdatedAt = time.Now()
 }
@@ -114,8 +119,19 @@ func (c *Conversation) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Plan = ""
+	c.pendingInput = false
 	c.State = StateGathering
 	c.UpdatedAt = time.Now()
+}
+
+// ClearPendingInput atomically checks and clears the pending input flag.
+// Returns true if user messages were queued during execution.
+func (c *Conversation) ClearPendingInput() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	had := c.pendingInput
+	c.pendingInput = false
+	return had
 }
 
 // GetFormattedHistory returns the full conversation history formatted for
