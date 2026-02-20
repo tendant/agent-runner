@@ -34,17 +34,30 @@ func TestGetOrCreate_ReturnsSame(t *testing.T) {
 	}
 }
 
-func TestGetOrCreate_NewAfterCompleted(t *testing.T) {
+func TestGetOrCreate_ReusesCompletedWithHistory(t *testing.T) {
 	m := NewManager()
 	conv1 := m.GetOrCreate("12345")
+	conv1.AddMessage("user", "do something")
+	conv1.AddMessage("assistant", "done")
+	conv1.SetPlan("my plan")
 	conv1.SetState(StateCompleted)
 
 	conv2 := m.GetOrCreate("12345")
-	if conv1 == conv2 {
-		t.Error("expected new conversation after completion")
+	if conv1 != conv2 {
+		t.Error("expected same conversation object to be reused")
 	}
 	if conv2.GetState() != StateGathering {
 		t.Errorf("expected gathering state, got %s", conv2.GetState())
+	}
+	if conv2.GetPlan() != "" {
+		t.Error("expected plan to be cleared on reset")
+	}
+	msgs := conv2.GetMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages preserved, got %d", len(msgs))
+	}
+	if msgs[0].Content != "do something" || msgs[1].Content != "done" {
+		t.Error("expected message history to be preserved")
 	}
 }
 

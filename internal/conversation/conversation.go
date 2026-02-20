@@ -108,6 +108,16 @@ func (c *Conversation) GetUserMessage() string {
 	return strings.Join(parts, "\n")
 }
 
+// Reset transitions a completed conversation back to gathering state,
+// preserving message history while clearing the plan.
+func (c *Conversation) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Plan = ""
+	c.State = StateGathering
+	c.UpdatedAt = time.Now()
+}
+
 // GetFormattedHistory returns the full conversation history formatted for
 // inclusion in a prompt. Returns empty string if there are fewer than 2 messages
 // (i.e., only the current message exists, so no prior context).
@@ -186,26 +196,27 @@ func (m *Manager) evictStale() {
 	cutoff := time.Now().Add(-conversationIdleTimeout)
 	for chatID, conv := range m.conversations {
 		conv.mu.Lock()
-		state := conv.State
 		updatedAt := conv.UpdatedAt
 		conv.mu.Unlock()
 
-		if state == StateCompleted || updatedAt.Before(cutoff) {
+		if updatedAt.Before(cutoff) {
 			delete(m.conversations, chatID)
 		}
 	}
 }
 
-// GetOrCreate returns the active conversation for a chat, creating one if none exists
-// or the previous one is completed.
+// GetOrCreate returns the active conversation for a chat, creating one if none exists.
+// If the previous conversation is completed, it resets it to gathering state while
+// preserving message history so the agent has context from prior sessions.
 func (m *Manager) GetOrCreate(chatID string) *Conversation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if conv, ok := m.conversations[chatID]; ok {
-		if conv.GetState() != StateCompleted {
-			return conv
+		if conv.GetState() == StateCompleted {
+			conv.Reset()
 		}
+		return conv
 	}
 
 	m.nextID++
