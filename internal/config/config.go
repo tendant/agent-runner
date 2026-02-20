@@ -12,9 +12,10 @@ import (
 // Config represents the application configuration
 type Config struct {
 	// Directory paths
-	ReposRoot string
-	LogsRoot  string
-	TmpRoot      string
+	ProjectDir string // Resolved CWD at startup — the project root
+	ReposRoot  string
+	LogsRoot   string
+	TmpRoot    string
 
 	// Project allowlist
 	AllowedProjects []string
@@ -135,6 +136,13 @@ func LoadFromEnv() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := DefaultConfig()
+
+	// Capture CWD as the project directory — must happen before any chdir
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	cfg.ProjectDir = cwd
 
 	cfg.ReposRoot = envOrDefault("REPOS_ROOT", cfg.ReposRoot)
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)

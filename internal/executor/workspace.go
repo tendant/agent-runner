@@ -149,6 +149,118 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, reposRoot string) {
 	}
 }
 
+// cwdSkipDirs are agent-runner infrastructure directories that should never be
+// copied into the workspace or synced back from it.
+var cwdSkipDirs = map[string]bool{
+	"tmp":  true,
+	"logs": true,
+	"repos": true,
+}
+
+// cwdSkipFiles are files that should never be copied into the workspace.
+var cwdSkipFiles = map[string]bool{
+	".env": true,
+}
+
+// PopulateCWDFiles copies non-infrastructure files from projectDir into workspacePath/repos/
+// so that project files (e.g. reminders.md) are available to Claude in the workspace.
+func (w *WorkspaceManager) PopulateCWDFiles(projectDir, workspacePath string) error {
+	reposPath := filepath.Join(workspacePath, "repos")
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return fmt.Errorf("failed to read project dir %s: %w", projectDir, err)
+	}
+
+	copied := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if cwdSkipDirs[name] || cwdSkipFiles[name] {
+			continue
+		}
+		// Skip hidden directories (e.g. .git) but allow hidden files
+		if entry.IsDir() && strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		src := filepath.Join(projectDir, name)
+		dst := filepath.Join(reposPath, name)
+
+		// Skip if destination already exists (e.g. shared repo already populated)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+
+		if entry.IsDir() {
+			if err := copyDir(src, dst); err != nil {
+				log.Printf("PopulateCWDFiles: warning: failed to copy dir %s: %v", name, err)
+				continue
+			}
+		} else {
+			if err := copyFile(src, dst); err != nil {
+				log.Printf("PopulateCWDFiles: warning: failed to copy file %s: %v", name, err)
+				continue
+			}
+		}
+		copied++
+	}
+
+	log.Printf("PopulateCWDFiles: copied %d entries from CWD to workspace", copied)
+	return nil
+}
+
+// SyncBackToCWD copies non-repo files from workspacePath/repos/ back to projectDir.
+// Shared repo directories (already handled by CacheReposBack) are skipped.
+func (w *WorkspaceManager) SyncBackToCWD(projectDir, workspacePath string, sharedRepos []string) error {
+	reposPath := filepath.Join(workspacePath, "repos")
+	entries, err := os.ReadDir(reposPath)
+	if err != nil {
+		return fmt.Errorf("failed to read workspace repos: %w", err)
+	}
+
+	// Build set of shared repo names to skip
+	repoSet := make(map[string]bool, len(sharedRepos))
+	for _, r := range sharedRepos {
+		if r != "" {
+			repoSet[r] = true
+		}
+	}
+
+	synced := 0
+	for _, entry := range entries {
+		name := entry.Name()
+
+		// Skip shared repos — they're handled by CacheReposBack
+		if repoSet[name] {
+			continue
+		}
+		// Skip infrastructure dirs
+		if cwdSkipDirs[name] || cwdSkipFiles[name] {
+			continue
+		}
+
+		src := filepath.Join(reposPath, name)
+		dst := filepath.Join(projectDir, name)
+
+		if entry.IsDir() {
+			os.RemoveAll(dst)
+			if err := copyDir(src, dst); err != nil {
+				log.Printf("SyncBackToCWD: warning: failed to sync dir %s: %v", name, err)
+				continue
+			}
+		} else {
+			if err := copyFile(src, dst); err != nil {
+				log.Printf("SyncBackToCWD: warning: failed to sync file %s: %v", name, err)
+				continue
+			}
+		}
+		log.Printf("SyncBackToCWD: synced %s back to CWD", name)
+		synced++
+	}
+
+	log.Printf("SyncBackToCWD: synced %d entries back to CWD", synced)
+	return nil
+}
+
 // configureGitRemote ensures the origin remote matches the expected URL.
 // It checks the current URL first and only updates if different.
 func configureGitRemote(repoPath, repoName, expectedURL string) {

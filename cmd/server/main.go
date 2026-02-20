@@ -14,6 +14,7 @@ func main() {
 	}
 
 	// Log configuration summary
+	log.Printf("Project dir: %s", cfg.ProjectDir)
 	log.Printf("Repos root: %s", cfg.ReposRoot)
 	log.Printf("Logs root: %s", cfg.LogsRoot)
 	log.Printf("Tmp root: %s", cfg.TmpRoot)

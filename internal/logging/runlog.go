@@ -70,6 +70,7 @@ type AgentIterationLog struct {
 	Error        string
 	DurationSecs int
 	Prompt       string // prompt sent to Claude for this iteration (for debugging)
+	Output       string // Claude's response text
 }
 
 // RunLogger handles markdown run log generation
@@ -184,7 +185,16 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 			if iter.Error != "" {
 				sb.WriteString(fmt.Sprintf("- **Error:** %s\n", iter.Error))
 			}
-			sb.WriteString(fmt.Sprintf("- **Duration:** %ds\n\n", iter.DurationSecs))
+			sb.WriteString(fmt.Sprintf("- **Duration:** %ds\n", iter.DurationSecs))
+			if iter.Output != "" {
+				sb.WriteString("\n<details>\n")
+				sb.WriteString(fmt.Sprintf("<summary>Output (%d chars)</summary>\n\n", len(iter.Output)))
+				sb.WriteString("```\n")
+				sb.WriteString(iter.Output)
+				sb.WriteString("\n```\n\n")
+				sb.WriteString("</details>\n")
+			}
+			sb.WriteString("\n")
 		}
 	}
 

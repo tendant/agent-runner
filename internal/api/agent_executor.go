@@ -40,6 +40,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
 		}
 
+		// Sync non-repo workspace files back to project dir
+		if liveSession.WorkspacePath != "" {
+			if err := h.workspaceManager.SyncBackToCWD(h.config.ProjectDir, liveSession.WorkspacePath, h.config.Agent.SharedRepos); err != nil {
+				log.Printf("Agent %s: warning: failed to sync back to project dir: %v", sessionID, err)
+			}
+		}
+
 		// Write agent audit log
 		snap := liveSession.Snapshot()
 		logData := &logging.AgentLogData{
@@ -60,6 +67,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				Error:        iter.Error,
 				DurationSecs: iter.DurationSecs,
 				Prompt:       iter.Prompt,
+				Output:       iter.Output,
 			})
 		}
 		logData.PlannerPrompt = plannerPromptText
@@ -113,6 +121,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
 	// before cache-back can copy from it.
 
+	// Copy project files into workspace so Claude can access them
+	if err := h.workspaceManager.PopulateCWDFiles(h.config.ProjectDir, workspacePath); err != nil {
+		log.Printf("Agent %s: warning: failed to populate project files: %v", sessionID, err)
+	}
+
 	// Claude runs in the repos/ subdirectory
 	reposPath := filepath.Join(workspacePath, "repos")
 	ctx := context.Background()
@@ -160,16 +173,16 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 
 		// Build prompt: dynamic (with plan/state) or static (backward compat)
-		var iterPrompt string
+		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
-			iterPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message)
+			systemPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message)
 		} else {
-			iterPrompt = promptBuilder.BuildStatic(message)
+			systemPrompt = promptBuilder.BuildStatic(message)
 		}
-		log.Printf("Agent %s: iteration %d prompt (%d chars)", sessionID, i, len(iterPrompt))
+		log.Printf("Agent %s: iteration %d system prompt (%d chars), message (%d chars)", sessionID, i, len(systemPrompt), len(message))
 
-		result := h.executeIteration(ctx, reposPath, iterPrompt, i, deadline)
-		result.Prompt = iterPrompt
+		result := h.executeIteration(ctx, reposPath, systemPrompt, message, i, deadline)
+		result.Prompt = systemPrompt
 		liveSession.AddIteration(result)
 	}
 
@@ -216,13 +229,13 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 // It just runs Claude and records success or error — no git operations.
 func (h *Handlers) executeIteration(
 	ctx context.Context,
-	workspacePath, prompt string,
+	workspacePath, systemPrompt, userMessage string,
 	iteration int,
 	deadline time.Time,
-) agent.IterationResult {
+) (result agent.IterationResult) {
 	iterStart := time.Now()
 
-	result := agent.IterationResult{
+	result = agent.IterationResult{
 		Iteration: iteration,
 	}
 
@@ -245,8 +258,8 @@ func (h *Handlers) executeIteration(
 	iterCtx, cancel := context.WithTimeout(ctx, iterTimeout)
 	defer cancel()
 
-	// Execute Claude Code with resolved prompt
-	execResult, _, execErr := h.executor.ExecuteWithLog(iterCtx, workspacePath, prompt)
+	// Execute Claude Code with system prompt + user message
+	execResult, _, execErr := h.executor.ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)

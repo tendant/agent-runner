@@ -300,15 +300,26 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 		return
 	}
 
-	b.emitThinking(ctx, convID, "Thinking...")
 	b.handleAnalysis(ctx, convID, conv)
 }
 
 func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conversation.Conversation) {
-	b.emitThinking(ctx, convID, "Starting agent...")
+	b.emitThinking(ctx, convID, "Working on it...")
 	conv.SetState(conversation.StateExecuting)
 
-	message := conv.GetUserMessage()
+	// Build message: latest user message + conversation history for context
+	messages := conv.GetMessages()
+	var currentMsg string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			currentMsg = messages[i].Content
+			break
+		}
+	}
+	message := currentMsg
+	if history := conv.GetFormattedHistory(); history != "" {
+		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
+	}
 
 	sessionID, err := b.starter.StartAgent(message)
 	if err != nil {
@@ -317,12 +328,22 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		return
 	}
 
-	b.emitDelta(ctx, convID, fmt.Sprintf("Agent session started: %s\n", sessionID))
+	log.Printf("Stream bot: agent session started: %s", sessionID)
 
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
 		b.pollAndReport(convID, sessionID)
+
+		// Add agent output to conversation history for future context
+		if session, ok := b.starter.GetAgentSession(sessionID); ok {
+			for _, iter := range session.Iterations {
+				if iter.Output != "" {
+					conv.AddMessage("assistant", iter.Output)
+				}
+			}
+		}
+
 		b.convManager.Complete(convID)
 	}()
 }
@@ -368,7 +389,6 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 	defer ticker.Stop()
 
 	ctx := context.Background()
-	reported := 0
 
 	for range ticker.C {
 		session, exists := b.starter.GetAgentSession(sessionID)
@@ -376,11 +396,6 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 			b.emitFinal(ctx, convID, "Session not found.")
 			return
 		}
-
-		for i := reported; i < len(session.Iterations); i++ {
-			b.emitDelta(ctx, convID, formatIteration(session.Iterations[i])+"\n")
-		}
-		reported = len(session.Iterations)
 
 		if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
 			b.emitFinal(ctx, convID, formatFinalResult(session))
@@ -414,37 +429,23 @@ func (b *Bot) emit(ctx context.Context, convID, eventType string, payload interf
 	}
 }
 
-// Formatting helpers (mirrors telegram package)
-
-func formatIteration(iter agent.IterationResult) string {
-	var sb strings.Builder
-	switch iter.Status {
-	case agent.IterationStatusSuccess:
-		fmt.Fprintf(&sb, "Iteration %d: completed", iter.Iteration)
-		if iter.Commit != "" {
-			fmt.Fprintf(&sb, " (commit %s)", iter.Commit)
-		}
-	case agent.IterationStatusNoChanges:
-		fmt.Fprintf(&sb, "Iteration %d: no changes", iter.Iteration)
-	case agent.IterationStatusValidation:
-		fmt.Fprintf(&sb, "Iteration %d: validation failed — %s", iter.Iteration, iter.Error)
-	case agent.IterationStatusError:
-		fmt.Fprintf(&sb, "Iteration %d: error — %s", iter.Iteration, iter.Error)
-	default:
-		fmt.Fprintf(&sb, "Iteration %d: %s", iter.Iteration, iter.Status)
-	}
-	if iter.Output != "" {
-		output := iter.Output
-		if len(output) > 4000 {
-			output = output[:4000] + "\n... (truncated)"
-		}
-		fmt.Fprintf(&sb, "\n\n%s", output)
-	}
-	return sb.String()
-}
+// Formatting helpers
 
 func formatFinalResult(session *agent.Session) string {
 	var sb strings.Builder
+
+	// Include the last iteration's output so the user sees Claude's response
+	if len(session.Iterations) > 0 {
+		lastOutput := session.Iterations[len(session.Iterations)-1].Output
+		if lastOutput != "" {
+			if len(lastOutput) > 4000 {
+				lastOutput = lastOutput[:4000] + "\n... (truncated)"
+			}
+			sb.WriteString(lastOutput)
+			sb.WriteString("\n\n---\n")
+		}
+	}
+
 	if session.Status == agent.SessionStatusCompleted {
 		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
 	} else {

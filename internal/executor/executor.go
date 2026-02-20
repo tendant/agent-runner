@@ -37,12 +37,21 @@ func NewExecutor(model string, maxTurns int) *Executor {
 
 // Execute runs Claude Code CLI with the given instruction in the workspace
 func (e *Executor) Execute(ctx context.Context, workspacePath, instruction string) (*ExecutionResult, error) {
+	return e.ExecuteWithSystemPrompt(ctx, workspacePath, "", instruction)
+}
+
+// ExecuteWithSystemPrompt runs Claude Code CLI with separate system and user prompts.
+// If systemPrompt is empty, only the user prompt (instruction) is sent.
+func (e *Executor) ExecuteWithSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, error) {
 	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "json"}
 	if e.Model != "" {
 		args = append(args, "--model", e.Model)
 	}
 	if e.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(e.MaxTurns))
+	}
+	if systemPrompt != "" {
+		args = append(args, "--system-prompt", systemPrompt)
 	}
 	args = append(args, instruction)
 
@@ -90,7 +99,13 @@ func (e *Executor) Execute(ctx context.Context, workspacePath, instruction strin
 
 // ExecuteWithLog runs Claude Code and returns both result and execution log
 func (e *Executor) ExecuteWithLog(ctx context.Context, workspacePath, instruction string) (*ExecutionResult, string, error) {
-	result, err := e.Execute(ctx, workspacePath, instruction)
+	return e.ExecuteWithLogAndSystemPrompt(ctx, workspacePath, "", instruction)
+}
+
+// ExecuteWithLogAndSystemPrompt runs Claude Code with separate system/user prompts
+// and returns both result and execution log.
+func (e *Executor) ExecuteWithLogAndSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, string, error) {
+	result, err := e.ExecuteWithSystemPrompt(ctx, workspacePath, systemPrompt, instruction)
 
 	var executionLog string
 	if result != nil {

@@ -167,9 +167,19 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 	b.send(tgChatID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
-	// Send the original user message to the agent, not the analyzer's plan text.
-	// The agent prompt template knows how to interpret raw user requests.
-	message := conv.GetUserMessage()
+	// Build message: latest user message + conversation history for context
+	messages := conv.GetMessages()
+	var currentMsg string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			currentMsg = messages[i].Content
+			break
+		}
+	}
+	message := currentMsg
+	if history := conv.GetFormattedHistory(); history != "" {
+		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
+	}
 
 	sessionID, err := b.starter.StartAgent(message)
 	if err != nil {
@@ -185,6 +195,16 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 	go func() {
 		defer b.wg.Done()
 		b.pollAndReport(tgChatID, sessionID)
+
+		// Add agent output to conversation history for future context
+		if session, ok := b.starter.GetAgentSession(sessionID); ok {
+			for _, iter := range session.Iterations {
+				if iter.Output != "" {
+					conv.AddMessage("assistant", iter.Output)
+				}
+			}
+		}
+
 		b.convManager.Complete(chatID)
 	}()
 }

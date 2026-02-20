@@ -108,6 +108,33 @@ func (c *Conversation) GetUserMessage() string {
 	return strings.Join(parts, "\n")
 }
 
+// GetFormattedHistory returns the full conversation history formatted for
+// inclusion in a prompt. Returns empty string if there are fewer than 2 messages
+// (i.e., only the current message exists, so no prior context).
+func (c *Conversation) GetFormattedHistory() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Only the current message — no history to include
+	if len(c.Messages) <= 1 {
+		return ""
+	}
+
+	var sb strings.Builder
+	// Include all messages except the last one (which is the current request)
+	for _, msg := range c.Messages[:len(c.Messages)-1] {
+		switch msg.Role {
+		case "user":
+			sb.WriteString("User: ")
+		case "assistant":
+			sb.WriteString("Assistant: ")
+		}
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
 const conversationIdleTimeout = 30 * time.Minute
 
 // Manager manages active conversations keyed by chat/channel ID.
