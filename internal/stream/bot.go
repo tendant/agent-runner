@@ -335,12 +335,18 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		defer b.wg.Done()
 		b.pollAndReport(convID, sessionID)
 
-		// Add agent output to conversation history for future context
+		// Upload output files and send as message with attachments
 		if session, ok := b.starter.GetAgentSession(sessionID); ok {
+			// Add agent output to conversation history for future context
 			for _, iter := range session.Iterations {
 				if iter.Output != "" {
 					conv.AddMessage("assistant", iter.Output)
 				}
+			}
+
+			// Upload _send/ files
+			if len(session.OutputFiles) > 0 {
+				b.uploadOutputFiles(context.Background(), convID, session)
 			}
 		}
 
@@ -392,6 +398,31 @@ func (b *Bot) handleAnalysis(ctx context.Context, convID string, conv *conversat
 	default:
 		conv.AddMessage("assistant", result.Message)
 		b.emitFinal(ctx, convID, result.Message)
+	}
+}
+
+// uploadOutputFiles uploads output files from the agent session and sends them
+// as a message with file attachments.
+func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *agent.Session) {
+	var fileIDs []string
+	var fileNames []string
+
+	for _, f := range session.OutputFiles {
+		fileID, err := b.client.UploadFile(ctx, convID, f.Name, f.ContentType, f.Data)
+		if err != nil {
+			log.Printf("Stream bot: failed to upload file %s: %v", f.Name, err)
+			continue
+		}
+		log.Printf("Stream bot: uploaded file %s -> %s", f.Name, fileID)
+		fileIDs = append(fileIDs, fileID)
+		fileNames = append(fileNames, f.Name)
+	}
+
+	if len(fileIDs) > 0 {
+		msg := fmt.Sprintf("Generated %d file(s): %s", len(fileIDs), strings.Join(fileNames, ", "))
+		if err := b.client.SendMessage(ctx, convID, msg, fileIDs); err != nil {
+			log.Printf("Stream bot: failed to send message with files: %v", err)
+		}
 	}
 }
 

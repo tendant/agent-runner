@@ -25,6 +25,13 @@ const (
 	IterationStatusError      IterationStatus = "error"
 )
 
+// OutputFile represents a file the agent wants to send back to the user.
+type OutputFile struct {
+	Name        string `json:"name"`
+	Data        []byte `json:"-"`
+	ContentType string `json:"content_type"`
+}
+
 // IterationResult captures the outcome of one iteration
 type IterationResult struct {
 	Iteration    int             `json:"iteration"`
@@ -58,6 +65,7 @@ type Session struct {
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	ConsecutiveFailures  int               `json:"-"`
+	OutputFiles          []OutputFile      `json:"-"`
 	PlanJSON             any               `json:"-"`
 	ReviewJSON           any               `json:"-"`
 
@@ -147,6 +155,13 @@ func (s *Session) SetReviewResult(review any) {
 	s.ReviewJSON = review
 }
 
+// SetOutputFiles stores files collected from the _send/ directory.
+func (s *Session) SetOutputFiles(files []OutputFile) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.OutputFiles = files
+}
+
 // Snapshot returns a deep copy of the session for safe concurrent reading
 func (s *Session) Snapshot() *Session {
 	s.mu.RLock()
@@ -172,6 +187,19 @@ func (s *Session) Snapshot() *Session {
 		ReviewJSON:          s.ReviewJSON,
 	}
 	copy(snap.Iterations, s.Iterations)
+
+	if len(s.OutputFiles) > 0 {
+		snap.OutputFiles = make([]OutputFile, len(s.OutputFiles))
+		for i, f := range s.OutputFiles {
+			dataCopy := make([]byte, len(f.Data))
+			copy(dataCopy, f.Data)
+			snap.OutputFiles[i] = OutputFile{
+				Name:        f.Name,
+				Data:        dataCopy,
+				ContentType: f.ContentType,
+			}
+		}
+	}
 
 	if s.CompletedAt != nil {
 		t := *s.CompletedAt

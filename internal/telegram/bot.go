@@ -331,6 +331,13 @@ func FormatFinalResult(session *agent.Session) string {
 			fmt.Fprintf(&sb, " — %s", session.Error)
 		}
 	}
+	if len(session.OutputFiles) > 0 {
+		var names []string
+		for _, f := range session.OutputFiles {
+			names = append(names, f.Name)
+		}
+		fmt.Fprintf(&sb, "\n\nGenerated files: %s", strings.Join(names, ", "))
+	}
 	return sb.String()
 }
 

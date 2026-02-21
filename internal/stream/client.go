@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -119,6 +120,87 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) (*DownloadedFi
 		Filename:    filename,
 		ContentType: resp.Header.Get("Content-Type"),
 	}, nil
+}
+
+// UploadFile uploads a file to a conversation and returns the file ID.
+func (c *Client) UploadFile(ctx context.Context, conversationID, filename, contentType string, data []byte) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	part, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", fmt.Errorf("write file data: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("close multipart: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/conversations/%s/files", c.serverURL, conversationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("upload file: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode upload response: %w", err)
+	}
+
+	return result.ID, nil
+}
+
+// SendMessage sends a message to a conversation, optionally with file attachments.
+func (c *Client) SendMessage(ctx context.Context, conversationID, content string, fileIDs []string) error {
+	body := map[string]interface{}{
+		"content": content,
+	}
+	if len(fileIDs) > 0 {
+		body["file_ids"] = fileIDs
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal message: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/conversations/%s/messages", c.serverURL, conversationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("send message: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
 
 // StreamEvents opens an SSE connection and returns a channel of events.

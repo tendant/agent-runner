@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,6 +187,15 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		liveSession.AddIteration(result)
 	}
 
+	// Collect output files from _send/ directory
+	sendDir := filepath.Join(reposPath, "_send")
+	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
+		log.Printf("Agent %s: warning: failed to collect _send/ files: %v", sessionID, err)
+	} else if len(outputFiles) > 0 {
+		log.Printf("Agent %s: collected %d output files from _send/", sessionID, len(outputFiles))
+		liveSession.SetOutputFiles(outputFiles)
+	}
+
 	// Phase 3: Reviewer (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
 		log.Printf("Agent %s: running reviewer", sessionID)
@@ -288,4 +298,63 @@ func (h *Handlers) executeIteration(
 	}
 	result.Status = agent.IterationStatusSuccess
 	return result
+}
+
+const (
+	maxOutputFiles     = 20
+	maxOutputTotalSize = 10 << 20 // 10MB
+)
+
+// collectOutputFiles reads files from the _send/ directory and returns them
+// as OutputFile slices. Caps at maxOutputFiles files and maxOutputTotalSize total bytes.
+func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
+	entries, err := os.ReadDir(sendDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read _send/ dir: %w", err)
+	}
+
+	var files []agent.OutputFile
+	var totalSize int64
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if len(files) >= maxOutputFiles {
+			log.Printf("collectOutputFiles: hit file limit (%d), skipping remaining", maxOutputFiles)
+			break
+		}
+
+		path := filepath.Join(sendDir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			log.Printf("collectOutputFiles: skip %s: %v", entry.Name(), err)
+			continue
+		}
+
+		if totalSize+info.Size() > maxOutputTotalSize {
+			log.Printf("collectOutputFiles: skip %s: would exceed %dMB total limit", entry.Name(), maxOutputTotalSize>>20)
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("collectOutputFiles: skip %s: %v", entry.Name(), err)
+			continue
+		}
+
+		contentType := http.DetectContentType(data)
+		totalSize += int64(len(data))
+
+		files = append(files, agent.OutputFile{
+			Name:        entry.Name(),
+			Data:        data,
+			ContentType: contentType,
+		})
+	}
+
+	return files, nil
 }
