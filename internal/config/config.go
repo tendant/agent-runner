@@ -55,7 +55,8 @@ type AgentConfig struct {
 	MaxIterations       int
 	MaxTotalSeconds     int
 	MaxIterationSeconds int
-	PromptFile          string   // Path to prompt template on disk
+	SystemPrompt        string   // Path to base agent prompt (agent.md) — always loaded
+	PromptFile          string   // Path to workflow prompt template (prompt.md) — optional overlay
 	Paths               []string // Comma-separated allowed paths
 	Author              string
 	CommitPrefix        string
@@ -161,6 +162,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.API.Bind = envOrDefault("BIND", cfg.API.Bind)
 	cfg.API.APIKey = envOrDefault("API_KEY", cfg.API.APIKey)
 
+	cfg.Agent.SystemPrompt = envOrDefault("AGENT_SYSTEM_PROMPT", cfg.Agent.SystemPrompt)
 	cfg.Agent.PromptFile = envOrDefault("AGENT_PROMPT_FILE", cfg.Agent.PromptFile)
 	cfg.Agent.Paths = envSliceOrDefault("AGENT_PATHS", cfg.Agent.Paths)
 	cfg.Agent.Author = envOrDefault("AGENT_AUTHOR", cfg.Agent.Author)

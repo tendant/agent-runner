@@ -94,12 +94,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 	}()
 
-	// Resolve prompt: read template file and inject message, or use message directly
-	promptFile := h.config.Agent.PromptFile
-	if promptFile != "" {
-		log.Printf("Agent %s: prompt file: %s", sessionID, promptFile)
-	} else {
-		log.Printf("Agent %s: no prompt file configured, using message directly", sessionID)
+	// Resolve prompt: combine base system prompt (agent.md) + workflow template (prompt.md)
+	if h.config.Agent.SystemPrompt != "" {
+		log.Printf("Agent %s: system prompt: %s", sessionID, h.config.Agent.SystemPrompt)
+	}
+	if h.config.Agent.PromptFile != "" {
+		log.Printf("Agent %s: workflow prompt: %s", sessionID, h.config.Agent.PromptFile)
 	}
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
@@ -202,27 +202,44 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	h.agentManager.CompleteSession(sessionID)
 }
 
-// resolvePrompt reads the prompt template file and injects the message,
-// or returns the message directly if no template is configured.
+// resolvePrompt builds the combined system prompt from base (agent.md) and
+// workflow (prompt.md) files. Returns the message directly if neither is configured.
 func (h *Handlers) resolvePrompt(message string) (string, error) {
-	templatePath := h.config.Agent.PromptFile
-	if templatePath == "" {
+	var parts []string
+
+	// Layer 1: Base system prompt (agent.md)
+	if path := h.config.Agent.SystemPrompt; path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read system prompt %s: %w", path, err)
+		}
+		base := strings.TrimSpace(string(data))
+		if base == "" {
+			return "", fmt.Errorf("system prompt file is empty")
+		}
+		parts = append(parts, base)
+	}
+
+	// Layer 2: Workflow template (prompt.md) with variable substitution
+	if path := h.config.Agent.PromptFile; path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read workflow prompt %s: %w", path, err)
+		}
+		tmpl := strings.TrimSpace(string(data))
+		if tmpl == "" {
+			return "", fmt.Errorf("workflow prompt file is empty")
+		}
+		tmpl = strings.ReplaceAll(tmpl, "{{MESSAGE}}", message)
+		tmpl = strings.ReplaceAll(tmpl, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
+		parts = append(parts, tmpl)
+	}
+
+	if len(parts) == 0 {
 		return message, nil
 	}
 
-	data, err := os.ReadFile(templatePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read prompt template %s: %w", templatePath, err)
-	}
-
-	template := strings.TrimSpace(string(data))
-	if template == "" {
-		return "", fmt.Errorf("prompt template file is empty")
-	}
-
-	result := strings.ReplaceAll(template, "{{MESSAGE}}", message)
-	result = strings.ReplaceAll(result, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
-	return result, nil
+	return strings.Join(parts, "\n\n"), nil
 }
 
 // executeIteration runs a single iteration of the agent loop.
