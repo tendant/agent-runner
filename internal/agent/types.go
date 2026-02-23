@@ -162,6 +162,22 @@ func (s *Session) SetOutputFiles(files []OutputFile) {
 	s.OutputFiles = files
 }
 
+// LastIterationError returns details of the most recent iteration if it was
+// a failure. Returns zero values if there are no iterations or the last one
+// succeeded.
+func (s *Session) LastIterationError() (iterNum int, errMsg string, partialOutput string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.Iterations) == 0 {
+		return 0, "", ""
+	}
+	last := s.Iterations[len(s.Iterations)-1]
+	if last.Status != IterationStatusError && last.Status != IterationStatusValidation {
+		return 0, "", ""
+	}
+	return last.Iteration, last.Error, last.Output
+}
+
 // Snapshot returns a deep copy of the session for safe concurrent reading
 func (s *Session) Snapshot() *Session {
 	s.mu.RLock()

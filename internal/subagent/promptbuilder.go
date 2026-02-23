@@ -19,8 +19,10 @@ func NewPromptBuilder(preamble string) *PromptBuilder {
 }
 
 // Build creates a dynamic prompt for the given iteration, injecting plan
-// progress, workspace state, and iteration metadata.
-func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *PlanResult, iteration int, message string) string {
+// progress, workspace state, and iteration metadata. errorContext, when
+// non-empty, is rendered before the iteration line so Claude can see what
+// went wrong on the previous attempt.
+func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *PlanResult, iteration int, message string, errorContext string) string {
 	state := ReadWorkspaceState(ctx, reposPath)
 
 	var sb strings.Builder
@@ -77,14 +79,23 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 		sb.WriteString("\n```\n\n")
 	}
 
+	// Error context from previous iteration (if any)
+	if errorContext != "" {
+		sb.WriteString(errorContext)
+		sb.WriteString("\n")
+	}
+
 	// Iteration metadata — no workflow instructions here; the preamble drives behavior
 	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n", iteration))
 
 	return sb.String()
 }
 
-// BuildStatic returns the preamble unchanged. Used for backward compatibility
-// when the planner is disabled.
-func (pb *PromptBuilder) BuildStatic(message string) string {
+// BuildStatic returns the preamble, optionally with error context appended.
+// Used for backward compatibility when the planner is disabled.
+func (pb *PromptBuilder) BuildStatic(message string, errorContext string) string {
+	if errorContext != "" {
+		return pb.preamble + "\n\n" + errorContext
+	}
 	return pb.preamble
 }

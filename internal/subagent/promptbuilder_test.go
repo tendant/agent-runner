@@ -11,7 +11,7 @@ import (
 
 func TestPromptBuilder_BuildStatic(t *testing.T) {
 	pb := NewPromptBuilder("You are a helpful assistant.\n\nTask: Do something")
-	result := pb.BuildStatic("ignored message")
+	result := pb.BuildStatic("ignored message", "")
 
 	if result != "You are a helpful assistant.\n\nTask: Do something" {
 		t.Errorf("expected preamble unchanged, got '%s'", result)
@@ -32,7 +32,7 @@ func TestPromptBuilder_Build_WithPlanNoPreamble(t *testing.T) {
 		},
 	}
 
-	result := pb.Build(context.Background(), dir, plan, 2, "fix login")
+	result := pb.Build(context.Background(), dir, plan, 2, "fix login", "")
 
 	if !strings.Contains(result, "Base prompt here") {
 		t.Error("expected preamble in output")
@@ -58,7 +58,7 @@ func TestPromptBuilder_Build_NilPlan(t *testing.T) {
 	dir := t.TempDir()
 
 	pb := NewPromptBuilder("Do the work")
-	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg", "")
 
 	if !strings.Contains(result, "Do the work") {
 		t.Error("expected preamble in output")
@@ -78,7 +78,7 @@ func TestPromptBuilder_Build_WithTodo(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] First task\n- [x] Done task\n"), 0644)
 
 	pb := NewPromptBuilder("preamble")
-	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg", "")
 
 	if !strings.Contains(result, "## Current TODO.md") {
 		t.Error("expected TODO section")
@@ -115,12 +115,46 @@ func TestPromptBuilder_Build_WithGitRepo(t *testing.T) {
 	cmd.Run()
 
 	pb := NewPromptBuilder("preamble")
-	result := pb.Build(context.Background(), dir, nil, 1, "msg")
+	result := pb.Build(context.Background(), dir, nil, 1, "msg", "")
 
 	if !strings.Contains(result, "## Recent Commits") {
 		t.Error("expected commits section")
 	}
 	if !strings.Contains(result, "my-app: ") {
 		t.Error("expected commit with repo prefix")
+	}
+}
+
+func TestPromptBuilder_Build_WithErrorContext(t *testing.T) {
+	dir := t.TempDir()
+
+	pb := NewPromptBuilder("preamble")
+	errCtx := "## Previous Iteration Error (iteration 2)\n\n**Error:** claude execution failed: timeout\n\n**Partial output:**\n```\nsome partial work\n```\n"
+	result := pb.Build(context.Background(), dir, nil, 3, "msg", errCtx)
+
+	if !strings.Contains(result, "## Previous Iteration Error (iteration 2)") {
+		t.Error("expected error context section")
+	}
+	if !strings.Contains(result, "claude execution failed: timeout") {
+		t.Error("expected error message in context")
+	}
+	if !strings.Contains(result, "some partial work") {
+		t.Error("expected partial output in context")
+	}
+	if !strings.Contains(result, "**Iteration:** 3") {
+		t.Error("expected iteration number after error context")
+	}
+}
+
+func TestPromptBuilder_BuildStatic_WithErrorContext(t *testing.T) {
+	pb := NewPromptBuilder("base prompt")
+	errCtx := "## Previous Iteration Error (iteration 1)\n\n**Error:** something broke\n"
+	result := pb.BuildStatic("msg", errCtx)
+
+	if !strings.Contains(result, "base prompt") {
+		t.Error("expected preamble")
+	}
+	if !strings.Contains(result, "## Previous Iteration Error") {
+		t.Error("expected error context appended")
 	}
 }

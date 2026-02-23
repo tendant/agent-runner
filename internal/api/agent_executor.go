@@ -173,12 +173,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			return
 		}
 
+		// Build error context from previous iteration failure (if any)
+		errorContext := ""
+		if iterNum, errMsg, partialOut := liveSession.LastIterationError(); errMsg != "" {
+			errorContext = buildErrorContext(iterNum, errMsg, partialOut)
+		}
+
 		// Build prompt: dynamic (with plan/state) or static (backward compat)
 		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
-			systemPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message)
+			systemPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message, errorContext)
 		} else {
-			systemPrompt = promptBuilder.BuildStatic(message)
+			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
 		}
 		log.Printf("Agent %s: iteration %d system prompt (%d chars), message (%d chars)", sessionID, i, len(systemPrompt), len(message))
 
@@ -290,6 +296,12 @@ func (h *Handlers) executeIteration(
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
+		// Preserve partial output so it can be fed back into the next iteration
+		if execResult != nil && execResult.Output != "" {
+			result.Output = execResult.Output
+		} else if execResult != nil && execResult.RawOutput != "" {
+			result.Output = execResult.RawOutput
+		}
 		return result
 	}
 
@@ -357,4 +369,22 @@ func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
 	}
 
 	return files, nil
+}
+
+const maxPartialOutputChars = 2000
+
+// buildErrorContext formats the last iteration error and partial output as
+// markdown so Claude can see what went wrong and self-correct.
+func buildErrorContext(iterNum int, errMsg, partialOutput string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Previous Iteration Error (iteration %d)\n\n", iterNum))
+	sb.WriteString(fmt.Sprintf("**Error:** %s\n", errMsg))
+	if partialOutput != "" {
+		truncated := partialOutput
+		if len(truncated) > maxPartialOutputChars {
+			truncated = truncated[:maxPartialOutputChars] + "\n... (truncated)"
+		}
+		sb.WriteString(fmt.Sprintf("\n**Partial output:**\n```\n%s\n```\n", truncated))
+	}
+	return sb.String()
 }
