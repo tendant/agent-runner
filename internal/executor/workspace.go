@@ -211,6 +211,9 @@ func (w *WorkspaceManager) PopulateCWDFiles(projectDir, workspacePath string) er
 // SyncBackToCWD copies non-repo files from workspacePath/repos/ back to projectDir.
 // Shared repo directories (already handled by CacheReposBack) are skipped.
 func (w *WorkspaceManager) SyncBackToCWD(projectDir, workspacePath string, sharedRepos []string) error {
+	if projectDir == "" {
+		return nil
+	}
 	reposPath := filepath.Join(workspacePath, "repos")
 	entries, err := os.ReadDir(reposPath)
 	if err != nil {
