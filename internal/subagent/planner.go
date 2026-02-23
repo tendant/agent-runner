@@ -30,6 +30,8 @@ Rules:
 - The summary should capture the goal, not the method
 - The approach should describe the strategy at a high level
 - Steps must cover the FULL workflow from the prompt template, including infrastructure, git operations, and deployment setup
+
+After completing a plan step, update ` + "`_progress.json`" + ` in the workspace root with: {"completed_steps": ["1", "2"]} listing all completed step IDs.
 `
 
 // Planner is a sub-agent that produces a structured plan before the iteration loop.

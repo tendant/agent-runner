@@ -33,6 +33,13 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 
 	// Plan with checkboxes
 	if plan != nil && len(plan.Steps) > 0 {
+		// Read progress file and build set of completed step IDs
+		completedIDs := ReadProgress(reposPath)
+		completedSet := make(map[string]bool, len(completedIDs))
+		for _, id := range completedIDs {
+			completedSet[id] = true
+		}
+
 		sb.WriteString("## Plan (guide only — follow the workflow instructions above)\n\n")
 		if plan.Summary != "" {
 			sb.WriteString(fmt.Sprintf("**Goal:** %s\n", plan.Summary))
@@ -42,7 +49,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 		}
 		for _, step := range plan.Steps {
 			check := " "
-			if step.Done {
+			if step.Done || completedSet[step.ID] {
 				check = "x"
 			}
 			sb.WriteString(fmt.Sprintf("- [%s] %s: %s", check, step.ID, step.Description))

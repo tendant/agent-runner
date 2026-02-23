@@ -146,6 +146,35 @@ func TestPromptBuilder_Build_WithErrorContext(t *testing.T) {
 	}
 }
 
+func TestPromptBuilder_Build_WithProgressFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a progress file marking steps 1 and 3 as completed
+	os.WriteFile(filepath.Join(dir, "_progress.json"), []byte(`{"completed_steps":["1","3"]}`), 0644)
+
+	pb := NewPromptBuilder("preamble")
+	plan := &PlanResult{
+		Summary: "Deploy app",
+		Steps: []PlanStep{
+			{ID: "1", Description: "Clone repo", Done: false},
+			{ID: "2", Description: "Build image", Done: false},
+			{ID: "3", Description: "Push image", Done: false},
+		},
+	}
+
+	result := pb.Build(context.Background(), dir, plan, 3, "deploy", "")
+
+	if !strings.Contains(result, "[x] 1: Clone repo") {
+		t.Error("expected step 1 checked via progress file")
+	}
+	if !strings.Contains(result, "[ ] 2: Build image") {
+		t.Error("expected step 2 unchecked")
+	}
+	if !strings.Contains(result, "[x] 3: Push image") {
+		t.Error("expected step 3 checked via progress file")
+	}
+}
+
 func TestPromptBuilder_BuildStatic_WithErrorContext(t *testing.T) {
 	pb := NewPromptBuilder("base prompt")
 	errCtx := "## Previous Iteration Error (iteration 1)\n\n**Error:** something broke\n"
