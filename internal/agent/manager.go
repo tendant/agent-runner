@@ -9,6 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// queueItem pairs a session with the function to start it.
+type queueItem struct {
+	session   *Session
+	startFunc func(*Session)
+}
+
 // Manager manages agent sessions
 type Manager struct {
 	mu                      sync.RWMutex
@@ -17,11 +23,17 @@ type Manager struct {
 	sessionRetentionSeconds int
 	ctx                     context.Context
 	cancel                  context.CancelFunc
+	queue                   chan *queueItem
+	queueSize               int
 }
 
 // NewManager creates a new agent session manager.
 // sessionRetentionSeconds controls how long completed sessions are kept before cleanup.
-func NewManager(sessionRetentionSeconds int) *Manager {
+// maxQueueSize controls the bounded queue for agent sessions.
+func NewManager(sessionRetentionSeconds, maxQueueSize int) *Manager {
+	if maxQueueSize <= 0 {
+		maxQueueSize = 10
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		sessions:                make(map[string]*Session),
@@ -29,8 +41,11 @@ func NewManager(sessionRetentionSeconds int) *Manager {
 		sessionRetentionSeconds: sessionRetentionSeconds,
 		ctx:                     ctx,
 		cancel:                  cancel,
+		queue:                   make(chan *queueItem, maxQueueSize),
+		queueSize:               maxQueueSize,
 	}
 	go m.cleanupLoop()
+	go m.dispatchLoop()
 	return m
 }
 
@@ -39,7 +54,8 @@ func (m *Manager) Context() context.Context {
 	return m.ctx
 }
 
-// Stop cancels the manager context and stops the cleanup loop.
+// Stop cancels the manager context, stops the cleanup and dispatch loops,
+// and drains any queued sessions.
 // Safe to call multiple times.
 func (m *Manager) Stop() {
 	m.cancel()
@@ -82,6 +98,56 @@ func (m *Manager) cleanupExpiredSessions() {
 	}
 }
 
+// dispatchLoop reads items from the queue one at a time and runs them
+// synchronously, ensuring only one agent runs at a time.
+func (m *Manager) dispatchLoop() {
+	for {
+		select {
+		case <-m.stopCh:
+			m.drainQueue()
+			return
+		case item := <-m.queue:
+			// Transition from queued to running
+			item.session.mu.Lock()
+			if item.session.Status == SessionStatusQueued {
+				item.session.Status = SessionStatusRunning
+				item.session.StartedAt = time.Now()
+			}
+			item.session.mu.Unlock()
+
+			// Run synchronously — blocks until done, then next item dequeues
+			item.startFunc(item.session)
+		}
+	}
+}
+
+// drainQueue fails all remaining queued sessions on shutdown.
+func (m *Manager) drainQueue() {
+	for {
+		select {
+		case item := <-m.queue:
+			item.session.Fail("agent queue shut down")
+		default:
+			return
+		}
+	}
+}
+
+// Enqueue adds a session to the dispatch queue. Returns an error if the queue is full.
+func (m *Manager) Enqueue(session *Session, startFunc func(*Session)) error {
+	select {
+	case m.queue <- &queueItem{session: session, startFunc: startFunc}:
+		return nil
+	default:
+		return fmt.Errorf("agent queue is full")
+	}
+}
+
+// QueueLength returns the current number of items waiting in the queue.
+func (m *Manager) QueueLength() int {
+	return len(m.queue)
+}
+
 // CreateSession creates a new agent session
 func (m *Manager) CreateSession(message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()
@@ -94,7 +160,7 @@ func (m *Manager) CreateSession(message string, paths []string, author, commitPr
 		CommitMessagePrefix: commitPrefix,
 		MaxIterations:       maxIter,
 		MaxTotalSeconds:     maxSeconds,
-		Status:              SessionStatusRunning,
+		Status:              SessionStatusQueued,
 		Iterations:          []IterationResult{},
 		StartedAt:           time.Now(),
 	}

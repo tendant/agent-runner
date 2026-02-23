@@ -795,7 +795,7 @@ fi
 	}
 }
 
-func TestE2E_AgentProjectLocking(t *testing.T) {
+func TestE2E_AgentQueueing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping E2E test in short mode")
 	}
@@ -824,13 +824,20 @@ func TestE2E_AgentProjectLocking(t *testing.T) {
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
 
-	// Slow mock claude — sleeps 2s per iteration so the lock is held long enough
+	// Slow mock claude — sleeps 2s per iteration so the first agent holds the queue
+	counterFile := filepath.Join(baseDir, "counter")
+	os.WriteFile(counterFile, []byte("0"), 0644)
+
 	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := `#!/bin/bash
+	mockScript := fmt.Sprintf(`#!/bin/bash
+COUNTER_FILE="%s"
+count=$(cat "$COUNTER_FILE")
+next=$((count + 1))
+echo "$next" > "$COUNTER_FILE"
 sleep 2
-echo "content" > "output.txt"
+echo "content for $next" > "output_${next}.txt"
 echo '{"result":"Done"}'
-`
+`, counterFile)
 	os.WriteFile(mockClaude, []byte(mockScript), 0755)
 	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
@@ -867,7 +874,7 @@ echo '{"result":"Done"}'
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// Start first agent — should succeed
+	// Start first agent — should get 202 with status queued
 	code1, resp1 := postAgent(t, ts.URL, map[string]interface{}{
 		"message": "First task",
 	})
@@ -875,11 +882,14 @@ echo '{"result":"Done"}'
 		t.Fatalf("expected 202 for first agent, got %d: %v", code1, resp1)
 	}
 	sessionID1, _ := resp1["session_id"].(string)
+	if resp1["status"] != "queued" {
+		t.Errorf("expected first agent status 'queued', got %v", resp1["status"])
+	}
 
-	// Give first agent time to acquire the lock (but not finish — each iteration takes 2s)
+	// Give first agent time to start running (dispatch picks it up)
 	time.Sleep(500 * time.Millisecond)
 
-	// Start second agent — should also get 202 (accepted) but fail due to lock
+	// Start second agent while first is running — should also get 202 queued
 	code2, resp2 := postAgent(t, ts.URL, map[string]interface{}{
 		"message": "Second task",
 	})
@@ -887,22 +897,27 @@ echo '{"result":"Done"}'
 		t.Fatalf("expected 202 for second agent, got %d: %v", code2, resp2)
 	}
 	sessionID2, _ := resp2["session_id"].(string)
-
-	// Poll second agent — should fail with lock error
-	result2 := pollAgentUntilDone(t, ts.URL, sessionID2, 30*time.Second)
-	status2, _ := result2["status"].(string)
-	if status2 != "failed" {
-		t.Fatalf("expected second agent to fail due to lock, got status %s", status2)
-	}
-	errMsg, _ := result2["error"].(string)
-	if !strings.Contains(errMsg, "lock") {
-		t.Errorf("expected lock-related error, got: %s", errMsg)
+	if resp2["status"] != "queued" {
+		t.Errorf("expected second agent status 'queued', got %v", resp2["status"])
 	}
 
-	// First agent should complete normally
+	// Verify second agent is queued while first is running
+	_, pollResp2 := getAgent(t, ts.URL, sessionID2)
+	status2, _ := pollResp2["status"].(string)
+	if status2 != "queued" {
+		t.Logf("second agent status: %s (may have already started if first finished fast)", status2)
+	}
+
+	// Both should complete successfully (second runs after first)
 	result1 := pollAgentUntilDone(t, ts.URL, sessionID1, 60*time.Second)
 	status1, _ := result1["status"].(string)
 	if status1 != "completed" {
 		t.Fatalf("expected first agent to complete, got %s: error=%v", status1, result1["error"])
+	}
+
+	result2 := pollAgentUntilDone(t, ts.URL, sessionID2, 60*time.Second)
+	finalStatus2, _ := result2["status"].(string)
+	if finalStatus2 != "completed" {
+		t.Fatalf("expected second agent to complete, got %s: error=%v", finalStatus2, result2["error"])
 	}
 }

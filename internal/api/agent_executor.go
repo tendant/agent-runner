@@ -31,18 +31,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	startTime := time.Now()
 	deadline := startTime.Add(time.Duration(maxSeconds) * time.Second)
 
-	// Acquire project lock so concurrent agent sessions don't clobber each other
-	if err := h.jobManager.AcquireProjectLock("_agent", sessionID); err != nil {
-		h.agentManager.FailSession(sessionID, "Failed to acquire project lock: "+err.Error())
-		return
-	}
-
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 
 	defer func() {
-		h.jobManager.ReleaseProjectLock("_agent", sessionID)
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)

@@ -65,6 +65,7 @@ type AgentConfig struct {
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
+	MaxQueueSize        int      // Maximum number of queued agent sessions
 }
 
 // TelegramConfig contains Telegram bot settings
@@ -125,6 +126,7 @@ func DefaultConfig() *Config {
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
 		PlannerEnabled:      true,
+		MaxQueueSize:        10,
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
@@ -175,6 +177,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
+	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)

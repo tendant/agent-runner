@@ -37,7 +37,7 @@ type Server struct {
 func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentManager := agent.NewManager(cfg.JobRetentionSeconds)
+	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor(cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -48,6 +48,7 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Setup router
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", handlers.HandleHealth)
 	mux.HandleFunc("/run", handlers.HandleRun)
 	mux.HandleFunc("/job/", handlers.HandleGetJob)
 	mux.HandleFunc("/status/", handlers.HandleGetStatus)
@@ -201,6 +202,10 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // apiKeyMiddleware validates the X-API-Key header
 func apiKeyMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		providedKey := r.Header.Get("X-API-Key")
 		if providedKey != apiKey {
 			w.Header().Set("Content-Type", "application/json")

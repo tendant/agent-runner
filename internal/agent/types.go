@@ -9,6 +9,7 @@ import (
 type SessionStatus string
 
 const (
+	SessionStatusQueued    SessionStatus = "queued"
 	SessionStatusRunning   SessionStatus = "running"
 	SessionStatusStopping  SessionStatus = "stopping"
 	SessionStatusCompleted SessionStatus = "completed"

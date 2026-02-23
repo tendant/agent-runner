@@ -49,7 +49,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentManager := agent.NewManager(3600)
+	agentManager := agent.NewManager(3600, 10)
 	t.Cleanup(agentManager.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -167,7 +167,7 @@ func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600)
+	agentMgr := agent.NewManager(3600, 10)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -283,7 +283,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600)
+	agentMgr := agent.NewManager(3600, 10)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -470,7 +470,7 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600)
+	agentMgr := agent.NewManager(3600, 10)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("", 0)
@@ -572,5 +572,53 @@ func TestApiKeyMiddleware_Missing(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+// --- Health endpoint tests ---
+
+func TestHandleHealth_ReturnsOK(t *testing.T) {
+	env := setupTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	env.handlers.HandleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	resp := parseJSON(w)
+	if resp["status"] != "ok" {
+		t.Errorf("expected status ok, got %v", resp["status"])
+	}
+}
+
+func TestHandleHealth_MethodNotAllowed(t *testing.T) {
+	env := setupTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/health", nil)
+	w := httptest.NewRecorder()
+	env.handlers.HandleHealth(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestApiKeyMiddleware_HealthBypass(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	handler := apiKeyMiddleware("test-key", inner)
+
+	// Request to /health without API key should pass through
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for /health without API key, got %d", w.Code)
 	}
 }

@@ -1,13 +1,14 @@
 package agent
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
 
 func newTestManager(t *testing.T, retentionSeconds int) *Manager {
 	t.Helper()
-	mgr := NewManager(retentionSeconds)
+	mgr := NewManager(retentionSeconds, 10)
 	t.Cleanup(mgr.Stop)
 	return mgr
 }
@@ -22,11 +23,28 @@ func TestCreateSession_Success(t *testing.T) {
 	if session.ID == "" {
 		t.Error("expected non-empty session ID")
 	}
-	if session.Status != SessionStatusRunning {
-		t.Errorf("expected status running, got %s", session.Status)
+	if session.Status != SessionStatusQueued {
+		t.Errorf("expected status queued, got %s", session.Status)
 	}
 	if session.MaxIterations != 10 {
 		t.Errorf("expected max_iterations 10, got %d", session.MaxIterations)
+	}
+}
+
+func TestCreateSession_StatusQueued(t *testing.T) {
+	mgr := newTestManager(t, 3600)
+
+	session, err := mgr.CreateSession("test", nil, "", "", 1, 60)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if session.Status != SessionStatusQueued {
+		t.Errorf("expected status queued, got %s", session.Status)
+	}
+
+	snap, _ := mgr.GetSession(session.ID)
+	if snap.Status != SessionStatusQueued {
+		t.Errorf("expected snapshot status queued, got %s", snap.Status)
 	}
 }
 
@@ -57,6 +75,11 @@ func TestStopSession(t *testing.T) {
 	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
+
+	// Manually set to running so RequestStop transitions to stopping
+	session.mu.Lock()
+	session.Status = SessionStatusRunning
+	session.mu.Unlock()
 
 	if err := mgr.StopSession(session.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -185,7 +208,7 @@ func TestSession_ToResponse(t *testing.T) {
 	if resp["session_id"] != session.ID {
 		t.Errorf("unexpected session_id: %v", resp["session_id"])
 	}
-	if resp["status"] != SessionStatusRunning {
+	if resp["status"] != SessionStatusQueued {
 		t.Errorf("unexpected status: %v", resp["status"])
 	}
 	if resp["current_iteration"] != 1 {
@@ -250,7 +273,7 @@ func TestCleanupExpiredSessions(t *testing.T) {
 }
 
 func TestStop_Idempotent(t *testing.T) {
-	mgr := NewManager(3600)
+	mgr := NewManager(3600, 10)
 
 	// Should not panic when called multiple times
 	mgr.Stop()
@@ -259,7 +282,7 @@ func TestStop_Idempotent(t *testing.T) {
 }
 
 func TestContext_CancelledAfterStop(t *testing.T) {
-	mgr := NewManager(3600)
+	mgr := NewManager(3600, 10)
 
 	ctx := mgr.Context()
 	if ctx.Err() != nil {
@@ -271,4 +294,138 @@ func TestContext_CancelledAfterStop(t *testing.T) {
 	if ctx.Err() == nil {
 		t.Error("expected context to be cancelled after Stop")
 	}
+}
+
+func TestEnqueue_DispatchesAndRuns(t *testing.T) {
+	mgr := newTestManager(t, 3600)
+
+	session, _ := mgr.CreateSession("test", nil, "", "", 1, 60)
+	if session.Status != SessionStatusQueued {
+		t.Fatalf("expected queued, got %s", session.Status)
+	}
+
+	done := make(chan struct{})
+	err := mgr.Enqueue(session, func(s *Session) {
+		defer close(done)
+		// By the time startFunc runs, status should be running
+		s.mu.RLock()
+		st := s.Status
+		s.mu.RUnlock()
+		if st != SessionStatusRunning {
+			t.Errorf("expected running inside startFunc, got %s", st)
+		}
+	})
+	if err != nil {
+		t.Fatalf("unexpected enqueue error: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("startFunc was not called within timeout")
+	}
+}
+
+func TestEnqueue_QueueFull(t *testing.T) {
+	mgr := NewManager(3600, 1)
+	defer mgr.Stop()
+
+	// Block the dispatch loop by filling the queue with a long-running item
+	blocker := make(chan struct{})
+	s1, _ := mgr.CreateSession("first", nil, "", "", 1, 60)
+	err := mgr.Enqueue(s1, func(s *Session) {
+		<-blocker // block until released
+	})
+	if err != nil {
+		t.Fatalf("first enqueue should succeed: %v", err)
+	}
+
+	// Wait for dispatch loop to pick up s1 (it will block inside startFunc)
+	time.Sleep(100 * time.Millisecond)
+
+	// Now fill the 1-slot buffer
+	s2, _ := mgr.CreateSession("second", nil, "", "", 1, 60)
+	err = mgr.Enqueue(s2, func(s *Session) {})
+	if err != nil {
+		t.Fatalf("second enqueue should succeed (fills buffer): %v", err)
+	}
+
+	// Third should fail — queue is full
+	s3, _ := mgr.CreateSession("third", nil, "", "", 1, 60)
+	err = mgr.Enqueue(s3, func(s *Session) {})
+	if err == nil {
+		t.Error("expected queue full error")
+	}
+
+	close(blocker)
+}
+
+func TestStop_DrainsQueue(t *testing.T) {
+	mgr := NewManager(3600, 10)
+
+	// Block dispatch so items stay queued
+	blocker := make(chan struct{})
+	s1, _ := mgr.CreateSession("blocking", nil, "", "", 1, 60)
+	mgr.Enqueue(s1, func(s *Session) {
+		<-blocker
+	})
+	// Wait for dispatch to pick up s1
+	time.Sleep(100 * time.Millisecond)
+
+	// Enqueue more items that will be in the channel buffer
+	var sessions []*Session
+	for i := 0; i < 3; i++ {
+		s, _ := mgr.CreateSession("queued", nil, "", "", 1, 60)
+		mgr.Enqueue(s, func(s *Session) {})
+		sessions = append(sessions, s)
+	}
+
+	// Unblock s1 and stop
+	close(blocker)
+	time.Sleep(50 * time.Millisecond)
+	mgr.Stop()
+
+	// Give drain a moment to process
+	time.Sleep(100 * time.Millisecond)
+
+	// Queued sessions that didn't run should be failed
+	// (Some may have run between unblock and stop, so just check they're not queued)
+	for _, s := range sessions {
+		snap, _ := mgr.GetSession(s.ID)
+		if snap.Status == SessionStatusQueued {
+			t.Errorf("expected session %s to not be queued after drain", s.ID)
+		}
+	}
+}
+
+func TestQueueLength(t *testing.T) {
+	mgr := NewManager(3600, 10)
+	defer mgr.Stop()
+
+	if mgr.QueueLength() != 0 {
+		t.Errorf("expected queue length 0, got %d", mgr.QueueLength())
+	}
+
+	// Block dispatch
+	blocker := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	s1, _ := mgr.CreateSession("blocking", nil, "", "", 1, 60)
+	mgr.Enqueue(s1, func(s *Session) {
+		wg.Done()
+		<-blocker
+	})
+	wg.Wait() // wait for dispatch to pick up s1
+
+	// Enqueue two more — they stay in the buffer
+	s2, _ := mgr.CreateSession("q1", nil, "", "", 1, 60)
+	mgr.Enqueue(s2, func(s *Session) {})
+	s3, _ := mgr.CreateSession("q2", nil, "", "", 1, 60)
+	mgr.Enqueue(s3, func(s *Session) {})
+
+	if mgr.QueueLength() != 2 {
+		t.Errorf("expected queue length 2, got %d", mgr.QueueLength())
+	}
+
+	close(blocker)
 }

@@ -415,6 +415,15 @@ func summarizeAction(instruction string) string {
 	return instruction
 }
 
+// HandleHealth handles GET /health — returns ok for load balancers / monitoring
+func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -45,7 +45,10 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	}
 
 	sessionID := session.ID
-	go h.executeAgent(session)
+	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {
+		h.agentManager.FailSession(sessionID, "agent queue is full")
+		return "", fmt.Errorf("agent queue is full")
+	}
 
 	return sessionID, nil
 }
