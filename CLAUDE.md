@@ -4,60 +4,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is **Claude Code v1 - Local API Wrapper**, an HTTP API that wraps Claude Code CLI to enable programmatic, controlled automation of Git repositories with safety guardrails. The project is currently in the design phase with a comprehensive specification in DESIGN.md but no implementation yet.
-
-**Core purpose:** A minimal, local-first, stateless API that allows trusted users to invoke Claude Code against projects with built-in safety checks, path allowlisting, and automatic Git push/commit workflows.
+**Agent Runner** — a Go HTTP server that wraps Claude Code CLI for autonomous, iterative task execution against Git repositories. Supports agent mode with planning/review phases, conversational interfaces via Telegram and agent-stream, and a REST API for one-shot jobs.
 
 ## Architecture
 
-### Design Principles
-- Local-first: projects exist on disk
-- Stateless API: no database required
-- In-memory execution state only
-- One request = one async execution
-- Direct push to Git (Gitea)
-- Explicit guardrails over heavy isolation
+### Packages
 
-### Directory Structure (Planned)
-```
-/claude-wrapper/
-  ├── api/              # HTTP API server
-  ├── repos/            # Persistent repo cache (jobs working copies, agent cache)
-  ├── logs/             # Markdown execution logs (audit trail)
-  ├── tmp/              # Ephemeral per-request workspaces
-  └── config.yaml       # Configuration file
-```
+| Package | Responsibility |
+|---------|---------------|
+| `api/` | HTTP server, routing, handlers, agent executor loop |
+| `agent/` | Session types, state management, thread-safe snapshots |
+| `config/` | Configuration loading from environment variables |
+| `conversation/` | Conversational state machine (gathering → confirming → executing) |
+| `executor/` | Claude Code CLI invocation and output parsing |
+| `git/` | Git operations (fetch, commit, push) |
+| `jobs/` | Job state, project locking (shared between jobs and agents) |
+| `logging/` | Markdown audit log writer |
+| `stream/` | agent-stream bot (SSE client, file upload/download) |
+| `subagent/` | Planner, reviewer, and dynamic prompt builder |
+| `telegram/` | Telegram bot |
 
-### Execution Flow
-1. `POST /run` returns job ID immediately (202 Accepted)
-2. Background: workspace preparation (git fetch, reset, clean)
-3. Copy to isolated `tmp/job-uuid/` workspace
-4. Execute Claude Code CLI in non-interactive mode
-5. Validate diff against path allowlist
-6. Git commit + push (with retry logic)
-7. Write markdown audit log
-8. Client polls `GET /job/{id}` for result
+### Key Patterns
+- All state in-memory; Markdown audit logs in `logs/` for persistence
+- Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety
+- Background goroutines for async execution; capture fields to locals before spawning
+- Project locking shared between jobs and agents via `jobs.Manager`
+- Agent workspace uses `repos/` subdirectory; repos cached back after completion
+- Two-layer prompt system: base `agent.md` + workflow `prompt.md` with template variables
 
-### Key API Endpoints
-- `POST /run` - Initiate execution (returns job ID)
-- `GET /job/{job_id}` - Poll for status/results
-- `GET /status/{project}` - Check project lock status
-- `GET /projects` - List available projects
+### Agent Execution Flow
+1. Resolve prompt (combine base system prompt + workflow template)
+2. Prepare workspace (clone/copy shared repos, populate project files)
+3. **Phase 1**: Planner sub-agent (optional) — produces step-by-step plan
+4. **Phase 2**: Iteration loop — run Claude repeatedly with dynamic prompts
+5. Collect output files from `_send/` directory
+6. **Phase 3**: Reviewer sub-agent (optional) — evaluates completeness
+7. Cache repos back, sync files, write audit log, cleanup workspace
 
-### Safety Mechanisms
-- Per-project mutex prevents concurrent Git operations
-- Each job gets ephemeral tmp/ workspace
-- Path allowlisting validates diff against `paths` parameter
-- Blocked paths: `.git/`, `.github/`, `.gitlab-ci.yml`, secrets patterns
+### API Endpoints
+- `POST /run` — one-shot job (returns job ID)
+- `GET /job/{id}` — poll job status
+- `POST /agent` — start agent session
+- `GET /agent/{id}` — poll session status
+- `POST /agent/{id}/stop` — request graceful stop
+- `GET /projects` — list projects
+- `GET /status/{project}` — check lock status
 
-### Job Status Flow
-`queued` → `running` → `validating` → `pushing` → `completed` (or `failed`)
+## Development
 
-## Implementation Notes
-
-The design is language-agnostic but references Go types in examples. Claude Code is invoked via:
+### Build and Run
 ```bash
-claude --print --dangerously-skip-permissions --output-format json "instruction"
+go build -o agent-runner ./cmd/server
+cp .env.example .env  # configure
+./agent-runner
 ```
 
-See DESIGN.md for complete API specifications, error codes, configuration schema, and upgrade path.
+### Testing
+```bash
+go test -race ./...
+```
+
+- E2E tests in `e2e/` use mock `claude` bash scripts prepended to PATH
+- Mock scripts use external counter files for iteration tracking
+- Always run with `-race` flag
+
+### Configuration
+All via environment variables. See `.env.example` for the full list. Key vars:
+- `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` — two-layer prompt paths
+- `AGENT_SHARED_REPOS` — repos pre-populated in every workspace
+- `STREAM_*` / `TELEGRAM_*` — bot configuration
+
+See DESIGN.md for the full architecture document.
