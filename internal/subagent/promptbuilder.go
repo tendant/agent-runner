@@ -60,6 +60,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 		}
 		sb.WriteString("\n")
 		sb.WriteString("**Important:** The instructions above are the source of truth. This plan is a rough guide — do not skip steps from the workflow instructions even if they are not listed in the plan.\n\n")
+		sb.WriteString("After completing a plan step, update `_progress.json` in the workspace root with: `{\"completed_steps\": [\"1\", \"2\"]}` listing all completed step IDs.\n\n")
 	}
 
 	// TODO.md contents

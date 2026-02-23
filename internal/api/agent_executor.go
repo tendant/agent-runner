@@ -197,6 +197,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
+
+		// Update completed steps from progress file
+		if completedSteps := subagent.ReadProgress(reposPath); len(completedSteps) > 0 {
+			liveSession.SetCompletedSteps(completedSteps)
+		}
 	}
 
 	// Collect output files from _send/ directory

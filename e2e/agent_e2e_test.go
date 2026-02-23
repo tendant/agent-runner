@@ -641,3 +641,156 @@ fi
 		t.Error("expected Plan section in audit log")
 	}
 }
+
+func TestE2E_AgentWithPlannerProgress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	baseDir := t.TempDir()
+
+	bareRepo := filepath.Join(baseDir, "origin.git")
+	reposDir := filepath.Join(baseDir, "repos")
+	logsDir := filepath.Join(baseDir, "logs")
+	tmpDir := filepath.Join(baseDir, "tmp")
+	mockBinDir := filepath.Join(baseDir, "mock-bin")
+
+	os.MkdirAll(reposDir, 0755)
+	os.MkdirAll(logsDir, 0755)
+	os.MkdirAll(tmpDir, 0755)
+	os.MkdirAll(mockBinDir, 0755)
+
+	runCmd(t, "", "git", "init", "--bare", bareRepo)
+
+	projectPath := filepath.Join(reposDir, "test-project")
+	runCmd(t, "", "git", "clone", bareRepo, projectPath)
+	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
+	runCmd(t, projectPath, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
+	runCmd(t, projectPath, "git", "add", "-A")
+	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
+	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+
+	// Mock claude:
+	// Invocation 1 (planner): returns plan with 3 steps
+	// Invocation 2+: writes _progress.json with cumulative step IDs and creates work files
+	counterFile := filepath.Join(baseDir, "counter")
+	os.WriteFile(counterFile, []byte("0"), 0644)
+
+	mockClaude := filepath.Join(mockBinDir, "claude")
+	mockScript := fmt.Sprintf(`#!/bin/bash
+COUNTER_FILE="%s"
+count=$(cat "$COUNTER_FILE")
+next=$((count + 1))
+echo "$next" > "$COUNTER_FILE"
+
+if [ "$next" -eq 1 ]; then
+    # Planner: return plan with 3 steps
+    echo '{"result":"{\"summary\":\"Build feature\",\"steps\":[{\"id\":\"1\",\"description\":\"Create module\",\"done\":false},{\"id\":\"2\",\"description\":\"Add tests\",\"done\":false},{\"id\":\"3\",\"description\":\"Update docs\",\"done\":false}],\"approach\":\"Incremental\"}"}'
+elif [ "$next" -eq 2 ]; then
+    echo '{"completed_steps":["1"]}' > _progress.json
+    echo "module code" > module.txt
+    echo '{"result":"Done step 1"}'
+elif [ "$next" -eq 3 ]; then
+    echo '{"completed_steps":["1","2"]}' > _progress.json
+    echo "test code" > tests.txt
+    echo '{"result":"Done step 2"}'
+else
+    echo '{"completed_steps":["1","2","3"]}' > _progress.json
+    echo "docs" > docs.txt
+    echo '{"result":"Done step 3"}'
+fi
+`, counterFile)
+
+	os.WriteFile(mockClaude, []byte(mockScript), 0755)
+	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+
+	cfg := &config.Config{
+		ReposRoot:                reposDir,
+		LogsRoot:                 logsDir,
+		TmpRoot:                  tmpDir,
+		AllowedProjects:          []string{},
+		MaxRuntimeSeconds:        60,
+		MaxConcurrentJobs:        5,
+		GitPushRetries:           1,
+		GitPushRetryDelaySeconds: 0,
+		Validation: config.ValidationConfig{
+			BlockBinaryFiles: false,
+			BlockedPaths:     []string{},
+		},
+		API: config.APIConfig{
+			Bind:   "127.0.0.1:0",
+			APIKey: "",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       3,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Paths:               []string{"*.txt", "*.md", "*.json"},
+			Author:              "test-agent",
+			CommitPrefix:        "[agent]",
+			PlannerEnabled:      true,
+		},
+		JobRetentionSeconds:     3600,
+		StartupCleanupStaleJobs: false,
+	}
+
+	srv := api.NewServer(cfg)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	code, resp := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "Build the feature",
+	})
+
+	if code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %v", code, resp)
+	}
+
+	sessionID := resp["session_id"].(string)
+	result := pollAgentUntilDone(t, ts.URL, sessionID, 60*time.Second)
+
+	status, _ := result["status"].(string)
+	if status != "completed" {
+		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+
+	// Verify plan is present
+	if _, hasPlan := result["plan"]; !hasPlan {
+		t.Error("expected plan in response")
+	}
+
+	// Verify completed_steps contains the final step IDs
+	completedRaw, hasSteps := result["completed_steps"]
+	if !hasSteps {
+		t.Fatal("expected completed_steps in response")
+	}
+	completedSlice, ok := completedRaw.([]interface{})
+	if !ok {
+		t.Fatalf("expected completed_steps to be array, got %T", completedRaw)
+	}
+
+	// Should have all 3 steps completed
+	if len(completedSlice) != 3 {
+		t.Fatalf("expected 3 completed steps, got %d: %v", len(completedSlice), completedSlice)
+	}
+
+	stepIDs := make(map[string]bool)
+	for _, s := range completedSlice {
+		stepIDs[s.(string)] = true
+	}
+	for _, id := range []string{"1", "2", "3"} {
+		if !stepIDs[id] {
+			t.Errorf("expected step %s in completed_steps", id)
+		}
+	}
+
+	// Verify iterations ran
+	iterations, ok := result["iterations"].([]interface{})
+	if !ok {
+		t.Fatal("expected iterations in response")
+	}
+	if len(iterations) != 3 {
+		t.Fatalf("expected 3 iterations, got %d", len(iterations))
+	}
+}

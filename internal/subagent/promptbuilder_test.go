@@ -175,6 +175,27 @@ func TestPromptBuilder_Build_WithProgressFile(t *testing.T) {
 	}
 }
 
+func TestPromptBuilder_Build_IncludesProgressInstruction(t *testing.T) {
+	dir := t.TempDir()
+
+	pb := NewPromptBuilder("preamble")
+	plan := &PlanResult{
+		Summary: "Do stuff",
+		Steps: []PlanStep{
+			{ID: "1", Description: "Step one"},
+		},
+	}
+
+	result := pb.Build(context.Background(), dir, plan, 1, "msg", "")
+
+	if !strings.Contains(result, "_progress.json") {
+		t.Error("expected progress instruction mentioning _progress.json")
+	}
+	if !strings.Contains(result, "completed_steps") {
+		t.Error("expected progress instruction mentioning completed_steps")
+	}
+}
+
 func TestPromptBuilder_BuildStatic_WithErrorContext(t *testing.T) {
 	pb := NewPromptBuilder("base prompt")
 	errCtx := "## Previous Iteration Error (iteration 1)\n\n**Error:** something broke\n"

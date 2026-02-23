@@ -38,8 +38,9 @@ func NewReviewer(exec *executor.Executor) *Reviewer {
 // Review runs the reviewer against the workspace and returns a structured review.
 func (r *Reviewer) Review(ctx context.Context, reposPath, message string, plan *PlanResult) (*ReviewResult, error) {
 	state := ReadWorkspaceState(ctx, reposPath)
+	completedIDs := ReadProgress(reposPath)
 
-	prompt := r.buildPrompt(state, message, plan)
+	prompt := r.buildPrompt(state, message, plan, completedIDs)
 
 	result, err := r.executor.Execute(ctx, reposPath, prompt)
 	if err != nil {
@@ -60,7 +61,12 @@ func (r *Reviewer) Review(ctx context.Context, reposPath, message string, plan *
 	return review, nil
 }
 
-func (r *Reviewer) buildPrompt(state WorkspaceState, message string, plan *PlanResult) string {
+func (r *Reviewer) buildPrompt(state WorkspaceState, message string, plan *PlanResult, completedIDs []string) string {
+	completedSet := make(map[string]bool, len(completedIDs))
+	for _, id := range completedIDs {
+		completedSet[id] = true
+	}
+
 	var sb strings.Builder
 
 	sb.WriteString(reviewerPrompt)
@@ -74,7 +80,7 @@ func (r *Reviewer) buildPrompt(state WorkspaceState, message string, plan *PlanR
 		sb.WriteString("Plan that was followed:\n")
 		for _, step := range plan.Steps {
 			check := " "
-			if step.Done {
+			if step.Done || completedSet[step.ID] {
 				check = "x"
 			}
 			sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", check, step.ID, step.Description))

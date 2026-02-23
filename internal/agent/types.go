@@ -67,6 +67,7 @@ type Session struct {
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	ConsecutiveFailures  int               `json:"-"`
 	OutputFiles          []OutputFile      `json:"-"`
+	CompletedSteps       []string          `json:"-"`
 	PlanJSON             any               `json:"-"`
 	ReviewJSON           any               `json:"-"`
 
@@ -156,6 +157,13 @@ func (s *Session) SetReviewResult(review any) {
 	s.ReviewJSON = review
 }
 
+// SetCompletedSteps updates the list of completed plan step IDs.
+func (s *Session) SetCompletedSteps(steps []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.CompletedSteps = steps
+}
+
 // SetOutputFiles stores files collected from the _send/ directory.
 func (s *Session) SetOutputFiles(files []OutputFile) {
 	s.mu.Lock()
@@ -200,6 +208,7 @@ func (s *Session) Snapshot() *Session {
 		CompletedAt:         s.CompletedAt,
 		Error:               s.Error,
 		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
+		CompletedSteps:      append([]string{}, s.CompletedSteps...),
 		PlanJSON:            s.PlanJSON,
 		ReviewJSON:          s.ReviewJSON,
 	}
@@ -247,6 +256,9 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if len(s.Iterations) > 0 {
 		resp["iterations"] = s.Iterations
+	}
+	if len(s.CompletedSteps) > 0 {
+		resp["completed_steps"] = s.CompletedSteps
 	}
 	if s.PlanJSON != nil {
 		resp["plan"] = s.PlanJSON
