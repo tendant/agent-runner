@@ -15,13 +15,8 @@ tmp/
 *.swo
 
 # E2E test artifacts
-e2e/iteration_*.txt
-e2e/output.txt
-e2e/work_*.txt
-e2e/module.txt
-e2e/tests.txt
-e2e/docs.txt
-e2e/_progress.json
+e2e/*.txt
+e2e/*.json
 
 # Binary
 agent-runner
