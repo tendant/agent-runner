@@ -23,20 +23,21 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
-	config      *config.Config
-	httpServer  *http.Server
-	handlers    *Handlers
-	telegramBot *telegram.Bot
-	streamBot   *stream.Bot
-	jobManager  *jobs.Manager
-	convManager *conversation.Manager
+	config       *config.Config
+	httpServer   *http.Server
+	handlers     *Handlers
+	telegramBot  *telegram.Bot
+	streamBot    *stream.Bot
+	jobManager   *jobs.Manager
+	agentManager *agent.Manager
+	convManager  *conversation.Manager
 }
 
 // NewServer creates a new API server
 func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentManager := agent.NewManager()
+	agentManager := agent.NewManager(cfg.JobRetentionSeconds)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor(cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
@@ -83,11 +84,12 @@ func NewServer(cfg *config.Config) *Server {
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-		handlers:    handlers,
-		telegramBot: telegramBot,
-		streamBot:   streamBot,
-		jobManager:  jobManager,
-		convManager: convManager,
+		handlers:     handlers,
+		telegramBot:  telegramBot,
+		streamBot:    streamBot,
+		jobManager:   jobManager,
+		agentManager: agentManager,
+		convManager:  convManager,
 	}
 }
 
@@ -123,6 +125,7 @@ func (s *Server) Start() error {
 			s.telegramBot.Stop()
 		}
 		s.convManager.Stop()
+		s.agentManager.Stop()
 		s.jobManager.Stop()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -31,11 +31,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	startTime := time.Now()
 	deadline := startTime.Add(time.Duration(maxSeconds) * time.Second)
 
+	// Acquire project lock so concurrent agent sessions don't clobber each other
+	if err := h.jobManager.AcquireProjectLock("_agent", sessionID); err != nil {
+		h.agentManager.FailSession(sessionID, "Failed to acquire project lock: "+err.Error())
+		return
+	}
+
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 
 	defer func() {
+		h.jobManager.ReleaseProjectLock("_agent", sessionID)
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
@@ -56,7 +63,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			Duration:     int(time.Since(startTime).Seconds()),
 			Message:      message,
 			Author:       authorName,
-			TotalCommits: snap.TotalCommits,
+			SuccessfulIterations: snap.SuccessfulIterations,
 			Error:        snap.Error,
 		}
 		for _, iter := range snap.Iterations {
@@ -129,7 +136,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Claude runs in the repos/ subdirectory
 	reposPath := filepath.Join(workspacePath, "repos")
-	ctx := context.Background()
+	ctx := h.agentManager.Context()
 
 	log.Printf("Agent %s: resolved preamble (%d chars)", sessionID, len(preamble))
 
@@ -153,9 +160,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// Phase 2: Iteration loop with dynamic prompts
 	promptBuilder := subagent.NewPromptBuilder(preamble)
 	for i := 1; i <= maxIter; i++ {
-		// Check stop signal
+		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
 			log.Printf("Agent %s: stop requested, exiting after iteration %d", sessionID, i-1)
+			break
+		}
+		if ctx.Err() != nil {
+			log.Printf("Agent %s: context cancelled, exiting after iteration %d", sessionID, i-1)
 			break
 		}
 

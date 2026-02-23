@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -10,14 +11,74 @@ import (
 
 // Manager manages agent sessions
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
+	mu                      sync.RWMutex
+	sessions                map[string]*Session
+	stopCh                  chan struct{}
+	sessionRetentionSeconds int
+	ctx                     context.Context
+	cancel                  context.CancelFunc
 }
 
-// NewManager creates a new agent session manager
-func NewManager() *Manager {
-	return &Manager{
-		sessions: make(map[string]*Session),
+// NewManager creates a new agent session manager.
+// sessionRetentionSeconds controls how long completed sessions are kept before cleanup.
+func NewManager(sessionRetentionSeconds int) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &Manager{
+		sessions:                make(map[string]*Session),
+		stopCh:                  make(chan struct{}),
+		sessionRetentionSeconds: sessionRetentionSeconds,
+		ctx:                     ctx,
+		cancel:                  cancel,
+	}
+	go m.cleanupLoop()
+	return m
+}
+
+// Context returns the manager's context, which is cancelled on Stop().
+func (m *Manager) Context() context.Context {
+	return m.ctx
+}
+
+// Stop cancels the manager context and stops the cleanup loop.
+// Safe to call multiple times.
+func (m *Manager) Stop() {
+	m.cancel()
+	select {
+	case <-m.stopCh:
+		// already closed
+	default:
+		close(m.stopCh)
+	}
+}
+
+func (m *Manager) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.cleanupExpiredSessions()
+		}
+	}
+}
+
+func (m *Manager) cleanupExpiredSessions() {
+	cutoff := time.Now().Add(-time.Duration(m.sessionRetentionSeconds) * time.Second)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, session := range m.sessions {
+		session.mu.RLock()
+		completedAt := session.CompletedAt
+		session.mu.RUnlock()
+
+		if completedAt != nil && completedAt.Before(cutoff) {
+			delete(m.sessions, id)
+		}
 	}
 }
 

@@ -58,7 +58,7 @@ type Session struct {
 	MaxTotalSeconds      int               `json:"max_total_seconds"`
 	Status               SessionStatus     `json:"status"`
 	CurrentIteration     int               `json:"current_iteration"`
-	TotalCommits         int               `json:"total_commits"`
+	SuccessfulIterations int               `json:"successful_iterations"`
 	Iterations           []IterationResult `json:"iterations"`
 	StartedAt            time.Time         `json:"started_at"`
 	CompletedAt          *time.Time        `json:"completed_at,omitempty"`
@@ -99,7 +99,7 @@ func (s *Session) AddIteration(result IterationResult) {
 	s.CurrentIteration = result.Iteration
 
 	if result.Status == IterationStatusSuccess {
-		s.TotalCommits++
+		s.SuccessfulIterations++
 		s.ConsecutiveFailures = 0
 	} else if result.Status == IterationStatusNoChanges {
 		s.ConsecutiveFailures = 0
@@ -202,7 +202,7 @@ func (s *Session) Snapshot() *Session {
 		MaxTotalSeconds:     s.MaxTotalSeconds,
 		Status:              s.Status,
 		CurrentIteration:    s.CurrentIteration,
-		TotalCommits:        s.TotalCommits,
+		SuccessfulIterations: s.SuccessfulIterations,
 		Iterations:          make([]IterationResult, len(s.Iterations)),
 		StartedAt:           s.StartedAt,
 		CompletedAt:         s.CompletedAt,
@@ -242,7 +242,7 @@ func (s *Session) ToResponse() map[string]any {
 		"session_id":        s.ID,
 		"status":            s.Status,
 		"current_iteration": s.CurrentIteration,
-		"total_commits":     s.TotalCommits,
+		"successful_iterations": s.SuccessfulIterations,
 		"max_iterations":    s.MaxIterations,
 		"elapsed_seconds":   s.ElapsedSeconds,
 		"started_at":        s.StartedAt.Format(time.RFC3339),

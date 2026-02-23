@@ -54,7 +54,7 @@ type AgentLogData struct {
 	Message       string
 	Author        string
 	Iterations    []AgentIterationLog
-	TotalCommits  int
+	SuccessfulIterations int
 	Error         string
 	Plan          string // JSON string of planner output (if enabled)
 	Review        string // JSON string of reviewer output (if enabled)
@@ -137,7 +137,7 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 	if data.Duration > 0 {
 		sb.WriteString(fmt.Sprintf("**Duration:** %ds  \n", data.Duration))
 	}
-	sb.WriteString(fmt.Sprintf("**Total Commits:** %d\n\n", data.TotalCommits))
+	sb.WriteString(fmt.Sprintf("**Successful Iterations:** %d\n\n", data.SuccessfulIterations))
 
 	if data.Error != "" {
 		sb.WriteString("## Error\n\n")

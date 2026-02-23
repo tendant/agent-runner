@@ -2,10 +2,18 @@ package agent
 
 import (
 	"testing"
+	"time"
 )
 
+func newTestManager(t *testing.T, retentionSeconds int) *Manager {
+	t.Helper()
+	mgr := NewManager(retentionSeconds)
+	t.Cleanup(mgr.Stop)
+	return mgr
+}
+
 func TestCreateSession_Success(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, err := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	if err != nil {
@@ -23,7 +31,7 @@ func TestCreateSession_Success(t *testing.T) {
 }
 
 func TestGetSession_Exists(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	created, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
@@ -37,7 +45,7 @@ func TestGetSession_Exists(t *testing.T) {
 }
 
 func TestGetSession_NotFound(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	_, exists := mgr.GetSession("nonexistent")
 	if exists {
@@ -46,7 +54,7 @@ func TestGetSession_NotFound(t *testing.T) {
 }
 
 func TestStopSession(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
@@ -61,7 +69,7 @@ func TestStopSession(t *testing.T) {
 }
 
 func TestStopSession_NotFound(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	if err := mgr.StopSession("nonexistent"); err == nil {
 		t.Error("expected error for nonexistent session")
@@ -69,7 +77,7 @@ func TestStopSession_NotFound(t *testing.T) {
 }
 
 func TestCompleteSession(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.CompleteSession(session.ID)
@@ -84,7 +92,7 @@ func TestCompleteSession(t *testing.T) {
 }
 
 func TestFailSession(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	mgr.FailSession(session.ID, "something went wrong")
@@ -99,7 +107,7 @@ func TestFailSession(t *testing.T) {
 }
 
 func TestSession_AddIteration(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 
@@ -116,8 +124,8 @@ func TestSession_AddIteration(t *testing.T) {
 	if snap.CurrentIteration != 1 {
 		t.Errorf("expected iteration 1, got %d", snap.CurrentIteration)
 	}
-	if snap.TotalCommits != 1 {
-		t.Errorf("expected 1 commit, got %d", snap.TotalCommits)
+	if snap.SuccessfulIterations != 1 {
+		t.Errorf("expected 1 successful iteration, got %d", snap.SuccessfulIterations)
 	}
 	if len(snap.Iterations) != 1 {
 		t.Fatalf("expected 1 iteration, got %d", len(snap.Iterations))
@@ -128,7 +136,7 @@ func TestSession_AddIteration(t *testing.T) {
 }
 
 func TestSession_ConsecutiveFailures(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
@@ -160,7 +168,7 @@ func TestSession_ConsecutiveFailures(t *testing.T) {
 }
 
 func TestSession_ToResponse(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
@@ -183,13 +191,13 @@ func TestSession_ToResponse(t *testing.T) {
 	if resp["current_iteration"] != 1 {
 		t.Errorf("unexpected current_iteration: %v", resp["current_iteration"])
 	}
-	if resp["total_commits"] != 1 {
-		t.Errorf("unexpected total_commits: %v", resp["total_commits"])
+	if resp["successful_iterations"] != 1 {
+		t.Errorf("unexpected successful_iterations: %v", resp["successful_iterations"])
 	}
 }
 
 func TestSession_StopRequested(t *testing.T) {
-	mgr := NewManager()
+	mgr := newTestManager(t, 3600)
 
 	session, _ := mgr.CreateSession("fix the bug", []string{"src/"}, "bot", "[agent]", 10, 300)
 	live, _ := mgr.GetSessionDirect(session.ID)
@@ -201,5 +209,66 @@ func TestSession_StopRequested(t *testing.T) {
 	live.RequestStop()
 	if !live.StopRequested() {
 		t.Error("stop should be requested after RequestStop")
+	}
+}
+
+func TestCleanupExpiredSessions(t *testing.T) {
+	mgr := newTestManager(t, 1) // 1 second retention
+
+	// Create two sessions and complete them
+	s1, _ := mgr.CreateSession("task 1", nil, "", "", 1, 60)
+	s2, _ := mgr.CreateSession("task 2", nil, "", "", 1, 60)
+	s3, _ := mgr.CreateSession("task 3", nil, "", "", 1, 60) // still running
+
+	mgr.CompleteSession(s1.ID)
+	mgr.CompleteSession(s2.ID)
+
+	// Backdate the CompletedAt on s1 so it appears expired
+	live1, _ := mgr.GetSessionDirect(s1.ID)
+	live1.mu.Lock()
+	past := time.Now().Add(-10 * time.Second)
+	live1.CompletedAt = &past
+	live1.mu.Unlock()
+
+	// Run cleanup
+	mgr.cleanupExpiredSessions()
+
+	// s1 should be removed (expired)
+	if _, exists := mgr.GetSession(s1.ID); exists {
+		t.Error("expected expired session s1 to be removed")
+	}
+
+	// s2 should still exist (completed just now, within retention)
+	if _, exists := mgr.GetSession(s2.ID); !exists {
+		t.Error("expected recently completed session s2 to still exist")
+	}
+
+	// s3 should still exist (still running)
+	if _, exists := mgr.GetSession(s3.ID); !exists {
+		t.Error("expected running session s3 to still exist")
+	}
+}
+
+func TestStop_Idempotent(t *testing.T) {
+	mgr := NewManager(3600)
+
+	// Should not panic when called multiple times
+	mgr.Stop()
+	mgr.Stop()
+	mgr.Stop()
+}
+
+func TestContext_CancelledAfterStop(t *testing.T) {
+	mgr := NewManager(3600)
+
+	ctx := mgr.Context()
+	if ctx.Err() != nil {
+		t.Error("expected context to be active before Stop")
+	}
+
+	mgr.Stop()
+
+	if ctx.Err() == nil {
+		t.Error("expected context to be cancelled after Stop")
 	}
 }

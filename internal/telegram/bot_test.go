@@ -95,7 +95,7 @@ func TestFormatFinalResult_Completed(t *testing.T) {
 	now := time.Now()
 	session := &agent.Session{
 		Status:         agent.SessionStatusCompleted,
-		TotalCommits:   7,
+		SuccessfulIterations: 7,
 		ElapsedSeconds: 120,
 		CompletedAt:    &now,
 		Iterations:     make([]agent.IterationResult, 5),

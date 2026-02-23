@@ -794,3 +794,115 @@ fi
 		t.Fatalf("expected 3 iterations, got %d", len(iterations))
 	}
 }
+
+func TestE2E_AgentProjectLocking(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping E2E test in short mode")
+	}
+
+	baseDir := t.TempDir()
+
+	bareRepo := filepath.Join(baseDir, "origin.git")
+	reposDir := filepath.Join(baseDir, "repos")
+	logsDir := filepath.Join(baseDir, "logs")
+	tmpDir := filepath.Join(baseDir, "tmp")
+	mockBinDir := filepath.Join(baseDir, "mock-bin")
+
+	os.MkdirAll(reposDir, 0755)
+	os.MkdirAll(logsDir, 0755)
+	os.MkdirAll(tmpDir, 0755)
+	os.MkdirAll(mockBinDir, 0755)
+
+	runCmd(t, "", "git", "init", "--bare", bareRepo)
+
+	projectPath := filepath.Join(reposDir, "test-project")
+	runCmd(t, "", "git", "clone", bareRepo, projectPath)
+	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
+	runCmd(t, projectPath, "git", "config", "user.name", "Test")
+	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
+	runCmd(t, projectPath, "git", "add", "-A")
+	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
+	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+
+	// Slow mock claude — sleeps 2s per iteration so the lock is held long enough
+	mockClaude := filepath.Join(mockBinDir, "claude")
+	mockScript := `#!/bin/bash
+sleep 2
+echo "content" > "output.txt"
+echo '{"result":"Done"}'
+`
+	os.WriteFile(mockClaude, []byte(mockScript), 0755)
+	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+
+	cfg := &config.Config{
+		ReposRoot:    reposDir,
+		LogsRoot:        logsDir,
+		TmpRoot:         tmpDir,
+		AllowedProjects: []string{},
+		MaxRuntimeSeconds: 60,
+		MaxConcurrentJobs: 5,
+		GitPushRetries:    1,
+		GitPushRetryDelaySeconds: 0,
+		Validation: config.ValidationConfig{
+			BlockBinaryFiles: false,
+			BlockedPaths:     []string{},
+		},
+		API: config.APIConfig{
+			Bind:   "127.0.0.1:0",
+			APIKey: "",
+		},
+		Agent: config.AgentConfig{
+			MaxIterations:       3,
+			MaxTotalSeconds:     60,
+			MaxIterationSeconds: 30,
+			Paths:               []string{"*.txt", "*.md"},
+			Author:              "test-agent",
+			CommitPrefix:        "[agent]",
+		},
+		JobRetentionSeconds:     3600,
+		StartupCleanupStaleJobs: false,
+	}
+
+	srv := api.NewServer(cfg)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Start first agent — should succeed
+	code1, resp1 := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "First task",
+	})
+	if code1 != http.StatusAccepted {
+		t.Fatalf("expected 202 for first agent, got %d: %v", code1, resp1)
+	}
+	sessionID1, _ := resp1["session_id"].(string)
+
+	// Give first agent time to acquire the lock (but not finish — each iteration takes 2s)
+	time.Sleep(500 * time.Millisecond)
+
+	// Start second agent — should also get 202 (accepted) but fail due to lock
+	code2, resp2 := postAgent(t, ts.URL, map[string]interface{}{
+		"message": "Second task",
+	})
+	if code2 != http.StatusAccepted {
+		t.Fatalf("expected 202 for second agent, got %d: %v", code2, resp2)
+	}
+	sessionID2, _ := resp2["session_id"].(string)
+
+	// Poll second agent — should fail with lock error
+	result2 := pollAgentUntilDone(t, ts.URL, sessionID2, 30*time.Second)
+	status2, _ := result2["status"].(string)
+	if status2 != "failed" {
+		t.Fatalf("expected second agent to fail due to lock, got status %s", status2)
+	}
+	errMsg, _ := result2["error"].(string)
+	if !strings.Contains(errMsg, "lock") {
+		t.Errorf("expected lock-related error, got: %s", errMsg)
+	}
+
+	// First agent should complete normally
+	result1 := pollAgentUntilDone(t, ts.URL, sessionID1, 60*time.Second)
+	status1, _ := result1["status"].(string)
+	if status1 != "completed" {
+		t.Fatalf("expected first agent to complete, got %s: error=%v", status1, result1["error"])
+	}
+}
