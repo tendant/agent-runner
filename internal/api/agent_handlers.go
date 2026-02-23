@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -52,6 +53,12 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Capture for response before goroutine
 	sessionID := session.ID
+
+	preview := req.Message
+	if len(preview) > 80 {
+		preview = preview[:80] + "..."
+	}
+	slog.Info("agent session started", "session_id", sessionID, "message_len", len(req.Message), "message", preview)
 
 	// Start agent loop in background
 	go h.executeAgent(session)
