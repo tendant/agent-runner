@@ -36,6 +36,7 @@ type OutputFile struct {
 type IterationResult struct {
 	Iteration    int             `json:"iteration"`
 	Status       IterationStatus `json:"status"`
+	Retry        bool            `json:"retry,omitempty"` // true if this iteration retried after a previous failure
 	Commit       string          `json:"commit,omitempty"`
 	ChangedFiles []string        `json:"changed_files,omitempty"`
 	Output       string          `json:"output,omitempty"` // Claude's result text

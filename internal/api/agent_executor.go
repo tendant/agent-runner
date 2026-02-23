@@ -168,8 +168,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		// Check consecutive failures
 		consecutiveFails := liveSession.GetConsecutiveFailures()
 		if consecutiveFails >= maxConsecutiveFailures {
-			log.Printf("Agent %s: %d consecutive failures, aborting", sessionID, consecutiveFails)
-			h.agentManager.FailSession(sessionID, fmt.Sprintf("aborted after %d consecutive failures", consecutiveFails))
+			_, lastErr, _ := liveSession.LastIterationError()
+			failMsg := fmt.Sprintf("aborted after %d consecutive failures", consecutiveFails)
+			if lastErr != "" {
+				failMsg += ": " + lastErr
+			}
+			log.Printf("Agent %s: %s", sessionID, failMsg)
+			h.agentManager.FailSession(sessionID, failMsg)
 			return
 		}
 
@@ -190,6 +195,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 		result := h.executeIteration(ctx, reposPath, systemPrompt, message, i, deadline)
 		result.Prompt = systemPrompt
+		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
 	}
 
