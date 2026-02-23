@@ -14,6 +14,11 @@ tmp/
 *.swp
 *.swo
 
+# E2E test artifacts
+e2e/iteration_*.txt
+e2e/output.txt
+e2e/work_*.txt
+
 # Binary
 agent-runner
 server
