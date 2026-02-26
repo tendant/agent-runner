@@ -73,6 +73,19 @@ func (b *Bot) Start(ctx context.Context) error {
 	return nil
 }
 
+// SendNotification sends a message to all configured conversations as the bot.
+// Intended for external systems (monitoring, cron jobs, etc.) to post messages.
+func (b *Bot) SendNotification(ctx context.Context, message string) error {
+	var lastErr error
+	for _, convID := range b.convIDs {
+		if err := b.client.SendMessage(ctx, convID, message, nil); err != nil {
+			log.Printf("Stream bot: failed to notify %s: %v", convID, err)
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
 // Stop gracefully shuts down the bot.
 func (b *Bot) Stop() {
 	if b.cancel != nil {

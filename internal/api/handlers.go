@@ -18,6 +18,11 @@ import (
 	"github.com/agent-runner/agent-runner/internal/logging"
 )
 
+// Notifier can send messages to configured chat channels.
+type Notifier interface {
+	SendNotification(ctx context.Context, message string) error
+}
+
 // Handlers contains all HTTP handlers
 type Handlers struct {
 	config           *config.Config
@@ -28,6 +33,7 @@ type Handlers struct {
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
+	notifier         Notifier
 }
 
 // NewHandlers creates a new handlers instance
@@ -51,6 +57,11 @@ func NewHandlers(
 		workspaceManager: workspaceManager,
 		runLogger:        runLogger,
 	}
+}
+
+// SetNotifier sets the notifier used by HandleNotify. Called after bot initialization.
+func (h *Handlers) SetNotifier(n Notifier) {
+	h.notifier = n
 }
 
 // RunRequest represents the POST /run request body
@@ -413,6 +424,42 @@ func summarizeAction(instruction string) string {
 		return strings.Join(words[:4], " ")
 	}
 	return instruction
+}
+
+// HandleNotify handles POST /notify — sends a message to all configured stream conversations.
+// External systems can use this for monitoring alerts, scheduled job notifications, etc.
+func (h *Handlers) HandleNotify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+	if req.Message == "" {
+		h.writeError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+
+	if h.notifier == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "stream bot not configured")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := h.notifier.SendNotification(ctx, req.Message); err != nil {
+		h.writeError(w, http.StatusBadGateway, "failed to send notification: "+err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }
 
 // HandleHealth handles GET /health — returns ok for load balancers / monitoring

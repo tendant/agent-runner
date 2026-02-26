@@ -49,6 +49,7 @@ func NewServer(cfg *config.Config) *Server {
 	// Setup router
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handlers.HandleHealth)
+	mux.HandleFunc("/notify", handlers.HandleNotify)
 	mux.HandleFunc("/run", handlers.HandleRun)
 	mux.HandleFunc("/job/", handlers.HandleGetJob)
 	mux.HandleFunc("/status/", handlers.HandleGetStatus)
@@ -75,6 +76,9 @@ func NewServer(cfg *config.Config) *Server {
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
 	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
+	if streamBot != nil {
+		handlers.SetNotifier(streamBot)
+	}
 
 	return &Server{
 		config: cfg,
