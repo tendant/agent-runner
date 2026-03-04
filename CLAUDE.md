@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Background goroutines for async execution; capture fields to locals before spawning
 - Project locking shared between jobs and agents via `jobs.Manager`
 - Agent workspace uses `repos/` subdirectory; repos cached back after completion
-- Two-layer prompt system: base `agent.md` + workflow `prompt.md` with template variables
+- Template-based prompt system: embedded defaults in `template/defaults/` merged with user overrides in memory dir; `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` are seeded into the memory dir at startup
 
 ### Agent Execution Flow
 1. Resolve prompt (combine base system prompt + workflow template)
@@ -70,7 +70,7 @@ go test -race ./...
 
 ### Configuration
 All via environment variables. See `.env.example` for the full list. Key vars:
-- `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` — two-layer prompt paths
+- `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` — prompt files seeded into the template system at startup
 - `AGENT_SHARED_REPOS` — repos pre-populated in every workspace
 - `STREAM_*` / `TELEGRAM_*` — bot configuration
 

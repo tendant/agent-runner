@@ -259,11 +259,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 // resolvePrompt builds the combined system prompt using the template system
 // (embedded defaults + optional user overrides from the memory directory).
 func (h *Handlers) resolvePrompt(message string) (string, error) {
-	return h.resolveTemplatePrompt(message)
-}
-
-// resolveTemplatePrompt composes the prompt from the template system.
-func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1)
 	memoryDir := h.config.MemoryDir
 

@@ -272,6 +272,74 @@ func TestRefreshDefaults_NoOpWithoutMemoryDir(t *testing.T) {
 	}
 }
 
+func TestSeedPromptFile_NoFrontmatter(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "memory")
+	src := filepath.Join(t.TempDir(), "prompt.md")
+	os.WriteFile(src, []byte("You are a helpful agent."), 0644)
+
+	if err := SeedPromptFile(dir, src, "prompt.md"); err != nil {
+		t.Fatalf("SeedPromptFile error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "prompt.md"))
+	if err != nil {
+		t.Fatalf("read seeded file: %v", err)
+	}
+	content := string(data)
+	if content != "---\nread_when: always\npriority: 100\n---\nYou are a helpful agent." {
+		t.Errorf("unexpected content:\n%s", content)
+	}
+}
+
+func TestSeedPromptFile_WithFrontmatter(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "memory")
+	src := filepath.Join(t.TempDir(), "prompt.md")
+	original := "---\npriority: 50\nread_when: boot\n---\nCustom prompt."
+	os.WriteFile(src, []byte(original), 0644)
+
+	if err := SeedPromptFile(dir, src, "prompt.md"); err != nil {
+		t.Fatalf("SeedPromptFile error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "prompt.md"))
+	if string(data) != original {
+		t.Errorf("should preserve existing frontmatter, got:\n%s", string(data))
+	}
+}
+
+func TestSeedPromptFile_OverwritesExisting(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("old content"), 0644)
+
+	src := filepath.Join(t.TempDir(), "prompt.md")
+	os.WriteFile(src, []byte("new content"), 0644)
+
+	if err := SeedPromptFile(dir, src, "prompt.md"); err != nil {
+		t.Fatalf("SeedPromptFile error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, "prompt.md"))
+	if string(data) == "old content" {
+		t.Error("should overwrite existing file")
+	}
+}
+
+func TestSeedPromptFile_EmptyInputs(t *testing.T) {
+	if err := SeedPromptFile("", "/some/path", "x.md"); err != nil {
+		t.Errorf("empty memoryDir should be no-op, got: %v", err)
+	}
+	if err := SeedPromptFile("/some/dir", "", "x.md"); err != nil {
+		t.Errorf("empty srcPath should be no-op, got: %v", err)
+	}
+}
+
+func TestSeedPromptFile_MissingSrc(t *testing.T) {
+	dir := t.TempDir()
+	if err := SeedPromptFile(dir, "/nonexistent/file.md", "prompt.md"); err == nil {
+		t.Error("expected error for missing source file")
+	}
+}
+
 func TestLoadFromDir_SkipsMemoryMD(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Memory"), 0644)
