@@ -1,0 +1,186 @@
+package template
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	files, err := LoadDefaults()
+	if err != nil {
+		t.Fatalf("LoadDefaults() error: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected embedded defaults, got none")
+	}
+
+	// Verify well-known files are present
+	names := make(map[string]bool)
+	for _, f := range files {
+		names[f.Name] = true
+	}
+	for _, name := range []string{"IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "BOOT.md", "HEARTBEAT.md"} {
+		if !names[name] {
+			t.Errorf("missing default template: %s", name)
+		}
+	}
+}
+
+func TestLoadDefaults_Priorities(t *testing.T) {
+	files, _ := LoadDefaults()
+	for _, f := range files {
+		if f.Name == "IDENTITY.md" && f.Meta.Priority != 10 {
+			t.Errorf("IDENTITY.md priority = %d, want 10", f.Meta.Priority)
+		}
+		if f.Name == "SOUL.md" && f.Meta.Priority != 20 {
+			t.Errorf("SOUL.md priority = %d, want 20", f.Meta.Priority)
+		}
+	}
+}
+
+func TestLoadFromDir_NonExistent(t *testing.T) {
+	files, err := LoadFromDir("/nonexistent/path")
+	if err != nil {
+		t.Fatalf("unexpected error for nonexistent dir: %v", err)
+	}
+	if files != nil {
+		t.Errorf("expected nil, got %d files", len(files))
+	}
+}
+
+func TestLoadFromDir_Empty(t *testing.T) {
+	files, err := LoadFromDir("")
+	if err != nil {
+		t.Fatalf("unexpected error for empty dir: %v", err)
+	}
+	if files != nil {
+		t.Errorf("expected nil, got %d files", len(files))
+	}
+}
+
+func TestLoadFromDir_WithOverride(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+title: Custom Soul
+read_when: always
+priority: 20
+---
+
+# My Custom Soul
+
+Be creative and bold.`
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte(content), 0644)
+
+	files, err := LoadFromDir(dir)
+	if err != nil {
+		t.Fatalf("LoadFromDir error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+	if files[0].Meta.Title != "Custom Soul" {
+		t.Errorf("title = %q, want Custom Soul", files[0].Meta.Title)
+	}
+}
+
+func TestMergeTemplates_Override(t *testing.T) {
+	defaults := []TemplateFile{
+		{Name: "SOUL.md", Meta: TemplateMeta{Title: "Default Soul", Priority: 20, ReadWhen: "always"}, Body: "default"},
+		{Name: "IDENTITY.md", Meta: TemplateMeta{Title: "Identity", Priority: 10, ReadWhen: "always"}, Body: "identity"},
+	}
+	overrides := []TemplateFile{
+		{Name: "SOUL.md", Meta: TemplateMeta{Title: "Custom Soul", Priority: 20, ReadWhen: "always"}, Body: "custom"},
+	}
+
+	merged := MergeTemplates(defaults, overrides)
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 merged, got %d", len(merged))
+	}
+
+	for _, f := range merged {
+		if f.Name == "SOUL.md" && f.Body != "custom" {
+			t.Errorf("SOUL.md should be overridden, got body=%q", f.Body)
+		}
+	}
+}
+
+func TestMergeTemplates_ExtraUserFile(t *testing.T) {
+	defaults := []TemplateFile{
+		{Name: "IDENTITY.md", Meta: TemplateMeta{Priority: 10, ReadWhen: "always"}, Body: "id"},
+	}
+	overrides := []TemplateFile{
+		{Name: "CUSTOM.md", Meta: TemplateMeta{Priority: 100, ReadWhen: "always"}, Body: "custom"},
+	}
+
+	merged := MergeTemplates(defaults, overrides)
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 merged, got %d", len(merged))
+	}
+}
+
+func TestFilterByPhase_Boot(t *testing.T) {
+	templates := []TemplateFile{
+		{Name: "IDENTITY.md", Meta: TemplateMeta{ReadWhen: "always"}},
+		{Name: "BOOT.md", Meta: TemplateMeta{ReadWhen: "boot"}},
+		{Name: "BOOTSTRAP.md", Meta: TemplateMeta{ReadWhen: "first_run"}},
+		{Name: "HEARTBEAT.md", Meta: TemplateMeta{ReadWhen: "heartbeat"}},
+	}
+
+	// Boot without first_run
+	result := FilterByPhase(templates, PhaseBoot, false)
+	if len(result) != 2 { // always + boot
+		t.Errorf("boot (no first_run): expected 2, got %d", len(result))
+	}
+
+	// Boot with first_run
+	result = FilterByPhase(templates, PhaseBoot, true)
+	if len(result) != 3 { // always + boot + first_run
+		t.Errorf("boot (first_run): expected 3, got %d", len(result))
+	}
+}
+
+func TestFilterByPhase_Heartbeat(t *testing.T) {
+	templates := []TemplateFile{
+		{Name: "IDENTITY.md", Meta: TemplateMeta{ReadWhen: "always"}},
+		{Name: "BOOT.md", Meta: TemplateMeta{ReadWhen: "boot"}},
+		{Name: "HEARTBEAT.md", Meta: TemplateMeta{ReadWhen: "heartbeat"}},
+	}
+
+	result := FilterByPhase(templates, PhaseHeartbeat, false)
+	if len(result) != 2 { // always + heartbeat
+		t.Errorf("heartbeat: expected 2, got %d", len(result))
+	}
+}
+
+func TestSortByPriority(t *testing.T) {
+	templates := []TemplateFile{
+		{Name: "C.md", Meta: TemplateMeta{Priority: 50}},
+		{Name: "A.md", Meta: TemplateMeta{Priority: 10}},
+		{Name: "B.md", Meta: TemplateMeta{Priority: 30}},
+	}
+	SortByPriority(templates)
+
+	if templates[0].Name != "A.md" || templates[1].Name != "B.md" || templates[2].Name != "C.md" {
+		t.Errorf("sort order wrong: %v", []string{templates[0].Name, templates[1].Name, templates[2].Name})
+	}
+}
+
+func TestLoadFromDir_SkipsMemoryMD(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Memory"), 0644)
+	os.WriteFile(filepath.Join(dir, "CUSTOM.md"), []byte("# Custom"), 0644)
+
+	files, err := LoadFromDir(dir)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	for _, f := range files {
+		if f.Name == "MEMORY.md" {
+			t.Error("MEMORY.md should be skipped by loader")
+		}
+	}
+	if len(files) != 1 {
+		t.Errorf("expected 1 file, got %d", len(files))
+	}
+}

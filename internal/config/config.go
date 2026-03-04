@@ -69,6 +69,8 @@ type AgentConfig struct {
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
+	TemplatesDir        string   // Directory for user template overrides (optional — embedded defaults always available)
+	MemoryDays          int      // Number of daily memory logs to include (default: 7)
 }
 
 // TelegramConfig contains Telegram bot settings
@@ -142,6 +144,7 @@ func DefaultConfig() *Config {
 			MaxTurns:            50,
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
+		MemoryDays:          7,
 		},
 		Runner: RunnerConfig{
 			LeaseDuration:     60,
@@ -200,6 +203,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
+	cfg.Agent.TemplatesDir = envOrDefault("AGENT_TEMPLATES_DIR", cfg.Agent.TemplatesDir)
+	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)

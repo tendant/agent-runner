@@ -14,6 +14,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/subagent"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 const maxConsecutiveFailures = 5
@@ -87,6 +88,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			log.Printf("Failed to write agent log: %v", err)
 		} else {
 			log.Printf("Agent log written: %s", logFile)
+		}
+
+		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
+		if liveSession.Status == agent.SessionStatusCompleted {
+			if err := tmpl.CompleteBootstrap(h.config.Agent.TemplatesDir); err != nil {
+				log.Printf("Agent %s: warning: bootstrap completion failed: %v", sessionID, err)
+			}
 		}
 
 		// Cleanup workspace after cache-back and logging are done
@@ -233,37 +241,63 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	h.agentManager.CompleteSession(sessionID)
 }
 
-// resolvePrompt builds the combined system prompt from base (agent.md) and
-// workflow (prompt.md) files. Returns the message directly if neither is configured.
+// resolvePrompt builds the combined system prompt using the template system
+// (embedded defaults + optional user overrides) plus legacy prompt files for
+// backward compatibility.
 func (h *Handlers) resolvePrompt(message string) (string, error) {
-	var parts []string
+	return h.resolveTemplatePrompt(message)
+}
 
-	// Layer 1: Base system prompt (agent.md)
+// resolveTemplatePrompt composes the prompt from the template system and
+// appends legacy AGENT_SYSTEM_PROMPT / AGENT_PROMPT_FILE content if set.
+func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
+	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1)
+	templatesDir := h.config.Agent.TemplatesDir
+
+	// Check for bootstrap (first_run)
+	firstRun := tmpl.IsFirstRun(templatesDir)
+
+	// Compose from embedded defaults + user overrides
+	composed, err := tmpl.ComposePrompt(templatesDir, tmpl.PhaseBoot, firstRun, ctx)
+	if err != nil {
+		return "", fmt.Errorf("template composition failed: %w", err)
+	}
+
+	var parts []string
+	if composed != "" {
+		parts = append(parts, composed)
+	}
+
+	// Legacy: append AGENT_SYSTEM_PROMPT if set (backward compat)
 	if path := h.config.Agent.SystemPrompt; path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read system prompt %s: %w", path, err)
 		}
 		base := strings.TrimSpace(string(data))
-		if base == "" {
-			return "", fmt.Errorf("system prompt file is empty")
+		if base != "" {
+			parts = append(parts, base)
 		}
-		parts = append(parts, base)
 	}
 
-	// Layer 2: Workflow template (prompt.md) with variable substitution
+	// Legacy: append AGENT_PROMPT_FILE if set (backward compat)
 	if path := h.config.Agent.PromptFile; path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read workflow prompt %s: %w", path, err)
 		}
-		tmpl := strings.TrimSpace(string(data))
-		if tmpl == "" {
-			return "", fmt.Errorf("workflow prompt file is empty")
+		wf := strings.TrimSpace(string(data))
+		if wf != "" {
+			wf = strings.ReplaceAll(wf, "{{MESSAGE}}", message)
+			wf = strings.ReplaceAll(wf, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
+			parts = append(parts, wf)
 		}
-		tmpl = strings.ReplaceAll(tmpl, "{{MESSAGE}}", message)
-		tmpl = strings.ReplaceAll(tmpl, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
-		parts = append(parts, tmpl)
+	}
+
+	// Append memory section
+	memorySec := tmpl.ComposeMemorySection(templatesDir, h.config.Agent.MemoryDays)
+	if memorySec != "" {
+		parts = append(parts, memorySec)
 	}
 
 	if len(parts) == 0 {
