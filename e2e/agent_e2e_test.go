@@ -14,6 +14,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 func setupAgentE2E(t *testing.T) *e2eEnv {
@@ -354,11 +355,13 @@ func TestE2E_AgentWithPromptTemplate(t *testing.T) {
 	reposDir := filepath.Join(baseDir, "repos")
 	logsDir := filepath.Join(baseDir, "logs")
 	tmpDir := filepath.Join(baseDir, "tmp")
+	memoryDir := filepath.Join(baseDir, "memory")
 	mockBinDir := filepath.Join(baseDir, "mock-bin")
 
 	os.MkdirAll(reposDir, 0755)
 	os.MkdirAll(logsDir, 0755)
 	os.MkdirAll(tmpDir, 0755)
+	os.MkdirAll(memoryDir, 0755)
 	os.MkdirAll(mockBinDir, 0755)
 
 	runCmd(t, "", "git", "init", "--bare", bareRepo)
@@ -372,23 +375,32 @@ func TestE2E_AgentWithPromptTemplate(t *testing.T) {
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
 
-	// Mock claude that creates a file
+	// Capture file records system prompt args for verification
+	captureFile := filepath.Join(baseDir, "captured-args.txt")
+
+	// Mock claude that captures --system-prompt and creates a file
 	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := `#!/bin/bash
+	mockScript := fmt.Sprintf(`#!/bin/bash
+echo "$@" >> %s
 echo "content" > "output.txt"
 echo '{"result":"Done"}'
-`
+`, captureFile)
 	os.WriteFile(mockClaude, []byte(mockScript), 0755)
 	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
-	// Create prompt template file
+	// Create prompt template file and seed it into the memory dir
 	promptFile := filepath.Join(baseDir, "prompt.md")
 	os.WriteFile(promptFile, []byte("You are a helpful assistant.\n\nTask: {{MESSAGE}}"), 0644)
 
+	if err := tmpl.SeedPromptFile(memoryDir, promptFile, "prompt.md"); err != nil {
+		t.Fatalf("SeedPromptFile error: %v", err)
+	}
+
 	cfg := &config.Config{
-		ReposRoot:             reposDir,
+		ReposRoot:                reposDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
+		MemoryDir:                memoryDir,
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        60,
 		MaxConcurrentJobs:        5,
@@ -409,7 +421,6 @@ echo '{"result":"Done"}'
 			Paths:               []string{"*.txt", "*.md"},
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
-			PromptFile:          promptFile,
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: false,
@@ -432,6 +443,19 @@ echo '{"result":"Done"}'
 	status, _ := result["status"].(string)
 	if status != "completed" {
 		t.Fatalf("expected completed, got %s: error=%v", status, result["error"])
+	}
+
+	// Verify the seeded prompt content reached mock claude via --system-prompt
+	captured, err := os.ReadFile(captureFile)
+	if err != nil {
+		t.Fatalf("failed to read captured args: %v", err)
+	}
+	args := string(captured)
+	if !strings.Contains(args, "You are a helpful assistant.") {
+		t.Errorf("expected prompt content in claude args, got:\n%s", args)
+	}
+	if !strings.Contains(args, "Fix the login bug") {
+		t.Errorf("expected {{MESSAGE}} substituted in prompt, got:\n%s", args)
 	}
 }
 
