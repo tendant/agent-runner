@@ -42,13 +42,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
 		}
 
-		// Sync non-repo workspace files back to project dir
-		if liveSession.WorkspacePath != "" {
-			if err := h.workspaceManager.SyncBackToCWD(h.config.ProjectDir, liveSession.WorkspacePath, h.config.Agent.SharedRepos); err != nil {
-				log.Printf("Agent %s: warning: failed to sync back to project dir: %v", sessionID, err)
-			}
-		}
-
 		// Write agent audit log
 		snap := liveSession.Snapshot()
 		logData := &logging.AgentLogData{
@@ -90,9 +83,21 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			log.Printf("Agent log written: %s", logFile)
 		}
 
+		// Write daily memory log
+		snap2 := liveSession.Snapshot()
+		msgPreview := message
+		if len(msgPreview) > 80 {
+			msgPreview = msgPreview[:80] + "..."
+		}
+		dailyEntry := fmt.Sprintf("[%s] session %s: %s, %d iterations — %s",
+			time.Now().Format("15:04"), sessionID, snap2.Status, snap2.SuccessfulIterations, msgPreview)
+		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
+			log.Printf("Agent %s: warning: failed to write daily log: %v", sessionID, err)
+		}
+
 		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
 		if liveSession.Status == agent.SessionStatusCompleted {
-			if err := tmpl.CompleteBootstrap(h.config.Agent.TemplatesDir); err != nil {
+			if err := tmpl.CompleteBootstrap(h.config.TemplatesDir); err != nil {
 				log.Printf("Agent %s: warning: bootstrap completion failed: %v", sessionID, err)
 			}
 		}
@@ -129,11 +134,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// NOTE: cleanup is done in the top-level defer (after CacheReposBack), not here.
 	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
 	// before cache-back can copy from it.
-
-	// Copy project files into workspace so Claude can access them
-	if err := h.workspaceManager.PopulateCWDFiles(h.config.ProjectDir, workspacePath); err != nil {
-		log.Printf("Agent %s: warning: failed to populate project files: %v", sessionID, err)
-	}
 
 	// Claude runs in the repos/ subdirectory
 	reposPath := filepath.Join(workspacePath, "repos")
@@ -252,7 +252,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 // appends legacy AGENT_SYSTEM_PROMPT / AGENT_PROMPT_FILE content if set.
 func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1)
-	templatesDir := h.config.Agent.TemplatesDir
+	templatesDir := h.config.TemplatesDir
 
 	// Check for bootstrap (first_run)
 	firstRun := tmpl.IsFirstRun(templatesDir)
@@ -295,7 +295,7 @@ func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	}
 
 	// Append memory section
-	memorySec := tmpl.ComposeMemorySection(templatesDir, h.config.Agent.MemoryDays)
+	memorySec := tmpl.ComposeMemorySection(templatesDir, h.config.MemoryDir, h.config.Agent.MemoryDays)
 	if memorySec != "" {
 		parts = append(parts, memorySec)
 	}

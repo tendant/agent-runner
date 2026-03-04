@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-// ComposeMemorySection loads MEMORY.md and the last N daily logs from the
-// memory/ subdirectory within templatesDir. Returns empty string if no
-// memory content is found.
-func ComposeMemorySection(templatesDir string, days int) string {
-	if templatesDir == "" {
+// ComposeMemorySection loads MEMORY.md from templatesDir and the last N daily
+// logs from memoryDir. Returns empty string if no memory content is found.
+// If memoryDir is empty, daily logs are skipped.
+func ComposeMemorySection(templatesDir, memoryDir string, days int) string {
+	if templatesDir == "" && memoryDir == "" {
 		return ""
 	}
 	if days <= 0 {
@@ -22,20 +22,23 @@ func ComposeMemorySection(templatesDir string, days int) string {
 
 	var parts []string
 
-	// Load curated MEMORY.md
-	memPath := filepath.Join(templatesDir, "MEMORY.md")
-	if data, err := os.ReadFile(memPath); err == nil {
-		content := strings.TrimSpace(string(data))
-		if content != "" {
-			parts = append(parts, content)
+	// Load curated MEMORY.md from templates
+	if templatesDir != "" {
+		memPath := filepath.Join(templatesDir, "MEMORY.md")
+		if data, err := os.ReadFile(memPath); err == nil {
+			content := strings.TrimSpace(string(data))
+			if content != "" {
+				parts = append(parts, content)
+			}
 		}
 	}
 
-	// Load daily logs from memory/ subdirectory
-	memDir := filepath.Join(templatesDir, "memory")
-	dailyLogs := loadDailyLogs(memDir, days)
-	if len(dailyLogs) > 0 {
-		parts = append(parts, dailyLogs...)
+	// Load daily logs from dedicated memory dir
+	if memoryDir != "" {
+		dailyLogs := loadDailyLogs(memoryDir, days)
+		if len(dailyLogs) > 0 {
+			parts = append(parts, dailyLogs...)
+		}
 	}
 
 	if len(parts) == 0 {
@@ -43,6 +46,30 @@ func ComposeMemorySection(templatesDir string, days int) string {
 	}
 
 	return "## Memory\n\n" + strings.Join(parts, "\n\n---\n\n")
+}
+
+// AppendDailyLog appends a timestamped entry to today's daily log file
+// (memoryDir/YYYY-MM-DD.md). Creates the directory if needed.
+func AppendDailyLog(memoryDir, entry string) error {
+	if memoryDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return fmt.Errorf("create memory dir: %w", err)
+	}
+	filename := time.Now().Format("2006-01-02") + ".md"
+	path := filepath.Join(memoryDir, filename)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open daily log: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		return fmt.Errorf("write daily log: %w", err)
+	}
+	return nil
 }
 
 // loadDailyLogs reads the last N daily log files (YYYY-MM-DD.md) from dir,

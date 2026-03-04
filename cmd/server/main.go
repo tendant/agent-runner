@@ -21,6 +21,7 @@ func main() {
 	log.Printf("Repos root: %s", cfg.ReposRoot)
 	log.Printf("Logs root: %s", cfg.LogsRoot)
 	log.Printf("Tmp root: %s", cfg.TmpRoot)
+	log.Printf("Templates dir: %s", cfg.TemplatesDir)
 	log.Printf("Max runtime: %ds", cfg.MaxRuntimeSeconds)
 	log.Printf("Max concurrent jobs: %d", cfg.MaxConcurrentJobs)
 	if len(cfg.AllowedProjects) > 0 {
@@ -61,6 +62,7 @@ func main() {
 			HeartbeatInterval: time.Duration(cfg.Runner.HeartbeatInterval) * time.Second,
 			MaxAttempts:       cfg.Runner.MaxAttempts,
 			TypePrefix:        cfg.Runner.TypePrefix,
+			TemplatesDir:      cfg.TemplatesDir,
 		}, bridge)
 		if err != nil {
 			log.Fatalf("Failed to create runner: %v", err)

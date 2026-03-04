@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
@@ -54,6 +55,7 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	MaxAttempts       int
 	TypePrefix        string
+	TemplatesDir      string // Optional: templates dir to read heartbeat config from
 }
 
 // New creates a new HybridRunner.
@@ -76,6 +78,16 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 		agentID = fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	}
 
+	// Override heartbeat interval from template if available
+	hbInterval := cfg.HeartbeatInterval
+	if cfg.TemplatesDir != "" {
+		hbCfg := tmpl.ParseHeartbeatConfig(cfg.TemplatesDir)
+		if hbCfg.IntervalSeconds > 0 {
+			hbInterval = time.Duration(hbCfg.IntervalSeconds) * time.Second
+			log.Printf("runner: heartbeat interval from template: %s", hbInterval)
+		}
+	}
+
 	return &HybridRunner{
 		db:            db,
 		dialect:       dialect,
@@ -86,7 +98,7 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 		agentID:       agentID,
 		leaseDuration: cfg.LeaseDuration,
 		pollCap:       cfg.PollCap,
-		hbInterval:    cfg.HeartbeatInterval,
+		hbInterval:    hbInterval,
 		typePrefix:    cfg.TypePrefix,
 		connString:    cfg.DatabaseURL,
 	}, nil
