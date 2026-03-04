@@ -116,11 +116,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		log.Printf("Agent %s: workflow prompt: %s", sessionID, h.config.Agent.PromptFile)
 	}
 
-	// Seed defaults into memory dir on first run
-	if err := tmpl.SeedDefaults(h.config.MemoryDir); err != nil {
-		log.Printf("Agent %s: warning: failed to seed defaults: %v", sessionID, err)
-	}
-
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())

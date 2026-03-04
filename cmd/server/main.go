@@ -8,6 +8,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/runner"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 func main() {
@@ -42,6 +43,11 @@ func main() {
 	}
 	if cfg.Telegram.BotToken != "" {
 		log.Printf("Telegram bot: enabled")
+	}
+
+	// Seed embedded defaults into memory dir on first run
+	if err := tmpl.SeedDefaults(cfg.MemoryDir); err != nil {
+		log.Printf("Warning: failed to seed defaults: %v", err)
 	}
 
 	// Create and start server
