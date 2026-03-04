@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/runner"
 )
 
 func main() {
@@ -42,6 +45,36 @@ func main() {
 
 	// Create and start server
 	server := api.NewServer(cfg)
+
+	// Conditionally start hybrid runner
+	if cfg.Runner.Enabled {
+		if cfg.Runner.DatabaseURL == "" {
+			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_ENABLED=true")
+		}
+
+		bridge := api.NewRunnerBridge(server.Handlers())
+		r, err := runner.New(runner.Config{
+			DatabaseURL:       cfg.Runner.DatabaseURL,
+			AgentID:           cfg.Runner.AgentID,
+			LeaseDuration:     time.Duration(cfg.Runner.LeaseDuration) * time.Second,
+			PollCap:           time.Duration(cfg.Runner.PollCap) * time.Second,
+			HeartbeatInterval: time.Duration(cfg.Runner.HeartbeatInterval) * time.Second,
+			MaxAttempts:       cfg.Runner.MaxAttempts,
+			TypePrefix:        cfg.Runner.TypePrefix,
+		}, bridge)
+		if err != nil {
+			log.Fatalf("Failed to create runner: %v", err)
+		}
+		server.SetRunner(r)
+
+		go func() {
+			log.Printf("Runner: starting hybrid runner")
+			if err := r.Start(context.Background()); err != nil {
+				log.Printf("Runner error: %v", err)
+			}
+		}()
+	}
+
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

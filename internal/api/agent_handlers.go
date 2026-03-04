@@ -31,11 +31,6 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	paths := h.config.Agent.Paths
-	if len(paths) == 0 {
-		h.writeError(w, http.StatusInternalServerError, "agent not configured: AGENT_PATHS is required")
-		return
-	}
-
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
 	maxIter := h.config.Agent.MaxIterations

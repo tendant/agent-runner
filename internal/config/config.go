@@ -45,6 +45,9 @@ type Config struct {
 	// Stream bot settings
 	Stream StreamConfig
 
+	// Runner settings
+	Runner RunnerConfig
+
 	// Cleanup settings
 	JobRetentionSeconds     int
 	StartupCleanupStaleJobs bool
@@ -79,6 +82,18 @@ type StreamConfig struct {
 	ServerURL       string   // STREAM_SERVER_URL
 	BotToken        string   // STREAM_BOT_TOKEN (pre-registered bot JWT)
 	ConversationIDs []string // STREAM_CONVERSATION_IDS
+}
+
+// RunnerConfig contains hybrid runner settings
+type RunnerConfig struct {
+	Enabled           bool   // RUNNER_ENABLED
+	DatabaseURL       string // RUNNER_DATABASE_URL (postgres:// or sqlite://)
+	AgentID           string // RUNNER_AGENT_ID (default: hostname-pid)
+	LeaseDuration     int    // RUNNER_LEASE_DURATION (seconds, default: 60)
+	PollCap           int    // RUNNER_POLL_CAP (seconds, default: 30)
+	HeartbeatInterval int    // RUNNER_HEARTBEAT_INTERVAL (seconds, default: 300)
+	MaxAttempts       int    // RUNNER_MAX_ATTEMPTS (default: 10)
+	TypePrefix        string // RUNNER_TYPE_PREFIX (default: "agent.")
 }
 
 // ValidationConfig contains diff validation settings
@@ -127,6 +142,13 @@ func DefaultConfig() *Config {
 			MaxTurns:            50,
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
+		},
+		Runner: RunnerConfig{
+			LeaseDuration:     60,
+			PollCap:           30,
+			HeartbeatInterval: 300,
+			MaxAttempts:       10,
+			TypePrefix:        "agent.",
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
@@ -185,6 +207,15 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.ServerURL = envOrDefault("STREAM_SERVER_URL", "")
 	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
 	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
+
+	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_ENABLED", cfg.Runner.Enabled)
+	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)
+	cfg.Runner.AgentID = envOrDefault("RUNNER_AGENT_ID", cfg.Runner.AgentID)
+	cfg.Runner.LeaseDuration = envIntOrDefault("RUNNER_LEASE_DURATION", cfg.Runner.LeaseDuration)
+	cfg.Runner.PollCap = envIntOrDefault("RUNNER_POLL_CAP", cfg.Runner.PollCap)
+	cfg.Runner.HeartbeatInterval = envIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", cfg.Runner.HeartbeatInterval)
+	cfg.Runner.MaxAttempts = envIntOrDefault("RUNNER_MAX_ATTEMPTS", cfg.Runner.MaxAttempts)
+	cfg.Runner.TypePrefix = envOrDefault("RUNNER_TYPE_PREFIX", cfg.Runner.TypePrefix)
 
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("STARTUP_CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)

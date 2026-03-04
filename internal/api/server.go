@@ -17,6 +17,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/runner"
 	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 )
@@ -31,6 +32,7 @@ type Server struct {
 	jobManager   *jobs.Manager
 	agentManager *agent.Manager
 	convManager  *conversation.Manager
+	runner       *runner.HybridRunner
 }
 
 // NewServer creates a new API server
@@ -122,7 +124,12 @@ func (s *Server) Start() error {
 		<-quit
 		log.Println("Server is shutting down...")
 
-		// Stop bots first
+		// Stop runner first (it may be executing a task)
+		if s.runner != nil {
+			s.runner.Stop()
+		}
+
+		// Stop bots
 		if s.streamBot != nil {
 			s.streamBot.Stop()
 		}
@@ -235,5 +242,15 @@ func (rw *responseWriter) WriteHeader(code int) {
 // Handler returns the HTTP handler for use in tests
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
+}
+
+// Handlers returns the server's Handlers instance for runner bridge setup.
+func (s *Server) Handlers() *Handlers {
+	return s.handlers
+}
+
+// SetRunner sets the hybrid runner on the server for lifecycle management.
+func (s *Server) SetRunner(r *runner.HybridRunner) {
+	s.runner = r
 }
 

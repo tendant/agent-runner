@@ -27,10 +27,6 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	h := a.handlers
 
 	paths := h.config.Agent.Paths
-	if len(paths) == 0 {
-		return "", fmt.Errorf("agent not configured: AGENT_PATHS is required")
-	}
-
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
 	maxIter := h.config.Agent.MaxIterations
