@@ -115,6 +115,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	if h.config.Agent.PromptFile != "" {
 		log.Printf("Agent %s: workflow prompt: %s", sessionID, h.config.Agent.PromptFile)
 	}
+
+	// Seed memory from templates on first run
+	if err := tmpl.SeedMemory(h.config.TemplatesDir, h.config.MemoryDir); err != nil {
+		log.Printf("Agent %s: warning: failed to seed memory: %v", sessionID, err)
+	}
+
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
@@ -295,7 +301,7 @@ func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	}
 
 	// Append memory section
-	memorySec := tmpl.ComposeMemorySection(templatesDir, h.config.MemoryDir, h.config.Agent.MemoryDays)
+	memorySec := tmpl.ComposeMemorySection(h.config.MemoryDir, h.config.Agent.MemoryDays)
 	if memorySec != "" {
 		parts = append(parts, memorySec)
 	}

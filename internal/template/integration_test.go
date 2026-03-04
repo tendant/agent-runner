@@ -132,22 +132,21 @@ Welcome! This is your first session. Please read README.md and set up the projec
 
 // TestIntegration_Memory verifies memory section composition.
 func TestIntegration_Memory(t *testing.T) {
-	dir := t.TempDir()
+	memDir := t.TempDir()
 
-	// Curated memory
-	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte(`# Project Notes
+	// Curated memory (now lives in memory dir after seeding)
+	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte(`# Project Notes
 
 - The API uses JWT auth
 - Database is PostgreSQL 16
 - Deploy via GitHub Actions`), 0644)
 
-	// Daily logs in separate memory dir
-	memDir := t.TempDir()
+	// Daily logs
 	os.WriteFile(filepath.Join(memDir, "2026-03-01.md"), []byte("Set up CI pipeline"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Fixed auth middleware"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Added user dashboard"), 0644)
 
-	result := ComposeMemorySection(dir, memDir, 7)
+	result := ComposeMemorySection(memDir, 7)
 	t.Logf("=== Memory section ===\n%s", result)
 
 	assertContains(t, result, "## Memory", "should have Memory header")
@@ -156,7 +155,7 @@ func TestIntegration_Memory(t *testing.T) {
 	assertContains(t, result, "Added user dashboard", "should contain today's log")
 
 	// Test with days=2 limit
-	result2 := ComposeMemorySection(dir, memDir, 2)
+	result2 := ComposeMemorySection(memDir, 2)
 	assertNotContains(t, result2, "Set up CI pipeline", "oldest log should be excluded with days=2")
 	assertContains(t, result2, "Fixed auth middleware", "second day should be included")
 	assertContains(t, result2, "Added user dashboard", "today should be included")
@@ -274,9 +273,11 @@ priority: 80
 
 First time setup: run npm install.`), 0644)
 
-	// Memory
+	// Memory — seed from templates, then compose from memory dir
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("Key fact: API rate limit is 100/min"), 0644)
-	memDir := t.TempDir()
+	memDir := filepath.Join(t.TempDir(), "memory")
+	// Seed: copy MEMORY.md from templates to memory dir (first run)
+	SeedMemory(dir, memDir)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Deployed v2.1"), 0644)
 
 	ctx := NewContext("Add rate limiting", []string{"api-server"}, 1)
@@ -287,7 +288,7 @@ First time setup: run npm install.`), 0644)
 		t.Fatalf("error: %v", err)
 	}
 
-	memorySec := ComposeMemorySection(dir, memDir, 7)
+	memorySec := ComposeMemorySection(memDir, 7)
 	if memorySec != "" {
 		result += "\n\n" + memorySec
 	}

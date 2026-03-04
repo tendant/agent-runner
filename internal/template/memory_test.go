@@ -8,15 +8,15 @@ import (
 )
 
 func TestComposeMemorySection_Empty(t *testing.T) {
-	result := ComposeMemorySection("", "", 7)
+	result := ComposeMemorySection("", 7)
 	if result != "" {
-		t.Errorf("expected empty for no dirs, got %q", result)
+		t.Errorf("expected empty for no memoryDir, got %q", result)
 	}
 }
 
-func TestComposeMemorySection_NoMemoryDir(t *testing.T) {
+func TestComposeMemorySection_NoFiles(t *testing.T) {
 	dir := t.TempDir()
-	result := ComposeMemorySection(dir, "", 7)
+	result := ComposeMemorySection(dir, 7)
 	if result != "" {
 		t.Errorf("expected empty when no memory files exist, got %q", result)
 	}
@@ -26,7 +26,7 @@ func TestComposeMemorySection_MemoryMDOnly(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Long-term memory\n\nImportant fact."), 0644)
 
-	result := ComposeMemorySection(dir, "", 7)
+	result := ComposeMemorySection(dir, 7)
 	if !strings.Contains(result, "## Memory") {
 		t.Error("should have Memory header")
 	}
@@ -42,7 +42,7 @@ func TestComposeMemorySection_DailyLogs(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Did task B"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Did task C"), 0644)
 
-	result := ComposeMemorySection("", memDir, 2)
+	result := ComposeMemorySection(memDir, 2)
 	// Should only include last 2 days
 	if strings.Contains(result, "Did task A") {
 		t.Error("should not include oldest log when days=2")
@@ -53,13 +53,11 @@ func TestComposeMemorySection_DailyLogs(t *testing.T) {
 }
 
 func TestComposeMemorySection_CombinedMemoryAndLogs(t *testing.T) {
-	tmplDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmplDir, "MEMORY.md"), []byte("Curated memory"), 0644)
-
 	memDir := t.TempDir()
+	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("Curated memory"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Today's log"), 0644)
 
-	result := ComposeMemorySection(tmplDir, memDir, 7)
+	result := ComposeMemorySection(memDir, 7)
 	if !strings.Contains(result, "Curated memory") {
 		t.Error("should contain MEMORY.md")
 	}
@@ -107,7 +105,6 @@ func TestAppendDailyLog_AppendsMultiple(t *testing.T) {
 	if !strings.Contains(content, "entry A") || !strings.Contains(content, "entry B") {
 		t.Error("should contain both entries")
 	}
-	// Each entry on its own line
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	if len(lines) != 2 {
 		t.Errorf("expected 2 lines, got %d", len(lines))
@@ -121,13 +118,81 @@ func TestAppendDailyLog_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestSeedMemory_CreatesFromTemplate(t *testing.T) {
+	tmplDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmplDir, "MEMORY.md"), []byte("# Initial memory\n\nSeed content."), 0644)
+
+	memDir := filepath.Join(t.TempDir(), "memory")
+	err := SeedMemory(tmplDir, memDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(memDir, "MEMORY.md"))
+	if err != nil {
+		t.Fatalf("MEMORY.md should exist in memory dir: %v", err)
+	}
+	if !strings.Contains(string(data), "Seed content") {
+		t.Error("should contain seeded content")
+	}
+}
+
+func TestSeedMemory_NoOpIfExists(t *testing.T) {
+	tmplDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmplDir, "MEMORY.md"), []byte("Template content"), 0644)
+
+	memDir := t.TempDir()
+	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("Existing content"), 0644)
+
+	err := SeedMemory(tmplDir, memDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not overwrite
+	data, _ := os.ReadFile(filepath.Join(memDir, "MEMORY.md"))
+	if strings.Contains(string(data), "Template content") {
+		t.Error("should not overwrite existing memory")
+	}
+	if !strings.Contains(string(data), "Existing content") {
+		t.Error("should preserve existing content")
+	}
+}
+
+func TestSeedMemory_NoTemplateMemory(t *testing.T) {
+	tmplDir := t.TempDir() // No MEMORY.md
+	memDir := filepath.Join(t.TempDir(), "memory")
+
+	err := SeedMemory(tmplDir, memDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Dir should be created but no MEMORY.md
+	if _, err := os.Stat(memDir); os.IsNotExist(err) {
+		t.Fatal("memory dir should be created")
+	}
+	if _, err := os.Stat(filepath.Join(memDir, "MEMORY.md")); !os.IsNotExist(err) {
+		t.Error("MEMORY.md should not exist when template has none")
+	}
+}
+
+func TestSeedMemory_EmptyDirs(t *testing.T) {
+	if err := SeedMemory("", ""); err != nil {
+		t.Errorf("expected nil for empty dirs, got %v", err)
+	}
+	if err := SeedMemory("", "/tmp/some-dir"); err != nil {
+		t.Errorf("expected nil for empty templatesDir, got %v", err)
+	}
+}
+
 func TestComposeMemorySection_InvalidFilenames(t *testing.T) {
 	memDir := t.TempDir()
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Not a date"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Valid"), 0644)
 
-	result := ComposeMemorySection("", memDir, 7)
+	result := ComposeMemorySection(memDir, 7)
 	if strings.Contains(result, "Not a date") {
 		t.Error("should skip non-date filenames")
 	}
