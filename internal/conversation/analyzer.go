@@ -63,6 +63,7 @@ Rules:
 - action "ask": The message contains NO actionable request at all (e.g. just "hello" or a question). "message" should be a response or clarifying question.
 - NEVER ask about systems, databases, files, context, or implementation details — the agent already knows all of that.
 - NEVER ask what "merge", "add", "search", "delete", "update", or similar action words mean — pass them through to the agent as-is.
+- Reminders, timers, and scheduling requests (e.g. "remind me in 5 minutes", "check on X later", "schedule Y every Monday") ARE valid actions — use "execute" for these. The agent can schedule tasks.
 - When in doubt, use "execute". The agent is better equipped to handle the request than you are.
 
 `)

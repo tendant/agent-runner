@@ -89,8 +89,13 @@ func (b *RunnerBridge) notify(ctx context.Context, snap *agent.Session) {
 	var msg string
 	switch snap.Status {
 	case agent.SessionStatusCompleted:
-		msg = fmt.Sprintf("✅ Runner task completed\n• Session: %s\n• Message: %s\n• Iterations: %d\n• Duration: %ds",
-			snap.ID, preview, snap.SuccessfulIterations, snap.ElapsedSeconds)
+		// Use agent output as notification if available (e.g. scheduled reminders)
+		if output := lastIterationOutput(snap); output != "" {
+			msg = output
+		} else {
+			msg = fmt.Sprintf("✅ Runner task completed\n• Session: %s\n• Message: %s\n• Iterations: %d\n• Duration: %ds",
+				snap.ID, preview, snap.SuccessfulIterations, snap.ElapsedSeconds)
+		}
 	case agent.SessionStatusFailed:
 		errPreview := snap.Error
 		if len(errPreview) > 120 {
@@ -108,6 +113,16 @@ func (b *RunnerBridge) notify(ctx context.Context, snap *agent.Session) {
 	if err := b.handlers.notifier.SendNotification(notifyCtx, msg); err != nil {
 		log.Printf("runner bridge: notification failed: %v", err)
 	}
+}
+
+// lastIterationOutput returns the output from the last successful iteration, if any.
+func lastIterationOutput(snap *agent.Session) string {
+	for i := len(snap.Iterations) - 1; i >= 0; i-- {
+		if snap.Iterations[i].Output != "" {
+			return snap.Iterations[i].Output
+		}
+	}
+	return ""
 }
 
 type agentTaskError struct {

@@ -9,6 +9,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/runner"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
+	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
 func main() {
@@ -49,6 +50,10 @@ func main() {
 	if err := tmpl.SeedDefaults(cfg.MemoryDir); err != nil {
 		log.Printf("Warning: failed to seed defaults: %v", err)
 	}
+	// Refresh unmodified defaults to pick up new embedded versions
+	if err := tmpl.RefreshDefaults(cfg.MemoryDir); err != nil {
+		log.Printf("Warning: failed to refresh defaults: %v", err)
+	}
 
 	// Create and start server
 	server := api.NewServer(cfg)
@@ -74,6 +79,10 @@ func main() {
 			log.Fatalf("Failed to create runner: %v", err)
 		}
 		server.SetRunner(r)
+
+		// Create workflow client for agent scheduling
+		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
+		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
 
 		go func() {
 			log.Printf("Runner: starting hybrid runner")

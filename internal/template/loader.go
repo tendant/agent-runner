@@ -1,7 +1,9 @@
 package template
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,6 +56,7 @@ func SeedDefaults(memoryDir string) error {
 		return fmt.Errorf("read embedded defaults: %w", err)
 	}
 
+	manifest := make(map[string]string)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -66,7 +69,101 @@ func SeedDefaults(memoryDir string) error {
 		if err := os.WriteFile(dst, data, 0644); err != nil {
 			return fmt.Errorf("write %s: %w", e.Name(), err)
 		}
+		manifest[e.Name()] = fmt.Sprintf("%x", sha256.Sum256(data))
 	}
+
+	// Write manifest so RefreshDefaults can detect user modifications later
+	if mdata, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+		os.WriteFile(filepath.Join(memoryDir, defaultsManifest), mdata, 0644)
+	}
+	return nil
+}
+
+const defaultsManifest = ".defaults.sha256"
+
+// RefreshDefaults updates seeded default templates that the user has not modified.
+// It tracks SHA-256 hashes of seeded files in a manifest. If a disk file matches
+// the previously-seeded hash (unmodified), it is replaced with the new embedded
+// version. User-modified files are left untouched.
+func RefreshDefaults(memoryDir string) error {
+	if memoryDir == "" {
+		return nil
+	}
+	if _, err := os.Stat(memoryDir); os.IsNotExist(err) {
+		return nil // no memory dir yet — SeedDefaults will handle it
+	}
+
+	// Load the manifest of previously-seeded hashes
+	manifestPath := filepath.Join(memoryDir, defaultsManifest)
+	manifest := make(map[string]string) // filename → sha256 hex
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		json.Unmarshal(data, &manifest)
+	}
+
+	// Load current embedded defaults
+	entries, err := defaultTemplates.ReadDir("defaults")
+	if err != nil {
+		return fmt.Errorf("read embedded defaults: %w", err)
+	}
+
+	updated := false
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+
+		embeddedData, err := defaultTemplates.ReadFile("defaults/" + e.Name())
+		if err != nil {
+			continue
+		}
+		embeddedHash := fmt.Sprintf("%x", sha256.Sum256(embeddedData))
+
+		diskPath := filepath.Join(memoryDir, e.Name())
+		diskData, err := os.ReadFile(diskPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File was deleted by user or never seeded — write it
+				if writeErr := os.WriteFile(diskPath, embeddedData, 0644); writeErr == nil {
+					manifest[e.Name()] = embeddedHash
+					updated = true
+				}
+			}
+			continue
+		}
+
+		diskHash := fmt.Sprintf("%x", sha256.Sum256(diskData))
+
+		// If the disk file matches the previously-seeded hash, it's unmodified — refresh it.
+		// Also refresh if there's no manifest entry (pre-manifest deployment).
+		prevHash, hasPrev := manifest[e.Name()]
+		if diskHash == embeddedHash {
+			// Already up to date
+			manifest[e.Name()] = embeddedHash
+			continue
+		}
+		if hasPrev && diskHash == prevHash {
+			// Unmodified by user — safe to update
+			if writeErr := os.WriteFile(diskPath, embeddedData, 0644); writeErr == nil {
+				manifest[e.Name()] = embeddedHash
+				updated = true
+			}
+		} else if !hasPrev {
+			// No manifest entry — this is a pre-manifest deployment.
+			// Be conservative: only update if file matches a well-known default
+			// and looks like it was never customized (has standard frontmatter title).
+			// Skip to avoid overwriting user customizations.
+			manifest[e.Name()] = diskHash
+			updated = true
+		}
+		// If diskHash != prevHash and hasPrev, user modified it — leave it alone.
+	}
+
+	if updated {
+		if data, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+			os.WriteFile(manifestPath, data, 0644)
+		}
+	}
+
 	return nil
 }
 

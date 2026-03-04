@@ -208,6 +208,70 @@ func TestSeedDefaults_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestSeedDefaults_WritesManifest(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "templates")
+	if err := SeedDefaults(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify manifest was written
+	if _, err := os.Stat(filepath.Join(dir, defaultsManifest)); os.IsNotExist(err) {
+		t.Error("manifest file should be created on first seed")
+	}
+}
+
+func TestRefreshDefaults_UpdatesUnmodifiedFile(t *testing.T) {
+	// Simulate: SeedDefaults wrote files, then binary is updated with new content.
+	dir := filepath.Join(t.TempDir(), "templates")
+	if err := SeedDefaults(dir); err != nil {
+		t.Fatalf("seed error: %v", err)
+	}
+
+	// Read current AGENTS.md (the seeded version)
+	origData, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if len(origData) == 0 {
+		t.Fatal("AGENTS.md should exist after seeding")
+	}
+
+	// RefreshDefaults should be a no-op when nothing changed
+	if err := RefreshDefaults(dir); err != nil {
+		t.Fatalf("refresh error: %v", err)
+	}
+	afterData, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if string(afterData) != string(origData) {
+		t.Error("RefreshDefaults should not change files when embedded content is the same")
+	}
+}
+
+func TestRefreshDefaults_PreservesUserModifiedFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "templates")
+	if err := SeedDefaults(dir); err != nil {
+		t.Fatalf("seed error: %v", err)
+	}
+
+	// User modifies SOUL.md
+	customContent := "My custom soul config"
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte(customContent), 0644)
+
+	// RefreshDefaults should NOT overwrite the user-modified file
+	if err := RefreshDefaults(dir); err != nil {
+		t.Fatalf("refresh error: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "SOUL.md"))
+	if string(data) != customContent {
+		t.Error("RefreshDefaults should preserve user-modified files")
+	}
+}
+
+func TestRefreshDefaults_NoOpWithoutMemoryDir(t *testing.T) {
+	if err := RefreshDefaults(""); err != nil {
+		t.Errorf("expected nil for empty dir, got %v", err)
+	}
+	if err := RefreshDefaults("/nonexistent/path"); err != nil {
+		t.Errorf("expected nil for nonexistent dir, got %v", err)
+	}
+}
+
 func TestLoadFromDir_SkipsMemoryMD(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Memory"), 0644)

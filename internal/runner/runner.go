@@ -38,6 +38,8 @@ type HybridRunner struct {
 	listener   *Listener
 	executor   AgentExecutor
 
+	scheduleTicker *simpleworkflow.ScheduleTicker
+
 	agentID       string
 	leaseDuration time.Duration
 	pollCap       time.Duration
@@ -121,6 +123,16 @@ func (r *HybridRunner) Start(ctx context.Context) error {
 	// Start LISTEN/NOTIFY listener (postgres only, nil on sqlite)
 	r.listener = NewListener(r.driverName, r.connString)
 
+	// Start schedule ticker so cron schedules fire
+	ticker, err := simpleworkflow.NewScheduleTicker(r.connString)
+	if err != nil {
+		log.Printf("runner: warning: failed to create schedule ticker: %v", err)
+	} else {
+		r.scheduleTicker = ticker
+		go r.scheduleTicker.Start(ctx)
+		log.Printf("runner: schedule ticker started")
+	}
+
 	// Mark idle
 	r.heartbeat.Upsert(ctx, r.agentID, "idle", "", "", "")
 
@@ -131,8 +143,26 @@ func (r *HybridRunner) Start(ctx context.Context) error {
 	return nil
 }
 
+// DB returns the underlying database connection.
+func (r *HybridRunner) DB() *sql.DB {
+	return r.db
+}
+
+// Dialect returns the simple-workflow dialect.
+func (r *HybridRunner) Dialect() simpleworkflow.Dialect {
+	return r.dialect
+}
+
+// ConnString returns the database connection string.
+func (r *HybridRunner) ConnString() string {
+	return r.connString
+}
+
 // Stop cleans up resources.
 func (r *HybridRunner) Stop() {
+	if r.scheduleTicker != nil {
+		r.scheduleTicker.Stop()
+	}
 	if r.listener != nil {
 		r.listener.Close()
 	}

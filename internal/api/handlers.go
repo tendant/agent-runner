@@ -34,6 +34,7 @@ type Handlers struct {
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
 	notifier         Notifier
+	workflowClient   WorkflowScheduler
 }
 
 // NewHandlers creates a new handlers instance
@@ -62,6 +63,11 @@ func NewHandlers(
 // SetNotifier sets the notifier used by HandleNotify. Called after bot initialization.
 func (h *Handlers) SetNotifier(n Notifier) {
 	h.notifier = n
+}
+
+// SetWorkflowClient sets the workflow scheduler used for agent-created schedules.
+func (h *Handlers) SetWorkflowClient(w WorkflowScheduler) {
+	h.workflowClient = w
 }
 
 // RunRequest represents the POST /run request body

@@ -226,6 +226,20 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		liveSession.SetOutputFiles(outputFiles)
 	}
 
+	// Collect and submit scheduled tasks from _schedule.json
+	if schedEntries, err := collectScheduleEntries(reposPath); err != nil {
+		log.Printf("Agent %s: warning: failed to collect _schedule.json: %v", sessionID, err)
+	} else if len(schedEntries) > 0 {
+		if h.workflowClient != nil {
+			log.Printf("Agent %s: submitting %d schedule entries", sessionID, len(schedEntries))
+			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Runner.TypePrefix); err != nil {
+				log.Printf("Agent %s: warning: failed to submit schedule entries: %v", sessionID, err)
+			}
+		} else {
+			log.Printf("Agent %s: warning: %d schedule entries found but no workflow client configured (RUNNER_ENABLED=false?)", sessionID, len(schedEntries))
+		}
+	}
+
 	// Phase 3: Reviewer (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
 		log.Printf("Agent %s: running reviewer", sessionID)
