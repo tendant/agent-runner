@@ -55,7 +55,7 @@ func main() {
 
 	// Seed legacy prompt files into template system
 	if cfg.Agent.SystemPrompt != "" {
-		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.SystemPrompt, "agent.md"); err != nil {
+		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.SystemPrompt, "system-prompt.md"); err != nil {
 			log.Printf("Warning: failed to seed system prompt: %v", err)
 		}
 	}

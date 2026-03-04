@@ -80,17 +80,23 @@ Session states: `running → stopping → completed/failed`
 
 ---
 
-## Two-Layer Prompt System
+## Template-Based Prompt System
 
-Agent mode combines two prompt layers at runtime:
+Agent mode composes the system prompt from a template pipeline:
 
-1. **Base prompt** (`AGENT_SYSTEM_PROMPT` → `agent.md`) — General agent conventions shared across all workflows: iterative loop behavior, TODO tracking, `_send/` file sending convention.
+1. **Embedded defaults** (`internal/template/defaults/*.md`) — Well-known templates (IDENTITY, SOUL, AGENTS, USER, TOOLS, BOOT, HEARTBEAT) with assigned priorities and read phases.
 
-2. **Workflow prompt** (`AGENT_PROMPT_FILE` → `prompt.md`) — Task-specific instructions with template variables:
-   - `{{MESSAGE}}` — the user's task message
-   - `{{REPOS}}` — comma-separated list of shared repos
+2. **User overrides** (memory directory) — Any `.md` file in the memory dir is loaded and merged by filename. Files without frontmatter get `priority: 100` and `read_when: always`.
 
-The combined prompt is passed as the system prompt to Claude Code CLI. If neither is configured, the user message is used directly.
+3. **Legacy prompt files** — `AGENT_SYSTEM_PROMPT` and `AGENT_PROMPT_FILE` are seeded into the memory directory at startup as `system-prompt.md` and `prompt.md` respectively, so they flow through the same pipeline.
+
+Template variables are substituted in all templates:
+- `{{MESSAGE}}` — the user's task message
+- `{{REPOS}}` — comma-separated list of shared repos
+- `{{DATE}}` — current date
+- `{{ITERATION}}` — current iteration number
+
+The composed prompt is passed as the system prompt to Claude Code CLI. If no templates produce output, the user message is used directly.
 
 ---
 
@@ -235,7 +241,7 @@ All configuration via environment variables. See `.env.example` for the full lis
 
 Key groups:
 - **Git**: `GIT_HOST`, `GIT_ORG`
-- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE`, `AGENT_SHARED_REPOS`, iteration/time limits, planner/reviewer toggles
+- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_SHARED_REPOS`, iteration/time limits, planner/reviewer toggles
 - **API**: `BIND`, `API_KEY`
 - **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CONVERSATION_IDS`
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`

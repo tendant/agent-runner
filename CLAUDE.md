@@ -33,7 +33,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Template-based prompt system: embedded defaults in `template/defaults/` merged with user overrides in memory dir; `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` are seeded into the memory dir at startup
 
 ### Agent Execution Flow
-1. Resolve prompt (combine base system prompt + workflow template)
+1. Resolve prompt (compose from template system: embedded defaults + memory dir overrides)
 2. Prepare workspace (clone/copy shared repos, populate project files)
 3. **Phase 1**: Planner sub-agent (optional) — produces step-by-step plan
 4. **Phase 2**: Iteration loop — run Claude repeatedly with dynamic prompts
