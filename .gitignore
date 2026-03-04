@@ -4,7 +4,9 @@
 # Runtime directories
 projects/
 origins/
+repos/
 runs/
+logs/
 tmp/
 .claude/
 
