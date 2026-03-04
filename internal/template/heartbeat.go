@@ -13,13 +13,13 @@ type HeartbeatConfig struct {
 }
 
 // ParseHeartbeatConfig extracts heartbeat configuration from a HEARTBEAT.md
-// template file. Checks user overrides first, then embedded defaults.
-func ParseHeartbeatConfig(templatesDir string) HeartbeatConfig {
+// file. Checks memoryDir first, then embedded defaults.
+func ParseHeartbeatConfig(memoryDir string) HeartbeatConfig {
 	cfg := HeartbeatConfig{IntervalSeconds: 300}
 
 	var content string
-	if templatesDir != "" {
-		if data, err := os.ReadFile(templatesDir + "/HEARTBEAT.md"); err == nil {
+	if memoryDir != "" {
+		if data, err := os.ReadFile(memoryDir + "/HEARTBEAT.md"); err == nil {
 			content = string(data)
 		}
 	}

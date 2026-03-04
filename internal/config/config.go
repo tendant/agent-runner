@@ -16,8 +16,7 @@ type Config struct {
 	ReposRoot    string
 	LogsRoot     string
 	TmpRoot      string
-	TemplatesDir string // Convention: ./templates (user template overrides)
-	MemoryDir    string // Convention: ./memory (generated daily logs)
+	MemoryDir string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 
 	// Project allowlist
 	AllowedProjects []string
@@ -117,7 +116,6 @@ func DefaultConfig() *Config {
 		ReposRoot:                "./repos",
 		LogsRoot:                 "./logs",
 		TmpRoot:                  "./tmp",
-		TemplatesDir:             "./templates",
 		MemoryDir:                "./memory",
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,

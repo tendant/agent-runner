@@ -9,41 +9,6 @@ import (
 	"time"
 )
 
-// SeedMemory copies MEMORY.md from templatesDir into memoryDir on first run.
-// First run is detected by memoryDir not existing. No-op if memoryDir already
-// exists or templatesDir has no MEMORY.md.
-func SeedMemory(templatesDir, memoryDir string) error {
-	if memoryDir == "" {
-		return nil
-	}
-	// If memory dir already exists, this is not the first run
-	if _, err := os.Stat(memoryDir); err == nil {
-		return nil
-	}
-
-	if err := os.MkdirAll(memoryDir, 0755); err != nil {
-		return fmt.Errorf("create memory dir: %w", err)
-	}
-
-	// Try user override first, then embedded default
-	var content []byte
-	if templatesDir != "" {
-		if data, err := os.ReadFile(filepath.Join(templatesDir, "MEMORY.md")); err == nil {
-			content = data
-		}
-	}
-
-	if content == nil {
-		return nil // No MEMORY.md to seed
-	}
-
-	dst := filepath.Join(memoryDir, "MEMORY.md")
-	if err := os.WriteFile(dst, content, 0644); err != nil {
-		return fmt.Errorf("seed MEMORY.md: %w", err)
-	}
-	return nil
-}
-
 // ComposeMemorySection loads MEMORY.md and the last N daily logs from
 // memoryDir. Returns empty string if no memory content is found.
 func ComposeMemorySection(memoryDir string, days int) string {

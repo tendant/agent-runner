@@ -97,7 +97,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
 		if liveSession.Status == agent.SessionStatusCompleted {
-			if err := tmpl.CompleteBootstrap(h.config.TemplatesDir); err != nil {
+			if err := tmpl.CompleteBootstrap(h.config.MemoryDir); err != nil {
 				log.Printf("Agent %s: warning: bootstrap completion failed: %v", sessionID, err)
 			}
 		}
@@ -116,9 +116,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		log.Printf("Agent %s: workflow prompt: %s", sessionID, h.config.Agent.PromptFile)
 	}
 
-	// Seed memory from templates on first run
-	if err := tmpl.SeedMemory(h.config.TemplatesDir, h.config.MemoryDir); err != nil {
-		log.Printf("Agent %s: warning: failed to seed memory: %v", sessionID, err)
+	// Seed defaults into memory dir on first run
+	if err := tmpl.SeedDefaults(h.config.MemoryDir); err != nil {
+		log.Printf("Agent %s: warning: failed to seed defaults: %v", sessionID, err)
 	}
 
 	preamble, err := h.resolvePrompt(message)
@@ -258,13 +258,13 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 // appends legacy AGENT_SYSTEM_PROMPT / AGENT_PROMPT_FILE content if set.
 func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1)
-	templatesDir := h.config.TemplatesDir
+	memoryDir := h.config.MemoryDir
 
 	// Check for bootstrap (first_run)
-	firstRun := tmpl.IsFirstRun(templatesDir)
+	firstRun := tmpl.IsFirstRun(memoryDir)
 
-	// Compose from embedded defaults + user overrides
-	composed, err := tmpl.ComposePrompt(templatesDir, tmpl.PhaseBoot, firstRun, ctx)
+	// Compose from embedded defaults + memory dir overrides
+	composed, err := tmpl.ComposePrompt(memoryDir, tmpl.PhaseBoot, firstRun, ctx)
 	if err != nil {
 		return "", fmt.Errorf("template composition failed: %w", err)
 	}

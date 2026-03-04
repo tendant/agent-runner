@@ -273,22 +273,19 @@ priority: 80
 
 First time setup: run npm install.`), 0644)
 
-	// Memory — seed from templates, then compose from memory dir
+	// Memory — everything in one dir
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("Key fact: API rate limit is 100/min"), 0644)
-	memDir := filepath.Join(t.TempDir(), "memory")
-	// Seed: copy MEMORY.md from templates to memory dir (first run)
-	SeedMemory(dir, memDir)
-	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Deployed v2.1"), 0644)
+	os.WriteFile(filepath.Join(dir, "2026-03-03.md"), []byte("Deployed v2.1"), 0644)
 
 	ctx := NewContext("Add rate limiting", []string{"api-server"}, 1)
 
-	// First run
+	// First run — dir is the memory dir (templates + memory + daily logs)
 	result, err := ComposePrompt(dir, PhaseBoot, true, ctx)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
 
-	memorySec := ComposeMemorySection(memDir, 7)
+	memorySec := ComposeMemorySection(dir, 7)
 	if memorySec != "" {
 		result += "\n\n" + memorySec
 	}

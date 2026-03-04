@@ -2,6 +2,7 @@ package template
 
 import (
 	"embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,42 @@ func LoadDefaults() ([]TemplateFile, error) {
 		files = append(files, tf)
 	}
 	return files, nil
+}
+
+// SeedDefaults writes all embedded default templates into memoryDir on first
+// run (detected by the directory not existing). No-op if the dir already exists.
+func SeedDefaults(memoryDir string) error {
+	if memoryDir == "" {
+		return nil
+	}
+	// If memory dir already exists, not first run
+	if _, err := os.Stat(memoryDir); err == nil {
+		return nil
+	}
+
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return fmt.Errorf("create memory dir: %w", err)
+	}
+
+	entries, err := defaultTemplates.ReadDir("defaults")
+	if err != nil {
+		return fmt.Errorf("read embedded defaults: %w", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, err := defaultTemplates.ReadFile("defaults/" + e.Name())
+		if err != nil {
+			continue
+		}
+		dst := filepath.Join(memoryDir, e.Name())
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }
 
 // LoadFromDir loads template files from a user directory.

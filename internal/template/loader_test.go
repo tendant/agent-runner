@@ -166,6 +166,48 @@ func TestSortByPriority(t *testing.T) {
 	}
 }
 
+func TestSeedDefaults_WritesDefaults(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "templates")
+	err := SeedDefaults(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify all well-known defaults were written
+	for _, name := range []string{"IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "BOOT.md", "HEARTBEAT.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
+			t.Errorf("missing seeded template: %s", name)
+		}
+	}
+}
+
+func TestSeedDefaults_NoOpIfExists(t *testing.T) {
+	dir := t.TempDir()
+	// Dir already exists — write a custom file
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Custom soul"), 0644)
+
+	err := SeedDefaults(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Custom file should be untouched
+	data, _ := os.ReadFile(filepath.Join(dir, "SOUL.md"))
+	if string(data) != "Custom soul" {
+		t.Error("should not overwrite existing templates dir")
+	}
+	// No extra files should be written
+	if _, err := os.Stat(filepath.Join(dir, "IDENTITY.md")); !os.IsNotExist(err) {
+		t.Error("should not seed into existing dir")
+	}
+}
+
+func TestSeedDefaults_EmptyDir(t *testing.T) {
+	if err := SeedDefaults(""); err != nil {
+		t.Errorf("expected nil for empty dir, got %v", err)
+	}
+}
+
 func TestLoadFromDir_SkipsMemoryMD(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Memory"), 0644)

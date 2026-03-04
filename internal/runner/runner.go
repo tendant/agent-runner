@@ -55,7 +55,7 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	MaxAttempts       int
 	TypePrefix        string
-	TemplatesDir      string // Optional: templates dir to read heartbeat config from
+	MemoryDir         string // Optional: memory dir to read heartbeat config from
 }
 
 // New creates a new HybridRunner.
@@ -80,8 +80,8 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 
 	// Override heartbeat interval from template if available
 	hbInterval := cfg.HeartbeatInterval
-	if cfg.TemplatesDir != "" {
-		hbCfg := tmpl.ParseHeartbeatConfig(cfg.TemplatesDir)
+	if cfg.MemoryDir != "" {
+		hbCfg := tmpl.ParseHeartbeatConfig(cfg.MemoryDir)
 		if hbCfg.IntervalSeconds > 0 {
 			hbInterval = time.Duration(hbCfg.IntervalSeconds) * time.Second
 			log.Printf("runner: heartbeat interval from template: %s", hbInterval)
