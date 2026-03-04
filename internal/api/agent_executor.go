@@ -257,14 +257,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 }
 
 // resolvePrompt builds the combined system prompt using the template system
-// (embedded defaults + optional user overrides) plus legacy prompt files for
-// backward compatibility.
+// (embedded defaults + optional user overrides from the memory directory).
 func (h *Handlers) resolvePrompt(message string) (string, error) {
 	return h.resolveTemplatePrompt(message)
 }
 
-// resolveTemplatePrompt composes the prompt from the template system and
-// appends legacy AGENT_SYSTEM_PROMPT / AGENT_PROMPT_FILE content if set.
+// resolveTemplatePrompt composes the prompt from the template system.
 func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1)
 	memoryDir := h.config.MemoryDir
@@ -281,32 +279,6 @@ func (h *Handlers) resolveTemplatePrompt(message string) (string, error) {
 	var parts []string
 	if composed != "" {
 		parts = append(parts, composed)
-	}
-
-	// Legacy: append AGENT_SYSTEM_PROMPT if set (backward compat)
-	if path := h.config.Agent.SystemPrompt; path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("failed to read system prompt %s: %w", path, err)
-		}
-		base := strings.TrimSpace(string(data))
-		if base != "" {
-			parts = append(parts, base)
-		}
-	}
-
-	// Legacy: append AGENT_PROMPT_FILE if set (backward compat)
-	if path := h.config.Agent.PromptFile; path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("failed to read workflow prompt %s: %w", path, err)
-		}
-		wf := strings.TrimSpace(string(data))
-		if wf != "" {
-			wf = strings.ReplaceAll(wf, "{{MESSAGE}}", message)
-			wf = strings.ReplaceAll(wf, "{{REPOS}}", strings.Join(h.config.Agent.SharedRepos, ", "))
-			parts = append(parts, wf)
-		}
 	}
 
 	// Append memory section

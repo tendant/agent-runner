@@ -248,6 +248,36 @@ func SortByPriority(templates []TemplateFile) {
 	})
 }
 
+// SeedPromptFile copies srcPath into memoryDir/destName so it enters the
+// template pipeline. If the source file already has frontmatter it is copied
+// as-is; otherwise default frontmatter (read_when: always, priority: 100) is
+// prepended. The source file is authoritative — the destination is always
+// overwritten.
+func SeedPromptFile(memoryDir, srcPath, destName string) error {
+	if memoryDir == "" || srcPath == "" {
+		return nil
+	}
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("read prompt file %s: %w", srcPath, err)
+	}
+	content := string(data)
+
+	// If no frontmatter, prepend defaults
+	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
+		content = "---\nread_when: always\npriority: 100\n---\n" + content
+	}
+
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return fmt.Errorf("create memory dir: %w", err)
+	}
+	dst := filepath.Join(memoryDir, destName)
+	if err := os.WriteFile(dst, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", destName, err)
+	}
+	return nil
+}
+
 // parseTemplateFile parses a template file from name and raw content.
 // Applies well-known defaults if frontmatter fields are missing.
 func parseTemplateFile(name, content string) TemplateFile {

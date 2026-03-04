@@ -39,8 +39,6 @@ func main() {
 	}
 	if cfg.Agent.PromptFile != "" {
 		log.Printf("Agent prompt file: %s", cfg.Agent.PromptFile)
-	} else {
-		log.Printf("Agent prompt file: none (using message directly)")
 	}
 	if cfg.Telegram.BotToken != "" {
 		log.Printf("Telegram bot: enabled")
@@ -53,6 +51,18 @@ func main() {
 	// Refresh unmodified defaults to pick up new embedded versions
 	if err := tmpl.RefreshDefaults(cfg.MemoryDir); err != nil {
 		log.Printf("Warning: failed to refresh defaults: %v", err)
+	}
+
+	// Seed legacy prompt files into template system
+	if cfg.Agent.SystemPrompt != "" {
+		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.SystemPrompt, "agent.md"); err != nil {
+			log.Printf("Warning: failed to seed system prompt: %v", err)
+		}
+	}
+	if cfg.Agent.PromptFile != "" {
+		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.PromptFile, "prompt.md"); err != nil {
+			log.Printf("Warning: failed to seed prompt file: %v", err)
+		}
 	}
 
 	// Create and start server
