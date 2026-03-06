@@ -17,10 +17,11 @@ type TemplateFile struct {
 
 // TemplateContext holds variables available for substitution in templates.
 type TemplateContext struct {
-	Message   string
-	Repos     string
-	Date      string
-	Iteration int
+	Message    string
+	Repos      string
+	Date       string
+	Iteration  int
+	ProjectDir string // absolute path to project root
 }
 
 // Phase represents the current execution phase for filtering templates.

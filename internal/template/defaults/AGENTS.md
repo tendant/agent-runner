@@ -30,6 +30,14 @@ Periodically use a heartbeat to:
 
 Daily files are raw notes; MEMORY.md is curated wisdom.
 
+### Committing Memory
+
+After updating memory files, commit them to preserve changes across sessions:
+
+    cd {{PROJECT_DIR}} && git add memory/ && git commit -m "[memory] <what changed>"
+
+This keeps the agent's evolution tracked in version control. Previous session logs in `memory/YYYY-MM-DD.md` may have uncommitted changes — commit those too when you notice them.
+
 ## Scheduling Tasks
 
 You can set reminders, schedule future tasks, and create recurring jobs by writing `_schedule.json` in the workspace `repos/` directory. The runner picks it up after your session completes and submits each entry as a workflow.
