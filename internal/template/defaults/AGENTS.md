@@ -40,32 +40,40 @@ This keeps the agent's evolution tracked in version control. Previous session lo
 
 ## Scheduling Tasks
 
-You can set reminders, schedule future tasks, and create recurring jobs by writing `_schedule.json` in the workspace `repos/` directory. The runner picks it up after your session completes and submits each entry as a workflow.
+You can set reminders, schedule future tasks, and create recurring jobs by calling the runner's schedule API. The runner confirms the schedule immediately, so you get feedback on success or failure.
 
-IMPORTANT: When someone asks you to "remind me", "do X in 10 minutes", "check on Y later", or any time-based request — you MUST write `_schedule.json`. Do NOT refuse or say you cannot set reminders. You CAN. The scheduled task will run as a new agent session at the specified time, delivering the message back to the user.
+IMPORTANT: When someone asks you to "remind me", "do X in 10 minutes", "check on Y later", or any time-based request — you MUST create a schedule. Do NOT refuse or say you cannot set reminders. You CAN. The scheduled task will run as a new agent session at the specified time, delivering the message back to the user.
 
-Example: "Remind me in 5 minutes to drink water" → write `_schedule.json` with `run_in_seconds: 300` and message "Remind the user to drink water".
+Example: "Remind me in 5 minutes to drink water" → call the schedule API with `run_in_seconds: 300` and message "Remind the user to drink water".
 
-### Format
+### API
 
-```json
-[
-  {
-    "message": "Send standup reminder",
-    "run_after": "2026-03-05T09:00:00-08:00",
-    "idempotency_key": "standup-2026-03-05"
-  },
-  {
-    "message": "Check deployment status",
-    "run_in_seconds": 3600
-  },
-  {
-    "message": "Weekly report",
-    "cron": "0 9 * * 1",
-    "timezone": "America/Los_Angeles"
-  }
-]
+Send a POST request to the runner's `/schedule` endpoint:
+
+```bash
+curl -X POST {{RUNNER_URL}}/schedule \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: {{API_KEY}}" \
+  -d '{"message": "Check deployment status", "run_in_seconds": 3600}'
 ```
+
+More examples:
+
+```bash
+# Absolute time (RFC3339)
+curl -X POST {{RUNNER_URL}}/schedule \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: {{API_KEY}}" \
+  -d '{"message": "Send standup reminder", "run_after": "2026-03-05T09:00:00-08:00", "idempotency_key": "standup-2026-03-05"}'
+
+# Recurring cron schedule
+curl -X POST {{RUNNER_URL}}/schedule \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: {{API_KEY}}" \
+  -d '{"message": "Weekly report", "cron": "0 9 * * 1", "timezone": "America/Los_Angeles"}'
+```
+
+A successful response returns HTTP 202 with `{"status": "scheduled"}`.
 
 ### Three scheduling modes
 
@@ -73,7 +81,11 @@ Example: "Remind me in 5 minutes to drink water" → write `_schedule.json` with
 - **`run_in_seconds`** — run after a delay from now
 - **`cron`** + **`timezone`** — recurring schedule (standard 5-field cron)
 
-Use `idempotency_key` on one-shot tasks to prevent duplicates if the same schedule is written again.
+Use `idempotency_key` on one-shot tasks to prevent duplicates if the same schedule is created again.
+
+### Fallback
+
+If the API is unavailable, you can write `_schedule.json` in the working directory as a fallback. The runner picks it up after your session completes. Use the same JSON fields as the API body, wrapped in an array.
 
 ### Periodic checks vs scheduled tasks
 

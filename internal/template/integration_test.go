@@ -12,7 +12,7 @@ import (
 // TestIntegration_DefaultsOnlyPrompt verifies that with no config at all,
 // embedded defaults produce a sensible composed prompt.
 func TestIntegration_DefaultsOnlyPrompt(t *testing.T) {
-	ctx := NewContext("Build a landing page", []string{"site-abc"}, 1, "/tmp/test-project")
+	ctx := NewContext("Build a landing page", []string{"site-abc"}, 1, "/tmp/test-project", "", "")
 
 	result, err := ComposePrompt("", PhaseBoot, false, ctx)
 	if err != nil {
@@ -47,7 +47,7 @@ priority: 20
 
 Always write tests first. Use TDD.`), 0644)
 
-	ctx := NewContext("Fix the login bug", []string{}, 1, "/tmp/test-project")
+	ctx := NewContext("Fix the login bug", []string{}, 1, "/tmp/test-project", "", "")
 	result, err := ComposePrompt(dir, PhaseBoot, false, ctx)
 	if err != nil {
 		t.Fatalf("ComposePrompt error: %v", err)
@@ -71,7 +71,7 @@ priority: 45
 
 Use Next.js 14 with Tailwind CSS and TypeScript.`), 0644)
 
-	ctx := NewContext("Create a dashboard", []string{}, 1, "/tmp/test-project")
+	ctx := NewContext("Create a dashboard", []string{}, 1, "/tmp/test-project", "", "")
 	result, err := ComposePrompt(dir, PhaseBoot, false, ctx)
 	if err != nil {
 		t.Fatalf("ComposePrompt error: %v", err)
@@ -107,7 +107,7 @@ Welcome! This is your first session. Please read README.md and set up the projec
 		t.Fatal("IsFirstRun should be true")
 	}
 
-	ctx := NewContext("Initialize project", []string{}, 1, "/tmp/test-project")
+	ctx := NewContext("Initialize project", []string{}, 1, "/tmp/test-project", "", "")
 	result, err := ComposePrompt(dir, PhaseBoot, true, ctx)
 	if err != nil {
 		t.Fatalf("ComposePrompt error: %v", err)
@@ -163,7 +163,7 @@ func TestIntegration_Memory(t *testing.T) {
 
 // TestIntegration_HeartbeatPhase verifies heartbeat phase filtering.
 func TestIntegration_HeartbeatPhase(t *testing.T) {
-	ctx := NewContext("ongoing task", []string{}, 5, "/tmp/test-project")
+	ctx := NewContext("ongoing task", []string{}, 5, "/tmp/test-project", "", "")
 
 	result, err := ComposePrompt("", PhaseHeartbeat, false, ctx)
 	if err != nil {
@@ -278,7 +278,7 @@ First time setup: run npm install.`), 0644)
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("Key fact: API rate limit is 100/min"), 0644)
 	os.WriteFile(filepath.Join(dir, "2026-03-03.md"), []byte("Deployed v2.1"), 0644)
 
-	ctx := NewContext("Add rate limiting", []string{"api-server"}, 1, "/tmp/test-project")
+	ctx := NewContext("Add rate limiting", []string{"api-server"}, 1, "/tmp/test-project", "", "")
 
 	// First run — dir is the memory dir (templates + memory + daily logs)
 	result, err := ComposePrompt(dir, PhaseBoot, true, ctx)

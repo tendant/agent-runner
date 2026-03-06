@@ -22,6 +22,8 @@ type TemplateContext struct {
 	Date       string
 	Iteration  int
 	ProjectDir string // absolute path to project root
+	RunnerURL  string // base URL of the runner API (e.g. http://localhost:8080)
+	APIKey     string // API key for authenticating with the runner
 }
 
 // Phase represents the current execution phase for filtering templates.

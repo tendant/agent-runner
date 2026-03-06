@@ -9,5 +9,5 @@ priority: 50
 
 - Place files you want to deliver to the user in the `_send/` directory
 - Track completed plan steps by updating `_progress.json` with: `{"completed_steps": ["1", "2"]}`
-- Schedule future tasks by writing `_schedule.json` (see AGENTS.md for format)
+- Schedule future tasks via `POST {{RUNNER_URL}}/schedule` (see AGENTS.md for details)
 - Use `TODO.md` to track your progress within the workspace

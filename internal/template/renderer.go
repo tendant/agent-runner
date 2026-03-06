@@ -49,13 +49,15 @@ func ComposePrompt(memoryDir string, phase Phase, firstRun bool, ctx TemplateCon
 }
 
 // NewContext creates a TemplateContext with the current date filled in.
-func NewContext(message string, repos []string, iteration int, projectDir string) TemplateContext {
+func NewContext(message string, repos []string, iteration int, projectDir, runnerURL, apiKey string) TemplateContext {
 	return TemplateContext{
 		Message:    message,
 		Repos:      strings.Join(repos, ", "),
 		Date:       time.Now().Format("2006-01-02"),
 		Iteration:  iteration,
 		ProjectDir: projectDir,
+		RunnerURL:  runnerURL,
+		APIKey:     apiKey,
 	}
 }
 
@@ -65,5 +67,7 @@ func substituteVars(body string, ctx TemplateContext) string {
 	body = strings.ReplaceAll(body, "{{DATE}}", ctx.Date)
 	body = strings.ReplaceAll(body, "{{ITERATION}}", fmt.Sprintf("%d", ctx.Iteration))
 	body = strings.ReplaceAll(body, "{{PROJECT_DIR}}", ctx.ProjectDir)
+	body = strings.ReplaceAll(body, "{{RUNNER_URL}}", ctx.RunnerURL)
+	body = strings.ReplaceAll(body, "{{API_KEY}}", ctx.APIKey)
 	return body
 }

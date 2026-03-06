@@ -257,7 +257,8 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 // resolvePrompt builds the combined system prompt using the template system
 // (embedded defaults + optional user overrides from the memory directory).
 func (h *Handlers) resolvePrompt(message string) (string, error) {
-	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1, h.config.ProjectDir)
+	runnerURL := "http://" + h.config.API.Bind
+	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1, h.config.ProjectDir, runnerURL, h.config.API.APIKey)
 	memoryDir := h.config.MemoryDir
 
 	// Check for bootstrap (first_run)
