@@ -10,10 +10,10 @@ type progressData struct {
 	CompletedSteps []string `json:"completed_steps"`
 }
 
-// ReadProgress reads _progress.json from reposPath and returns the list of
+// ReadProgress reads _progress.json from workspacePath and returns the list of
 // completed step IDs. Returns an empty slice if the file is missing or invalid.
-func ReadProgress(reposPath string) []string {
-	data, err := os.ReadFile(filepath.Join(reposPath, "_progress.json"))
+func ReadProgress(workspacePath string) []string {
+	data, err := os.ReadFile(filepath.Join(workspacePath, "_progress.json"))
 	if err != nil {
 		return nil
 	}

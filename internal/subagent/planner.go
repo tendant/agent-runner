@@ -48,12 +48,12 @@ func NewPlanner(exec *executor.Executor, preamble string) *Planner {
 }
 
 // Plan runs the planner against the workspace and returns a structured plan.
-func (p *Planner) Plan(ctx context.Context, reposPath, message string) (*PlanResult, error) {
-	state := ReadWorkspaceState(ctx, reposPath)
+func (p *Planner) Plan(ctx context.Context, workspacePath, message string) (*PlanResult, error) {
+	state := ReadWorkspaceState(ctx, workspacePath)
 
 	prompt := p.BuildPrompt(state, message)
 
-	result, err := p.executor.Execute(ctx, reposPath, prompt)
+	result, err := p.executor.Execute(ctx, workspacePath, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("planner execution failed: %w", err)
 	}

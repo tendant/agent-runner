@@ -22,8 +22,8 @@ func NewPromptBuilder(preamble string) *PromptBuilder {
 // progress, workspace state, and iteration metadata. errorContext, when
 // non-empty, is rendered before the iteration line so Claude can see what
 // went wrong on the previous attempt.
-func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *PlanResult, iteration int, message string, errorContext string) string {
-	state := ReadWorkspaceState(ctx, reposPath)
+func (pb *PromptBuilder) Build(ctx context.Context, workspacePath string, plan *PlanResult, iteration int, message string, errorContext string) string {
+	state := ReadWorkspaceState(ctx, workspacePath)
 
 	var sb strings.Builder
 
@@ -34,7 +34,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, reposPath string, plan *Plan
 	// Plan with checkboxes
 	if plan != nil && len(plan.Steps) > 0 {
 		// Read progress file and build set of completed step IDs
-		completedIDs := ReadProgress(reposPath)
+		completedIDs := ReadProgress(workspacePath)
 		completedSet := make(map[string]bool, len(completedIDs))
 		for _, id := range completedIDs {
 			completedSet[id] = true

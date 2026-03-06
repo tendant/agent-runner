@@ -36,13 +36,13 @@ func NewReviewer(exec *executor.Executor) *Reviewer {
 }
 
 // Review runs the reviewer against the workspace and returns a structured review.
-func (r *Reviewer) Review(ctx context.Context, reposPath, message string, plan *PlanResult) (*ReviewResult, error) {
-	state := ReadWorkspaceState(ctx, reposPath)
-	completedIDs := ReadProgress(reposPath)
+func (r *Reviewer) Review(ctx context.Context, workspacePath, message string, plan *PlanResult) (*ReviewResult, error) {
+	state := ReadWorkspaceState(ctx, workspacePath)
+	completedIDs := ReadProgress(workspacePath)
 
 	prompt := r.buildPrompt(state, message, plan, completedIDs)
 
-	result, err := r.executor.Execute(ctx, reposPath, prompt)
+	result, err := r.executor.Execute(ctx, workspacePath, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("reviewer execution failed: %w", err)
 	}

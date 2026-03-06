@@ -43,9 +43,9 @@ func (w *workflowSchedulerClient) SubmitSchedule(ctx context.Context, entries []
 
 const scheduleFileName = "_schedule.json"
 
-// collectScheduleEntries reads _schedule.json from the repos directory.
-func collectScheduleEntries(reposPath string) ([]ScheduleEntry, error) {
-	path := filepath.Join(reposPath, scheduleFileName)
+// collectScheduleEntries reads _schedule.json from the workspace directory.
+func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
+	path := filepath.Join(workspacePath, scheduleFileName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

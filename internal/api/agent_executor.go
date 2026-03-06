@@ -136,8 +136,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
 	// before cache-back can copy from it.
 
-	// Claude runs in the repos/ subdirectory
-	reposPath := filepath.Join(workspacePath, "repos")
 	ctx := h.agentManager.Context()
 
 	log.Printf("Agent %s: resolved preamble (%d chars)", sessionID, len(preamble))
@@ -147,10 +145,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	if h.config.Agent.PlannerEnabled {
 		log.Printf("Agent %s: running planner", sessionID)
 		planner := subagent.NewPlanner(h.executor, preamble)
-		plannerState := subagent.ReadWorkspaceState(ctx, reposPath)
+		plannerState := subagent.ReadWorkspaceState(ctx, workspacePath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
 		log.Printf("Agent %s: planner prompt (%d chars)", sessionID, len(plannerPromptText))
-		plan, err = planner.Plan(ctx, reposPath, message)
+		plan, err = planner.Plan(ctx, workspacePath, message)
 		if err != nil {
 			log.Printf("Agent %s: planner failed (non-fatal): %v", sessionID, err)
 		} else {
@@ -200,25 +198,25 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		// Build prompt: dynamic (with plan/state) or static (backward compat)
 		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
-			systemPrompt = promptBuilder.Build(ctx, reposPath, plan, i, message, errorContext)
+			systemPrompt = promptBuilder.Build(ctx, workspacePath, plan, i, message, errorContext)
 		} else {
 			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
 		}
 		log.Printf("Agent %s: iteration %d system prompt (%d chars), message (%d chars)", sessionID, i, len(systemPrompt), len(message))
 
-		result := h.executeIteration(ctx, reposPath, systemPrompt, message, i, deadline)
+		result := h.executeIteration(ctx, workspacePath, systemPrompt, message, i, deadline)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
 
 		// Update completed steps from progress file
-		if completedSteps := subagent.ReadProgress(reposPath); len(completedSteps) > 0 {
+		if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
 			liveSession.SetCompletedSteps(completedSteps)
 		}
 	}
 
 	// Collect output files from _send/ directory
-	sendDir := filepath.Join(reposPath, "_send")
+	sendDir := filepath.Join(workspacePath, "_send")
 	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
 		log.Printf("Agent %s: warning: failed to collect _send/ files: %v", sessionID, err)
 	} else if len(outputFiles) > 0 {
@@ -227,7 +225,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}
 
 	// Collect and submit scheduled tasks from _schedule.json
-	if schedEntries, err := collectScheduleEntries(reposPath); err != nil {
+	if schedEntries, err := collectScheduleEntries(workspacePath); err != nil {
 		log.Printf("Agent %s: warning: failed to collect _schedule.json: %v", sessionID, err)
 	} else if len(schedEntries) > 0 {
 		if h.workflowClient != nil {
@@ -244,7 +242,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	if h.config.Agent.ReviewerEnabled {
 		log.Printf("Agent %s: running reviewer", sessionID)
 		reviewer := subagent.NewReviewer(h.executor)
-		review, reviewErr := reviewer.Review(ctx, reposPath, message, plan)
+		review, reviewErr := reviewer.Review(ctx, workspacePath, message, plan)
 		if reviewErr != nil {
 			log.Printf("Agent %s: reviewer failed (non-fatal): %v", sessionID, reviewErr)
 		} else {
