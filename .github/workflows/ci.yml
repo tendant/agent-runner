@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Replace local simple-workflow with published version for CI
+      - run: go mod edit -replace=github.com/tendant/simple-workflow=github.com/tendant/simple-workflow@v0.0.5
+      - run: go mod tidy
+      - run: go build ./...
+      - run: go test -race ./...
