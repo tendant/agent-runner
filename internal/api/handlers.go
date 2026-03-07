@@ -35,6 +35,7 @@ type Handlers struct {
 	runLogger        *logging.RunLogger
 	notifier         Notifier
 	workflowClient   WorkflowScheduler
+	runnerDB         RunnerDB // set when runner is enabled, for debug queries
 }
 
 // NewHandlers creates a new handlers instance
@@ -68,6 +69,17 @@ func (h *Handlers) SetNotifier(n Notifier) {
 // SetWorkflowClient sets the workflow scheduler used for agent-created schedules.
 func (h *Handlers) SetWorkflowClient(w WorkflowScheduler) {
 	h.workflowClient = w
+}
+
+// RunnerDB provides read-only access to the runner's database for debug queries.
+type RunnerDB interface {
+	QuerySchedules() ([]map[string]interface{}, error)
+	QueryRuns(limit int) ([]map[string]interface{}, error)
+}
+
+// SetRunnerDB sets the runner DB for debug endpoints.
+func (h *Handlers) SetRunnerDB(db RunnerDB) {
+	h.runnerDB = db
 }
 
 // RunRequest represents the POST /run request body

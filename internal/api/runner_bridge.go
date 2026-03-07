@@ -56,19 +56,29 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	}
 
 	sessionID := session.ID
-	log.Printf("runner bridge: executing agent task session=%s message_len=%d", sessionID, len(payload.Message))
+	msgPreview := payload.Message
+	if len(msgPreview) > 80 {
+		msgPreview = msgPreview[:80] + "..."
+	}
+	log.Printf("runner bridge: executing agent task session=%s message=%q max_iter=%d max_seconds=%d",
+		sessionID, msgPreview, maxIter, maxSeconds)
 
 	// Run executeAgent synchronously — the runner's lease extension keeps
 	// the workflow_run lease alive while this blocks.
+	startTime := time.Now()
 	h.executeAgent(session)
+	elapsed := time.Since(startTime)
 
 	// Check final status and notify
 	snap, _ := h.agentManager.GetSession(sessionID)
 	if snap != nil {
+		log.Printf("runner bridge: session=%s completed status=%s iterations=%d elapsed=%s",
+			sessionID, snap.Status, snap.SuccessfulIterations, elapsed.Round(time.Second))
 		b.notify(ctx, snap)
 	}
 
 	if snap != nil && snap.Status == agent.SessionStatusFailed && snap.Error != "" {
+		log.Printf("runner bridge: session=%s failed: %s", sessionID, snap.Error)
 		return &agentTaskError{msg: snap.Error}
 	}
 

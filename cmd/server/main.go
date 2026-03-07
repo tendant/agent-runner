@@ -70,6 +70,8 @@ func main() {
 
 	// Conditionally start hybrid runner
 	if cfg.Runner.Enabled {
+		log.Printf("Runner: enabled (db=%s prefix=%s lease=%ds poll_cap=%ds)",
+			cfg.Runner.DatabaseURL, cfg.Runner.TypePrefix, cfg.Runner.LeaseDuration, cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
 			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_ENABLED=true")
 		}
@@ -93,6 +95,8 @@ func main() {
 		// Create workflow client for agent scheduling
 		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
 		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
+		server.Handlers().SetRunnerDB(runner.NewDebugDB(r.DB(), r.Dialect().DriverName()))
+		log.Printf("Runner: workflow client initialized for schedule submission")
 
 		go func() {
 			log.Printf("Runner: starting hybrid runner")
@@ -100,6 +104,8 @@ func main() {
 				log.Printf("Runner error: %v", err)
 			}
 		}()
+	} else {
+		log.Printf("Runner: disabled (set RUNNER_ENABLED=true and RUNNER_DATABASE_URL to enable scheduled tasks)")
 	}
 
 	if err := server.Start(); err != nil {

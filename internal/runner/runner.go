@@ -219,22 +219,30 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 
 	run, err := r.runs.Claim(ctx, r.agentID, typePrefixes, r.leaseDuration)
 	if err != nil {
-		log.Printf("runner: claim error: %v", err)
+		log.Printf("runner: claim error (prefix=%s): %v", prefix, err)
 		return false
 	}
 	if run == nil {
 		return false
 	}
 
-	log.Printf("runner: claimed task %s (type=%s attempt=%d)", run.ID, run.Type, run.Attempt)
+	log.Printf("runner: claimed task %s (type=%s attempt=%d/%d payload_len=%d)",
+		run.ID, run.Type, run.Attempt, run.MaxAttempts, len(run.Payload))
 
 	// Parse payload
 	var payload AgentTaskPayload
 	if err := json.Unmarshal(run.Payload, &payload); err != nil {
-		log.Printf("runner: invalid payload for %s: %v", run.ID, err)
+		log.Printf("runner: invalid payload for %s: %v (raw: %s)", run.ID, err, string(run.Payload))
 		r.runs.MarkFailed(ctx, run, fmt.Errorf("invalid payload: %w", err))
 		return true
 	}
+
+	msgPreview := payload.Message
+	if len(msgPreview) > 100 {
+		msgPreview = msgPreview[:100] + "..."
+	}
+	log.Printf("runner: task %s payload: message=%q author=%q max_iterations=%d max_seconds=%d",
+		run.ID, msgPreview, payload.Author, payload.MaxIterations, payload.MaxTotalSeconds)
 
 	// Update heartbeat to running
 	r.heartbeat.Upsert(ctx, r.agentID, "running", run.ID, "", payload.Message)
@@ -245,15 +253,18 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 	go r.extendLease(leaseCtx, run.ID)
 
 	// Execute the agent task
+	startTime := time.Now()
+	log.Printf("runner: executing task %s", run.ID)
 	execErr := r.executor.ExecuteAgentTask(ctx, payload)
+	elapsed := time.Since(startTime)
 
 	// Mark result
 	if execErr != nil {
-		log.Printf("runner: task %s failed: %v", run.ID, execErr)
+		log.Printf("runner: task %s failed after %s: %v", run.ID, elapsed.Round(time.Second), execErr)
 		r.runs.MarkFailed(ctx, run, execErr)
 		r.heartbeat.Upsert(ctx, r.agentID, "idle", "", run.ID, "")
 	} else {
-		log.Printf("runner: task %s succeeded", run.ID)
+		log.Printf("runner: task %s succeeded after %s", run.ID, elapsed.Round(time.Second))
 		r.runs.MarkSucceeded(ctx, run.ID, map[string]string{"status": "completed"})
 		r.heartbeat.Upsert(ctx, r.agentID, "idle", "", run.ID, "")
 	}
