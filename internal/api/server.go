@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -152,6 +153,14 @@ func (s *Server) Start() error {
 		close(done)
 	}()
 
+	// Bind the port first so we know the server is ready before starting
+	// bots and other components that depend on the API being reachable.
+	ln, err := net.Listen("tcp", s.config.API.Bind)
+	if err != nil {
+		return err
+	}
+	log.Printf("Server listening on %s", ln.Addr().String())
+
 	// Start Telegram bot
 	if s.telegramBot != nil {
 		if err := s.telegramBot.Start(context.Background()); err != nil {
@@ -166,9 +175,7 @@ func (s *Server) Start() error {
 		}
 	}
 
-	log.Printf("Server starting on %s", s.config.API.Bind)
-
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 
