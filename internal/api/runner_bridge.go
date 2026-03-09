@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -69,12 +68,11 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	h.executeAgent(session)
 	elapsed := time.Since(startTime)
 
-	// Check final status and notify
+	// Check final status (notification is handled by executeAgent's defer)
 	snap, _ := h.agentManager.GetSession(sessionID)
 	if snap != nil {
 		log.Printf("runner bridge: session=%s completed status=%s iterations=%d elapsed=%s",
 			sessionID, snap.Status, snap.SuccessfulIterations, elapsed.Round(time.Second))
-		b.notify(ctx, snap)
 	}
 
 	if snap != nil && snap.Status == agent.SessionStatusFailed && snap.Error != "" {
@@ -83,56 +81,6 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	}
 
 	return nil
-}
-
-// notify sends a completion notification via the configured notifier (stream/telegram).
-func (b *RunnerBridge) notify(ctx context.Context, snap *agent.Session) {
-	if b.handlers.notifier == nil {
-		return
-	}
-
-	preview := snap.Message
-	if len(preview) > 80 {
-		preview = preview[:80] + "..."
-	}
-
-	var msg string
-	switch snap.Status {
-	case agent.SessionStatusCompleted:
-		// Use agent output as notification if available (e.g. scheduled reminders)
-		if output := lastIterationOutput(snap); output != "" {
-			msg = output
-		} else {
-			msg = fmt.Sprintf("✅ Runner task completed\n• Session: %s\n• Message: %s\n• Iterations: %d\n• Duration: %ds",
-				snap.ID, preview, snap.SuccessfulIterations, snap.ElapsedSeconds)
-		}
-	case agent.SessionStatusFailed:
-		errPreview := snap.Error
-		if len(errPreview) > 120 {
-			errPreview = errPreview[:120] + "..."
-		}
-		msg = fmt.Sprintf("❌ Runner task failed\n• Session: %s\n• Message: %s\n• Error: %s",
-			snap.ID, preview, errPreview)
-	default:
-		return
-	}
-
-	notifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	if err := b.handlers.notifier.SendNotification(notifyCtx, msg); err != nil {
-		log.Printf("runner bridge: notification failed: %v", err)
-	}
-}
-
-// lastIterationOutput returns the output from the last successful iteration, if any.
-func lastIterationOutput(snap *agent.Session) string {
-	for i := len(snap.Iterations) - 1; i >= 0; i-- {
-		if snap.Iterations[i].Output != "" {
-			return snap.Iterations[i].Output
-		}
-	}
-	return ""
 }
 
 type agentTaskError struct {

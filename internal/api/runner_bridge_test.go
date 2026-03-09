@@ -15,7 +15,7 @@ func TestLastIterationOutput_ReturnsLastNonEmpty(t *testing.T) {
 		},
 	}
 
-	result := lastIterationOutput(snap)
+	result := lastAgentOutput(snap)
 	if result != "third output" {
 		t.Errorf("expected 'third output', got %q", result)
 	}
@@ -29,7 +29,7 @@ func TestLastIterationOutput_AllEmpty(t *testing.T) {
 		},
 	}
 
-	result := lastIterationOutput(snap)
+	result := lastAgentOutput(snap)
 	if result != "" {
 		t.Errorf("expected empty string, got %q", result)
 	}
@@ -38,7 +38,7 @@ func TestLastIterationOutput_AllEmpty(t *testing.T) {
 func TestLastIterationOutput_NilIterations(t *testing.T) {
 	snap := &agent.Session{}
 
-	result := lastIterationOutput(snap)
+	result := lastAgentOutput(snap)
 	if result != "" {
 		t.Errorf("expected empty string, got %q", result)
 	}
@@ -51,7 +51,7 @@ func TestLastIterationOutput_SingleIteration(t *testing.T) {
 		},
 	}
 
-	result := lastIterationOutput(snap)
+	result := lastAgentOutput(snap)
 	if result != "only output" {
 		t.Errorf("expected 'only output', got %q", result)
 	}
@@ -66,7 +66,7 @@ func TestLastIterationOutput_SkipsMiddleEmpty(t *testing.T) {
 		},
 	}
 
-	result := lastIterationOutput(snap)
+	result := lastAgentOutput(snap)
 	if result != "first" {
 		t.Errorf("expected 'first', got %q", result)
 	}

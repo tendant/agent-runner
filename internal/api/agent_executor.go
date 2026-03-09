@@ -102,6 +102,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			}
 		}
 
+		// Send notification to connected chat channels
+		h.notifySessionResult(liveSession.Snapshot())
+
 		// Cleanup workspace after cache-back and logging are done
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath)
@@ -399,6 +402,67 @@ func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
 	}
 
 	return files, nil
+}
+
+// notifySessionResult sends the agent session result to connected chat channels.
+// Called from executeAgent's defer so both runner-initiated and API-initiated sessions
+// get notifications. Runner bridge also calls its own notify (which is fine — the
+// runner bridge notify is richer for runner tasks; this one is the catch-all).
+func (h *Handlers) notifySessionResult(snap *agent.Session) {
+	if h.notifier == nil {
+		return
+	}
+
+	// Skip notification if session was started from a chat channel (the user
+	// is already watching the session via polling). Only notify for sessions
+	// that completed "in the background" — i.e. runner-initiated tasks.
+	// Runner bridge handles its own notifications, so we notify here only
+	// for API-initiated sessions that the user might not be watching.
+	// For now, notify all completed/failed sessions and let the notifier dedupe.
+
+	preview := snap.Message
+	if len(preview) > 80 {
+		preview = preview[:80] + "..."
+	}
+
+	var msg string
+	switch snap.Status {
+	case agent.SessionStatusCompleted:
+		if output := lastAgentOutput(snap); output != "" {
+			msg = output
+		} else {
+			msg = fmt.Sprintf("Agent completed\n• Session: %s\n• Message: %s\n• Iterations: %d\n• Duration: %ds",
+				snap.ID, preview, snap.SuccessfulIterations, snap.ElapsedSeconds)
+		}
+	case agent.SessionStatusFailed:
+		errPreview := snap.Error
+		if len(errPreview) > 120 {
+			errPreview = errPreview[:120] + "..."
+		}
+		msg = fmt.Sprintf("Agent failed\n• Session: %s\n• Message: %s\n• Error: %s",
+			snap.ID, preview, errPreview)
+	default:
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := h.notifier.SendNotification(ctx, msg); err != nil {
+		log.Printf("Agent %s: notification failed: %v", snap.ID, err)
+	} else {
+		log.Printf("Agent %s: notification sent", snap.ID)
+	}
+}
+
+// lastAgentOutput returns the output from the last iteration with output.
+func lastAgentOutput(snap *agent.Session) string {
+	for i := len(snap.Iterations) - 1; i >= 0; i-- {
+		if snap.Iterations[i].Output != "" {
+			return snap.Iterations[i].Output
+		}
+	}
+	return ""
 }
 
 const maxPartialOutputChars = 2000
