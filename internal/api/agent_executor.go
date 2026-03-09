@@ -264,11 +264,28 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1, h.config.ProjectDir, runnerURL, h.config.API.APIKey)
 	memoryDir := h.config.MemoryDir
 
+	// Load prompt files directly from source (no copy into memory dir)
+	var extras []tmpl.TemplateFile
+	if h.config.Agent.SystemPrompt != "" {
+		if tf, err := tmpl.LoadPromptFile(h.config.Agent.SystemPrompt, "system-prompt.md"); err != nil {
+			log.Printf("Warning: failed to load system prompt: %v", err)
+		} else if tf != nil {
+			extras = append(extras, *tf)
+		}
+	}
+	if h.config.Agent.PromptFile != "" {
+		if tf, err := tmpl.LoadPromptFile(h.config.Agent.PromptFile, "prompt.md"); err != nil {
+			log.Printf("Warning: failed to load prompt file: %v", err)
+		} else if tf != nil {
+			extras = append(extras, *tf)
+		}
+	}
+
 	// Check for bootstrap (first_run)
 	firstRun := tmpl.IsFirstRun(memoryDir)
 
-	// Compose from embedded defaults + memory dir overrides
-	composed, err := tmpl.ComposePrompt(memoryDir, tmpl.PhaseBoot, firstRun, ctx)
+	// Compose from embedded defaults + memory dir overrides + prompt files
+	composed, err := tmpl.ComposePrompt(memoryDir, tmpl.PhaseBoot, firstRun, ctx, extras...)
 	if err != nil {
 		return "", fmt.Errorf("template composition failed: %w", err)
 	}

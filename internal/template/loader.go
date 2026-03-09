@@ -253,6 +253,9 @@ func SortByPriority(templates []TemplateFile) {
 // as-is; otherwise default frontmatter (read_when: always, priority: 100) is
 // prepended. The source file is authoritative — the destination is always
 // overwritten.
+//
+// Deprecated: Use LoadPromptFile instead to read prompt files directly without
+// copying into the memory directory.
 func SeedPromptFile(memoryDir, srcPath, destName string) error {
 	if memoryDir == "" || srcPath == "" {
 		return nil
@@ -276,6 +279,29 @@ func SeedPromptFile(memoryDir, srcPath, destName string) error {
 		return fmt.Errorf("write %s: %w", destName, err)
 	}
 	return nil
+}
+
+// LoadPromptFile reads a prompt file from srcPath and returns it as a
+// TemplateFile ready for the composition pipeline. The file is read directly
+// from its source location — nothing is copied into the memory directory.
+// destName is used as the template name for merging (e.g. "prompt.md").
+func LoadPromptFile(srcPath, destName string) (*TemplateFile, error) {
+	if srcPath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return nil, fmt.Errorf("read prompt file %s: %w", srcPath, err)
+	}
+	content := string(data)
+
+	// If no frontmatter, prepend defaults so parseTemplateFile picks them up
+	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
+		content = "---\nread_when: always\npriority: 100\n---\n" + content
+	}
+
+	tf := parseTemplateFile(destName, content)
+	return &tf, nil
 }
 
 // parseTemplateFile parses a template file from name and raw content.

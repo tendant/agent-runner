@@ -53,17 +53,9 @@ func main() {
 		log.Printf("Warning: failed to refresh defaults: %v", err)
 	}
 
-	// Seed legacy prompt files into template system
-	if cfg.Agent.SystemPrompt != "" {
-		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.SystemPrompt, "system-prompt.md"); err != nil {
-			log.Printf("Warning: failed to seed system prompt: %v", err)
-		}
-	}
-	if cfg.Agent.PromptFile != "" {
-		if err := tmpl.SeedPromptFile(cfg.MemoryDir, cfg.Agent.PromptFile, "prompt.md"); err != nil {
-			log.Printf("Warning: failed to seed prompt file: %v", err)
-		}
-	}
+	// Prompt files (AGENT_SYSTEM_PROMPT, AGENT_PROMPT_FILE) are now loaded
+	// directly from source on each session via LoadPromptFile — no need to
+	// seed copies into the memory directory.
 
 	// Create and start server
 	server := api.NewServer(cfg)

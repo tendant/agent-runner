@@ -30,7 +30,8 @@ func Render(templates []TemplateFile, ctx TemplateContext) string {
 
 // ComposePrompt is the high-level function that loads, merges, filters, sorts,
 // and renders templates into a final prompt string.
-func ComposePrompt(memoryDir string, phase Phase, firstRun bool, ctx TemplateContext) (string, error) {
+// Optional extra templates are merged after memory dir overrides (highest precedence).
+func ComposePrompt(memoryDir string, phase Phase, firstRun bool, ctx TemplateContext, extras ...TemplateFile) (string, error) {
 	defaults, err := LoadDefaults()
 	if err != nil {
 		return "", fmt.Errorf("load default templates: %w", err)
@@ -42,6 +43,9 @@ func ComposePrompt(memoryDir string, phase Phase, firstRun bool, ctx TemplateCon
 	}
 
 	merged := MergeTemplates(defaults, overrides)
+	if len(extras) > 0 {
+		merged = MergeTemplates(merged, extras)
+	}
 	filtered := FilterByPhase(merged, phase, firstRun)
 	SortByPriority(filtered)
 
