@@ -75,6 +75,14 @@ curl -X POST {{RUNNER_URL}}/schedule \
 
 A successful response returns HTTP 202 with `{"status": "scheduled"}`.
 
+IMPORTANT: After creating a schedule, verify it was persisted by checking the debug endpoint:
+
+```bash
+curl {{RUNNER_URL}}/debug/schedules -H "X-API-Key: {{API_KEY}}"
+```
+
+If your schedule does not appear in the list, it was NOT created. Do not tell the user it was set up unless you have confirmed it exists.
+
 ### Three scheduling modes
 
 - **`run_after`** — run at an absolute time (RFC3339 format)
