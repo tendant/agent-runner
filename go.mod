@@ -9,7 +9,7 @@ require github.com/joho/godotenv v1.5.1
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/lib/pq v1.11.2
-	github.com/tendant/simple-workflow v0.0.5
+	github.com/tendant/simple-workflow v0.0.6
 )
 
 require (
@@ -32,5 +32,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.46.1 // indirect
 )
-
-replace github.com/tendant/simple-workflow => ../simple-workflow
