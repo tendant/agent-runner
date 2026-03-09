@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	simpleworkflow "github.com/tendant/simple-workflow"
@@ -23,9 +24,25 @@ type ScheduleEntry struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"` // dedup key for one-shot tasks
 }
 
+// ScheduleInfo represents a schedule returned by the list endpoint.
+type ScheduleInfo struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Message     string  `json:"message,omitempty"`
+	CronExpr    string  `json:"cron"`
+	Timezone    string  `json:"timezone"`
+	NextRunAt   string  `json:"next_run_at"`
+	LastRunAt   string  `json:"last_run_at,omitempty"`
+	Enabled     bool    `json:"enabled"`
+	Priority    int     `json:"priority"`
+	MaxAttempts int     `json:"max_attempts"`
+}
+
 // WorkflowScheduler submits schedule entries via simple-workflow.
 type WorkflowScheduler interface {
 	SubmitSchedule(ctx context.Context, entries []ScheduleEntry, typePrefix string) error
+	ListSchedules(ctx context.Context) ([]ScheduleInfo, error)
+	DeleteSchedule(ctx context.Context, scheduleID string) error
 }
 
 // workflowSchedulerClient implements WorkflowScheduler using a simple-workflow Client.
@@ -40,6 +57,41 @@ func NewWorkflowScheduler(client *simpleworkflow.Client) WorkflowScheduler {
 
 func (w *workflowSchedulerClient) SubmitSchedule(ctx context.Context, entries []ScheduleEntry, typePrefix string) error {
 	return submitScheduleEntries(ctx, w.client, entries, typePrefix)
+}
+
+func (w *workflowSchedulerClient) ListSchedules(ctx context.Context) ([]ScheduleInfo, error) {
+	schedules, err := w.client.ListSchedules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var result []ScheduleInfo
+	for _, s := range schedules {
+		info := ScheduleInfo{
+			ID:          s.ID,
+			Type:        s.Type,
+			CronExpr:    s.CronExpr,
+			Timezone:    s.Timezone,
+			NextRunAt:   s.NextRunAt.Format(time.RFC3339),
+			Enabled:     s.Enabled,
+			Priority:    s.Priority,
+			MaxAttempts: s.MaxAttempts,
+		}
+		if s.LastRunAt != nil {
+			info.LastRunAt = s.LastRunAt.Format(time.RFC3339)
+		}
+		// Extract message from payload if available
+		if payload, ok := s.Payload.(map[string]interface{}); ok {
+			if msg, ok := payload["message"].(string); ok {
+				info.Message = msg
+			}
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
+func (w *workflowSchedulerClient) DeleteSchedule(ctx context.Context, scheduleID string) error {
+	return w.client.DeleteSchedule(ctx, scheduleID)
 }
 
 // HandleSchedule handles POST /schedule requests from agents to create scheduled tasks.
@@ -79,6 +131,67 @@ func (h *Handlers) HandleSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusAccepted, map[string]string{"status": "scheduled"})
+}
+
+// HandleListSchedules handles GET /schedules — returns all active schedules.
+func (h *Handlers) HandleListSchedules(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	if h.workflowClient == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "runner not enabled")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	schedules, err := h.workflowClient.ListSchedules(ctx)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "failed to list schedules: "+err.Error())
+		return
+	}
+
+	if schedules == nil {
+		schedules = []ScheduleInfo{}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{"schedules": schedules})
+}
+
+// HandleDeleteSchedule handles DELETE /schedule/{id} — soft-deletes a schedule.
+func (h *Handlers) HandleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	scheduleID := strings.TrimPrefix(r.URL.Path, "/schedule/")
+	if scheduleID == "" {
+		h.writeError(w, http.StatusBadRequest, "schedule id is required")
+		return
+	}
+
+	if h.workflowClient == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "runner not enabled")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := h.workflowClient.DeleteSchedule(ctx, scheduleID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.writeError(w, http.StatusNotFound, "schedule not found")
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "failed to delete schedule: "+err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 const scheduleFileName = "_schedule.json"

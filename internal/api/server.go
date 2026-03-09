@@ -58,6 +58,8 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/status/", handlers.HandleGetStatus)
 	mux.HandleFunc("/projects", handlers.HandleGetProjects)
 	mux.HandleFunc("/schedule", handlers.HandleSchedule)
+	mux.HandleFunc("/schedule/", handlers.HandleDeleteSchedule)
+	mux.HandleFunc("/schedules", handlers.HandleListSchedules)
 	mux.HandleFunc("/debug/schedules", handlers.HandleDebugSchedules)
 	mux.HandleFunc("/agent", handlers.HandleStartAgent)
 	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {

@@ -75,13 +75,27 @@ curl -X POST {{RUNNER_URL}}/schedule \
 
 A successful response returns HTTP 202 with `{"status": "scheduled"}`.
 
-IMPORTANT: After creating a schedule, verify it was persisted by checking the debug endpoint:
+IMPORTANT: After creating a schedule, verify it was persisted by listing schedules:
 
 ```bash
-curl {{RUNNER_URL}}/debug/schedules -H "X-API-Key: {{API_KEY}}"
+curl {{RUNNER_URL}}/schedules -H "X-API-Key: {{API_KEY}}"
 ```
 
 If your schedule does not appear in the list, it was NOT created. Do not tell the user it was set up unless you have confirmed it exists.
+
+### Managing schedules
+
+List all active schedules:
+```bash
+curl {{RUNNER_URL}}/schedules -H "X-API-Key: {{API_KEY}}"
+```
+
+Delete a schedule by ID:
+```bash
+curl -X DELETE {{RUNNER_URL}}/schedule/{id} -H "X-API-Key: {{API_KEY}}"
+```
+
+Before creating a new recurring schedule, check `/schedules` to avoid duplicates. If duplicates exist, delete the extras.
 
 ### Three scheduling modes
 
