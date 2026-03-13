@@ -467,11 +467,17 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	baseDir := t.TempDir()
 	reposDir := filepath.Join(baseDir, "repos")
 	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
+
+	// Use a separate temp dir for workspaces so background goroutines
+	// from executeAgent don't race with t.TempDir() cleanup.
+	tmpDir, err := os.MkdirTemp("", "agent-e2e-noproject-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 
 	os.MkdirAll(reposDir, 0755)
 	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
 
 	cfg := &config.Config{
 		ReposRoot:    reposDir,
