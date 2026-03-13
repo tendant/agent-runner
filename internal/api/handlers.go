@@ -29,7 +29,7 @@ type Handlers struct {
 	jobManager       *jobs.Manager
 	agentManager     *agent.Manager
 	gitOps           *git.Operations
-	executor         *executor.Executor
+	executor         executor.Executor
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
@@ -44,7 +44,7 @@ func NewHandlers(
 	jobManager *jobs.Manager,
 	agentManager *agent.Manager,
 	gitOps *git.Operations,
-	exec *executor.Executor,
+	exec executor.Executor,
 	validator *executor.Validator,
 	workspaceManager *executor.WorkspaceManager,
 	runLogger *logging.RunLogger,

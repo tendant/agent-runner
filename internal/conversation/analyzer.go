@@ -17,11 +17,11 @@ type AnalysisResult struct {
 
 // Analyzer uses Claude CLI to analyze conversation messages and decide the next action.
 type Analyzer struct {
-	executor *executor.Executor
+	executor executor.Executor
 }
 
 // NewAnalyzer creates a new conversation analyzer.
-func NewAnalyzer(exec *executor.Executor) *Analyzer {
+func NewAnalyzer(exec executor.Executor) *Analyzer {
 	return &Analyzer{executor: exec}
 }
 

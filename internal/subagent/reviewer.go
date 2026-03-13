@@ -27,11 +27,11 @@ Rules:
 
 // Reviewer is a sub-agent that reviews work after the iteration loop (phase 2).
 type Reviewer struct {
-	executor *executor.Executor
+	executor executor.Executor
 }
 
 // NewReviewer creates a new reviewer sub-agent.
-func NewReviewer(exec *executor.Executor) *Reviewer {
+func NewReviewer(exec executor.Executor) *Reviewer {
 	return &Reviewer{executor: exec}
 }
 

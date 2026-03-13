@@ -66,6 +66,7 @@ type AgentConfig struct {
 	CommitPrefix        string
 	Model               string   // Optional: --model flag for Claude CLI (e.g., "qwen3-coder:30b")
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
+	CLI                 string   // CLI backend: "claude" (default) or "codex"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
@@ -143,6 +144,7 @@ func DefaultConfig() *Config {
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
+			CLI:                 "claude",
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
 		MemoryDays:          7,
@@ -200,6 +202,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
+	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)

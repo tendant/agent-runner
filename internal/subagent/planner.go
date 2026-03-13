@@ -36,14 +36,14 @@ After completing a plan step, update ` + "`_progress.json`" + ` in the workspace
 
 // Planner is a sub-agent that produces a structured plan before the iteration loop.
 type Planner struct {
-	executor *executor.Executor
+	executor executor.Executor
 	preamble string // prompt template content for context
 }
 
 // NewPlanner creates a new planner sub-agent.
 // The preamble is the resolved prompt template content, giving the planner
 // visibility into the user's workflow instructions.
-func NewPlanner(exec *executor.Executor, preamble string) *Planner {
+func NewPlanner(exec executor.Executor, preamble string) *Planner {
 	return &Planner{executor: exec, preamble: preamble}
 }
 
