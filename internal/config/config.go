@@ -89,7 +89,7 @@ type StreamConfig struct {
 
 // RunnerConfig contains hybrid runner settings
 type RunnerConfig struct {
-	Enabled           bool   // RUNNER_ENABLED
+	Enabled           bool   // RUNNER_SCHEDULER_ENABLED
 	DatabaseURL       string // RUNNER_DATABASE_URL (postgres:// or sqlite://)
 	AgentID           string // RUNNER_AGENT_ID (default: hostname-pid)
 	LeaseDuration     int    // RUNNER_LEASE_DURATION (seconds, default: 60)
@@ -216,7 +216,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
 	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
 
-	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_ENABLED", cfg.Runner.Enabled)
+	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)
 	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)
 	cfg.Runner.AgentID = envOrDefault("RUNNER_AGENT_ID", cfg.Runner.AgentID)
 	cfg.Runner.LeaseDuration = envIntOrDefault("RUNNER_LEASE_DURATION", cfg.Runner.LeaseDuration)

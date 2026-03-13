@@ -65,7 +65,7 @@ func main() {
 		log.Printf("Runner: enabled (db=%s prefix=%s lease=%ds poll_cap=%ds)",
 			cfg.Runner.DatabaseURL, cfg.Runner.TypePrefix, cfg.Runner.LeaseDuration, cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
-			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_ENABLED=true")
+			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_SCHEDULER_ENABLED=true")
 		}
 
 		bridge := api.NewRunnerBridge(server.Handlers())
@@ -97,7 +97,7 @@ func main() {
 			}
 		}()
 	} else {
-		log.Printf("Runner: disabled (set RUNNER_ENABLED=true and RUNNER_DATABASE_URL to enable scheduled tasks)")
+		log.Printf("Runner: disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable scheduled tasks)")
 	}
 
 	if err := server.Start(); err != nil {

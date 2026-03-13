@@ -237,7 +237,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				log.Printf("Agent %s: warning: failed to submit schedule entries: %v", sessionID, err)
 			}
 		} else {
-			log.Printf("Agent %s: warning: %d schedule entries found but no workflow client configured (RUNNER_ENABLED=false?)", sessionID, len(schedEntries))
+			log.Printf("Agent %s: warning: %d schedule entries found but no workflow client configured (RUNNER_SCHEDULER_ENABLED=false?)", sessionID, len(schedEntries))
 		}
 	}
 
