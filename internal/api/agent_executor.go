@@ -20,6 +20,23 @@ import (
 
 const maxConsecutiveFailures = 5
 
+// backoffDelay returns a delay before retrying after consecutive failures.
+// 0 failures = no delay, 1 = 2s, 2 = 4s, 3 = 8s, 4 = 16s, capped at 30s.
+func backoffDelay(consecutiveFails int) time.Duration {
+	if consecutiveFails <= 0 {
+		return 0
+	}
+	delay := time.Duration(1<<uint(consecutiveFails)) * time.Second
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	return delay
+}
+
+// maxReviewerCorrections is the maximum number of corrective iterations
+// the reviewer feedback loop can trigger after the main iteration loop.
+const maxReviewerCorrections = 3
+
 // executeAgent runs the agent iteration loop.
 // Claude handles all git operations via the prompt — the loop just runs Claude
 // in the workspace and records results.
@@ -200,6 +217,16 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			return
 		}
 
+		// Exponential backoff on consecutive failures
+		if delay := backoffDelay(consecutiveFails); delay > 0 {
+			slog.Info("backing off before retry", "session_id", sessionID, "delay", delay, "consecutive_failures", consecutiveFails)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return
+			}
+		}
+
 		// Build error context from previous iteration failure (if any)
 		errorContext := ""
 		if iterNum, errMsg, partialOut := liveSession.LastIterationError(); errMsg != "" {
@@ -226,9 +253,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			metrics.CostUSDTotal.Add(result.CostUSD)
 		}
 
-		// Update completed steps from progress file
+		// Update completed steps from progress file and sync to plan
 		if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
 			liveSession.SetCompletedSteps(completedSteps)
+			if plan != nil {
+				plan.MarkDone(completedSteps)
+			}
 		}
 	}
 
@@ -255,16 +285,70 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 	}
 
-	// Phase 3: Reviewer (optional, non-fatal)
+	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
-		slog.Info("running reviewer", "session_id", sessionID)
 		reviewer := subagent.NewReviewer(h.executor)
-		review, reviewErr := reviewer.Review(ctx, workspacePath, message, plan)
-		if reviewErr != nil {
-			slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
-		} else {
-			slog.Info("reviewer completed", "session_id", sessionID, "score", review.Score, "complete", review.Complete)
+
+		for correction := 0; correction <= maxReviewerCorrections; correction++ {
+			if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
+				break
+			}
+
+			slog.Info("running reviewer", "session_id", sessionID, "pass", correction)
+			review, reviewErr := reviewer.Review(ctx, workspacePath, message, plan)
+			if reviewErr != nil {
+				slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
+				break
+			}
+
+			slog.Info("reviewer completed", "session_id", sessionID,
+				"score", review.Score, "complete", review.Complete,
+				"issues", len(review.Issues), "pass", correction)
 			liveSession.SetReviewResult(review)
+
+			// If complete or no issues, we're done
+			if review.Complete || len(review.Issues) == 0 {
+				break
+			}
+
+			// Don't run corrective iterations on the last pass
+			if correction >= maxReviewerCorrections {
+				slog.Info("reviewer correction limit reached", "session_id", sessionID)
+				break
+			}
+
+			// Run a corrective iteration with reviewer feedback as context
+			correctionContext := buildReviewerContext(review)
+			iterNum := liveSession.Snapshot().CurrentIteration + 1
+
+			var systemPrompt string
+			if h.config.Agent.PlannerEnabled {
+				systemPrompt = promptBuilder.Build(ctx, workspacePath, plan, iterNum, message, correctionContext)
+			} else {
+				systemPrompt = promptBuilder.BuildStatic(message, correctionContext)
+			}
+
+			slog.Info("running corrective iteration", "session_id", sessionID,
+				"iteration", iterNum, "issues", len(review.Issues))
+
+			result := h.executeIteration(ctx, workspacePath, systemPrompt, message, iterNum, deadline)
+			result.Prompt = systemPrompt
+			result.Retry = true
+			liveSession.AddIteration(result)
+
+			metrics.IterationsTotal.WithLabelValues(string(result.Status)).Inc()
+			metrics.IterationDurationSeconds.Observe(float64(result.DurationSecs))
+			if result.CostUSD > 0 {
+				metrics.CostUSDTotal.Add(result.CostUSD)
+			}
+
+			// Update progress after correction
+			if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
+				liveSession.SetCompletedSteps(completedSteps)
+				if plan != nil {
+					plan.MarkDone(completedSteps)
+				}
+			}
 		}
 	}
 
@@ -498,6 +582,30 @@ func lastAgentOutput(snap *agent.Session) string {
 		}
 	}
 	return ""
+}
+
+// buildReviewerContext formats reviewer issues and suggestions as markdown
+// context for a corrective iteration.
+func buildReviewerContext(review *subagent.ReviewResult) string {
+	var sb strings.Builder
+	sb.WriteString("## Reviewer Feedback (corrective iteration)\n\n")
+	sb.WriteString(fmt.Sprintf("**Score:** %d/10\n\n", review.Score))
+	if len(review.Issues) > 0 {
+		sb.WriteString("**Issues to fix:**\n")
+		for _, issue := range review.Issues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+		sb.WriteString("\n")
+	}
+	if len(review.Suggestions) > 0 {
+		sb.WriteString("**Suggestions:**\n")
+		for _, s := range review.Suggestions {
+			sb.WriteString(fmt.Sprintf("- %s\n", s))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Please address the issues above.\n")
+	return sb.String()
 }
 
 const maxPartialOutputChars = 2000

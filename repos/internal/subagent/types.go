@@ -16,6 +16,30 @@ type PlanResult struct {
 	RawOutput string     `json:"-"`
 }
 
+// MarkDone marks steps as done based on completed step IDs.
+func (p *PlanResult) MarkDone(completedIDs []string) {
+	set := make(map[string]bool, len(completedIDs))
+	for _, id := range completedIDs {
+		set[id] = true
+	}
+	for i := range p.Steps {
+		if set[p.Steps[i].ID] {
+			p.Steps[i].Done = true
+		}
+	}
+}
+
+// RemainingSteps returns steps not yet marked as done.
+func (p *PlanResult) RemainingSteps() []PlanStep {
+	var remaining []PlanStep
+	for _, s := range p.Steps {
+		if !s.Done {
+			remaining = append(remaining, s)
+		}
+	}
+	return remaining
+}
+
 // ReviewResult is the structured output from the reviewer sub-agent (phase 2).
 type ReviewResult struct {
 	Complete    bool     `json:"complete"`
