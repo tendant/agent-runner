@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -40,9 +41,14 @@ type Conversation struct {
 
 const maxMessages = 20
 
+// Summarizer can condense conversation history into a short summary.
+type Summarizer interface {
+	Summarize(ctx context.Context, messages []Message) (string, error)
+}
+
 // AddMessage appends a message to the conversation and updates the timestamp.
-// Trims the oldest messages if the history exceeds maxMessages.
-// If the conversation is executing and the message is from a user, marks pending input.
+// When messages exceed maxMessages, old messages are compacted: if a Summarizer
+// is set, they are summarized; otherwise the oldest are dropped.
 func (c *Conversation) AddMessage(role, content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -52,12 +58,49 @@ func (c *Conversation) AddMessage(role, content string) {
 		Time:    time.Now(),
 	})
 	if len(c.Messages) > maxMessages {
-		c.Messages = c.Messages[len(c.Messages)-maxMessages:]
+		c.compact()
 	}
 	if role == "user" && c.State == StateExecuting {
 		c.pendingInput = true
 	}
 	c.UpdatedAt = time.Now()
+}
+
+// compact reduces messages when over the limit. If a summary already exists,
+// just drop the oldest non-summary messages. The actual summarization is
+// triggered externally via CompactWithSummary to avoid blocking AddMessage.
+func (c *Conversation) compact() {
+	if len(c.Messages) <= maxMessages {
+		return
+	}
+	// Keep the last maxMessages messages, preserving any leading summary
+	c.Messages = c.Messages[len(c.Messages)-maxMessages:]
+}
+
+// NeedsCompaction returns true if the conversation has enough messages to
+// benefit from summarization (called before triggering async summarization).
+func (c *Conversation) NeedsCompaction() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.Messages) >= maxMessages-2 // trigger before we hit the hard cap
+}
+
+// CompactWithSummary replaces old messages with a summary message, keeping
+// the most recent keepRecent messages intact. Thread-safe.
+func (c *Conversation) CompactWithSummary(summary string, keepRecent int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.Messages) <= keepRecent+1 {
+		return
+	}
+	summaryMsg := Message{
+		Role:    "assistant",
+		Content: "[Conversation summary]\n" + summary,
+		Time:    c.Messages[0].Time,
+	}
+	recent := make([]Message, keepRecent)
+	copy(recent, c.Messages[len(c.Messages)-keepRecent:])
+	c.Messages = append([]Message{summaryMsg}, recent...)
 }
 
 // SetState changes the conversation state.

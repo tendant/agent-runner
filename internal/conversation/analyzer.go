@@ -25,6 +25,25 @@ func NewAnalyzer(exec executor.Executor) *Analyzer {
 	return &Analyzer{executor: exec}
 }
 
+// Summarize implements Summarizer by calling Claude to condense messages.
+func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, error) {
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation in 2-3 sentences, preserving key decisions, requests, and outcomes. Output ONLY the summary text, no preamble.\n\n")
+	for _, msg := range messages {
+		fmt.Fprintf(&sb, "%s: %s\n", msg.Role, msg.Content)
+	}
+
+	result, err := a.executor.Execute(ctx, "/tmp", sb.String())
+	if err != nil {
+		return "", fmt.Errorf("summarization failed: %w", err)
+	}
+	output := result.Output
+	if output == "" {
+		output = result.RawOutput
+	}
+	return strings.TrimSpace(output), nil
+}
+
 // Analyze sends the conversation history to Claude and gets a structured response.
 func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
 	prompt := a.buildPrompt(conv)

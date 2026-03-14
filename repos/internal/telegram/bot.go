@@ -196,13 +196,21 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 		defer b.wg.Done()
 		b.pollAndReport(tgChatID, sessionID)
 
-		// Add agent output to conversation history for future context
+		// Add agent output to conversation history and upload output files
 		if session, ok := b.starter.GetAgentSession(sessionID); ok {
 			for _, iter := range session.Iterations {
 				if iter.Output != "" {
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
+			if len(session.OutputFiles) > 0 {
+				b.uploadOutputFiles(tgChatID, session)
+			}
+		}
+
+		// Summarize conversation if it's getting long
+		if b.analyzer != nil && conv.NeedsCompaction() {
+			b.summarizeConversation(conv)
 		}
 
 		// If user sent messages during execution, process them now
@@ -291,6 +299,54 @@ func (b *Bot) send(chatID int64, text string) {
 	}
 }
 
+// uploadOutputFiles sends _send/ files as Telegram documents.
+func (b *Bot) uploadOutputFiles(chatID int64, session *agent.Session) {
+	for _, f := range session.OutputFiles {
+		fileBytes := tgbotapi.FileBytes{Name: f.Name, Bytes: f.Data}
+		doc := tgbotapi.NewDocument(chatID, fileBytes)
+		doc.Caption = f.Name
+		if _, err := b.api.Send(doc); err != nil {
+			slog.Error("telegram: failed to send file", "file", f.Name, "error", err)
+		} else {
+			slog.Info("telegram: sent file", "file", f.Name)
+		}
+	}
+}
+
+// sendDocument sends raw bytes as a Telegram document.
+func (b *Bot) sendDocument(chatID int64, name string, data []byte) {
+	fileBytes := tgbotapi.FileBytes{Name: name, Bytes: data}
+	doc := tgbotapi.NewDocument(chatID, fileBytes)
+	if _, err := b.api.Send(doc); err != nil {
+		slog.Error("telegram: failed to send document", "name", name, "error", err)
+	}
+}
+
+// summarizeConversation compacts old messages into a summary.
+func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	msgs := conv.GetMessages()
+	// Summarize the older half, keep the recent half
+	keepRecent := len(msgs) / 2
+	if keepRecent < 4 {
+		keepRecent = 4
+	}
+	toSummarize := msgs[:len(msgs)-keepRecent]
+	if len(toSummarize) == 0 {
+		return
+	}
+
+	summary, err := b.analyzer.Summarize(ctx, toSummarize)
+	if err != nil {
+		slog.Warn("telegram: conversation summarization failed", "error", err)
+		return
+	}
+	conv.CompactWithSummary(summary, keepRecent)
+	slog.Info("telegram: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
+}
+
 // FormatIteration formats a single iteration result for Telegram.
 func FormatIteration(iter agent.IterationResult) string {
 	var sb strings.Builder
@@ -332,11 +388,7 @@ func FormatFinalResult(session *agent.Session) string {
 		}
 	}
 	if len(session.OutputFiles) > 0 {
-		var names []string
-		for _, f := range session.OutputFiles {
-			names = append(names, f.Name)
-		}
-		fmt.Fprintf(&sb, "\n\nGenerated files: %s", strings.Join(names, ", "))
+		fmt.Fprintf(&sb, "\n\n%d file(s) attached", len(session.OutputFiles))
 	}
 	return sb.String()
 }
