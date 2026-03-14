@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -59,8 +59,8 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	if len(msgPreview) > 80 {
 		msgPreview = msgPreview[:80] + "..."
 	}
-	log.Printf("runner bridge: executing agent task session=%s message=%q max_iter=%d max_seconds=%d",
-		sessionID, msgPreview, maxIter, maxSeconds)
+	slog.Info("runner bridge: executing agent task",
+		"session_id", sessionID, "message", msgPreview, "max_iterations", maxIter, "max_seconds", maxSeconds)
 
 	// Run executeAgent synchronously — the runner's lease extension keeps
 	// the workflow_run lease alive while this blocks.
@@ -71,12 +71,13 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	// Check final status (notification is handled by executeAgent's defer)
 	snap, _ := h.agentManager.GetSession(sessionID)
 	if snap != nil {
-		log.Printf("runner bridge: session=%s completed status=%s iterations=%d elapsed=%s",
-			sessionID, snap.Status, snap.SuccessfulIterations, elapsed.Round(time.Second))
+		slog.Info("runner bridge: session completed",
+			"session_id", sessionID, "status", snap.Status,
+			"iterations", snap.SuccessfulIterations, "elapsed", elapsed.Round(time.Second))
 	}
 
 	if snap != nil && snap.Status == agent.SessionStatusFailed && snap.Error != "" {
-		log.Printf("runner bridge: session=%s failed: %s", sessionID, snap.Error)
+		slog.Error("runner bridge: session failed", "session_id", sessionID, "error", snap.Error)
 		return &agentTaskError{msg: snap.Error}
 	}
 

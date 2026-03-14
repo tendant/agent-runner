@@ -3,7 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,7 +86,7 @@ func (b *Bot) Start(ctx context.Context) error {
 		}
 	}()
 
-	log.Printf("Telegram bot started (@%s)", b.api.Self.UserName)
+	slog.Info("telegram bot started", "username", b.api.Self.UserName)
 	return nil
 }
 
@@ -99,13 +99,13 @@ func (b *Bot) Stop() {
 		b.api.StopReceivingUpdates()
 	}
 	b.wg.Wait()
-	log.Println("Telegram bot stopped")
+	slog.Info("telegram bot stopped")
 }
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Security: only respond to the configured chat ID
 	if b.chatID != 0 && msg.Chat.ID != b.chatID {
-		log.Printf("Telegram: ignoring message from unauthorized chat %d", msg.Chat.ID)
+		slog.Warn("telegram: ignoring message from unauthorized chat", "chat_id", msg.Chat.ID)
 		return
 	}
 
@@ -224,7 +224,7 @@ func (b *Bot) handleAnalysis(tgChatID int64, chatID string, conv *conversation.C
 
 	result, err := b.analyzer.Analyze(ctx, conv)
 	if err != nil {
-		log.Printf("Telegram: analyzer error: %v", err)
+		slog.Error("telegram: analyzer error", "error", err)
 		if ctx.Err() == context.DeadlineExceeded {
 			b.send(tgChatID, "Sorry, the request timed out. Please try again.")
 		} else {
@@ -287,7 +287,7 @@ func (b *Bot) send(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	if _, err := b.api.Send(msg); err != nil {
-		log.Printf("Telegram: failed to send message: %v", err)
+		slog.Error("telegram: failed to send message", "error", err)
 	}
 }
 

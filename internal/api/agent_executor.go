@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
@@ -32,11 +33,16 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	startTime := time.Now()
 	deadline := startTime.Add(time.Duration(maxSeconds) * time.Second)
 
+	metrics.ActiveSessions.Inc()
+
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 
 	defer func() {
+		metrics.ActiveSessions.Dec()
+		snap0 := liveSession.Snapshot()
+		metrics.SessionsTotal.WithLabelValues(string(snap0.Status)).Inc()
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.ReposRoot)
@@ -51,6 +57,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			Message:      message,
 			Author:       authorName,
 			SuccessfulIterations: snap.SuccessfulIterations,
+			TotalCostUSD: snap.TotalCostUSD,
 			Error:        snap.Error,
 		}
 		for _, iter := range snap.Iterations {
@@ -61,6 +68,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				ChangedFiles: iter.ChangedFiles,
 				Error:        iter.Error,
 				DurationSecs: iter.DurationSecs,
+				CostUSD:      iter.CostUSD,
 				Prompt:       iter.Prompt,
 				Output:       iter.Output,
 			})
@@ -78,9 +86,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			}
 		}
 		if logFile, err := h.runLogger.WriteAgentLog(logData); err != nil {
-			log.Printf("Failed to write agent log: %v", err)
+			slog.Error("failed to write agent log", "session_id", sessionID, "error", err)
 		} else {
-			log.Printf("Agent log written: %s", logFile)
+			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
 
 		// Write daily memory log
@@ -92,13 +100,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		dailyEntry := fmt.Sprintf("[%s] session %s: %s, %d iterations — %s",
 			time.Now().Format("15:04"), sessionID, snap2.Status, snap2.SuccessfulIterations, msgPreview)
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
-			log.Printf("Agent %s: warning: failed to write daily log: %v", sessionID, err)
+			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 		}
 
 		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
 		if liveSession.Status == agent.SessionStatusCompleted {
 			if err := tmpl.CompleteBootstrap(h.config.MemoryDir); err != nil {
-				log.Printf("Agent %s: warning: bootstrap completion failed: %v", sessionID, err)
+				slog.Warn("bootstrap completion failed", "session_id", sessionID, "error", err)
 			}
 		}
 
@@ -113,10 +121,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Resolve prompt: combine base system prompt (agent.md) + workflow template (prompt.md)
 	if h.config.Agent.SystemPrompt != "" {
-		log.Printf("Agent %s: system prompt: %s", sessionID, h.config.Agent.SystemPrompt)
+		slog.Info("system prompt configured", "session_id", sessionID, "path", h.config.Agent.SystemPrompt)
 	}
 	if h.config.Agent.PromptFile != "" {
-		log.Printf("Agent %s: workflow prompt: %s", sessionID, h.config.Agent.PromptFile)
+		slog.Info("workflow prompt configured", "session_id", sessionID, "path", h.config.Agent.PromptFile)
 	}
 
 	preamble, err := h.resolvePrompt(message)
@@ -141,21 +149,21 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	ctx := h.agentManager.Context()
 
-	log.Printf("Agent %s: resolved preamble (%d chars)", sessionID, len(preamble))
+	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
 	// Phase 1: Planner (optional, non-fatal)
 	var plan *subagent.PlanResult
 	if h.config.Agent.PlannerEnabled {
-		log.Printf("Agent %s: running planner", sessionID)
+		slog.Info("running planner", "session_id", sessionID)
 		planner := subagent.NewPlanner(h.executor, preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, workspacePath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
-		log.Printf("Agent %s: planner prompt (%d chars)", sessionID, len(plannerPromptText))
+		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
 		plan, err = planner.Plan(ctx, workspacePath, message)
 		if err != nil {
-			log.Printf("Agent %s: planner failed (non-fatal): %v", sessionID, err)
+			slog.Warn("planner failed (non-fatal)", "session_id", sessionID, "error", err)
 		} else {
-			log.Printf("Agent %s: planner produced %d steps", sessionID, len(plan.Steps))
+			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
 			liveSession.SetPlanResult(plan)
 		}
 	}
@@ -165,17 +173,17 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
-			log.Printf("Agent %s: stop requested, exiting after iteration %d", sessionID, i-1)
+			slog.Info("stop requested", "session_id", sessionID, "after_iteration", i-1)
 			break
 		}
 		if ctx.Err() != nil {
-			log.Printf("Agent %s: context cancelled, exiting after iteration %d", sessionID, i-1)
+			slog.Info("context cancelled", "session_id", sessionID, "after_iteration", i-1)
 			break
 		}
 
 		// Check time limit
 		if time.Now().After(deadline) {
-			log.Printf("Agent %s: time limit reached (%ds)", sessionID, maxSeconds)
+			slog.Info("time limit reached", "session_id", sessionID, "max_seconds", maxSeconds)
 			break
 		}
 
@@ -187,7 +195,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			if lastErr != "" {
 				failMsg += ": " + lastErr
 			}
-			log.Printf("Agent %s: %s", sessionID, failMsg)
+			slog.Error("aborting session", "session_id", sessionID, "reason", failMsg)
 			h.agentManager.FailSession(sessionID, failMsg)
 			return
 		}
@@ -205,12 +213,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		} else {
 			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
 		}
-		log.Printf("Agent %s: iteration %d system prompt (%d chars), message (%d chars)", sessionID, i, len(systemPrompt), len(message))
+		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		result := h.executeIteration(ctx, workspacePath, systemPrompt, message, i, deadline)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
+
+		metrics.IterationsTotal.WithLabelValues(string(result.Status)).Inc()
+		metrics.IterationDurationSeconds.Observe(float64(result.DurationSecs))
+		if result.CostUSD > 0 {
+			metrics.CostUSDTotal.Add(result.CostUSD)
+		}
 
 		// Update completed steps from progress file
 		if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
@@ -221,35 +235,35 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// Collect output files from _send/ directory
 	sendDir := filepath.Join(workspacePath, "_send")
 	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
-		log.Printf("Agent %s: warning: failed to collect _send/ files: %v", sessionID, err)
+		slog.Warn("failed to collect _send/ files", "session_id", sessionID, "error", err)
 	} else if len(outputFiles) > 0 {
-		log.Printf("Agent %s: collected %d output files from _send/", sessionID, len(outputFiles))
+		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
 		liveSession.SetOutputFiles(outputFiles)
 	}
 
 	// Collect and submit scheduled tasks from _schedule.json
 	if schedEntries, err := collectScheduleEntries(workspacePath); err != nil {
-		log.Printf("Agent %s: warning: failed to collect _schedule.json: %v", sessionID, err)
+		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
 	} else if len(schedEntries) > 0 {
 		if h.workflowClient != nil {
-			log.Printf("Agent %s: submitting %d schedule entries", sessionID, len(schedEntries))
+			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
 			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Runner.TypePrefix); err != nil {
-				log.Printf("Agent %s: warning: failed to submit schedule entries: %v", sessionID, err)
+				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
 			}
 		} else {
-			log.Printf("Agent %s: warning: %d schedule entries found but no workflow client configured (RUNNER_SCHEDULER_ENABLED=false?)", sessionID, len(schedEntries))
+			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
 		}
 	}
 
 	// Phase 3: Reviewer (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
-		log.Printf("Agent %s: running reviewer", sessionID)
+		slog.Info("running reviewer", "session_id", sessionID)
 		reviewer := subagent.NewReviewer(h.executor)
 		review, reviewErr := reviewer.Review(ctx, workspacePath, message, plan)
 		if reviewErr != nil {
-			log.Printf("Agent %s: reviewer failed (non-fatal): %v", sessionID, reviewErr)
+			slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
 		} else {
-			log.Printf("Agent %s: reviewer score=%d complete=%v", sessionID, review.Score, review.Complete)
+			slog.Info("reviewer completed", "session_id", sessionID, "score", review.Score, "complete", review.Complete)
 			liveSession.SetReviewResult(review)
 		}
 	}
@@ -268,14 +282,14 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	var extras []tmpl.TemplateFile
 	if h.config.Agent.SystemPrompt != "" {
 		if tf, err := tmpl.LoadPromptFile(h.config.Agent.SystemPrompt, "system-prompt.md"); err != nil {
-			log.Printf("Warning: failed to load system prompt: %v", err)
+			slog.Warn("failed to load system prompt", "error", err)
 		} else if tf != nil {
 			extras = append(extras, *tf)
 		}
 	}
 	if h.config.Agent.PromptFile != "" {
 		if tf, err := tmpl.LoadPromptFile(h.config.Agent.PromptFile, "prompt.md"); err != nil {
-			log.Printf("Warning: failed to load prompt file: %v", err)
+			slog.Warn("failed to load prompt file", "error", err)
 		} else if tf != nil {
 			extras = append(extras, *tf)
 		}
@@ -352,11 +366,15 @@ func (h *Handlers) executeIteration(
 		} else if execResult != nil && execResult.RawOutput != "" {
 			result.Output = execResult.RawOutput
 		}
+		if execResult != nil {
+			result.CostUSD = execResult.CostUSD
+		}
 		return result
 	}
 
 	if execResult != nil {
 		result.Output = execResult.Output
+		result.CostUSD = execResult.CostUSD
 	}
 	result.Status = agent.IterationStatusSuccess
 	return result
@@ -386,25 +404,25 @@ func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
 			continue
 		}
 		if len(files) >= maxOutputFiles {
-			log.Printf("collectOutputFiles: hit file limit (%d), skipping remaining", maxOutputFiles)
+			slog.Warn("output file limit reached, skipping remaining", "limit", maxOutputFiles)
 			break
 		}
 
 		path := filepath.Join(sendDir, entry.Name())
 		info, err := entry.Info()
 		if err != nil {
-			log.Printf("collectOutputFiles: skip %s: %v", entry.Name(), err)
+			slog.Warn("skipping output file", "file", entry.Name(), "error", err)
 			continue
 		}
 
 		if totalSize+info.Size() > maxOutputTotalSize {
-			log.Printf("collectOutputFiles: skip %s: would exceed %dMB total limit", entry.Name(), maxOutputTotalSize>>20)
+			slog.Warn("skipping output file, would exceed size limit", "file", entry.Name(), "limit_mb", maxOutputTotalSize>>20)
 			continue
 		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			log.Printf("collectOutputFiles: skip %s: %v", entry.Name(), err)
+			slog.Warn("skipping output file", "file", entry.Name(), "error", err)
 			continue
 		}
 
@@ -466,9 +484,9 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 	defer cancel()
 
 	if err := h.notifier.SendNotification(ctx, msg); err != nil {
-		log.Printf("Agent %s: notification failed: %v", snap.ID, err)
+		slog.Error("notification failed", "session_id", snap.ID, "error", err)
 	} else {
-		log.Printf("Agent %s: notification sent", snap.ID)
+		slog.Info("notification sent", "session_id", snap.ID)
 	}
 }
 

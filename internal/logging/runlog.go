@@ -55,6 +55,7 @@ type AgentLogData struct {
 	Author        string
 	Iterations    []AgentIterationLog
 	SuccessfulIterations int
+	TotalCostUSD  float64
 	Error         string
 	Plan          string // JSON string of planner output (if enabled)
 	Review        string // JSON string of reviewer output (if enabled)
@@ -69,6 +70,7 @@ type AgentIterationLog struct {
 	ChangedFiles []string
 	Error        string
 	DurationSecs int
+	CostUSD      float64
 	Prompt       string // prompt sent to Claude for this iteration (for debugging)
 	Output       string // Claude's response text
 }
@@ -137,7 +139,11 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 	if data.Duration > 0 {
 		sb.WriteString(fmt.Sprintf("**Duration:** %ds  \n", data.Duration))
 	}
-	sb.WriteString(fmt.Sprintf("**Successful Iterations:** %d\n\n", data.SuccessfulIterations))
+	sb.WriteString(fmt.Sprintf("**Successful Iterations:** %d  \n", data.SuccessfulIterations))
+	if data.TotalCostUSD > 0 {
+		sb.WriteString(fmt.Sprintf("**Total Cost:** $%.4f\n", data.TotalCostUSD))
+	}
+	sb.WriteString("\n")
 
 	if data.Error != "" {
 		sb.WriteString("## Error\n\n")
@@ -186,6 +192,9 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 				sb.WriteString(fmt.Sprintf("- **Error:** %s\n", iter.Error))
 			}
 			sb.WriteString(fmt.Sprintf("- **Duration:** %ds\n", iter.DurationSecs))
+			if iter.CostUSD > 0 {
+				sb.WriteString(fmt.Sprintf("- **Cost:** $%.4f\n", iter.CostUSD))
+			}
 			if iter.Output != "" {
 				sb.WriteString("\n<details>\n")
 				sb.WriteString(fmt.Sprintf("<summary>Output (%d chars)</summary>\n\n", len(iter.Output)))

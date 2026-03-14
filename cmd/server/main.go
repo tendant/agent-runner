@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/api"
@@ -19,38 +20,40 @@ func main() {
 	}
 
 	// Log configuration summary
-	log.Printf("Project dir: %s", cfg.ProjectDir)
-	log.Printf("Repos root: %s", cfg.ReposRoot)
-	log.Printf("Logs root: %s", cfg.LogsRoot)
-	log.Printf("Tmp root: %s", cfg.TmpRoot)
-	log.Printf("Memory dir: %s", cfg.MemoryDir)
-	log.Printf("Max runtime: %ds", cfg.MaxRuntimeSeconds)
-	log.Printf("Max concurrent jobs: %d", cfg.MaxConcurrentJobs)
+	slog.Info("configuration loaded",
+		"project_dir", cfg.ProjectDir,
+		"repos_root", cfg.ReposRoot,
+		"logs_root", cfg.LogsRoot,
+		"tmp_root", cfg.TmpRoot,
+		"memory_dir", cfg.MemoryDir,
+		"max_runtime_seconds", cfg.MaxRuntimeSeconds,
+		"max_concurrent_jobs", cfg.MaxConcurrentJobs,
+	)
 	if len(cfg.AllowedProjects) > 0 {
-		log.Printf("Allowed projects: %v", cfg.AllowedProjects)
+		slog.Info("allowed projects", "projects", cfg.AllowedProjects)
 	} else {
-		log.Printf("Allowed projects: all")
+		slog.Info("allowed projects: all")
 	}
 	if cfg.API.APIKey != "" {
-		log.Printf("API key authentication: enabled")
+		slog.Info("API key authentication enabled")
 	}
 	if cfg.Agent.Model != "" {
-		log.Printf("Agent model: %s", cfg.Agent.Model)
+		slog.Info("agent configured", "model", cfg.Agent.Model)
 	}
 	if cfg.Agent.PromptFile != "" {
-		log.Printf("Agent prompt file: %s", cfg.Agent.PromptFile)
+		slog.Info("agent prompt file", "path", cfg.Agent.PromptFile)
 	}
 	if cfg.Telegram.BotToken != "" {
-		log.Printf("Telegram bot: enabled")
+		slog.Info("telegram bot enabled")
 	}
 
 	// Seed embedded defaults into memory dir on first run
 	if err := tmpl.SeedDefaults(cfg.MemoryDir); err != nil {
-		log.Printf("Warning: failed to seed defaults: %v", err)
+		slog.Warn("failed to seed defaults", "error", err)
 	}
 	// Refresh unmodified defaults to pick up new embedded versions
 	if err := tmpl.RefreshDefaults(cfg.MemoryDir); err != nil {
-		log.Printf("Warning: failed to refresh defaults: %v", err)
+		slog.Warn("failed to refresh defaults", "error", err)
 	}
 
 	// Prompt files (AGENT_SYSTEM_PROMPT, AGENT_PROMPT_FILE) are now loaded
@@ -62,8 +65,9 @@ func main() {
 
 	// Conditionally start hybrid runner
 	if cfg.Runner.Enabled {
-		log.Printf("Runner: enabled (db=%s prefix=%s lease=%ds poll_cap=%ds)",
-			cfg.Runner.DatabaseURL, cfg.Runner.TypePrefix, cfg.Runner.LeaseDuration, cfg.Runner.PollCap)
+		slog.Info("runner enabled",
+			"db", cfg.Runner.DatabaseURL, "prefix", cfg.Runner.TypePrefix,
+			"lease_seconds", cfg.Runner.LeaseDuration, "poll_cap_seconds", cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
 			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_SCHEDULER_ENABLED=true")
 		}
@@ -88,16 +92,16 @@ func main() {
 		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
 		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
 		server.Handlers().SetRunnerDB(runner.NewDebugDB(r.DB(), r.Dialect().DriverName()))
-		log.Printf("Runner: workflow client initialized for schedule submission")
+		slog.Info("runner workflow client initialized")
 
 		go func() {
-			log.Printf("Runner: starting hybrid runner")
+			slog.Info("runner starting")
 			if err := r.Start(context.Background()); err != nil {
-				log.Printf("Runner error: %v", err)
+				slog.Error("runner error", "error", err)
 			}
 		}()
 	} else {
-		log.Printf("Runner: disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable scheduled tasks)")
+		slog.Info("runner disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable)")
 	}
 
 	if err := server.Start(); err != nil {

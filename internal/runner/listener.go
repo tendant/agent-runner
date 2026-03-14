@@ -1,7 +1,7 @@
 package runner
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/lib/pq"
@@ -27,13 +27,13 @@ func NewListener(driverName, connString string) *Listener {
 
 	reportProblem := func(ev pq.ListenerEventType, err error) {
 		if err != nil {
-			log.Printf("runner listener: event=%d err=%v", ev, err)
+			slog.Warn("runner listener event", "event_type", ev, "error", err)
 		}
 	}
 
 	pql := pq.NewListener(connString, 10*time.Second, 60*time.Second, reportProblem)
 	if err := pql.Listen("agent_wake"); err != nil {
-		log.Printf("runner listener: failed to LISTEN on agent_wake: %v", err)
+		slog.Error("runner listener: failed to LISTEN on agent_wake", "error", err)
 		pql.Close()
 		return nil
 	}

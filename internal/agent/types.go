@@ -43,6 +43,7 @@ type IterationResult struct {
 	Output       string          `json:"output,omitempty"` // Claude's result text
 	Error        string          `json:"error,omitempty"`
 	DurationSecs int             `json:"duration_seconds"`
+	CostUSD      float64         `json:"cost_usd,omitempty"`
 	Prompt       string          `json:"-"` // prompt sent to Claude (excluded from API response)
 }
 
@@ -66,6 +67,7 @@ type Session struct {
 	Error                string            `json:"error,omitempty"`
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
+	TotalCostUSD         float64           `json:"total_cost_usd,omitempty"`
 	ConsecutiveFailures  int               `json:"-"`
 	OutputFiles          []OutputFile      `json:"-"`
 	CompletedSteps       []string          `json:"-"`
@@ -98,6 +100,7 @@ func (s *Session) AddIteration(result IterationResult) {
 	defer s.mu.Unlock()
 	s.Iterations = append(s.Iterations, result)
 	s.CurrentIteration = result.Iteration
+	s.TotalCostUSD += result.CostUSD
 
 	if result.Status == IterationStatusSuccess {
 		s.SuccessfulIterations++
@@ -208,6 +211,7 @@ func (s *Session) Snapshot() *Session {
 		StartedAt:           s.StartedAt,
 		CompletedAt:         s.CompletedAt,
 		Error:               s.Error,
+		TotalCostUSD:        s.TotalCostUSD,
 		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
 		CompletedSteps:      append([]string{}, s.CompletedSteps...),
 		PlanJSON:            s.PlanJSON,
@@ -249,6 +253,9 @@ func (s *Session) ToResponse() map[string]any {
 		"started_at":        s.StartedAt.Format(time.RFC3339),
 	}
 
+	if s.TotalCostUSD > 0 {
+		resp["total_cost_usd"] = s.TotalCostUSD
+	}
 	if s.CompletedAt != nil {
 		resp["completed_at"] = s.CompletedAt.Format(time.RFC3339)
 	}

@@ -27,9 +27,11 @@ type ClaudeOutput struct {
 
 // ExecutionResult contains the result of CLI execution
 type ExecutionResult struct {
-	Output    string
-	RawOutput string
-	Error     error
+	Output     string
+	RawOutput  string
+	Error      error
+	CostUSD    float64
+	DurationMS int
 }
 
 // ClaudeExecutor handles Claude Code CLI execution
@@ -105,6 +107,8 @@ func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspaceP
 	var claudeOut ClaudeOutput
 	if err := json.Unmarshal(stdout.Bytes(), &claudeOut); err == nil {
 		result.Output = claudeOut.Result
+		result.CostUSD = claudeOut.CostUSD
+		result.DurationMS = claudeOut.DurationMS
 		if claudeOut.Error != "" {
 			result.Error = fmt.Errorf("CLAUDE_ERROR: %s", claudeOut.Error)
 		}

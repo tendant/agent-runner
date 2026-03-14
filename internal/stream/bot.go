@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +54,7 @@ func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Ma
 // Start begins listening on all configured conversations. Non-blocking.
 func (b *Bot) Start(ctx context.Context) error {
 	if len(b.convIDs) == 0 {
-		log.Println("Stream bot: no conversation IDs configured, not starting")
+		slog.Info("stream bot: no conversation IDs configured, not starting")
 		return nil
 	}
 
@@ -69,7 +69,7 @@ func (b *Bot) Start(ctx context.Context) error {
 		}()
 	}
 
-	log.Printf("Stream bot started, listening to %d conversations", len(b.convIDs))
+	slog.Info("stream bot started", "conversations", len(b.convIDs))
 	return nil
 }
 
@@ -79,7 +79,7 @@ func (b *Bot) SendNotification(ctx context.Context, message string) error {
 	var lastErr error
 	for _, convID := range b.convIDs {
 		if err := b.client.SendMessage(ctx, convID, message, nil); err != nil {
-			log.Printf("Stream bot: failed to notify %s: %v", convID, err)
+			slog.Error("stream bot: failed to notify", "conversation_id", convID, "error", err)
 			lastErr = err
 		}
 	}
@@ -92,7 +92,7 @@ func (b *Bot) Stop() {
 		b.cancel()
 	}
 	b.wg.Wait()
-	log.Println("Stream bot stopped")
+	slog.Info("stream bot stopped")
 }
 
 // listenConversation connects to SSE for a single conversation and processes events.
@@ -100,7 +100,7 @@ func (b *Bot) listenConversation(ctx context.Context, convID string) {
 	// Catch up: connect from seq 0, drain all existing events to find
 	// the latest seq without processing them, so we only handle new messages.
 	afterSeq := b.catchUpSeq(ctx, convID)
-	log.Printf("Stream bot: caught up on %s, starting from seq %d", convID, afterSeq)
+	slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq)
 
 	for {
 		select {
@@ -111,7 +111,7 @@ func (b *Bot) listenConversation(ctx context.Context, convID string) {
 
 		events, err := b.client.StreamEvents(ctx, convID, afterSeq)
 		if err != nil {
-			log.Printf("Stream bot: SSE connect error for %s: %v", convID, err)
+			slog.Error("stream bot SSE connect error", "conversation_id", convID, "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -128,7 +128,7 @@ func (b *Bot) listenConversation(ctx context.Context, convID string) {
 		}
 
 		// Channel closed — reconnect after delay
-		log.Printf("Stream bot: SSE connection closed for %s, reconnecting...", convID)
+		slog.Info("stream bot SSE connection closed, reconnecting", "conversation_id", convID)
 		select {
 		case <-ctx.Done():
 			return
@@ -145,7 +145,7 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 
 	events, err := b.client.StreamEvents(catchUpCtx, convID, 0)
 	if err != nil {
-		log.Printf("Stream bot: catch-up failed for %s: %v", convID, err)
+		slog.Warn("stream bot catch-up failed", "conversation_id", convID, "error", err)
 		return 0
 	}
 
@@ -174,7 +174,7 @@ type messagePayload struct {
 func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event) {
 	var msg messagePayload
 	if err := json.Unmarshal(event.Payload, &msg); err != nil {
-		log.Printf("Stream bot: failed to parse message payload: %v", err)
+		slog.Error("stream bot: failed to parse message payload", "error", err)
 		return
 	}
 
@@ -212,7 +212,7 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 	for _, fileID := range fileIDs {
 		file, err := b.client.DownloadFile(ctx, fileID)
 		if err != nil {
-			log.Printf("Stream bot: failed to download file %s: %v", fileID, err)
+			slog.Error("stream bot: failed to download file", "file_id", fileID, "error", err)
 			continue
 		}
 
@@ -222,11 +222,11 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 			// Save binary file to temp dir so the agent can access it
 			path, err := saveToTemp(file)
 			if err != nil {
-				log.Printf("Stream bot: failed to save file %s: %v", file.Filename, err)
+				slog.Error("stream bot: failed to save file", "file", file.Filename, "error", err)
 				parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) — failed to save]", file.Filename, file.ContentType, len(file.Data)))
 				continue
 			}
-			log.Printf("Stream bot: saved file %s to %s", file.Filename, path)
+			slog.Info("stream bot: saved file", "file", file.Filename, "path", path)
 			parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) saved to: %s]", file.Filename, file.ContentType, len(file.Data), path))
 		}
 	}
@@ -341,7 +341,7 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		return
 	}
 
-	log.Printf("Stream bot: agent session started: %s", sessionID)
+	slog.Info("stream bot: agent session started", "session_id", sessionID)
 
 	b.wg.Add(1)
 	go func() {
@@ -384,7 +384,7 @@ func (b *Bot) handleAnalysis(ctx context.Context, convID string, conv *conversat
 
 	result, err := b.analyzer.Analyze(analysisCtx, conv)
 	if err != nil {
-		log.Printf("Stream bot: analyzer error: %v", err)
+		slog.Error("stream bot: analyzer error", "error", err)
 		if analysisCtx.Err() == context.DeadlineExceeded {
 			b.emitFinal(ctx, convID, "Sorry, the request timed out. Please try again.")
 		} else {
@@ -423,10 +423,10 @@ func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *age
 	for _, f := range session.OutputFiles {
 		fileID, err := b.client.UploadFile(ctx, convID, f.Name, f.ContentType, f.Data)
 		if err != nil {
-			log.Printf("Stream bot: failed to upload file %s: %v", f.Name, err)
+			slog.Error("stream bot: failed to upload file", "file", f.Name, "error", err)
 			continue
 		}
-		log.Printf("Stream bot: uploaded file %s -> %s", f.Name, fileID)
+		slog.Info("stream bot: uploaded file", "file", f.Name, "file_id", fileID)
 		fileIDs = append(fileIDs, fileID)
 		fileNames = append(fileNames, f.Name)
 	}
@@ -434,7 +434,7 @@ func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *age
 	if len(fileIDs) > 0 {
 		msg := fmt.Sprintf("Generated %d file(s): %s", len(fileIDs), strings.Join(fileNames, ", "))
 		if err := b.client.SendMessage(ctx, convID, msg, fileIDs); err != nil {
-			log.Printf("Stream bot: failed to send message with files: %v", err)
+			slog.Error("stream bot: failed to send message with files", "error", err)
 		}
 	}
 }
@@ -476,11 +476,11 @@ func (b *Bot) emitFinal(ctx context.Context, convID, text string) {
 func (b *Bot) emit(ctx context.Context, convID, eventType string, payload interface{}) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("Stream bot: marshal error: %v", err)
+		slog.Error("stream bot: marshal error", "error", err)
 		return
 	}
 	if err := b.client.EmitEvent(ctx, convID, eventType, data); err != nil {
-		log.Printf("Stream bot: emit error (%s): %v", eventType, err)
+		slog.Error("stream bot: emit error", "event_type", eventType, "error", err)
 	}
 }
 

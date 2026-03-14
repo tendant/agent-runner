@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -86,7 +86,7 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 		hbCfg := tmpl.ParseHeartbeatConfig(cfg.MemoryDir)
 		if hbCfg.IntervalSeconds > 0 {
 			hbInterval = time.Duration(hbCfg.IntervalSeconds) * time.Second
-			log.Printf("runner: heartbeat interval from template: %s", hbInterval)
+			slog.Info("runner: heartbeat interval from template", "interval", hbInterval)
 		}
 	}
 
@@ -126,18 +126,20 @@ func (r *HybridRunner) Start(ctx context.Context) error {
 	// Start schedule ticker so cron schedules fire
 	ticker, err := simpleworkflow.NewScheduleTicker(r.connString)
 	if err != nil {
-		log.Printf("runner: warning: failed to create schedule ticker: %v", err)
+		slog.Warn("failed to create schedule ticker", "error", err)
 	} else {
 		r.scheduleTicker = ticker
 		go r.scheduleTicker.Start(ctx)
-		log.Printf("runner: schedule ticker started")
+		slog.Info("runner: schedule ticker started")
 	}
 
 	// Mark idle
 	r.heartbeat.Upsert(ctx, r.agentID, "idle", "", "", "")
 
-	log.Printf("runner: started (agent_id=%s driver=%s lease=%s poll_cap=%s heartbeat=%s prefix=%s)",
-		r.agentID, r.driverName, r.leaseDuration, r.pollCap, r.hbInterval, r.typePrefix)
+	slog.Info("runner started",
+		"agent_id", r.agentID, "driver", r.driverName,
+		"lease", r.leaseDuration, "poll_cap", r.pollCap,
+		"heartbeat", r.hbInterval, "prefix", r.typePrefix)
 
 	r.loop(ctx)
 	return nil
@@ -202,7 +204,7 @@ func (r *HybridRunner) loop(ctx context.Context) {
 		case <-heartbeatTimer.C:
 			r.heartbeat.Touch(ctx, r.agentID)
 		case <-ctx.Done():
-			log.Printf("runner: shutting down")
+			slog.Info("runner shutting down")
 			r.heartbeat.Upsert(ctx, r.agentID, "stopped", "", "", "")
 			return
 		}
@@ -219,20 +221,22 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 
 	run, err := r.runs.Claim(ctx, r.agentID, typePrefixes, r.leaseDuration)
 	if err != nil {
-		log.Printf("runner: claim error (prefix=%s): %v", prefix, err)
+		slog.Error("runner claim error", "prefix", prefix, "error", err)
 		return false
 	}
 	if run == nil {
 		return false
 	}
 
-	log.Printf("runner: claimed task %s (type=%s attempt=%d/%d payload_len=%d)",
-		run.ID, run.Type, run.Attempt, run.MaxAttempts, len(run.Payload))
+	slog.Info("runner claimed task",
+		"task_id", run.ID, "type", run.Type,
+		"attempt", run.Attempt, "max_attempts", run.MaxAttempts,
+		"payload_len", len(run.Payload))
 
 	// Parse payload
 	var payload AgentTaskPayload
 	if err := json.Unmarshal(run.Payload, &payload); err != nil {
-		log.Printf("runner: invalid payload for %s: %v (raw: %s)", run.ID, err, string(run.Payload))
+		slog.Error("runner: invalid payload", "task_id", run.ID, "error", err)
 		r.runs.MarkFailed(ctx, run, fmt.Errorf("invalid payload: %w", err))
 		return true
 	}
@@ -241,8 +245,9 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 	if len(msgPreview) > 100 {
 		msgPreview = msgPreview[:100] + "..."
 	}
-	log.Printf("runner: task %s payload: message=%q author=%q max_iterations=%d max_seconds=%d",
-		run.ID, msgPreview, payload.Author, payload.MaxIterations, payload.MaxTotalSeconds)
+	slog.Info("runner task payload",
+		"task_id", run.ID, "message", msgPreview, "author", payload.Author,
+		"max_iterations", payload.MaxIterations, "max_seconds", payload.MaxTotalSeconds)
 
 	// Update heartbeat to running
 	r.heartbeat.Upsert(ctx, r.agentID, "running", run.ID, "", payload.Message)
@@ -254,17 +259,17 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 
 	// Execute the agent task
 	startTime := time.Now()
-	log.Printf("runner: executing task %s", run.ID)
+	slog.Info("runner executing task", "task_id", run.ID)
 	execErr := r.executor.ExecuteAgentTask(ctx, payload)
 	elapsed := time.Since(startTime)
 
 	// Mark result
 	if execErr != nil {
-		log.Printf("runner: task %s failed after %s: %v", run.ID, elapsed.Round(time.Second), execErr)
+		slog.Error("runner task failed", "task_id", run.ID, "elapsed", elapsed.Round(time.Second), "error", execErr)
 		r.runs.MarkFailed(ctx, run, execErr)
 		r.heartbeat.Upsert(ctx, r.agentID, "idle", "", run.ID, "")
 	} else {
-		log.Printf("runner: task %s succeeded after %s", run.ID, elapsed.Round(time.Second))
+		slog.Info("runner task succeeded", "task_id", run.ID, "elapsed", elapsed.Round(time.Second))
 		r.runs.MarkSucceeded(ctx, run.ID, map[string]string{"status": "completed"})
 		r.heartbeat.Upsert(ctx, r.agentID, "idle", "", run.ID, "")
 	}
@@ -284,7 +289,7 @@ func (r *HybridRunner) extendLease(ctx context.Context, runID string) {
 			return
 		case <-ticker.C:
 			if err := r.runs.ExtendLease(ctx, runID, r.leaseDuration); err != nil {
-				log.Printf("runner: lease extension failed for %s: %v", runID, err)
+				slog.Error("runner lease extension failed", "task_id", runID, "error", err)
 				return
 			}
 		}

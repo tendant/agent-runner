@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
+	// Import metrics package to register prometheus collectors.
+	_ "github.com/agent-runner/agent-runner/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -61,6 +65,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/schedule/", handlers.HandleDeleteSchedule)
 	mux.HandleFunc("/schedules", handlers.HandleListSchedules)
 	mux.HandleFunc("/debug/schedules", handlers.HandleDebugSchedules)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/agent", handlers.HandleStartAgent)
 	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/stop") {
@@ -116,7 +121,7 @@ func (s *Server) Start() error {
 	if s.config.StartupCleanupStaleJobs {
 		workspaceManager := executor.NewWorkspaceManager(s.config.TmpRoot, s.config.MaxRuntimeSeconds)
 		if err := workspaceManager.CleanupStaleWorkspaces(); err != nil {
-			log.Printf("Warning: failed to cleanup stale workspaces: %v", err)
+			slog.Warn("failed to cleanup stale workspaces", "error", err)
 		}
 	}
 
@@ -127,7 +132,7 @@ func (s *Server) Start() error {
 
 	go func() {
 		<-quit
-		log.Println("Server is shutting down...")
+		slog.Info("server shutting down")
 
 		// Stop runner first (it may be executing a task)
 		if s.runner != nil {
@@ -161,19 +166,19 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Server listening on %s", ln.Addr().String())
+	slog.Info("server listening", "addr", ln.Addr().String())
 
 	// Start Telegram bot
 	if s.telegramBot != nil {
 		if err := s.telegramBot.Start(context.Background()); err != nil {
-			log.Printf("Warning: %v", err)
+			slog.Warn("telegram bot start failed", "error", err)
 		}
 	}
 
 	// Start stream bot
 	if s.streamBot != nil {
 		if err := s.streamBot.Start(context.Background()); err != nil {
-			log.Printf("Warning: stream bot: %v", err)
+			slog.Warn("stream bot start failed", "error", err)
 		}
 	}
 
@@ -182,7 +187,7 @@ func (s *Server) Start() error {
 	}
 
 	<-done
-	log.Println("Server stopped")
+	slog.Info("server stopped")
 	return nil
 }
 
@@ -212,11 +217,11 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
-		log.Printf("%s %s %d %v",
-			r.Method,
-			r.URL.Path,
-			wrapped.statusCode,
-			time.Since(start),
+		slog.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", wrapped.statusCode,
+			"duration", time.Since(start),
 		)
 	})
 }
@@ -224,7 +229,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // apiKeyMiddleware validates the X-API-Key header
 func apiKeyMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
