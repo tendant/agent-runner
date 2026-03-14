@@ -74,7 +74,7 @@ Flow:
 3. **Phase 2: Iteration loop** — run Claude repeatedly with dynamic prompts incorporating plan and workspace state
 4. **Output file collection** — scan `_send/` directory for files to deliver to user
 5. **Phase 3: Reviewer** (optional) — sub-agent evaluates completeness and quality
-6. **Cleanup** — cache repos back, sync workspace files, write audit log, delete workspace
+6. **Cleanup** — cache workspaces back, sync workspace files, write audit log, delete workspace
 
 Session states: `running → stopping → completed/failed`
 
@@ -106,7 +106,7 @@ Each agent session gets an isolated workspace:
 
 ```
 workspace-{session-id}/
-├── repos/              # Claude's working directory
+├── repos/              # Claude's working directory (shared repos live here)
 │   ├── shared-repo/    # Pre-populated from AGENT_SHARED_REPOS
 │   ├── another-repo/   # Pre-populated from AGENT_SHARED_REPOS
 │   └── _send/          # Output files for user delivery
@@ -114,8 +114,8 @@ workspace-{session-id}/
 └── ...                 # Other project files (synced from ProjectDir)
 ```
 
-- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `repos/` and copied into each workspace
-- Claude runs in the `repos/` subdirectory
+- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied into each workspace
+- Claude runs in the `repos/` subdirectory within the workspace
 - After completion, repos are cached back for future sessions
 - Non-repo files are synced back to the project directory
 
@@ -282,7 +282,8 @@ agent-runner/
 │   ├── subagent/        # Planner, reviewer, prompt builder
 │   └── telegram/        # Telegram bot
 ├── e2e/                 # End-to-end tests with mock Claude scripts
-├── repos/               # Persistent repo cache (runtime)
+├── repos/               # Go source mirror (tracked in git)
+├── workspaces/          # Persistent repo cache (runtime, gitignored)
 ├── logs/                # Markdown audit logs (runtime)
 └── .env.example         # Configuration template
 ```

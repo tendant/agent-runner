@@ -2,9 +2,9 @@
 .env
 
 # Runtime directories
+workspaces/
 projects/
 origins/
-repos/
 runs/
 logs/
 tmp/
@@ -22,6 +22,7 @@ e2e/*.json
 
 # Binary
 agent-runner
+agent-cli
 
 # OS files
 .DS_Store
