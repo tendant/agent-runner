@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety
 - Background goroutines for async execution; capture fields to locals before spawning
 - Project locking shared between jobs and agents via `jobs.Manager`
-- Agent workspace uses `repos/` subdirectory within each session; shared repos cached in `workspaces/` (WORKSPACES_ROOT) between sessions
+- Agent workspace uses `workspace/` subdirectory as the agent's CWD; `state/` holds runner bookkeeping (TODO.md); shared repos cached in `workspaces/` (WORKSPACES_ROOT) between sessions
 - Template-based prompt system: embedded defaults in `template/defaults/` merged with user overrides in memory dir; `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` are seeded into the memory dir at startup
 
 ### Agent Execution Flow

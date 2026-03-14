@@ -150,7 +150,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		return
 	}
 
-	// Prepare agent workspace with repos/ structure
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.WorkspacesRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.GitHost, h.config.GitOrg,
@@ -164,6 +163,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
 	// before cache-back can copy from it.
 
+	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
+	checkoutPath := filepath.Join(workspacePath, "workspace")
+
 	ctx := h.agentManager.Context()
 
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
@@ -173,10 +175,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	if h.config.Agent.PlannerEnabled {
 		slog.Info("running planner", "session_id", sessionID)
 		planner := subagent.NewPlanner(h.executor, preamble)
-		plannerState := subagent.ReadWorkspaceState(ctx, workspacePath)
+		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
-		plan, err = planner.Plan(ctx, workspacePath, message)
+		plan, err = planner.Plan(ctx, checkoutPath, message)
 		if err != nil {
 			slog.Warn("planner failed (non-fatal)", "session_id", sessionID, "error", err)
 		} else {
@@ -236,13 +238,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		// Build prompt: dynamic (with plan/state) or static (backward compat)
 		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
-			systemPrompt = promptBuilder.Build(ctx, workspacePath, plan, i, message, errorContext)
+			systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, i, message, errorContext)
 		} else {
 			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
-		result := h.executeIteration(ctx, workspacePath, systemPrompt, message, i, deadline)
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
@@ -254,7 +256,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 
 		// Update completed steps from progress file and sync to plan
-		if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
+		if completedSteps := subagent.ReadProgress(checkoutPath); len(completedSteps) > 0 {
 			liveSession.SetCompletedSteps(completedSteps)
 			if plan != nil {
 				plan.MarkDone(completedSteps)
@@ -267,7 +269,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}
 
 	// Collect output files from _send/ directory
-	sendDir := filepath.Join(workspacePath, "_send")
+	sendDir := filepath.Join(checkoutPath, "_send")
 	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
 		slog.Warn("failed to collect _send/ files", "session_id", sessionID, "error", err)
 	} else if len(outputFiles) > 0 {
@@ -276,7 +278,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}
 
 	// Collect and submit scheduled tasks from _schedule.json
-	if schedEntries, err := collectScheduleEntries(workspacePath); err != nil {
+	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {
 		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
 	} else if len(schedEntries) > 0 {
 		if h.workflowClient != nil {
@@ -299,7 +301,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			}
 
 			slog.Info("running reviewer", "session_id", sessionID, "pass", correction)
-			review, reviewErr := reviewer.Review(ctx, workspacePath, message, plan)
+			review, reviewErr := reviewer.Review(ctx, checkoutPath, message, plan)
 			if reviewErr != nil {
 				slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
 				break
@@ -327,7 +329,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 			var systemPrompt string
 			if h.config.Agent.PlannerEnabled {
-				systemPrompt = promptBuilder.Build(ctx, workspacePath, plan, iterNum, message, correctionContext)
+				systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, iterNum, message, correctionContext)
 			} else {
 				systemPrompt = promptBuilder.BuildStatic(message, correctionContext)
 			}
@@ -335,7 +337,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("running corrective iteration", "session_id", sessionID,
 				"iteration", iterNum, "issues", len(review.Issues))
 
-			result := h.executeIteration(ctx, workspacePath, systemPrompt, message, iterNum, deadline)
+			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline)
 			result.Prompt = systemPrompt
 			result.Retry = true
 			liveSession.AddIteration(result)
@@ -347,7 +349,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			}
 
 			// Update progress after correction
-			if completedSteps := subagent.ReadProgress(workspacePath); len(completedSteps) > 0 {
+			if completedSteps := subagent.ReadProgress(checkoutPath); len(completedSteps) > 0 {
 				liveSession.SetCompletedSteps(completedSteps)
 				if plan != nil {
 					plan.MarkDone(completedSteps)

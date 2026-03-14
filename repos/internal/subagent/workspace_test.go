@@ -10,8 +10,13 @@ import (
 )
 
 func TestReadWorkspaceState_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	state := ReadWorkspaceState(context.Background(), dir)
+	// Create session layout: workspace/ and state/
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(workspaceDir, 0755)
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
+
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
 
 	if state.TodoContent != "" {
 		t.Errorf("expected empty TodoContent, got '%s'", state.TodoContent)
@@ -25,13 +30,18 @@ func TestReadWorkspaceState_EmptyDir(t *testing.T) {
 }
 
 func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
-	dir := t.TempDir()
+	// Create session layout: workspace/ and state/
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	stateDir := filepath.Join(sessionDir, "state")
+	os.MkdirAll(workspaceDir, 0755)
+	os.MkdirAll(stateDir, 0755)
 
-	// Create TODO.md
-	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] Fix bug\n- [x] Add tests\n"), 0644)
+	// Create TODO.md in state/ directory
+	os.WriteFile(filepath.Join(stateDir, "TODO.md"), []byte("- [ ] Fix bug\n- [x] Add tests\n"), 0644)
 
-	// Create a git repo
-	repoDir := filepath.Join(dir, "my-repo")
+	// Create a git repo directly in workspace/
+	repoDir := filepath.Join(workspaceDir, "my-repo")
 	os.MkdirAll(repoDir, 0755)
 	runGit(t, repoDir, "init")
 	runGit(t, repoDir, "config", "user.email", "test@test.com")
@@ -40,7 +50,7 @@ func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
 	runGit(t, repoDir, "add", "-A")
 	runGit(t, repoDir, "commit", "-m", "Initial commit")
 
-	state := ReadWorkspaceState(context.Background(), dir)
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
 
 	if !strings.Contains(state.TodoContent, "Fix bug") {
 		t.Errorf("expected TodoContent to contain 'Fix bug', got '%s'", state.TodoContent)
@@ -59,9 +69,14 @@ func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
 }
 
 func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
-	dir := t.TempDir()
+	// Create session layout: workspace/ and state/
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(workspaceDir, 0755)
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
 
-	repoDir := filepath.Join(dir, "repo")
+	// Create a git repo directly in workspace/
+	repoDir := filepath.Join(workspaceDir, "repo")
 	os.MkdirAll(repoDir, 0755)
 	runGit(t, repoDir, "init")
 	runGit(t, repoDir, "config", "user.email", "test@test.com")
@@ -73,7 +88,7 @@ func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
 	// Make uncommitted changes
 	os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v2 changed"), 0644)
 
-	state := ReadWorkspaceState(context.Background(), dir)
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
 
 	if state.GitDiffStat == "" {
 		t.Error("expected non-empty GitDiffStat for uncommitted changes")
@@ -83,13 +98,15 @@ func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
 	}
 }
 
-func TestReadWorkspaceState_SkipsDotDirs(t *testing.T) {
-	dir := t.TempDir()
+func TestReadWorkspaceState_SkipsDotAndUnderscoreDirs(t *testing.T) {
+	// Create session layout: workspace/
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(filepath.Join(workspaceDir, ".hidden"), 0755)
+	os.MkdirAll(filepath.Join(workspaceDir, "_send"), 0755)
+	os.MkdirAll(filepath.Join(workspaceDir, "visible"), 0755)
 
-	os.MkdirAll(filepath.Join(dir, ".hidden"), 0755)
-	os.MkdirAll(filepath.Join(dir, "visible"), 0755)
-
-	state := ReadWorkspaceState(context.Background(), dir)
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
 
 	if len(state.RepoNames) != 1 || state.RepoNames[0] != "visible" {
 		t.Errorf("expected [visible], got %v", state.RepoNames)

@@ -10,21 +10,22 @@ import (
 )
 
 // ReadWorkspaceState reads the current state of the workspace for prompt injection.
-// It reads TODO.md, recent git commits, repo directory names, and git diff stats.
-func ReadWorkspaceState(ctx context.Context, reposPath string) WorkspaceState {
+// workspacePath is the agent's CWD (the workspace/ subdir). Repos live directly here.
+// TODO.md is read from the sibling state/ directory.
+func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceState {
 	var state WorkspaceState
 
-	// Read TODO.md from the repos directory (or parent workspace)
-	todoPath := filepath.Join(reposPath, "TODO.md")
+	// Read TODO.md from the sibling state/ directory
+	todoPath := filepath.Join(workspacePath, "..", "state", "TODO.md")
 	if data, err := os.ReadFile(todoPath); err == nil {
 		state.TodoContent = strings.TrimSpace(string(data))
 	}
 
-	// List repo directories
-	entries, err := os.ReadDir(reposPath)
+	// List repo directories directly in workspace (skip hidden and underscore-prefixed)
+	entries, err := os.ReadDir(workspacePath)
 	if err == nil {
 		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !strings.HasPrefix(e.Name(), "_") {
 				state.RepoNames = append(state.RepoNames, e.Name())
 			}
 		}
@@ -34,7 +35,7 @@ func ReadWorkspaceState(ctx context.Context, reposPath string) WorkspaceState {
 	var commits []string
 	var diffs []string
 	for _, repoName := range state.RepoNames {
-		repoDir := filepath.Join(reposPath, repoName)
+		repoDir := filepath.Join(workspacePath, repoName)
 
 		// Recent commits
 		if out := gitCmd(ctx, repoDir, "log", "--oneline", "-10"); out != "" {

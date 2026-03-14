@@ -105,23 +105,24 @@ The composed prompt is passed as the system prompt to Claude Code CLI. If no tem
 Each agent session gets an isolated workspace:
 
 ```
-workspace-{session-id}/
-├── repos/              # Claude's working directory (shared repos live here)
-│   ├── shared-repo/    # Pre-populated from AGENT_SHARED_REPOS
-│   ├── another-repo/   # Pre-populated from AGENT_SHARED_REPOS
-│   └── _send/          # Output files for user delivery
-├── TODO.md             # Agent's progress tracker (synced back to project dir)
-└── ...                 # Other project files (synced from ProjectDir)
+session-{id}/
+├── workspace/              # Agent's CWD (cmd.Dir points here)
+│   ├── shared-repo-a/      # Pre-populated from AGENT_SHARED_REPOS
+│   ├── shared-repo-b/      # Pre-populated from AGENT_SHARED_REPOS
+│   ├── _send/              # Agent writes output files here
+│   └── _progress.json      # Agent writes plan step completion
+└── state/                  # Runner-managed (not visible to agent)
+    └── TODO.md             # Progress tracker, injected into prompts
 ```
 
-- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied into each workspace
-- Claude runs in the `repos/` subdirectory within the workspace
-- After completion, repos are cached back for future sessions
-- Non-repo files are synced back to the project directory
+- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied into each workspace's `workspace/` directory
+- Agent opens its eyes in `workspace/` — no `cd` needed; `_send/` and `_progress.json` are relative to CWD
+- `state/` is the runner's bookkeeping, invisible to the agent
+- After completion, repos are cached back from `workspace/` for future sessions (underscore-prefixed entries skipped)
 
 ### Output Files (`_send/` Convention)
 
-Agents can send files to the user by writing them to `repos/_send/`. After the iteration loop completes (before cleanup), the executor:
+Agents can send files to the user by writing them to `_send/` in their working directory. After the iteration loop completes (before cleanup), the executor:
 
 1. Scans `_send/` for files (skips subdirectories)
 2. Reads each file with content type detection

@@ -84,8 +84,10 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 	return nil
 }
 
-// PrepareAgentWorkspace creates a workspace with a repos/ subdirectory.
-// It pre-populates shared repos from the persistent repo cache.
+// PrepareAgentWorkspace creates a workspace with workspace/ and state/ subdirectories.
+// workspace/ is the agent's CWD — shared repos, _send/, _progress.json live here.
+// state/ is runner-managed bookkeeping (TODO.md), invisible to the agent.
+// It pre-populates shared repos from the persistent repo cache into workspace/.
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
 func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID string, sharedRepos []string, gitHost, gitOrg string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
@@ -94,19 +96,24 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID strin
 		return "", fmt.Errorf("failed to create tmp directory: %w", err)
 	}
 
-	reposPath := filepath.Join(workspacePath, "repos")
-	if err := os.MkdirAll(reposPath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create repos directory: %w", err)
+	agentDir := filepath.Join(workspacePath, "workspace")
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create workspace directory: %w", err)
 	}
 
-	// Pre-populate shared repos from cache
+	stateDir := filepath.Join(workspacePath, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Pre-populate shared repos from cache into workspace/
 	for _, repo := range sharedRepos {
 		if repo == "" {
 			continue
 		}
 		cachedRepo := filepath.Join(workspacesRoot, repo)
 		if info, err := os.Stat(cachedRepo); err == nil && info.IsDir() {
-			dst := filepath.Join(reposPath, repo)
+			dst := filepath.Join(agentDir, repo)
 			if err := copyDir(cachedRepo, dst); err != nil {
 				log.Printf("Agent workspace: warning: failed to copy shared repo %s: %v", repo, err)
 				continue
@@ -124,19 +131,23 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID strin
 	return workspacePath, nil
 }
 
-// CacheReposBack copies repos from workspace/repos/ back to workspacesRoot/ for future runs.
+// CacheReposBack copies repos from workspace/ back to workspacesRoot/ for future runs.
+// Skips hidden and underscore-prefixed entries (_send/, _progress.json, etc.).
 func (w *WorkspaceManager) CacheReposBack(workspacePath, workspacesRoot string) {
-	reposPath := filepath.Join(workspacePath, "repos")
-	entries, err := os.ReadDir(reposPath)
+	agentDir := filepath.Join(workspacePath, "workspace")
+	entries, err := os.ReadDir(agentDir)
 	if err != nil {
-		return // no repos directory, nothing to cache
+		return // no workspace directory, nothing to cache
 	}
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		src := filepath.Join(reposPath, entry.Name())
+		if strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "_") {
+			continue
+		}
+		src := filepath.Join(agentDir, entry.Name())
 		dst := filepath.Join(workspacesRoot, entry.Name())
 
 		// Remove old cache and replace with updated version
@@ -145,7 +156,7 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, workspacesRoot string) 
 			log.Printf("Agent workspace: warning: failed to cache repo %s: %v", entry.Name(), err)
 			continue
 		}
-		log.Printf("Agent workspace: cached repo %s back to repos", entry.Name())
+		log.Printf("Agent workspace: cached repo %s back to workspaces", entry.Name())
 	}
 }
 

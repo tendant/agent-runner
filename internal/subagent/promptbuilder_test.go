@@ -72,10 +72,15 @@ func TestPromptBuilder_Build_NilPlan(t *testing.T) {
 }
 
 func TestPromptBuilder_Build_WithTodo(t *testing.T) {
-	dir := t.TempDir()
+	// Create session layout: workspace/ and state/
+	sessionDir := t.TempDir()
+	dir := filepath.Join(sessionDir, "workspace")
+	stateDir := filepath.Join(sessionDir, "state")
+	os.MkdirAll(dir, 0755)
+	os.MkdirAll(stateDir, 0755)
 
-	// Create TODO.md
-	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] First task\n- [x] Done task\n"), 0644)
+	// Create TODO.md in state/ directory
+	os.WriteFile(filepath.Join(stateDir, "TODO.md"), []byte("- [ ] First task\n- [x] Done task\n"), 0644)
 
 	pb := NewPromptBuilder("preamble")
 	result := pb.Build(context.Background(), dir, nil, 1, "msg", "")
@@ -89,12 +94,14 @@ func TestPromptBuilder_Build_WithTodo(t *testing.T) {
 }
 
 func TestPromptBuilder_Build_WithGitRepo(t *testing.T) {
-	dir := t.TempDir()
+	// Create session layout: workspace/ and state/
+	sessionDir := t.TempDir()
+	dir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(dir, 0755)
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
 
-	// Create a repo with a commit inside repos/ subdirectory
-	reposDir := filepath.Join(dir, "repos")
-	os.MkdirAll(reposDir, 0755)
-	repoDir := filepath.Join(reposDir, "my-app")
+	// Create a repo with a commit directly in workspace/
+	repoDir := filepath.Join(dir, "my-app")
 	os.MkdirAll(repoDir, 0755)
 
 	cmd := exec.Command("git", "init")

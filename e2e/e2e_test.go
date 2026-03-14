@@ -19,7 +19,7 @@ import (
 type e2eEnv struct {
 	server      *httptest.Server
 	bareRepo    string
-	reposDir string
+	workspacesDir string
 	logsDir     string
 	tmpDir      string
 	mockBinDir  string
@@ -30,12 +30,12 @@ func setupE2E(t *testing.T) *e2eEnv {
 	baseDir := t.TempDir()
 
 	bareRepo := filepath.Join(baseDir, "origin.git")
-	reposDir := filepath.Join(baseDir, "repos")
+	workspacesDir := filepath.Join(baseDir, "workspaces")
 	logsDir := filepath.Join(baseDir, "logs")
 	tmpDir := filepath.Join(baseDir, "tmp")
 	mockBinDir := filepath.Join(baseDir, "mock-bin")
 
-	os.MkdirAll(reposDir, 0755)
+	os.MkdirAll(workspacesDir, 0755)
 	os.MkdirAll(logsDir, 0755)
 	os.MkdirAll(tmpDir, 0755)
 	os.MkdirAll(mockBinDir, 0755)
@@ -44,7 +44,7 @@ func setupE2E(t *testing.T) *e2eEnv {
 	runCmd(t, "", "git", "init", "--bare", bareRepo)
 
 	// 2. Clone to projects dir, make initial commit, push
-	projectPath := filepath.Join(reposDir, "test-project")
+	projectPath := filepath.Join(workspacesDir, "test-project")
 	runCmd(t, "", "git", "clone", bareRepo, projectPath)
 	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
 	runCmd(t, projectPath, "git", "config", "user.name", "Test")
@@ -69,7 +69,7 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":1000}'
 
 	// 5. Create config and start server
 	cfg := &config.Config{
-		WorkspacesRoot:             reposDir,
+		WorkspacesRoot:             workspacesDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
 		AllowedProjects:          []string{},
@@ -102,7 +102,7 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":1000}'
 	return &e2eEnv{
 		server:      ts,
 		bareRepo:    bareRepo,
-		reposDir: reposDir,
+		workspacesDir: workspacesDir,
 		logsDir:     logsDir,
 		tmpDir:      tmpDir,
 		mockBinDir:  mockBinDir,
@@ -225,19 +225,19 @@ func TestE2E_ValidationRejection(t *testing.T) {
 	baseDir := t.TempDir()
 
 	bareRepo := filepath.Join(baseDir, "origin.git")
-	reposDir := filepath.Join(baseDir, "repos")
+	workspacesDir := filepath.Join(baseDir, "workspaces")
 	logsDir := filepath.Join(baseDir, "logs")
 	tmpDir := filepath.Join(baseDir, "tmp")
 	mockBinDir := filepath.Join(baseDir, "mock-bin")
 
-	os.MkdirAll(reposDir, 0755)
+	os.MkdirAll(workspacesDir, 0755)
 	os.MkdirAll(logsDir, 0755)
 	os.MkdirAll(tmpDir, 0755)
 	os.MkdirAll(mockBinDir, 0755)
 
 	runCmd(t, "", "git", "init", "--bare", bareRepo)
 
-	projectPath := filepath.Join(reposDir, "test-project")
+	projectPath := filepath.Join(workspacesDir, "test-project")
 	runCmd(t, "", "git", "clone", bareRepo, projectPath)
 	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
 	runCmd(t, projectPath, "git", "config", "user.name", "Test")
@@ -256,7 +256,7 @@ echo '{"result":"Done"}'
 	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
 	cfg := &config.Config{
-		WorkspacesRoot:             reposDir,
+		WorkspacesRoot:             workspacesDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
 		AllowedProjects:          []string{},
@@ -317,12 +317,12 @@ func TestE2E_ApiKeyAuth(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-	reposDir := filepath.Join(baseDir, "repos")
-	os.MkdirAll(reposDir, 0755)
-	os.MkdirAll(filepath.Join(reposDir, "test-project", ".git"), 0755)
+	workspacesDir := filepath.Join(baseDir, "workspaces")
+	os.MkdirAll(workspacesDir, 0755)
+	os.MkdirAll(filepath.Join(workspacesDir, "test-project", ".git"), 0755)
 
 	cfg := &config.Config{
-		WorkspacesRoot:             reposDir,
+		WorkspacesRoot:             workspacesDir,
 		LogsRoot:                 filepath.Join(baseDir, "logs"),
 		TmpRoot:                  filepath.Join(baseDir, "tmp"),
 		AllowedProjects:          []string{},
@@ -394,19 +394,19 @@ func TestE2E_ProjectLocking(t *testing.T) {
 	baseDir := t.TempDir()
 
 	bareRepo := filepath.Join(baseDir, "origin.git")
-	reposDir := filepath.Join(baseDir, "repos")
+	workspacesDir := filepath.Join(baseDir, "workspaces")
 	logsDir := filepath.Join(baseDir, "logs")
 	tmpDir := filepath.Join(baseDir, "tmp")
 	mockBinDir := filepath.Join(baseDir, "mock-bin")
 
-	os.MkdirAll(reposDir, 0755)
+	os.MkdirAll(workspacesDir, 0755)
 	os.MkdirAll(logsDir, 0755)
 	os.MkdirAll(tmpDir, 0755)
 	os.MkdirAll(mockBinDir, 0755)
 
 	runCmd(t, "", "git", "init", "--bare", bareRepo)
 
-	projectPath := filepath.Join(reposDir, "test-project")
+	projectPath := filepath.Join(workspacesDir, "test-project")
 	runCmd(t, "", "git", "clone", bareRepo, projectPath)
 	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
 	runCmd(t, projectPath, "git", "config", "user.name", "Test")
@@ -426,7 +426,7 @@ echo '{"result":"Done"}'
 	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
 	cfg := &config.Config{
-		WorkspacesRoot:             reposDir,
+		WorkspacesRoot:             workspacesDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
 		AllowedProjects:          []string{},
