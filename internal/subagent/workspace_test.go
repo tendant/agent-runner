@@ -30,10 +30,8 @@ func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
 	// Create TODO.md at workspace root
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] Fix bug\n- [x] Add tests\n"), 0644)
 
-	// Create a git repo inside repos/ subdirectory
-	reposDir := filepath.Join(dir, "repos")
-	os.MkdirAll(reposDir, 0755)
-	repoDir := filepath.Join(reposDir, "my-repo")
+	// Create a git repo in the workspace
+	repoDir := filepath.Join(dir, "my-repo")
 	os.MkdirAll(repoDir, 0755)
 	runGit(t, repoDir, "init")
 	runGit(t, repoDir, "config", "user.email", "test@test.com")
@@ -63,9 +61,7 @@ func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
 func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
 	dir := t.TempDir()
 
-	reposDir := filepath.Join(dir, "repos")
-	os.MkdirAll(reposDir, 0755)
-	repoDir := filepath.Join(reposDir, "repo")
+	repoDir := filepath.Join(dir, "repo")
 	os.MkdirAll(repoDir, 0755)
 	runGit(t, repoDir, "init")
 	runGit(t, repoDir, "config", "user.email", "test@test.com")
@@ -87,12 +83,15 @@ func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
 	}
 }
 
-func TestReadWorkspaceState_SkipsDotDirs(t *testing.T) {
+func TestReadWorkspaceState_SkipsDotAndUnderscoreDirs(t *testing.T) {
 	dir := t.TempDir()
 
-	reposDir := filepath.Join(dir, "repos")
-	os.MkdirAll(filepath.Join(reposDir, ".hidden"), 0755)
-	os.MkdirAll(filepath.Join(reposDir, "visible"), 0755)
+	// .hidden and _send should be skipped; only git repos are listed
+	os.MkdirAll(filepath.Join(dir, ".hidden"), 0755)
+	os.MkdirAll(filepath.Join(dir, "_send"), 0755)
+	visibleDir := filepath.Join(dir, "visible")
+	os.MkdirAll(visibleDir, 0755)
+	runGit(t, visibleDir, "init")
 
 	state := ReadWorkspaceState(context.Background(), dir)
 

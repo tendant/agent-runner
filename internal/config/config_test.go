@@ -8,7 +8,7 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
 	if cfg.WorkspacesRoot != "./workspaces" {
-		t.Errorf("expected WorkspacesRoot ./repos, got %s", cfg.WorkspacesRoot)
+		t.Errorf("expected WorkspacesRoot ./workspaces, got %s", cfg.WorkspacesRoot)
 	}
 	if cfg.LogsRoot != "./logs" {
 		t.Errorf("expected LogsRoot ./logs, got %s", cfg.LogsRoot)
@@ -184,7 +184,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 }
 
 func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
-	t.Setenv("WORKSPACES_ROOT", "/tmp/repos")
+	t.Setenv("WORKSPACES_ROOT", "/tmp/workspaces")
 	t.Setenv("LOGS_ROOT", "/tmp/logs")
 	t.Setenv("TMP_ROOT", "/tmp/workspaces")
 	t.Setenv("MAX_RUNTIME_SECONDS", "600")
@@ -203,8 +203,8 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.WorkspacesRoot != "/tmp/repos" {
-		t.Errorf("expected /tmp/repos, got %s", cfg.WorkspacesRoot)
+	if cfg.WorkspacesRoot != "/tmp/workspaces" {
+		t.Errorf("expected /tmp/workspaces, got %s", cfg.WorkspacesRoot)
 	}
 	if cfg.MaxRuntimeSeconds != 600 {
 		t.Errorf("expected 600, got %d", cfg.MaxRuntimeSeconds)

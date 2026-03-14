@@ -91,10 +91,8 @@ func TestPromptBuilder_Build_WithTodo(t *testing.T) {
 func TestPromptBuilder_Build_WithGitRepo(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create a repo with a commit inside repos/ subdirectory
-	reposDir := filepath.Join(dir, "repos")
-	os.MkdirAll(reposDir, 0755)
-	repoDir := filepath.Join(reposDir, "my-app")
+	// Create a git repo in the workspace
+	repoDir := filepath.Join(dir, "my-app")
 	os.MkdirAll(repoDir, 0755)
 
 	cmd := exec.Command("git", "init")
