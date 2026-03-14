@@ -19,7 +19,7 @@ import (
 
 type testEnv struct {
 	handlers    *Handlers
-	workspacesDir string
+	repoCacheDir string
 	logsDir     string
 	tmpDir      string
 }
@@ -28,7 +28,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 
-	workspacesDir := filepath.Join(dir, "workspaces")
+	repoCacheDir := filepath.Join(dir, "repo-cache")
 	logsDir := filepath.Join(dir, "logs")
 
 	// Use a separate temp dir for workspaces so background goroutines
@@ -39,11 +39,11 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 
-	os.MkdirAll(workspacesDir, 0755)
+	os.MkdirAll(repoCacheDir, 0755)
 	os.MkdirAll(logsDir, 0755)
 
 	cfg := config.DefaultConfig()
-	cfg.WorkspacesRoot = workspacesDir
+	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = logsDir
 	cfg.TmpRoot = tmpDir
 
@@ -61,7 +61,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	return &testEnv{
 		handlers:    handlers,
-		workspacesDir: workspacesDir,
+		repoCacheDir: repoCacheDir,
 		logsDir:     logsDir,
 		tmpDir:      tmpDir,
 	}
@@ -69,7 +69,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 func (e *testEnv) createFakeProject(t *testing.T, name string) {
 	t.Helper()
-	projectDir := filepath.Join(e.workspacesDir, name)
+	projectDir := filepath.Join(e.repoCacheDir, name)
 	gitDir := filepath.Join(projectDir, ".git")
 	os.MkdirAll(gitDir, 0755)
 }
@@ -156,11 +156,11 @@ func TestHandleRun_InvalidJSON(t *testing.T) {
 
 func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 	dir := t.TempDir()
-	workspacesDir := filepath.Join(dir, "workspaces")
-	os.MkdirAll(workspacesDir, 0755)
+	repoCacheDir := filepath.Join(dir, "repo-cache")
+	os.MkdirAll(repoCacheDir, 0755)
 
 	cfg := config.DefaultConfig()
-	cfg.WorkspacesRoot = workspacesDir
+	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = filepath.Join(dir, "logs")
 	cfg.TmpRoot = filepath.Join(dir, "tmp")
 	cfg.AllowedProjects = []string{"allowed-project"}
@@ -272,11 +272,11 @@ func TestHandleRun_ProjectLocked(t *testing.T) {
 
 func TestHandleRun_AtCapacity(t *testing.T) {
 	dir := t.TempDir()
-	workspacesDir := filepath.Join(dir, "workspaces")
-	os.MkdirAll(workspacesDir, 0755)
+	repoCacheDir := filepath.Join(dir, "repo-cache")
+	os.MkdirAll(repoCacheDir, 0755)
 
 	cfg := config.DefaultConfig()
-	cfg.WorkspacesRoot = workspacesDir
+	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = filepath.Join(dir, "logs")
 	cfg.TmpRoot = filepath.Join(dir, "tmp")
 	cfg.MaxConcurrentJobs = 1
@@ -293,8 +293,8 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
 	// Create fake projects
-	os.MkdirAll(filepath.Join(workspacesDir, "project-a", ".git"), 0755)
-	os.MkdirAll(filepath.Join(workspacesDir, "project-b", ".git"), 0755)
+	os.MkdirAll(filepath.Join(repoCacheDir, "project-a", ".git"), 0755)
+	os.MkdirAll(filepath.Join(repoCacheDir, "project-b", ".git"), 0755)
 
 	// First request takes the only slot
 	w1 := postJSON(handlers.HandleRun, map[string]interface{}{
@@ -444,7 +444,7 @@ func TestHandleGetProjects_WithGitProjects(t *testing.T) {
 	env.createFakeProject(t, "project-b")
 
 	// Also create a non-git directory (should be excluded)
-	os.MkdirAll(filepath.Join(env.workspacesDir, "not-a-repo"), 0755)
+	os.MkdirAll(filepath.Join(env.repoCacheDir, "not-a-repo"), 0755)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
 	w := httptest.NewRecorder()
@@ -459,11 +459,11 @@ func TestHandleGetProjects_WithGitProjects(t *testing.T) {
 
 func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 	dir := t.TempDir()
-	workspacesDir := filepath.Join(dir, "workspaces")
-	os.MkdirAll(workspacesDir, 0755)
+	repoCacheDir := filepath.Join(dir, "repo-cache")
+	os.MkdirAll(repoCacheDir, 0755)
 
 	cfg := config.DefaultConfig()
-	cfg.WorkspacesRoot = workspacesDir
+	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = filepath.Join(dir, "logs")
 	cfg.TmpRoot = filepath.Join(dir, "tmp")
 	cfg.AllowedProjects = []string{"allowed-only"}
@@ -480,8 +480,8 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
 	// Create two projects, only one in allowlist
-	os.MkdirAll(filepath.Join(workspacesDir, "allowed-only", ".git"), 0755)
-	os.MkdirAll(filepath.Join(workspacesDir, "blocked-project", ".git"), 0755)
+	os.MkdirAll(filepath.Join(repoCacheDir, "allowed-only", ".git"), 0755)
+	os.MkdirAll(filepath.Join(repoCacheDir, "blocked-project", ".git"), 0755)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
 	w := httptest.NewRecorder()

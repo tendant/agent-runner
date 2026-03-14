@@ -115,7 +115,7 @@ session-{id}/
     └── TODO.md             # Progress tracker, injected into prompts
 ```
 
-- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied into each workspace's `workspace/` directory
+- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `repo-cache/` (configured via `REPO_CACHE_ROOT`) and copied into each workspace's `workspace/` directory
 - Agent opens its eyes in `workspace/` — no `cd` needed; `_send/` and `_progress.json` are relative to CWD
 - `state/` is the runner's bookkeeping, invisible to the agent
 - After completion, repos are cached back from `workspace/` for future sessions (underscore-prefixed entries skipped)
@@ -284,7 +284,7 @@ agent-runner/
 │   └── telegram/        # Telegram bot
 ├── e2e/                 # End-to-end tests with mock Claude scripts
 ├── repos/               # Go source mirror (tracked in git)
-├── workspaces/          # Persistent repo cache (runtime, gitignored)
+├── repo-cache/          # Persistent repo cache (runtime, gitignored)
 ├── logs/                # Markdown audit logs (runtime)
 └── .env.example         # Configuration template
 ```

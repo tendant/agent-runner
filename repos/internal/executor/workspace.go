@@ -89,7 +89,7 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // state/ is runner-managed bookkeeping (TODO.md), invisible to the agent.
 // It pre-populates shared repos from the persistent repo cache into workspace/.
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
-func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID string, sharedRepos []string, gitHost, gitOrg string) (string, error) {
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, gitHost, gitOrg string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -111,7 +111,7 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID strin
 		if repo == "" {
 			continue
 		}
-		cachedRepo := filepath.Join(workspacesRoot, repo)
+		cachedRepo := filepath.Join(repoCacheRoot, repo)
 		if info, err := os.Stat(cachedRepo); err == nil && info.IsDir() {
 			dst := filepath.Join(agentDir, repo)
 			if err := copyDir(cachedRepo, dst); err != nil {
@@ -131,9 +131,9 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(workspacesRoot, sessionID strin
 	return workspacePath, nil
 }
 
-// CacheReposBack copies repos from workspace/ back to workspacesRoot/ for future runs.
+// CacheReposBack copies repos from workspace/ back to repoCacheRoot/ for future runs.
 // Skips hidden and underscore-prefixed entries (_send/, _progress.json, etc.).
-func (w *WorkspaceManager) CacheReposBack(workspacePath, workspacesRoot string) {
+func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 	agentDir := filepath.Join(workspacePath, "workspace")
 	entries, err := os.ReadDir(agentDir)
 	if err != nil {
@@ -148,7 +148,7 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, workspacesRoot string) 
 			continue
 		}
 		src := filepath.Join(agentDir, entry.Name())
-		dst := filepath.Join(workspacesRoot, entry.Name())
+		dst := filepath.Join(repoCacheRoot, entry.Name())
 
 		// Remove old cache and replace with updated version
 		os.RemoveAll(dst)

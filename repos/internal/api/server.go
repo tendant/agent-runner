@@ -193,7 +193,7 @@ func (s *Server) Start() error {
 
 func (s *Server) ensureDirectories() error {
 	dirs := []string{
-		s.config.WorkspacesRoot,
+		s.config.RepoCacheRoot,
 		s.config.LogsRoot,
 		s.config.TmpRoot,
 	}

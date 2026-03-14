@@ -13,7 +13,7 @@ import (
 type Config struct {
 	// Directory paths
 	ProjectDir   string // Resolved CWD at startup — the project root
-	WorkspacesRoot string
+	RepoCacheRoot string
 	LogsRoot     string
 	TmpRoot      string
 	MemoryDir string // Convention: ./memory (seeded defaults + daily logs + curated memory)
@@ -114,7 +114,7 @@ type APIConfig struct {
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
 	return &Config{
-		WorkspacesRoot:           "./workspaces",
+		RepoCacheRoot:           "./repo-cache",
 		LogsRoot:                 "./logs",
 		TmpRoot:                  "./tmp",
 		MemoryDir:                "./memory",
@@ -175,7 +175,7 @@ func LoadFromEnv() (*Config, error) {
 	}
 	cfg.ProjectDir = cwd
 
-	cfg.WorkspacesRoot = envOrDefault("WORKSPACES_ROOT", cfg.WorkspacesRoot)
+	cfg.RepoCacheRoot = envOrDefault("REPO_CACHE_ROOT", cfg.RepoCacheRoot)
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
@@ -237,8 +237,8 @@ func LoadFromEnv() (*Config, error) {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.WorkspacesRoot == "" {
-		return fmt.Errorf("workspaces_root is required")
+	if c.RepoCacheRoot == "" {
+		return fmt.Errorf("repo_cache_root is required")
 	}
 	if c.LogsRoot == "" {
 		return fmt.Errorf("logs_root is required")

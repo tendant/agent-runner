@@ -62,7 +62,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		metrics.SessionsTotal.WithLabelValues(string(snap0.Status)).Inc()
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
-			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.WorkspacesRoot)
+			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.RepoCacheRoot)
 		}
 
 		// Write agent audit log
@@ -151,7 +151,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}
 
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
-		h.config.WorkspacesRoot, sessionID, h.config.Agent.SharedRepos,
+		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.GitHost, h.config.GitOrg,
 	)
 	if err != nil {

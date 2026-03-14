@@ -22,7 +22,7 @@ func main() {
 	// Log configuration summary
 	slog.Info("configuration loaded",
 		"project_dir", cfg.ProjectDir,
-		"workspaces_root", cfg.WorkspacesRoot,
+		"repo_cache_root", cfg.RepoCacheRoot,
 		"logs_root", cfg.LogsRoot,
 		"tmp_root", cfg.TmpRoot,
 		"memory_dir", cfg.MemoryDir,
