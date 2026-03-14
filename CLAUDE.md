@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety
 - Background goroutines for async execution; capture fields to locals before spawning
 - Project locking shared between jobs and agents via `jobs.Manager`
-- Shared repos placed directly in each session workspace root; cached in `workspaces/` (WORKSPACES_ROOT) between sessions
+- Agent workspace uses `repos/` subdirectory within each session; shared repos cached in `workspaces/` (WORKSPACES_ROOT) between sessions
 - Template-based prompt system: embedded defaults in `template/defaults/` merged with user overrides in memory dir; `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` are seeded into the memory dir at startup
 
 ### Agent Execution Flow
@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 4. **Phase 2**: Iteration loop — run Claude repeatedly with dynamic prompts
 5. Collect output files from `_send/` directory
 6. **Phase 3**: Reviewer sub-agent (optional) — evaluates completeness
-7. Cache git repos back to workspaces/, write audit log, cleanup workspace
+7. Cache repos back, sync files, write audit log, cleanup workspace
 
 ### API Endpoints
 - `POST /run` — one-shot job (returns job ID)

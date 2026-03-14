@@ -27,10 +27,10 @@ func TestReadWorkspaceState_EmptyDir(t *testing.T) {
 func TestReadWorkspaceState_WithTodoAndRepo(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create TODO.md at workspace root
+	// Create TODO.md
 	os.WriteFile(filepath.Join(dir, "TODO.md"), []byte("- [ ] Fix bug\n- [x] Add tests\n"), 0644)
 
-	// Create a git repo in the workspace
+	// Create a git repo
 	repoDir := filepath.Join(dir, "my-repo")
 	os.MkdirAll(repoDir, 0755)
 	runGit(t, repoDir, "init")
@@ -83,15 +83,11 @@ func TestReadWorkspaceState_WithUncommittedChanges(t *testing.T) {
 	}
 }
 
-func TestReadWorkspaceState_SkipsDotAndUnderscoreDirs(t *testing.T) {
+func TestReadWorkspaceState_SkipsDotDirs(t *testing.T) {
 	dir := t.TempDir()
 
-	// .hidden and _send should be skipped; only git repos are listed
 	os.MkdirAll(filepath.Join(dir, ".hidden"), 0755)
-	os.MkdirAll(filepath.Join(dir, "_send"), 0755)
-	visibleDir := filepath.Join(dir, "visible")
-	os.MkdirAll(visibleDir, 0755)
-	runGit(t, visibleDir, "init")
+	os.MkdirAll(filepath.Join(dir, "visible"), 0755)
 
 	state := ReadWorkspaceState(context.Background(), dir)
 

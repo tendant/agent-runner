@@ -10,7 +10,7 @@ import (
 )
 
 // ReadWorkspaceState reads the current state of the workspace for prompt injection.
-// It reads TODO.md from the workspace root, and lists repos from the work/ subdirectory.
+// It reads TODO.md from the workspace root, and lists repos from the repos/ subdirectory.
 func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceState {
 	var state WorkspaceState
 
@@ -20,17 +20,13 @@ func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceStat
 		state.TodoContent = strings.TrimSpace(string(data))
 	}
 
-	// List git repo directories in the workspace root
-	entries, err := os.ReadDir(workspacePath)
+	// List repo directories inside repos/ subdirectory
+	reposDir := filepath.Join(workspacePath, "repos")
+	entries, err := os.ReadDir(reposDir)
 	if err == nil {
 		for _, e := range entries {
-			name := e.Name()
-			if !e.IsDir() || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
-				continue
-			}
-			// Only include directories that are git repos
-			if _, err := os.Stat(filepath.Join(workspacePath, name, ".git")); err == nil {
-				state.RepoNames = append(state.RepoNames, name)
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				state.RepoNames = append(state.RepoNames, e.Name())
 			}
 		}
 	}
@@ -39,7 +35,7 @@ func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceStat
 	var commits []string
 	var diffs []string
 	for _, repoName := range state.RepoNames {
-		repoDir := filepath.Join(workspacePath, repoName)
+		repoDir := filepath.Join(reposDir, repoName)
 
 		// Recent commits
 		if out := gitCmd(ctx, repoDir, "log", "--oneline", "-10"); out != "" {

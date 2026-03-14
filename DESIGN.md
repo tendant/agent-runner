@@ -105,23 +105,23 @@ The composed prompt is passed as the system prompt to Claude Code CLI. If no tem
 Each agent session gets an isolated workspace:
 
 ```
-session-{session-id}/
-├── shared-repo/        # Pre-populated from AGENT_SHARED_REPOS
-├── another-repo/       # Pre-populated from AGENT_SHARED_REPOS
-├── _send/              # Output files for user delivery
-├── _progress.json      # Completed plan step IDs
-├── TODO.md             # Agent's progress tracker
-└── ...
+workspace-{session-id}/
+├── repos/              # Claude's working directory (shared repos live here)
+│   ├── shared-repo/    # Pre-populated from AGENT_SHARED_REPOS
+│   ├── another-repo/   # Pre-populated from AGENT_SHARED_REPOS
+│   └── _send/          # Output files for user delivery
+├── TODO.md             # Agent's progress tracker (synced back to project dir)
+└── ...                 # Other project files (synced from ProjectDir)
 ```
 
-- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied directly into each session workspace
-- Claude runs in the workspace root
-- After completion, git repos are cached back for future sessions
-- Non-repo files are cleaned up with the workspace
+- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `workspaces/` (configured via `WORKSPACES_ROOT`) and copied into each workspace
+- Claude runs in the `repos/` subdirectory within the workspace
+- After completion, repos are cached back for future sessions
+- Non-repo files are synced back to the project directory
 
 ### Output Files (`_send/` Convention)
 
-Agents can send files to the user by writing them to `_send/`. After the iteration loop completes (before cleanup), the executor:
+Agents can send files to the user by writing them to `repos/_send/`. After the iteration loop completes (before cleanup), the executor:
 
 1. Scans `_send/` for files (skips subdirectories)
 2. Reads each file with content type detection
@@ -256,7 +256,7 @@ Key groups:
 | Network | API bound to localhost or private network |
 | Authentication | Optional static API key (`X-API-Key` header) |
 | Authorization | Trusted users only |
-| Isolation | Per-session workspace; git repos cached back to workspaces/ and cleaned up |
+| Isolation | Per-session workspace; repos cached and cleaned up |
 | Git | Credentials managed externally |
 | Bots | Telegram restricted by chat ID; stream bot uses JWT auth |
 
