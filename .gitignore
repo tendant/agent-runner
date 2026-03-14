@@ -3,6 +3,8 @@
 
 # Runtime directories
 repo-cache/
+repos/
+workspaces/
 projects/
 origins/
 runs/

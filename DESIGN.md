@@ -283,7 +283,6 @@ agent-runner/
 │   ├── subagent/        # Planner, reviewer, prompt builder
 │   └── telegram/        # Telegram bot
 ├── e2e/                 # End-to-end tests with mock Claude scripts
-├── repos/               # Go source mirror (tracked in git)
 ├── repo-cache/          # Persistent repo cache (runtime, gitignored)
 ├── logs/                # Markdown audit logs (runtime)
 └── .env.example         # Configuration template
