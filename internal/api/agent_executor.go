@@ -258,6 +258,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			liveSession.SetCompletedSteps(completedSteps)
 			if plan != nil {
 				plan.MarkDone(completedSteps)
+				if len(plan.RemainingSteps()) == 0 {
+					slog.Info("all plan steps completed", "session_id", sessionID, "iteration", i)
+					break
+				}
 			}
 		}
 	}
