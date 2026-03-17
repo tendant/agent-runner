@@ -26,7 +26,7 @@ type Config struct {
 	MaxConcurrentJobs int
 
 	// Git settings
-	GitHost                  string // e.g. "git.memochat.ai"
+	GitHost                  string // e.g. "gitea.example.com"
 	GitOrg                   string // e.g. "sites"
 	GitPushRetries           int
 	GitPushRetryDelaySeconds int
