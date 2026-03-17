@@ -39,15 +39,21 @@ Key variables:
 
 ## Connecting to Agent Stream
 
-[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. Once you have access to an agent-stream server, connect agent-runner to it:
+[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. It lets you send messages, receive streaming responses, and get file attachments back from the agent.
+
+To connect agent-runner, you need three values from the app:
+
+1. **`STREAM_SERVER_URL`** — your Agent Stream server URL. Set it in the app via the gear icon on the login screen.
+
+2. **`STREAM_BOT_TOKEN`** — create a bot in the app under Menu → Bots → tap `+`. The token is shown once after creation — copy it immediately.
+
+3. **`STREAM_CONVERSATION_IDS`** — create a conversation in the app (tap `+` on the conversation list). The conversation ID starts with `c_` and is visible in the conversation detail.
 
 ```bash
 STREAM_SERVER_URL=https://your-agent-stream-server
 STREAM_BOT_TOKEN=your-bot-jwt
-STREAM_CONVERSATION_IDS=conv_id1,conv_id2
+STREAM_CONVERSATION_IDS=c_your_conversation_id
 ```
-
-The app lets you send messages, receive streaming responses, and get file attachments back from the agent.
 
 ## API
 
