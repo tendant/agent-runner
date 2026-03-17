@@ -35,11 +35,11 @@ Key variables:
 | `AGENT_PLANNER_ENABLED` | `false` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
-| `STREAM_SERVER_URL` | | [agent-stream](https://github.com/tendant/agent-stream) server URL |
+| `STREAM_SERVER_URL` | | Agent Stream server URL |
 
 ## Connecting to Agent Stream
 
-[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. Once you have the app and an agent-stream server, connect agent-runner to it:
+[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. Once you have access to an agent-stream server, connect agent-runner to it:
 
 ```bash
 STREAM_SERVER_URL=https://your-agent-stream-server
