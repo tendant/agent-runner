@@ -1,6 +1,6 @@
 # Agent Runner
 
-A Go HTTP server that drives AI coding agents — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or any compatible CLI — for autonomous, iterative task execution against Git repositories.
+An autonomous AI agent that runs coding tasks iteratively against Git repositories. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), and other compatible CLI agents — with planning, review phases, conversational interfaces (Telegram, web), and a REST API.
 
 ## Prerequisites
 
