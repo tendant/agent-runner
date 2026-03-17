@@ -37,6 +37,18 @@ Key variables:
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
 | `STREAM_SERVER_URL` | | [agent-stream](https://github.com/tendant/agent-stream) server URL |
 
+## Connecting to Agent Stream
+
+[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. Once you have the app and an agent-stream server, connect agent-runner to it:
+
+```bash
+STREAM_SERVER_URL=https://your-agent-stream-server
+STREAM_BOT_TOKEN=your-bot-jwt
+STREAM_CONVERSATION_IDS=conv_id1,conv_id2
+```
+
+The app lets you send messages, receive streaming responses, and get file attachments back from the agent.
+
 ## API
 
 ```bash
