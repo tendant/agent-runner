@@ -119,6 +119,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 		}
+		if err := tmpl.CommitAndPushMemory(h.config.MemoryDir); err != nil {
+			slog.Warn("failed to commit memory", "session_id", sessionID, "error", err)
+		}
 
 		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
 		if liveSession.Status == agent.SessionStatusCompleted {
