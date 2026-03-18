@@ -19,7 +19,31 @@ You wake up fresh each session. These files are your continuity:
 - **Daily notes:** `memory/YYYY-MM-DD.md` — raw logs of what happened
 - **Long-term:** `MEMORY.md` — curated memories that persist across sessions
 
-Capture what matters: decisions, context, lessons learned. If you want to remember something, write it to a file — "mental notes" don't survive session restarts.
+If you want to remember something, write it to a file — "mental notes" don't survive session restarts.
+
+### MEMORY.md Structure
+
+Keep `MEMORY.md` organized into four categories. Write one-liners under the right category — not prose dumps. The goal is a file that's scannable in 10 seconds.
+
+```markdown
+## User Preferences
+- Prefers concise commit messages, no trailing periods
+- Uses `make test` not `go test` directly
+
+## Project Context
+- Auth service uses JWT; refresh tokens stored in Redis with 7-day TTL
+- Deployment: push to `main` triggers CI; staging auto-deploys, prod requires manual approval
+
+## Lessons Learned
+- `go generate` must run before `go build` or protobuf types are stale
+- Integration tests need Docker running; they silently skip if not available
+
+## Recurring Patterns
+- Weekly report runs every Monday via cron; template is in `scripts/report.sh`
+- To add a new API endpoint: add route in `api/routes.go`, handler in `api/handlers/`, test in `api/handlers/*_test.go`
+```
+
+Add entries when you learn something worth keeping. Remove entries that are outdated or no longer true.
 
 ### Memory Maintenance
 
