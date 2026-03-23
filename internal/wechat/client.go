@@ -107,7 +107,8 @@ func (c *Client) PollQRCodeStatus(ctx context.Context, qrcode string) (*GetQRCod
 	return &resp, nil
 }
 
-// do executes an authenticated request to the iLink API.
+// do executes a request to the iLink API. Auth headers are added only when
+// a token is configured (QR login endpoints are unauthenticated).
 func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]byte, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
@@ -124,9 +125,14 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("AuthorizationType", "ilink_bot_token")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("X-WECHAT-UIN", randomUIN())
+	if c.token != "" {
+		req.Header.Set("AuthorizationType", "ilink_bot_token")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("X-WECHAT-UIN", randomUIN())
+	} else {
+		// QR login endpoints use a version header instead of bearer auth.
+		req.Header.Set("iLink-App-ClientVersion", "1")
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
