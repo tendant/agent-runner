@@ -67,7 +67,8 @@ func NewClient(cfg Config, exec executor.Executor) Client {
 		return NewAnthropicClient(apiKey, model, cfg.BaseURL)
 
 	case "openai":
-		if apiKey == "" {
+		// API key is optional when a custom BaseURL is set (e.g. Ollama, local endpoints).
+		if apiKey == "" && cfg.BaseURL == "" {
 			slog.Warn("llm: openai provider selected but no API key found, falling back to executor")
 			break
 		}
