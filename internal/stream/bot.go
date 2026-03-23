@@ -16,6 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/wechat"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
@@ -604,10 +605,22 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 		send := func(msg string) {
 			b.emitFinal(ctx, convID, msg)
 		}
-		sendQR := func(_ context.Context, qrContent string) {
-			send("Tap the link below in WeChat to authorize the bot login:\n\n" +
-				qrContent +
-				"\n\n(If the link does not open automatically, copy and paste it into WeChat's built-in browser.)")
+		sendQR := func(qrCtx context.Context, qrContent string) {
+			pngBytes, err := qrcode.Encode(qrContent, qrcode.Medium, 256)
+			if err != nil {
+				slog.Error("stream: failed to generate qr code image", "error", err)
+				send("Tap the link below in WeChat to authorize the bot login:\n\n" + qrContent)
+				return
+			}
+			fileID, err := b.client.UploadFile(qrCtx, convID, "qrcode.png", "image/png", pngBytes)
+			if err != nil {
+				slog.Error("stream: failed to upload qr code image", "error", err)
+				send("Tap the link below in WeChat to authorize the bot login:\n\n" + qrContent)
+				return
+			}
+			if err := b.client.SendMessage(qrCtx, convID, "Scan the QR code in WeChat to log in:", []string{fileID}); err != nil {
+				slog.Error("stream: failed to send qr code message", "error", err)
+			}
 		}
 
 		result, err := wechat.RunLoginFlow(ctx, b.wechatBaseURL, send, sendQR)
