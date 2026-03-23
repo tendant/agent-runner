@@ -10,17 +10,26 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const defaultBaseURL = "https://ilinkai.weixin.qq.com"
+
+const syncBufFile = "/tmp/wechat-sync-buf.txt"
 
 // Client is an HTTP client for the Tencent iLink bot API.
 type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+
+	timeoutMu   sync.Mutex
+	pollTimeout time.Duration
 }
 
 // NewClient creates an iLink API client.
@@ -86,10 +95,14 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 
 	req := SendMessageReq{
 		Msg: WeixinMessage{
+			FromUserID:   "",
 			ToUserID:     toUserID,
+			ClientID:     uuid.New().String(),
+			MessageType:  MessageTypeBot,
+			MessageState: MessageStateFinish,
 			ContextToken: contextToken,
 			ItemList: []MessageItem{
-				{Type: MessageTypeText, TextItem: &TextItem{Text: text}},
+				{Type: MessageItemTypeText, TextItem: &TextItem{Text: text}},
 			},
 		},
 		BaseInfo: buildBaseInfo(),
@@ -196,6 +209,30 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 		return nil, fmt.Errorf("wechat: %s %s: HTTP %d: %s", method, path, resp.StatusCode, body)
 	}
 	return body, nil
+}
+
+// loadSyncBuf restores the last-known get_updates_buf cursor from disk.
+// Returns "" if not found (first run).
+func (c *Client) loadSyncBuf() string {
+	data, err := os.ReadFile(syncBufFile)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// saveSyncBuf persists the get_updates_buf cursor to disk so it survives restarts.
+func (c *Client) saveSyncBuf(buf string) {
+	if err := os.WriteFile(syncBufFile, []byte(buf), 0600); err != nil {
+		slog.Warn("wechat: failed to persist sync buf", "error", err)
+	}
+}
+
+// setPollTimeout updates the suggested poll timeout from the server.
+func (c *Client) setPollTimeout(d time.Duration) {
+	c.timeoutMu.Lock()
+	c.pollTimeout = d
+	c.timeoutMu.Unlock()
 }
 
 // randomUIN returns X-WECHAT-UIN: the decimal string of a random uint32,

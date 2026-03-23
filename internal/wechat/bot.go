@@ -77,10 +77,11 @@ func (b *Bot) Stop() {
 
 // runLoop continuously long-polls getupdates and dispatches inbound messages.
 func (b *Bot) runLoop(ctx context.Context) {
-	var buf string // sync cursor, updated after each poll
+	buf := b.client.loadSyncBuf()  // restore cursor from disk across restarts
 	pollCount := 0
+	consecutiveFailures := 0
 
-	slog.Info("wechat: poll loop starting")
+	slog.Info("wechat: poll loop starting", "has_saved_cursor", buf != "")
 
 	for {
 		if ctx.Err() != nil {
@@ -94,7 +95,34 @@ func (b *Bot) runLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Warn("wechat: getupdates error, retrying in 3s", "error", err, "polls", pollCount)
+			consecutiveFailures++
+			delay := 3 * time.Second
+			if consecutiveFailures >= 3 {
+				delay = 30 * time.Second
+				slog.Warn("wechat: repeated getupdates errors, backing off 30s",
+					"error", err, "polls", pollCount, "failures", consecutiveFailures)
+			} else {
+				slog.Warn("wechat: getupdates error, retrying",
+					"error", err, "polls", pollCount, "delay", delay)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+			continue
+		}
+		consecutiveFailures = 0
+
+		// Handle API-level errors returned inside the response body.
+		if resp.Ret != 0 || resp.ErrCode != 0 {
+			if resp.ErrCode == ErrCodeSessionExpired || resp.Ret == ErrCodeSessionExpired {
+				slog.Error("wechat: session expired (errcode -14) — re-run wechat-login to get a new token",
+					"polls", pollCount)
+				return // stop polling; token is no longer valid
+			}
+			slog.Error("wechat: getupdates api error",
+				"ret", resp.Ret, "errcode", resp.ErrCode, "errmsg", resp.ErrMsg, "polls", pollCount)
 			select {
 			case <-ctx.Done():
 				return
@@ -103,23 +131,15 @@ func (b *Bot) runLoop(ctx context.Context) {
 			continue
 		}
 
-		// Log API-level errors returned in the response body
-		if resp.Ret != 0 || resp.ErrCode != 0 {
-			slog.Error("wechat: getupdates returned api error",
-				"ret", resp.Ret, "errcode", resp.ErrCode, "errmsg", resp.ErrMsg,
-				"polls", pollCount,
-			)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(3 * time.Second):
-			}
-			continue
+		// Respect server-suggested poll timeout for the next request.
+		if resp.LongpollingTimeoutMs > 0 {
+			b.client.setPollTimeout(time.Duration(resp.LongpollingTimeoutMs) * time.Millisecond)
 		}
 
 		if resp.GetUpdatesBuf != "" {
 			slog.Debug("wechat: cursor updated", "buf_len", len(resp.GetUpdatesBuf))
 			buf = resp.GetUpdatesBuf
+			b.client.saveSyncBuf(buf)
 		} else {
 			slog.Debug("wechat: empty poll (no new messages)", "polls", pollCount)
 		}
@@ -162,9 +182,9 @@ func (b *Bot) getContextToken(userID string) string {
 
 // handleMessage processes a single inbound WeChat message.
 func (b *Bot) handleMessage(msg WeixinMessage) {
-	if msg.MessageType != MessageTypeText {
-		slog.Info("wechat: ignoring non-text message", "from_user_id", msg.FromUserID, "message_type", msg.MessageType)
-		return // V1: text only
+	if msg.MessageType != MessageTypeUser {
+		slog.Info("wechat: ignoring non-user message", "from_user_id", msg.FromUserID, "message_type", msg.MessageType)
+		return // only handle inbound user messages
 	}
 
 	text := extractText(msg)
@@ -379,7 +399,7 @@ func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
 // extractText returns the plain text from the first text item in a message.
 func extractText(msg WeixinMessage) string {
 	for _, item := range msg.ItemList {
-		if item.Type == MessageTypeText && item.TextItem != nil {
+		if item.Type == MessageItemTypeText && item.TextItem != nil {
 			return item.TextItem.Text
 		}
 	}

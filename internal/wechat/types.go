@@ -1,7 +1,16 @@
 package wechat
 
-// MessageTypeText is the iLink message type for plain text.
-const MessageTypeText = 1
+// Message-level type (WeixinMessage.MessageType).
+const (
+	MessageTypeUser = 1 // inbound: message from a WeChat user
+	MessageTypeBot  = 2 // outbound: message from the bot
+)
+
+// Message-level state (WeixinMessage.MessageState).
+const MessageStateFinish = 2
+
+// Item-level type (MessageItem.Type).
+const MessageItemTypeText = 1 // plain text item
 
 // channelVersion is sent in every request as base_info.channel_version so the
 // server can identify the client. Matches the @tencent-weixin/openclaw-weixin
@@ -31,9 +40,11 @@ type MessageItem struct {
 // WeixinMessage is the core message type used for both inbound (getupdates)
 // and outbound (sendmessage) calls.
 type WeixinMessage struct {
-	FromUserID   string        `json:"from_user_id,omitempty"`
+	FromUserID   string        `json:"from_user_id"`           // "" for outbound bot messages
 	ToUserID     string        `json:"to_user_id,omitempty"`
-	MessageType  int           `json:"message_type,omitempty"`
+	ClientID     string        `json:"client_id,omitempty"`    // unique UUID per outbound message
+	MessageType  int           `json:"message_type,omitempty"` // 1=USER (inbound), 2=BOT (outbound)
+	MessageState int           `json:"message_state,omitempty"` // 2=FINISH for outbound
 	ItemList     []MessageItem `json:"item_list,omitempty"`
 	ContextToken string        `json:"context_token,omitempty"`
 }
@@ -46,12 +57,17 @@ type GetUpdatesReq struct {
 
 // GetUpdatesResp is the response from ilink/bot/getupdates.
 type GetUpdatesResp struct {
-	Ret           int             `json:"ret"`
-	ErrCode       int             `json:"errcode"`
-	ErrMsg        string          `json:"errmsg"`
-	Msgs          []WeixinMessage `json:"msgs"`
-	GetUpdatesBuf string          `json:"get_updates_buf"`
+	Ret                  int             `json:"ret"`
+	ErrCode              int             `json:"errcode"`
+	ErrMsg               string          `json:"errmsg"`
+	Msgs                 []WeixinMessage `json:"msgs"`
+	GetUpdatesBuf        string          `json:"get_updates_buf"`
+	LongpollingTimeoutMs int             `json:"longpolling_timeout_ms"` // server-suggested poll timeout
 }
+
+// ErrCodeSessionExpired is the iLink error code for an expired/invalidated
+// session. When received, polling must stop and re-login is required.
+const ErrCodeSessionExpired = -14
 
 // SendMessageReq is the request body for ilink/bot/sendmessage.
 type SendMessageReq struct {
