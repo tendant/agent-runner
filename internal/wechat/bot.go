@@ -48,7 +48,7 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	return &Bot{
 		client:      NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
-		downloader:  NewDownloader(cfg.BaseURL, mediaDir),
+		downloader:  NewDownloader(cfg.CDNBaseURL, mediaDir),
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,

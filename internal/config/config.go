@@ -92,9 +92,10 @@ type StreamConfig struct {
 
 // WeChatConfig contains WeChat bot settings (iLink API).
 type WeChatConfig struct {
-	Token    string // WECHAT_TOKEN — bearer token obtained via QR login
-	BaseURL  string // WECHAT_BASE_URL — default: https://ilinkai.weixin.qq.com
-	StateDir string // WECHAT_STATE_DIR — directory for sync buf cursor; defaults to TmpRoot
+	Token      string // WECHAT_TOKEN — bearer token obtained via QR login
+	BaseURL    string // WECHAT_BASE_URL — default: https://ilinkai.weixin.qq.com
+	CDNBaseURL string // WECHAT_CDN_BASE_URL — media CDN; default: https://novac2c.cdn.weixin.qq.com/c2c
+	StateDir   string // WECHAT_STATE_DIR — directory for sync buf cursor; defaults to TmpRoot
 }
 
 // RunnerConfig contains hybrid runner settings
@@ -228,6 +229,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
+	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "")
 	cfg.WeChat.StateDir = envOrDefault("WECHAT_STATE_DIR", cfg.TmpRoot)
 
 	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)

@@ -18,6 +18,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// defaultCDNBaseURL is the WeChat c2c CDN host used for all media downloads.
+// It is separate from the iLink API host (ilinkai.weixin.qq.com).
+const defaultCDNBaseURL = "https://novac2c.cdn.weixin.qq.com/c2c"
+
 // Downloader fetches, decrypts, and saves inbound media from the iLink CDN.
 type Downloader struct {
 	cdnBaseURL string
@@ -25,13 +29,13 @@ type Downloader struct {
 	httpClient *http.Client
 }
 
-// NewDownloader creates a Downloader. cdnBaseURL defaults to the iLink API base
-// URL if empty. mediaDir is where downloaded files are written; it is resolved
-// to an absolute path so that file paths injected into agent messages remain
-// valid when the agent runs in a different working directory.
+// NewDownloader creates a Downloader. cdnBaseURL defaults to the WeChat c2c CDN
+// if empty. mediaDir is where downloaded files are written; it is resolved to
+// an absolute path so that file paths injected into agent messages remain valid
+// when the agent runs in a different working directory.
 func NewDownloader(cdnBaseURL, mediaDir string) *Downloader {
 	if cdnBaseURL == "" {
-		cdnBaseURL = defaultBaseURL
+		cdnBaseURL = defaultCDNBaseURL
 	}
 	if abs, err := filepath.Abs(mediaDir); err == nil {
 		mediaDir = abs
