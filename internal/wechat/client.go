@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -43,7 +43,10 @@ func (c *Client) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResp, e
 	ctx, cancel := context.WithTimeout(ctx, 37*time.Second)
 	defer cancel()
 
-	body, err := c.do(ctx, http.MethodPost, "ilink/bot/getupdates", GetUpdatesReq{GetUpdatesBuf: buf})
+	body, err := c.do(ctx, http.MethodPost, "ilink/bot/getupdates", GetUpdatesReq{
+		GetUpdatesBuf: buf,
+		BaseInfo:      buildBaseInfo(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +72,7 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 				{Type: MessageTypeText, TextItem: &TextItem{Text: text}},
 			},
 		},
+		BaseInfo: buildBaseInfo(),
 	}
 	_, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
 	return err
@@ -125,12 +129,12 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("AuthorizationType", "ilink_bot_token")
+	req.Header.Set("X-WECHAT-UIN", randomUIN())
 	if c.token != "" {
-		req.Header.Set("AuthorizationType", "ilink_bot_token")
 		req.Header.Set("Authorization", "Bearer "+c.token)
-		req.Header.Set("X-WECHAT-UIN", randomUIN())
 	} else {
-		// QR login endpoints use a version header instead of bearer auth.
+		// QR login endpoints don't need a bearer token; add a version hint.
 		req.Header.Set("iLink-App-ClientVersion", "1")
 	}
 
@@ -150,10 +154,10 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	return body, nil
 }
 
-// randomUIN returns a random uint32 encoded as base64, as required by the
-// iLink API for the X-WECHAT-UIN header.
+// randomUIN returns X-WECHAT-UIN: the decimal string of a random uint32,
+// base64-encoded. This matches the TypeScript implementation:
+// Buffer.from(String(uint32), "utf-8").toString("base64")
 func randomUIN() string {
-	var buf [4]byte
-	binary.LittleEndian.PutUint32(buf[:], rand.Uint32())
-	return base64.StdEncoding.EncodeToString(buf[:])
+	decimal := strconv.FormatUint(uint64(rand.Uint32()), 10)
+	return base64.StdEncoding.EncodeToString([]byte(decimal))
 }

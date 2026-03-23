@@ -3,6 +3,20 @@ package wechat
 // MessageTypeText is the iLink message type for plain text.
 const MessageTypeText = 1
 
+// channelVersion is sent in every request as base_info.channel_version so the
+// server can identify the client. Matches the @tencent-weixin/openclaw-weixin
+// plugin version we reverse-engineered the protocol from.
+const channelVersion = "1.0.3"
+
+// BaseInfo is attached to every outgoing API request body.
+type BaseInfo struct {
+	ChannelVersion string `json:"channel_version"`
+}
+
+func buildBaseInfo() BaseInfo {
+	return BaseInfo{ChannelVersion: channelVersion}
+}
+
 // TextItem holds the content of a text message.
 type TextItem struct {
 	Text string `json:"text"`
@@ -26,7 +40,8 @@ type WeixinMessage struct {
 
 // GetUpdatesReq is the request body for ilink/bot/getupdates.
 type GetUpdatesReq struct {
-	GetUpdatesBuf string `json:"get_updates_buf"`
+	GetUpdatesBuf string   `json:"get_updates_buf"`
+	BaseInfo      BaseInfo `json:"base_info"`
 }
 
 // GetUpdatesResp is the response from ilink/bot/getupdates.
@@ -40,7 +55,8 @@ type GetUpdatesResp struct {
 
 // SendMessageReq is the request body for ilink/bot/sendmessage.
 type SendMessageReq struct {
-	Msg WeixinMessage `json:"msg"`
+	Msg      WeixinMessage `json:"msg"`
+	BaseInfo BaseInfo      `json:"base_info"`
 }
 
 // GetQRCodeResp is the response from ilink/bot/get_bot_qrcode.
