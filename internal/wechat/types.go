@@ -9,13 +9,13 @@ const (
 // Message-level state (WeixinMessage.MessageState).
 const MessageStateFinish = 2
 
-// Item-level type (MessageItem.Type).
+// Item-level type (MessageItem.Type) — mirrors MessageItemType in the iLink protocol.
 const (
-	MessageItemTypeText  = 1 // plain text
-	MessageItemTypeImage = 2 // image
-	MessageItemTypeVoice = 3 // voice/audio
-	MessageItemTypeVideo = 4 // video
-	MessageItemTypeFile  = 6 // generic file/document
+	MessageItemTypeText  = 1
+	MessageItemTypeImage = 2
+	MessageItemTypeVoice = 3
+	MessageItemTypeFile  = 4
+	MessageItemTypeVideo = 5
 )
 
 // channelVersion is sent in every request as base_info.channel_version so the
@@ -37,10 +37,54 @@ type TextItem struct {
 	Text string `json:"text"`
 }
 
+// CDNMedia is a CDN reference embedded in media items.
+type CDNMedia struct {
+	EncryptQueryParam string `json:"encrypt_query_param,omitempty"`
+	AESKey            string `json:"aes_key,omitempty"` // base64-encoded; see parseAESKey for formats
+	EncryptType       int    `json:"encrypt_type,omitempty"`
+}
+
+// ImageItem holds image metadata.
+type ImageItem struct {
+	Media      *CDNMedia `json:"media,omitempty"`
+	ThumbMedia *CDNMedia `json:"thumb_media,omitempty"`
+	// AESKey is a hex-encoded 16-byte key (preferred over Media.AESKey for inbound messages).
+	AESKey string `json:"aeskey,omitempty"`
+	URL    string `json:"url,omitempty"`
+}
+
+// VoiceItem holds voice/audio metadata.
+type VoiceItem struct {
+	Media      *CDNMedia `json:"media,omitempty"`
+	EncodeType int       `json:"encode_type,omitempty"` // 6=silk (common)
+	SampleRate int       `json:"sample_rate,omitempty"`
+	Playtime   int       `json:"playtime,omitempty"` // milliseconds
+	Text       string    `json:"text,omitempty"`     // voice-to-text transcript (if available)
+}
+
+// FileItem holds file attachment metadata.
+type FileItem struct {
+	Media    *CDNMedia `json:"media,omitempty"`
+	FileName string    `json:"file_name,omitempty"`
+	MD5      string    `json:"md5,omitempty"`
+	Len      string    `json:"len,omitempty"` // file size as string
+}
+
+// VideoItem holds video metadata.
+type VideoItem struct {
+	Media      *CDNMedia `json:"media,omitempty"`
+	VideoSize  int       `json:"video_size,omitempty"`
+	PlayLength int       `json:"play_length,omitempty"`
+}
+
 // MessageItem is a single content item in a WeChat message.
 type MessageItem struct {
-	Type     int       `json:"type"`
-	TextItem *TextItem `json:"text_item,omitempty"`
+	Type      int        `json:"type"`
+	TextItem  *TextItem  `json:"text_item,omitempty"`
+	ImageItem *ImageItem `json:"image_item,omitempty"`
+	VoiceItem *VoiceItem `json:"voice_item,omitempty"`
+	FileItem  *FileItem  `json:"file_item,omitempty"`
+	VideoItem *VideoItem `json:"video_item,omitempty"`
 }
 
 // WeixinMessage is the core message type used for both inbound (getupdates)

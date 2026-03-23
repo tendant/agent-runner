@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,8 +23,9 @@ type AgentStarter interface {
 // Bot is a WeChat bot that bridges messages to the agent runner via the
 // Tencent iLink API.
 type Bot struct {
-	client  *Client
-	starter AgentStarter
+	client     *Client
+	downloader *Downloader
+	starter    AgentStarter
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -43,8 +45,10 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 	if cfg.Token == "" {
 		return nil
 	}
+	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	return &Bot{
 		client:      NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
+		downloader:  NewDownloader(cfg.BaseURL, mediaDir),
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,
@@ -187,54 +191,50 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 		return // only handle inbound user messages
 	}
 
-	text := extractText(msg)
-	if text == "" {
-		if desc := describeNonText(msg); desc != "" {
-			slog.Info("wechat: received non-text message", "from_user_id", msg.FromUserID, "type", desc)
-			b.sendText(context.Background(), msg.FromUserID, "I received "+desc+", but I can only process text messages for now.")
-		} else {
-			slog.Warn("wechat: received message with no readable content", "from_user_id", msg.FromUserID)
-		}
+	ctx := context.Background()
+	content := b.extractContent(ctx, msg)
+	if content == "" {
+		slog.Warn("wechat: received message with no usable content", "from_user_id", msg.FromUserID)
 		return
 	}
 
-	slog.Info("wechat: handling text message", "from_user_id", msg.FromUserID, "text_len", len(text))
+	slog.Info("wechat: handling message", "from_user_id", msg.FromUserID, "content_len", len(content))
 
 	userID := msg.FromUserID
 	chatID := userID // use WeChat user ID as conversation key
 
 	// Handle /cancel command
-	if strings.EqualFold(strings.TrimSpace(text), "/cancel") {
+	if strings.EqualFold(strings.TrimSpace(content), "/cancel") {
 		b.convManager.Complete(chatID)
-		b.sendText(context.Background(), userID, "Conversation cancelled. Send a new message to start over.")
+		b.sendText(ctx, userID, "Conversation cancelled. Send a new message to start over.")
 		return
 	}
 
 	conv := b.convManager.GetOrCreate(chatID)
-	conv.AddMessage("user", text)
+	conv.AddMessage("user", content)
 
 	state := conv.GetState()
 	slog.Info("wechat: conversation state", "user_id", userID, "state", state)
 
 	if state == conversation.StateExecuting {
-		b.sendText(context.Background(), userID, "Message queued — I'll process it after the current task finishes.")
+		b.sendText(ctx, userID, "Message queued — I'll process it after the current task finishes.")
 		return
 	}
 
 	if state == conversation.StateConfirming {
-		if isConfirmation(text) {
+		if isConfirmation(content) {
 			b.handleConfirmation(userID, chatID, conv)
 			return
 		}
-		if isDenial(text) {
+		if isDenial(content) {
 			conv.SetState(conversation.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
-			b.sendText(context.Background(), userID, "OK, what would you like to change?")
+			b.sendText(ctx, userID, "OK, what would you like to change?")
 			return
 		}
 	}
 
-	b.sendText(context.Background(), userID, "Thinking...")
+	b.sendText(ctx, userID, "Thinking...")
 	b.handleAnalysis(userID, chatID, conv)
 }
 
@@ -401,32 +401,79 @@ func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
 	slog.Info("wechat: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
 }
 
-// extractText returns the plain text from the first text item in a message.
-func extractText(msg WeixinMessage) string {
-	for _, item := range msg.ItemList {
-		if item.Type == MessageItemTypeText && item.TextItem != nil {
-			return item.TextItem.Text
-		}
-	}
-	return ""
-}
-
-// describeNonText returns a human-readable description of the first non-text
-// item in a message, or "" if the message contains no recognisable media.
-func describeNonText(msg WeixinMessage) string {
+// extractContent assembles the full content of an inbound message. Text items
+// are included as-is; media items are downloaded and represented as file-path
+// annotations. Voice items with a transcript use the transcript directly.
+// Returns "" if the message has no usable content.
+func (b *Bot) extractContent(ctx context.Context, msg WeixinMessage) string {
+	var parts []string
 	for _, item := range msg.ItemList {
 		switch item.Type {
+		case MessageItemTypeText:
+			if item.TextItem != nil && item.TextItem.Text != "" {
+				parts = append(parts, item.TextItem.Text)
+			}
+
 		case MessageItemTypeImage:
-			return "an image"
+			path, err := b.downloader.DownloadImage(ctx, item)
+			if err != nil {
+				slog.Warn("wechat: image download failed", "error", err)
+				parts = append(parts, "[Image — could not download]")
+			} else {
+				parts = append(parts, fmt.Sprintf("[Image: %s]", path))
+			}
+
 		case MessageItemTypeVoice:
-			return "a voice message"
-		case MessageItemTypeVideo:
-			return "a video"
+			if item.VoiceItem != nil && item.VoiceItem.Text != "" {
+				// Voice-to-text transcript is available — use it as the message.
+				parts = append(parts, item.VoiceItem.Text)
+			} else {
+				dur := ""
+				if item.VoiceItem != nil && item.VoiceItem.Playtime > 0 {
+					dur = fmt.Sprintf(" (%ds)", item.VoiceItem.Playtime/1000)
+				}
+				parts = append(parts, "[Voice message"+dur+" — no transcript available]")
+			}
+
 		case MessageItemTypeFile:
-			return "a file"
+			path, err := b.downloader.DownloadFile(ctx, item)
+			if err != nil {
+				slog.Warn("wechat: file download failed", "error", err)
+				name := ""
+				if item.FileItem != nil {
+					name = item.FileItem.FileName
+				}
+				if name != "" {
+					parts = append(parts, fmt.Sprintf("[File '%s' — could not download]", name))
+				} else {
+					parts = append(parts, "[File — could not download]")
+				}
+			} else {
+				name := ""
+				if item.FileItem != nil {
+					name = item.FileItem.FileName
+				}
+				if name != "" {
+					parts = append(parts, fmt.Sprintf("[File '%s': %s]", name, path))
+				} else {
+					parts = append(parts, fmt.Sprintf("[File: %s]", path))
+				}
+			}
+
+		case MessageItemTypeVideo:
+			path, err := b.downloader.DownloadVideo(ctx, item)
+			if err != nil {
+				slog.Warn("wechat: video download failed", "error", err)
+				parts = append(parts, "[Video — could not download]")
+			} else {
+				parts = append(parts, fmt.Sprintf("[Video: %s]", path))
+			}
+
+		default:
+			slog.Debug("wechat: unknown item type", "type", item.Type)
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }
 
 func formatIteration(iter agent.IterationResult) string {
