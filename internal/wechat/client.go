@@ -78,7 +78,7 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	slog.Debug("wechat: sendmessage",
+	slog.Info("wechat: sendmessage",
 		"to_user_id", toUserID,
 		"text_len", len(text),
 		"has_context_token", contextToken != "",
@@ -96,10 +96,20 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 	}
 	body, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
 	if err != nil {
-		slog.Warn("wechat: sendmessage failed", "to_user_id", toUserID, "error", err)
+		slog.Warn("wechat: sendmessage http error", "to_user_id", toUserID, "error", err)
 		return err
 	}
-	slog.Debug("wechat: sendmessage response", "to_user_id", toUserID, "body", string(body))
+
+	// Server may return HTTP 200 with a non-zero ret/errcode on failure.
+	var resp SendMessageResp
+	if jsonErr := json.Unmarshal(body, &resp); jsonErr == nil {
+		if resp.Ret != 0 || resp.ErrCode != 0 {
+			err := fmt.Errorf("ret=%d errcode=%d errmsg=%s", resp.Ret, resp.ErrCode, resp.ErrMsg)
+			slog.Error("wechat: sendmessage api error", "to_user_id", toUserID, "error", err)
+			return err
+		}
+	}
+	slog.Info("wechat: sendmessage ok", "to_user_id", toUserID, "body", string(body))
 	return nil
 }
 

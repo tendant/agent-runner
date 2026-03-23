@@ -59,6 +59,13 @@ type SendMessageReq struct {
 	BaseInfo BaseInfo      `json:"base_info"`
 }
 
+// SendMessageResp is the response from ilink/bot/sendmessage.
+type SendMessageResp struct {
+	Ret     int    `json:"ret"`
+	ErrCode int    `json:"errcode"`
+	ErrMsg  string `json:"errmsg"`
+}
+
 // GetQRCodeResp is the response from ilink/bot/get_bot_qrcode.
 type GetQRCodeResp struct {
 	Ret           int    `json:"ret"`
