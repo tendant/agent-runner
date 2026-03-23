@@ -35,6 +35,9 @@ type Bot struct {
 	tokenMu   sync.Mutex
 	ctxTokens map[string]string
 
+	// loginMu prevents concurrent /wechat-login flows.
+	loginMu sync.Mutex
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
@@ -210,6 +213,12 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 		return
 	}
 
+	// Handle /wechat-login command — runs the QR login flow inline.
+	if strings.EqualFold(strings.TrimSpace(content), "/wechat-login") {
+		b.handleLogin(userID)
+		return
+	}
+
 	conv := b.convManager.GetOrCreate(chatID)
 	conv.AddMessage("user", content)
 
@@ -236,6 +245,50 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 	b.sendText(ctx, userID, "Thinking...")
 	b.handleAnalysis(userID, chatID, conv)
+}
+
+// handleLogin runs the iLink QR login flow in a background goroutine and sends
+// status updates back to the user. On success the new token (and optional
+// region-specific base URL) are written to .env.local.
+func (b *Bot) handleLogin(userID string) {
+	if !b.loginMu.TryLock() {
+		b.sendText(context.Background(), userID, "A login is already in progress. Please wait.")
+		return
+	}
+
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		defer b.loginMu.Unlock()
+
+		send := func(msg string) {
+			b.sendText(context.Background(), userID, msg)
+		}
+
+		send("Starting WeChat login flow...")
+
+		result, err := RunLoginFlow(context.Background(), b.client.baseURL, send)
+		if err != nil {
+			slog.Error("wechat: login flow failed", "error", err)
+			send("Login failed: " + err.Error())
+			return
+		}
+
+		// Persist the new token to .env.local so it survives restarts.
+		if err := config.SetEnvLocal("WECHAT_TOKEN", result.Token); err != nil {
+			slog.Error("wechat: failed to save token to .env.local", "error", err)
+			send("Login succeeded but could not save token: " + err.Error())
+			return
+		}
+		if result.BaseURL != "" && result.BaseURL != b.client.baseURL {
+			if err := config.SetEnvLocal("WECHAT_BASE_URL", result.BaseURL); err != nil {
+				slog.Warn("wechat: failed to save base_url to .env.local", "error", err)
+			}
+		}
+
+		slog.Info("wechat: login complete, token saved to .env.local")
+		send("Login successful! Token saved to .env.local.\n\nRestart the server to connect with the new token.")
+	}()
 }
 
 // handleConfirmation starts the agent after the user confirms.
