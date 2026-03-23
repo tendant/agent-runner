@@ -8,7 +8,6 @@ import (
 )
 
 const (
-	qrMaxRefreshes      = 3
 	qrPollTimeout       = 37 * time.Second
 	qrLoginTotalTimeout = 5 * time.Minute
 )
@@ -22,13 +21,10 @@ type LoginResult struct {
 // RunLoginFlow performs the iLink QR login sequence.
 //
 // sendMessage is called to relay status updates to the user.
-// sendQRContent is called with the raw QR code content (a WeChat-native URL)
-// whenever a new QR code needs to be sent to the user. The caller is responsible
-// for formatting/uploading the QR code as appropriate (e.g. as a PNG image or
-// as tappable link text).
-//
-// The context deadline governs the total wait time; callers should set a
-// timeout of at least qrLoginTotalTimeout (5 minutes).
+// sendQRContent is called once with the raw QR code content (a WeChat-native
+// URL); the caller formats/uploads it as appropriate. If the QR code expires
+// before the user scans it, RunLoginFlow returns an error — callers should
+// re-invoke it (e.g. the user sends /wechat-login again).
 func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string), sendQRContent func(ctx context.Context, qrContent string)) (*LoginResult, error) {
 	client := NewClient(baseURL, "", "") // unauthenticated — login endpoints don't need a token
 
@@ -46,7 +42,6 @@ func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string),
 	sendQRContent(ctx, qrResp.QRCodeImgContent)
 
 	qrCode := qrResp.QRCode
-	refreshes := 0
 
 	for {
 		if ctx.Err() != nil {
@@ -78,17 +73,7 @@ func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string),
 			sendMessage("QR code scanned — please confirm in WeChat...")
 
 		case "expired":
-			refreshes++
-			if refreshes > qrMaxRefreshes {
-				return nil, fmt.Errorf("QR code expired %d times, giving up", refreshes)
-			}
-			sendMessage(fmt.Sprintf("QR code expired, refreshing (%d/%d)...", refreshes, qrMaxRefreshes))
-			newQR, err := client.GetQRCode(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("refresh qr code: %w", err)
-			}
-			qrCode = newQR.QRCode
-			sendQRContent(ctx, newQR.QRCodeImgContent)
+			return nil, fmt.Errorf("QR code expired — please run /wechat-login again to get a new code")
 
 		case "confirmed":
 			if statusResp.BotToken == "" {
