@@ -81,22 +81,23 @@ func (a *Analyzer) buildPrompt(conv *Conversation) string {
 		sb.WriteString("\n\n---\n\n")
 	}
 
-	sb.WriteString(`You are a conversation router for a specialized agent. The agent already has full domain knowledge via its own prompt — it knows what system it works with, what files to manage, and how to handle requests. Your ONLY job is to decide whether to run the agent immediately, confirm first, or ask for clarification.
+	sb.WriteString("You are a conversation router for a specialized agent. The agent already has full domain knowledge via its own prompt — it knows what system it works with, what files to manage, and how to handle requests. Your ONLY job is to decide whether to run the agent immediately, confirm first, or ask for clarification.\n\n")
+	sb.WriteString("You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n")
+	sb.WriteString("{\"action\": \"ask|plan|execute\", \"message\": \"your response text\"}\n\n")
+	sb.WriteString("Rules:\n")
+	sb.WriteString("- action \"execute\": The user's request contains a clear action (verb + target). Run immediately. \"message\" should be a brief description (e.g. \"Adding client Acme Corp\", \"Searching conflicts for Acme\"). This is the DEFAULT — use it whenever the user expresses intent to do something.\n")
+	sb.WriteString("- action \"plan\": The request is unusually complex or destructive and warrants user confirmation before proceeding. \"message\" should describe what will be done.\n")
 
-You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
-{"action": "ask|plan|execute", "message": "your response text"}
+	if a.agentContext != "" {
+		sb.WriteString("- action \"ask\": The user sent something with NO actionable intent (e.g. \"hello\", \"thanks\", \"ok\", or a general capability question). Answer general capability questions (\"what can you do\", \"help\", \"how does this work\") directly from the agent context above — no need to run the agent. Use \"execute\" if the question requires accessing live data or state that only the agent can retrieve.\n")
+	} else {
+		sb.WriteString("- action \"ask\": The user sent something with NO actionable intent and no way to clarify further (e.g. just \"hello\", \"thanks\", \"ok\"). For capability questions (\"what can you do\", \"help\"), use \"execute\" instead so the agent can answer with accurate context.\n")
+	}
 
-Rules:
-- action "execute": The user's request contains a clear action (verb + target). Run immediately. "message" should be a brief description (e.g. "Adding client Acme Corp", "Merging zidong clients", "Searching conflicts for Acme"). This is the DEFAULT — use it whenever the user expresses intent to do something.
-- action "plan": The request is unusually complex or destructive and warrants user confirmation before proceeding. "message" should describe what will be done.
-- action "ask": The user sent something with NO actionable intent AND no way to clarify further (e.g. just "hello", "thanks", "ok"). "message" should be a brief neutral reply like "Hello! What would you like to do?".
-- NEVER use "ask" for capability questions ("what can you do", "help", "how does this work") — use "execute" so the agent can answer with accurate context.
-- NEVER use "ask" because you're unsure of details — the agent already knows all context, files, systems, and domain knowledge.
-- NEVER ask what "merge", "add", "search", "delete", "update", or similar action words mean — pass them through to the agent as-is.
-- Reminders, timers, and scheduling requests (e.g. "remind me in 5 minutes", "check on X later", "schedule Y every Monday") ARE valid actions — use "execute" for these.
-- When in doubt, use "execute". The agent is always better equipped to handle the request than you are.
-
-`)
+	sb.WriteString("- NEVER use \"ask\" because you're unsure of task details — the agent already knows all context, files, systems, and domain knowledge.\n")
+	sb.WriteString("- NEVER ask what \"merge\", \"add\", \"search\", \"delete\", \"update\", or similar action words mean — pass them through to the agent as-is.\n")
+	sb.WriteString("- Reminders, timers, and scheduling requests (e.g. \"remind me in 5 minutes\", \"check on X later\") ARE valid actions — use \"execute\" for these.\n")
+	sb.WriteString("- When in doubt, use \"execute\". The agent is always better equipped to handle the request than you are.\n\n")
 
 	sb.WriteString("Conversation history:\n")
 	for _, msg := range conv.GetMessages() {
