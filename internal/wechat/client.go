@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -20,26 +21,28 @@ import (
 
 const defaultBaseURL = "https://ilinkai.weixin.qq.com"
 
-const syncBufFile = "/tmp/wechat-sync-buf.txt"
-
 // Client is an HTTP client for the Tencent iLink bot API.
 type Client struct {
 	baseURL    string
 	token      string
+	stateDir   string // directory for persisted state (sync buf cursor)
 	httpClient *http.Client
 
 	timeoutMu   sync.Mutex
 	pollTimeout time.Duration
 }
 
-// NewClient creates an iLink API client.
-func NewClient(baseURL, token string) *Client {
+// NewClient creates an iLink API client. stateDir is the directory used to
+// persist the getupdates cursor across restarts; if empty, the cursor is
+// not persisted.
+func NewClient(baseURL, token, stateDir string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
 	return &Client{
-		baseURL: baseURL,
-		token:   token,
+		baseURL:  baseURL,
+		token:    token,
+		stateDir: stateDir,
 		httpClient: &http.Client{
 			Timeout: 0, // callers set per-request timeouts via context
 		},
@@ -211,10 +214,17 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	return body, nil
 }
 
+func (c *Client) syncBufPath() string {
+	return filepath.Join(c.stateDir, "wechat-sync-buf.txt")
+}
+
 // loadSyncBuf restores the last-known get_updates_buf cursor from disk.
-// Returns "" if not found (first run).
+// Returns "" if not found (first run) or if stateDir is not configured.
 func (c *Client) loadSyncBuf() string {
-	data, err := os.ReadFile(syncBufFile)
+	if c.stateDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(c.syncBufPath())
 	if err != nil {
 		return ""
 	}
@@ -223,7 +233,10 @@ func (c *Client) loadSyncBuf() string {
 
 // saveSyncBuf persists the get_updates_buf cursor to disk so it survives restarts.
 func (c *Client) saveSyncBuf(buf string) {
-	if err := os.WriteFile(syncBufFile, []byte(buf), 0600); err != nil {
+	if c.stateDir == "" {
+		return
+	}
+	if err := os.WriteFile(c.syncBufPath(), []byte(buf), 0600); err != nil {
 		slog.Warn("wechat: failed to persist sync buf", "error", err)
 	}
 }

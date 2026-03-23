@@ -10,7 +10,13 @@ const (
 const MessageStateFinish = 2
 
 // Item-level type (MessageItem.Type).
-const MessageItemTypeText = 1 // plain text item
+const (
+	MessageItemTypeText  = 1 // plain text
+	MessageItemTypeImage = 2 // image
+	MessageItemTypeVoice = 3 // voice/audio
+	MessageItemTypeVideo = 4 // video
+	MessageItemTypeFile  = 6 // generic file/document
+)
 
 // channelVersion is sent in every request as base_info.channel_version so the
 // server can identify the client. Matches the @tencent-weixin/openclaw-weixin

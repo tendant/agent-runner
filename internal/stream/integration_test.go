@@ -50,7 +50,7 @@ func TestIntegration_BotConnects(t *testing.T) {
 		ConversationIDs: []string{convID},
 	}
 
-	convMgr := conversation.NewManager()
+	convMgr := conversation.NewManager("")
 	defer convMgr.Stop()
 
 	bot := New(cfg, &mockStarter{}, convMgr, nil)

@@ -24,7 +24,7 @@ func main() {
 	timeout := flag.Duration("timeout", 5*time.Minute, "total time to wait for QR scan")
 	flag.Parse()
 
-	client := wechat.NewClient(*baseURL, "") // no token needed for login flow
+	client := wechat.NewClient(*baseURL, "", "") // no token needed for login flow
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()

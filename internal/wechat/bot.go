@@ -44,7 +44,7 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 		return nil
 	}
 	return &Bot{
-		client:      NewClient(cfg.BaseURL, cfg.Token),
+		client:      NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,
@@ -189,7 +189,12 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 	text := extractText(msg)
 	if text == "" {
-		slog.Warn("wechat: received text message with no text content", "from_user_id", msg.FromUserID)
+		if desc := describeNonText(msg); desc != "" {
+			slog.Info("wechat: received non-text message", "from_user_id", msg.FromUserID, "type", desc)
+			b.sendText(context.Background(), msg.FromUserID, "I received "+desc+", but I can only process text messages for now.")
+		} else {
+			slog.Warn("wechat: received message with no readable content", "from_user_id", msg.FromUserID)
+		}
 		return
 	}
 
@@ -401,6 +406,24 @@ func extractText(msg WeixinMessage) string {
 	for _, item := range msg.ItemList {
 		if item.Type == MessageItemTypeText && item.TextItem != nil {
 			return item.TextItem.Text
+		}
+	}
+	return ""
+}
+
+// describeNonText returns a human-readable description of the first non-text
+// item in a message, or "" if the message contains no recognisable media.
+func describeNonText(msg WeixinMessage) string {
+	for _, item := range msg.ItemList {
+		switch item.Type {
+		case MessageItemTypeImage:
+			return "an image"
+		case MessageItemTypeVoice:
+			return "a voice message"
+		case MessageItemTypeVideo:
+			return "a video"
+		case MessageItemTypeFile:
+			return "a file"
 		}
 	}
 	return ""

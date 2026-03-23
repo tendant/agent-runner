@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -85,7 +86,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 
 	// Create conversation components for Telegram bot
-	convManager := conversation.NewManager()
+	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	analyzer := conversation.NewAnalyzer(exec)
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
@@ -219,6 +220,7 @@ func (s *Server) ensureDirectories() error {
 		s.config.RepoCacheRoot,
 		s.config.LogsRoot,
 		s.config.TmpRoot,
+		filepath.Join(s.config.TmpRoot, "conversations"),
 	}
 
 	for _, dir := range dirs {

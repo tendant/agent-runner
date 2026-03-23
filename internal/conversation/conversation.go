@@ -2,7 +2,11 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -212,16 +216,108 @@ type Manager struct {
 	conversations map[string]*Conversation
 	nextID        int
 	stopCh        chan struct{}
+	dir           string // persistence directory; "" = disabled
 }
 
-// NewManager creates a new conversation manager.
-func NewManager() *Manager {
+// NewManager creates a new conversation manager. dir is the directory used to
+// persist conversations to disk across restarts; pass "" to disable persistence.
+func NewManager(dir string) *Manager {
 	m := &Manager{
 		conversations: make(map[string]*Conversation),
 		stopCh:        make(chan struct{}),
+		dir:           dir,
+	}
+	if dir != "" {
+		m.loadAll()
 	}
 	go m.cleanupLoop()
 	return m
+}
+
+// convFilePath returns the JSON file path for a conversation.
+func (m *Manager) convFilePath(chatID string) string {
+	// Sanitise chatID: keep alphanumeric, dash, underscore; replace rest with _.
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, chatID)
+	return filepath.Join(m.dir, "conv-"+safe+".json")
+}
+
+// persist writes a conversation to disk. No-op if persistence is disabled.
+func (m *Manager) persist(conv *Conversation) {
+	if m.dir == "" {
+		return
+	}
+	conv.mu.Lock()
+	data, err := json.Marshal(conv)
+	conv.mu.Unlock()
+	if err != nil {
+		slog.Warn("conversation: marshal failed", "chat_id", conv.ChatID, "error", err)
+		return
+	}
+	if err := os.WriteFile(m.convFilePath(conv.ChatID), data, 0600); err != nil {
+		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+	}
+}
+
+// loadAll reads all persisted conversations from disk at startup.
+func (m *Manager) loadAll() {
+	if err := os.MkdirAll(m.dir, 0755); err != nil {
+		slog.Warn("conversation: failed to create persistence dir", "dir", m.dir, "error", err)
+		return
+	}
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		slog.Warn("conversation: failed to read persistence dir", "dir", m.dir, "error", err)
+		return
+	}
+	loaded := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "conv-") || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(m.dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			slog.Warn("conversation: failed to read file", "path", path, "error", err)
+			continue
+		}
+		var conv Conversation
+		if err := json.Unmarshal(data, &conv); err != nil {
+			slog.Warn("conversation: failed to parse file", "path", path, "error", err)
+			continue
+		}
+		if conv.State == StateCompleted {
+			continue // skip completed conversations
+		}
+		if conv.ChatID == "" {
+			continue
+		}
+		m.conversations[conv.ChatID] = &conv
+		loaded++
+	}
+	if loaded > 0 {
+		slog.Info("conversation: loaded persisted conversations", "count", loaded)
+	}
+}
+
+// saveAll persists all active conversations. Called from the background loop.
+func (m *Manager) saveAll() {
+	if m.dir == "" {
+		return
+	}
+	m.mu.RLock()
+	convs := make([]*Conversation, 0, len(m.conversations))
+	for _, conv := range m.conversations {
+		convs = append(convs, conv)
+	}
+	m.mu.RUnlock()
+	for _, conv := range convs {
+		m.persist(conv)
+	}
 }
 
 // Stop stops the cleanup loop. Safe to call multiple times.
@@ -233,17 +329,22 @@ func (m *Manager) Stop() {
 	}
 }
 
-// cleanupLoop periodically evicts stale and completed conversations.
+// cleanupLoop periodically evicts stale conversations and saves active ones.
 func (m *Manager) cleanupLoop() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
+	evictTicker := time.NewTicker(time.Minute)
+	saveTicker := time.NewTicker(30 * time.Second)
+	defer evictTicker.Stop()
+	defer saveTicker.Stop()
 
 	for {
 		select {
 		case <-m.stopCh:
+			m.saveAll() // flush on shutdown
 			return
-		case <-ticker.C:
+		case <-evictTicker.C:
 			m.evictStale()
+		case <-saveTicker.C:
+			m.saveAll()
 		}
 	}
 }
@@ -260,6 +361,9 @@ func (m *Manager) evictStale() {
 
 		if updatedAt.Before(cutoff) {
 			delete(m.conversations, chatID)
+			if m.dir != "" {
+				os.Remove(m.convFilePath(chatID))
+			}
 		}
 	}
 }
@@ -302,12 +406,16 @@ func (m *Manager) Get(chatID string) (*Conversation, bool) {
 	return conv, true
 }
 
-// Complete marks the conversation for a chat as completed.
+// Complete marks the conversation for a chat as completed and removes its
+// persisted file (if any).
 func (m *Manager) Complete(chatID string) {
 	m.mu.RLock()
 	conv, ok := m.conversations[chatID]
 	m.mu.RUnlock()
 	if ok {
 		conv.SetState(StateCompleted)
+		if m.dir != "" {
+			os.Remove(m.convFilePath(chatID))
+		}
 	}
 }

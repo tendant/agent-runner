@@ -5,14 +5,14 @@ import (
 )
 
 func TestNewManager(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	if m == nil {
 		t.Fatal("expected non-nil manager")
 	}
 }
 
 func TestGetOrCreate_CreatesNew(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv := m.GetOrCreate("12345")
 	if conv == nil {
 		t.Fatal("expected non-nil conversation")
@@ -26,7 +26,7 @@ func TestGetOrCreate_CreatesNew(t *testing.T) {
 }
 
 func TestGetOrCreate_ReturnsSame(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv1 := m.GetOrCreate("12345")
 	conv2 := m.GetOrCreate("12345")
 	if conv1 != conv2 {
@@ -35,7 +35,7 @@ func TestGetOrCreate_ReturnsSame(t *testing.T) {
 }
 
 func TestGetOrCreate_ReusesCompletedWithHistory(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv1 := m.GetOrCreate("12345")
 	conv1.AddMessage("user", "do something")
 	conv1.AddMessage("assistant", "done")
@@ -62,7 +62,7 @@ func TestGetOrCreate_ReusesCompletedWithHistory(t *testing.T) {
 }
 
 func TestGetOrCreate_DifferentChats(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv1 := m.GetOrCreate("111")
 	conv2 := m.GetOrCreate("222")
 	if conv1 == conv2 {
@@ -71,7 +71,7 @@ func TestGetOrCreate_DifferentChats(t *testing.T) {
 }
 
 func TestGet_NotFound(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv, ok := m.Get("99999")
 	if ok || conv != nil {
 		t.Error("expected nil for unknown chat")
@@ -79,7 +79,7 @@ func TestGet_NotFound(t *testing.T) {
 }
 
 func TestGet_Completed(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv := m.GetOrCreate("12345")
 	conv.SetState(StateCompleted)
 
@@ -90,7 +90,7 @@ func TestGet_Completed(t *testing.T) {
 }
 
 func TestComplete(t *testing.T) {
-	m := NewManager()
+	m := NewManager("")
 	conv := m.GetOrCreate("12345")
 	m.Complete("12345")
 	if conv.GetState() != StateCompleted {
