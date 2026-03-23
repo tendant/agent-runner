@@ -316,7 +316,11 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Warn("wechat: http error", "method", method, "url", url, "error", err)
+		if ctx.Err() != nil {
+			slog.Debug("wechat: http request cancelled", "method", method, "url", url)
+		} else {
+			slog.Warn("wechat: http error", "method", method, "url", url, "error", err)
+		}
 		return nil, fmt.Errorf("wechat: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
