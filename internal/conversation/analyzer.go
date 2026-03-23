@@ -76,11 +76,12 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation) in this e
 Rules:
 - action "execute": The user's request contains a clear action (verb + target). Run immediately. "message" should be a brief description (e.g. "Adding client Acme Corp", "Merging zidong clients", "Searching conflicts for Acme"). This is the DEFAULT — use it whenever the user expresses intent to do something.
 - action "plan": The request is unusually complex or destructive and warrants user confirmation before proceeding. "message" should describe what will be done.
-- action "ask": The message contains NO actionable request at all (e.g. just "hello" or a question). "message" should be a response or clarifying question.
-- NEVER ask about systems, databases, files, context, or implementation details — the agent already knows all of that.
+- action "ask": The user sent something with NO actionable intent AND no way to clarify further (e.g. just "hello", "thanks", "ok"). "message" should be a brief neutral reply like "Hello! What would you like to do?".
+- NEVER use "ask" for capability questions ("what can you do", "help", "how does this work") — use "execute" so the agent can answer with accurate context.
+- NEVER use "ask" because you're unsure of details — the agent already knows all context, files, systems, and domain knowledge.
 - NEVER ask what "merge", "add", "search", "delete", "update", or similar action words mean — pass them through to the agent as-is.
-- Reminders, timers, and scheduling requests (e.g. "remind me in 5 minutes", "check on X later", "schedule Y every Monday") ARE valid actions — use "execute" for these. The agent can schedule tasks.
-- When in doubt, use "execute". The agent is better equipped to handle the request than you are.
+- Reminders, timers, and scheduling requests (e.g. "remind me in 5 minutes", "check on X later", "schedule Y every Monday") ARE valid actions — use "execute" for these.
+- When in doubt, use "execute". The agent is always better equipped to handle the request than you are.
 
 `)
 
