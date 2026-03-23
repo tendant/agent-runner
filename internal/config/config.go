@@ -49,6 +49,9 @@ type Config struct {
 	// WeChat bot settings
 	WeChat WeChatConfig
 
+	// Analyzer LLM settings
+	Analyzer AnalyzerConfig
+
 	// Runner settings
 	Runner RunnerConfig
 
@@ -96,6 +99,15 @@ type WeChatConfig struct {
 	BaseURL    string // WECHAT_BASE_URL — default: https://ilinkai.weixin.qq.com
 	CDNBaseURL string // WECHAT_CDN_BASE_URL — media CDN; default: https://novac2c.cdn.weixin.qq.com/c2c
 	StateDir   string // WECHAT_STATE_DIR — directory for sync buf cursor; defaults to TmpRoot
+}
+
+// AnalyzerConfig configures the fast LLM used for conversation intent routing.
+// If no provider/key is set, falls back to the executor (Claude CLI).
+type AnalyzerConfig struct {
+	Provider string // "anthropic" | "openai" | "" (auto-detect from env)
+	Model    string // model ID; provider default used if empty
+	APIKey   string // ANALYZER_API_KEY; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY
+	BaseURL  string // override API base URL (e.g. http://localhost:11434 for Ollama)
 }
 
 // RunnerConfig contains hybrid runner settings
@@ -249,6 +261,11 @@ func LoadFromEnv() (*Config, error) {
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
 	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "")
 	cfg.WeChat.StateDir = envOrDefault("WECHAT_STATE_DIR", cfg.TmpRoot)
+
+	cfg.Analyzer.Provider = envOrDefault("ANALYZER_PROVIDER", "")
+	cfg.Analyzer.Model = envOrDefault("ANALYZER_MODEL", "")
+	cfg.Analyzer.APIKey = envOrDefault("ANALYZER_API_KEY", "")
+	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
 
 	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)
 	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)

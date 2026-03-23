@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/agent-runner/agent-runner/internal/executor"
+	"github.com/agent-runner/agent-runner/internal/llm"
 )
 
 // AnalysisResult is the structured response from the analyzer.
@@ -15,17 +16,18 @@ type AnalysisResult struct {
 	Message string `json:"message"` // question text or plan text
 }
 
-// Analyzer uses Claude CLI to analyze conversation messages and decide the next action.
+// Analyzer uses a fast LLM client to analyze conversation messages and decide
+// the next action. It falls back gracefully when no client is configured.
 type Analyzer struct {
-	executor executor.Executor
+	client llm.Client
 }
 
-// NewAnalyzer creates a new conversation analyzer.
-func NewAnalyzer(exec executor.Executor) *Analyzer {
-	return &Analyzer{executor: exec}
+// NewAnalyzer creates a new conversation analyzer backed by the given LLM client.
+func NewAnalyzer(client llm.Client) *Analyzer {
+	return &Analyzer{client: client}
 }
 
-// Summarize implements Summarizer by calling Claude to condense messages.
+// Summarize condenses conversation history into a short summary.
 func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("Summarize the following conversation in 2-3 sentences, preserving key decisions, requests, and outcomes. Output ONLY the summary text, no preamble.\n\n")
@@ -33,33 +35,28 @@ func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, e
 		fmt.Fprintf(&sb, "%s: %s\n", msg.Role, msg.Content)
 	}
 
-	result, err := a.executor.Execute(ctx, "/tmp", sb.String())
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	result, err := a.client.Complete(ctx, sb.String())
 	if err != nil {
 		return "", fmt.Errorf("summarization failed: %w", err)
 	}
-	output := result.Output
-	if output == "" {
-		output = result.RawOutput
-	}
-	return strings.TrimSpace(output), nil
+	return strings.TrimSpace(result), nil
 }
 
-// Analyze sends the conversation history to Claude and gets a structured response.
+// Analyze sends the conversation history to the LLM and returns a routing decision.
 func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
 	prompt := a.buildPrompt(conv)
 
-	// Use a temporary directory for execution (no workspace needed for analysis)
-	result, err := a.executor.Execute(ctx, "/tmp", prompt)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	output, err := a.client.Complete(ctx, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("analyzer execution failed: %w", err)
+		return nil, fmt.Errorf("analyzer failed: %w", err)
 	}
 
-	output := result.Output
-	if output == "" {
-		output = result.RawOutput
-	}
-
-	// Parse JSON from output — look for JSON block in case there's surrounding text
 	analysisResult, err := parseAnalysisResult(output)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse analyzer response: %w (raw: %s)", err, output)

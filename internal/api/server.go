@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
+	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
@@ -87,7 +88,13 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Create conversation components for Telegram bot
 	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
-	analyzer := conversation.NewAnalyzer(exec)
+	llmClient := llm.NewClient(llm.Config{
+		Provider: cfg.Analyzer.Provider,
+		Model:    cfg.Analyzer.Model,
+		APIKey:   cfg.Analyzer.APIKey,
+		BaseURL:  cfg.Analyzer.BaseURL,
+	}, exec)
+	analyzer := conversation.NewAnalyzer(llmClient)
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
 	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
