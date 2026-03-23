@@ -49,8 +49,9 @@ type ImageItem struct {
 	Media      *CDNMedia `json:"media,omitempty"`
 	ThumbMedia *CDNMedia `json:"thumb_media,omitempty"`
 	// AESKey is a hex-encoded 16-byte key (preferred over Media.AESKey for inbound messages).
-	AESKey string `json:"aeskey,omitempty"`
-	URL    string `json:"url,omitempty"`
+	AESKey  string `json:"aeskey,omitempty"`
+	URL     string `json:"url,omitempty"`
+	MidSize int    `json:"mid_size,omitempty"` // ciphertext size in bytes (outbound)
 }
 
 // VoiceItem holds voice/audio metadata.
@@ -130,6 +131,36 @@ type SendMessageResp struct {
 	Ret     int    `json:"ret"`
 	ErrCode int    `json:"errcode"`
 	ErrMsg  string `json:"errmsg"`
+}
+
+// UploadMediaType values for GetUploadUrlReq.MediaType.
+const (
+	UploadMediaTypeImage = 1
+	UploadMediaTypeVideo = 2
+	UploadMediaTypeFile  = 3
+	UploadMediaTypeVoice = 4
+)
+
+// GetUploadUrlReq is the request body for ilink/bot/getuploadurl.
+type GetUploadUrlReq struct {
+	FileKey      string   `json:"filekey"`
+	MediaType    int      `json:"media_type"`
+	ToUserID     string   `json:"to_user_id,omitempty"`
+	RawSize      int      `json:"rawsize"`
+	RawFileMD5   string   `json:"rawfilemd5"`  // MD5 of plaintext, hex-encoded
+	FileSize     int      `json:"filesize"`    // AES-128-ECB padded ciphertext size
+	NoNeedThumb  bool     `json:"no_need_thumb"`
+	AESKey       string   `json:"aeskey"`      // hex-encoded 16-byte key
+	BaseInfo     BaseInfo `json:"base_info"`
+}
+
+// GetUploadUrlResp is the response from ilink/bot/getuploadurl.
+type GetUploadUrlResp struct {
+	Ret             int    `json:"ret"`
+	ErrCode         int    `json:"errcode"`
+	ErrMsg          string `json:"errmsg"`
+	UploadParam     string `json:"upload_param"`
+	ThumbUploadParam string `json:"thumb_upload_param,omitempty"`
 }
 
 // GetQRCodeResp is the response from ilink/bot/get_bot_qrcode.

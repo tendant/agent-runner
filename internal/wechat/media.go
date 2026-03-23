@@ -3,6 +3,8 @@ package wechat
 import (
 	"context"
 	"crypto/aes"
+	"crypto/md5"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -211,6 +213,91 @@ func pkcs7Unpad(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid pkcs7 padding %d", pad)
 	}
 	return data[:len(data)-pad], nil
+}
+
+// encryptAES128ECB encrypts plaintext with AES-128-ECB + PKCS7 padding.
+func encryptAES128ECB(data, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	// PKCS7 pad to block boundary
+	padLen := aes.BlockSize - (len(data) % aes.BlockSize)
+	padded := make([]byte, len(data)+padLen)
+	copy(padded, data)
+	for i := len(data); i < len(padded); i++ {
+		padded[i] = byte(padLen)
+	}
+	out := make([]byte, len(padded))
+	for i := 0; i < len(padded); i += aes.BlockSize {
+		block.Encrypt(out[i:i+aes.BlockSize], padded[i:i+aes.BlockSize])
+	}
+	return out, nil
+}
+
+// aesECBPaddedSize returns the AES-128-ECB ciphertext size for a given plaintext
+// length, matching the TypeScript aesEcbPaddedSize: ceil((n+1)/16)*16.
+func aesECBPaddedSize(n int) int {
+	return ((n + 1 + aes.BlockSize - 1) / aes.BlockSize) * aes.BlockSize
+}
+
+// UploadedImage holds the result of a successful image CDN upload.
+type UploadedImage struct {
+	DownloadParam  string // encrypt_query_param for the sendmessage image_item
+	AESKeyHex      string // hex-encoded 16-byte AES key
+	CiphertextSize int    // encrypted byte length (for mid_size field)
+}
+
+// UploadImage encrypts imageData and uploads it to the iLink CDN via the
+// provided client. toUserID is required by the getuploadurl API.
+func UploadImage(ctx context.Context, client *Client, cdnBaseURL, toUserID string, imageData []byte) (*UploadedImage, error) {
+	// Generate random 16-byte AES key and filekey.
+	keyRaw := make([]byte, 16)
+	if _, err := rand.Read(keyRaw); err != nil {
+		return nil, fmt.Errorf("generate aes key: %w", err)
+	}
+	filekeyRaw := make([]byte, 16)
+	if _, err := rand.Read(filekeyRaw); err != nil {
+		return nil, fmt.Errorf("generate filekey: %w", err)
+	}
+	aeskeyHex := hex.EncodeToString(keyRaw)
+	filekey := hex.EncodeToString(filekeyRaw)
+
+	rawMD5 := md5.Sum(imageData)
+	rawMD5Hex := hex.EncodeToString(rawMD5[:])
+	cipherSize := aesECBPaddedSize(len(imageData))
+
+	slog.Debug("wechat: upload image", "rawsize", len(imageData), "ciphersize", cipherSize, "md5", rawMD5Hex)
+
+	uploadResp, err := client.GetUploadUrl(ctx, GetUploadUrlReq{
+		FileKey:    filekey,
+		MediaType:  UploadMediaTypeImage,
+		ToUserID:   toUserID,
+		RawSize:    len(imageData),
+		RawFileMD5: rawMD5Hex,
+		FileSize:   cipherSize,
+		NoNeedThumb: true,
+		AESKey:     aeskeyHex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getuploadurl: %w", err)
+	}
+
+	encrypted, err := encryptAES128ECB(imageData, keyRaw)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: %w", err)
+	}
+
+	downloadParam, err := client.UploadToCDN(ctx, cdnBaseURL, uploadResp.UploadParam, filekey, encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("cdn upload: %w", err)
+	}
+
+	return &UploadedImage{
+		DownloadParam:  downloadParam,
+		AESKeyHex:      aeskeyHex,
+		CiphertextSize: cipherSize,
+	}, nil
 }
 
 // sniffImageExt returns a file extension inferred from magic bytes.

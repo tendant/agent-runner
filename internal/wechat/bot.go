@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
+
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
@@ -38,16 +40,17 @@ type Bot struct {
 	// loginMu prevents concurrent /wechat-login flows.
 	loginMu sync.Mutex
 
+	// reloadMu guards cancel to prevent a race between Reload and Start.
+	reloadMu sync.Mutex
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-// New creates a new WeChat bot. Returns nil if no token is configured.
-// The actual connection is deferred to Start().
+// New creates a new WeChat bot. Always returns a non-nil bot; if no token is
+// configured the bot starts in a dormant state and becomes active after
+// Reload is called with a valid token.
 func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer) *Bot {
-	if cfg.Token == "" {
-		return nil
-	}
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	return &Bot{
 		client:      NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
@@ -59,9 +62,43 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 	}
 }
 
-// Start begins long-polling the iLink API. Non-blocking.
+// Reload updates the bot's credentials at runtime and starts the poll loop if
+// it is not already running. This is called after a successful QR login flow
+// bootstrapped from another client (e.g. agent-stream).
+func (b *Bot) Reload(token, baseURL string) {
+	b.client.SetToken(token, baseURL)
+	slog.Info("wechat: credentials reloaded", "has_base_url", baseURL != "")
+
+	// Start the poll loop if it hasn't been started yet (token was empty at New time).
+	b.reloadMu.Lock()
+	defer b.reloadMu.Unlock()
+	if b.cancel == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.cancel = cancel
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			b.runLoop(ctx)
+		}()
+		slog.Info("wechat: poll loop started via Reload")
+	}
+}
+
+// Start begins long-polling the iLink API. Non-blocking. If no token is
+// configured the bot waits dormant until Reload is called.
 func (b *Bot) Start(ctx context.Context) error {
+	b.client.mu.RLock()
+	token := b.client.token
+	b.client.mu.RUnlock()
+
+	if token == "" {
+		slog.Info("wechat bot: no token configured, waiting for /wechat-login")
+		return nil
+	}
+
+	b.reloadMu.Lock()
 	ctx, b.cancel = context.WithCancel(ctx)
+	b.reloadMu.Unlock()
 
 	b.wg.Add(1)
 	go func() {
@@ -267,7 +304,32 @@ func (b *Bot) handleLogin(userID string) {
 
 		send("Starting WeChat login flow...")
 
-		result, err := RunLoginFlow(context.Background(), b.client.baseURL, send)
+		// sendQR attempts to generate a QR code PNG, upload it to the CDN, and
+		// send it as an image message. Falls back to a tappable text link on error.
+		sendQR := func(ctx context.Context, qrContent string) {
+			pngBytes, err := qrcode.Encode(qrContent, qrcode.Medium, 256)
+			if err != nil {
+				slog.Warn("wechat: qr encode failed, using text fallback", "error", err)
+				sendQRText(send, qrContent)
+				return
+			}
+			uploaded, err := UploadImage(ctx, b.client, b.downloader.cdnBaseURL, userID, pngBytes)
+			if err != nil {
+				slog.Warn("wechat: qr image upload failed, using text fallback", "error", err)
+				sendQRText(send, qrContent)
+				return
+			}
+			ctxToken := b.getContextToken(userID)
+			if err := b.client.SendImage(ctx, userID, uploaded.DownloadParam, uploaded.AESKeyHex, ctxToken, uploaded.CiphertextSize); err != nil {
+				slog.Warn("wechat: qr send image failed, using text fallback", "error", err)
+				sendQRText(send, qrContent)
+				return
+			}
+			// Also send the text link as backup so the user can tap it if the image is unclear.
+			send("Or tap this link to authorize:\n\n" + qrContent)
+		}
+
+		result, err := RunLoginFlow(context.Background(), b.client.baseURL, send, sendQR)
 		if err != nil {
 			slog.Error("wechat: login flow failed", "error", err)
 			send("Login failed: " + err.Error())

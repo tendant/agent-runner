@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,11 +25,11 @@ const defaultBaseURL = "https://ilinkai.weixin.qq.com"
 // Client is an HTTP client for the Tencent iLink bot API.
 type Client struct {
 	baseURL    string
-	token      string
 	stateDir   string // directory for persisted state (sync buf cursor)
 	httpClient *http.Client
 
-	timeoutMu   sync.Mutex
+	mu          sync.RWMutex
+	token       string
 	pollTimeout time.Duration
 }
 
@@ -46,6 +47,17 @@ func NewClient(baseURL, token, stateDir string) *Client {
 		httpClient: &http.Client{
 			Timeout: 0, // callers set per-request timeouts via context
 		},
+	}
+}
+
+// SetToken updates the bearer token and optionally the base URL at runtime.
+// Safe to call concurrently with in-flight requests.
+func (c *Client) SetToken(token, baseURL string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.token = token
+	if baseURL != "" {
+		c.baseURL = baseURL
 	}
 }
 
@@ -129,6 +141,109 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 	return nil
 }
 
+// GetUploadUrl requests CDN upload credentials for a media file.
+func (c *Client) GetUploadUrl(ctx context.Context, req GetUploadUrlReq) (*GetUploadUrlResp, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	req.BaseInfo = buildBaseInfo()
+	body, err := c.do(ctx, http.MethodPost, "ilink/bot/getuploadurl", req)
+	if err != nil {
+		return nil, err
+	}
+	var resp GetUploadUrlResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("wechat: parse getuploadurl response: %w", err)
+	}
+	if resp.Ret != 0 || resp.ErrCode != 0 {
+		return nil, fmt.Errorf("wechat: getuploadurl error ret=%d errcode=%d errmsg=%s", resp.Ret, resp.ErrCode, resp.ErrMsg)
+	}
+	return &resp, nil
+}
+
+// UploadToCDN POSTs encrypted bytes to the CDN and returns the download
+// encrypted_query_param from the x-encrypted-param response header.
+func (c *Client) UploadToCDN(ctx context.Context, cdnBaseURL, uploadParam, filekey string, data []byte) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	cdnURL := cdnBaseURL + "/upload?encrypted_query_param=" + url.QueryEscape(uploadParam) +
+		"&filekey=" + url.QueryEscape(filekey)
+	slog.Debug("wechat: cdn upload", "url_prefix", cdnURL[:min(len(cdnURL), 80)], "bytes", len(data))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cdnURL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("wechat: cdn upload build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("wechat: cdn upload: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		msg := resp.Header.Get("x-error-message")
+		return "", fmt.Errorf("wechat: cdn upload HTTP %d: %s", resp.StatusCode, msg)
+	}
+	downloadParam := resp.Header.Get("x-encrypted-param")
+	if downloadParam == "" {
+		return "", fmt.Errorf("wechat: cdn upload response missing x-encrypted-param header")
+	}
+	slog.Debug("wechat: cdn upload ok", "download_param_len", len(downloadParam))
+	return downloadParam, nil
+}
+
+// SendImage sends an image message to a WeChat user.
+// downloadParam and aeskeyHex come from a prior UploadToCDN call.
+func (c *Client) SendImage(ctx context.Context, toUserID, downloadParam, aeskeyHex, contextToken string, cipherSize int) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	slog.Info("wechat: sendimage", "to_user_id", toUserID, "has_context_token", contextToken != "")
+
+	req := SendMessageReq{
+		Msg: WeixinMessage{
+			FromUserID:   "",
+			ToUserID:     toUserID,
+			ClientID:     uuid.New().String(),
+			MessageType:  MessageTypeBot,
+			MessageState: MessageStateFinish,
+			ContextToken: contextToken,
+			ItemList: []MessageItem{
+				{
+					Type: MessageItemTypeImage,
+					ImageItem: &ImageItem{
+						Media: &CDNMedia{
+							EncryptQueryParam: downloadParam,
+							// aes_key wire format: base64 of the hex string (not raw bytes)
+							AESKey:      base64.StdEncoding.EncodeToString([]byte(aeskeyHex)),
+							EncryptType: 1,
+						},
+						// mid_size is the ciphertext size in bytes
+					},
+				},
+			},
+		},
+		BaseInfo: buildBaseInfo(),
+	}
+	// Store ciphertext size in mid_size (matches what the TypeScript sends)
+	req.Msg.ItemList[0].ImageItem.MidSize = cipherSize
+
+	body, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
+	if err != nil {
+		return err
+	}
+	var sendResp SendMessageResp
+	if jsonErr := json.Unmarshal(body, &sendResp); jsonErr == nil {
+		if sendResp.Ret != 0 || sendResp.ErrCode != 0 {
+			return fmt.Errorf("wechat: sendimage api error ret=%d errcode=%d errmsg=%s", sendResp.Ret, sendResp.ErrCode, sendResp.ErrMsg)
+		}
+	}
+	slog.Info("wechat: sendimage ok", "to_user_id", toUserID)
+	return nil
+}
+
 // GetQRCode fetches a QR code for interactive login.
 func (c *Client) GetQRCode(ctx context.Context) (*GetQRCodeResp, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -176,7 +291,12 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 		bodyReader = bytes.NewReader(b)
 	}
 
-	url := c.baseURL + "/" + path
+	c.mu.RLock()
+	baseURL := c.baseURL
+	token := c.token
+	c.mu.RUnlock()
+
+	url := baseURL + "/" + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("wechat: build request: %w", err)
@@ -185,8 +305,8 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("AuthorizationType", "ilink_bot_token")
 	req.Header.Set("X-WECHAT-UIN", randomUIN())
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	} else {
 		// QR login endpoints don't need a bearer token; add a version hint.
 		req.Header.Set("iLink-App-ClientVersion", "1")
@@ -243,9 +363,9 @@ func (c *Client) saveSyncBuf(buf string) {
 
 // setPollTimeout updates the suggested poll timeout from the server.
 func (c *Client) setPollTimeout(d time.Duration) {
-	c.timeoutMu.Lock()
+	c.mu.Lock()
 	c.pollTimeout = d
-	c.timeoutMu.Unlock()
+	c.mu.Unlock()
 }
 
 // randomUIN returns X-WECHAT-UIN: the decimal string of a random uint32,

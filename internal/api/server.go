@@ -95,6 +95,9 @@ func NewServer(cfg *config.Config) *Server {
 		handlers.SetNotifier(streamBot)
 	}
 	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer)
+	if streamBot != nil {
+		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
+	}
 
 	return &Server{
 		config: cfg,

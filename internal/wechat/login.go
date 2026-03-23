@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	qrMaxRefreshes     = 3
-	qrPollTimeout      = 37 * time.Second
+	qrMaxRefreshes      = 3
+	qrPollTimeout       = 37 * time.Second
 	qrLoginTotalTimeout = 5 * time.Minute
 )
 
@@ -21,14 +21,15 @@ type LoginResult struct {
 
 // RunLoginFlow performs the iLink QR login sequence.
 //
-// sendMessage is called to relay status updates to the user:
-//   - when the QR code is ready (URL to encode/tap)
-//   - when the QR code is scanned but not yet confirmed
-//   - on expiry refreshes
+// sendMessage is called to relay status updates to the user.
+// sendQRContent is called with the raw QR code content (a WeChat-native URL)
+// whenever a new QR code needs to be sent to the user. The caller is responsible
+// for formatting/uploading the QR code as appropriate (e.g. as a PNG image or
+// as tappable link text).
 //
 // The context deadline governs the total wait time; callers should set a
 // timeout of at least qrLoginTotalTimeout (5 minutes).
-func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string)) (*LoginResult, error) {
+func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string), sendQRContent func(ctx context.Context, qrContent string)) (*LoginResult, error) {
 	client := NewClient(baseURL, "", "") // unauthenticated — login endpoints don't need a token
 
 	ctx, cancel := context.WithTimeout(ctx, qrLoginTotalTimeout)
@@ -42,7 +43,7 @@ func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string))
 		return nil, fmt.Errorf("server returned empty qr code content (ret=%d errmsg=%s)", qrResp.Ret, qrResp.ErrMsg)
 	}
 
-	sendQR(sendMessage, qrResp.QRCodeImgContent)
+	sendQRContent(ctx, qrResp.QRCodeImgContent)
 
 	qrCode := qrResp.QRCode
 	refreshes := 0
@@ -87,7 +88,7 @@ func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string))
 				return nil, fmt.Errorf("refresh qr code: %w", err)
 			}
 			qrCode = newQR.QRCode
-			sendQR(sendMessage, newQR.QRCodeImgContent)
+			sendQRContent(ctx, newQR.QRCodeImgContent)
 
 		case "confirmed":
 			if statusResp.BotToken == "" {
@@ -105,10 +106,8 @@ func RunLoginFlow(ctx context.Context, baseURL string, sendMessage func(string))
 	}
 }
 
-// sendQR sends the QR code content to the user as a tappable link.
-// The qrContent is a WeChat-native URL: tapping it in the WeChat app opens
-// the bot-authorization dialog directly (no external QR scanner needed).
-func sendQR(sendMessage func(string), qrContent string) {
+// sendQRText sends the QR code content to the user as a tappable link (text fallback).
+func sendQRText(sendMessage func(string), qrContent string) {
 	sendMessage("Tap the link below in WeChat to authorize the bot login:\n\n" +
 		qrContent +
 		"\n\n(If the link does not open automatically, copy and paste it into WeChat's built-in browser.)")

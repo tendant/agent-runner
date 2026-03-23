@@ -15,6 +15,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/wechat"
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
@@ -25,14 +26,26 @@ type AgentStarter interface {
 
 // Bot bridges agent-stream conversations to the agent runner.
 type Bot struct {
-	client      *Client
-	starter     AgentStarter
-	convManager *conversation.Manager
-	analyzer    *conversation.Analyzer
-	convIDs     []string
-	botUserID   string
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	client         *Client
+	starter        AgentStarter
+	convManager    *conversation.Manager
+	analyzer       *conversation.Analyzer
+	convIDs        []string
+	botUserID      string
+	wechatReloader  func(token, baseURL string) // called after a successful /wechat-login
+	wechatBaseURL   string                     // iLink API base URL for the login flow
+	wechatLoginMu   sync.Mutex                 // prevents concurrent /wechat-login flows
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+}
+
+// SetWeChatReloader registers a callback that is invoked with the new token and
+// base URL after a successful /wechat-login flow. baseURL is the iLink API base
+// URL to use during the login flow. Typically wired to (*wechat.Bot).Reload by
+// the server.
+func (b *Bot) SetWeChatReloader(fn func(token, baseURL string), baseURL string) {
+	b.wechatReloader = fn
+	b.wechatBaseURL = baseURL
 }
 
 // New creates a new stream bot. Returns nil if ServerURL or BotToken is empty.
@@ -280,6 +293,12 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	if text == "/cancel" {
 		b.convManager.Complete(convID)
 		b.emitFinal(ctx, convID, "Conversation cancelled. Send a new message to start over.")
+		return
+	}
+
+	// Handle /wechat-login: run the iLink QR login flow and hot-reload the WeChat bot.
+	if text == "/wechat-login" {
+		b.handleWeChatLogin(ctx, convID)
 		return
 	}
 
@@ -559,6 +578,59 @@ func isDenial(text string) bool {
 		return true
 	}
 	return false
+}
+
+// handleWeChatLogin runs the iLink QR login flow in a background goroutine and
+// hot-reloads the WeChat bot on success. The QR code is sent as a tappable text
+// link (no CDN upload required from stream).
+func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
+	if b.wechatReloader == nil {
+		b.emitFinal(ctx, convID, "WeChat bot is not configured on this server.")
+		return
+	}
+
+	if !b.wechatLoginMu.TryLock() {
+		b.emitFinal(ctx, convID, "A WeChat login is already in progress. Please wait.")
+		return
+	}
+
+	b.emitFinal(ctx, convID, "Starting WeChat login flow...")
+
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		defer b.wechatLoginMu.Unlock()
+
+		send := func(msg string) {
+			b.emitFinal(ctx, convID, msg)
+		}
+		sendQR := func(_ context.Context, qrContent string) {
+			send("Tap the link below in WeChat to authorize the bot login:\n\n" +
+				qrContent +
+				"\n\n(If the link does not open automatically, copy and paste it into WeChat's built-in browser.)")
+		}
+
+		result, err := wechat.RunLoginFlow(ctx, b.wechatBaseURL, send, sendQR)
+		if err != nil {
+			slog.Error("stream: wechat login flow failed", "error", err)
+			b.emitFinal(ctx, convID, "Login failed: "+err.Error())
+			return
+		}
+
+		if err := config.SetEnvLocal("WECHAT_TOKEN", result.Token); err != nil {
+			slog.Error("stream: failed to save wechat token to .env.local", "error", err)
+			b.emitFinal(ctx, convID, "Login succeeded but could not save token: "+err.Error())
+			return
+		}
+		if result.BaseURL != "" {
+			if err := config.SetEnvLocal("WECHAT_BASE_URL", result.BaseURL); err != nil {
+				slog.Warn("stream: failed to save wechat base_url to .env.local", "error", err)
+			}
+		}
+
+		b.wechatReloader(result.Token, result.BaseURL)
+		b.emitFinal(ctx, convID, "WeChat login successful! Bot is now active.")
+	}()
 }
 
 // extractBotUserID extracts a user ID from a JWT token (base64-decoded middle segment).
