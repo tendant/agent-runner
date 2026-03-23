@@ -19,12 +19,19 @@ type AnalysisResult struct {
 // Analyzer uses a fast LLM client to analyze conversation messages and decide
 // the next action. It falls back gracefully when no client is configured.
 type Analyzer struct {
-	client llm.Client
+	client       llm.Client
+	agentContext string // optional: agent system prompt snippet for accurate routing
 }
 
 // NewAnalyzer creates a new conversation analyzer backed by the given LLM client.
 func NewAnalyzer(client llm.Client) *Analyzer {
 	return &Analyzer{client: client}
+}
+
+// SetAgentContext provides the analyzer with the agent's system prompt so it
+// can make accurate routing decisions and give correct responses for greetings.
+func (a *Analyzer) SetAgentContext(context string) {
+	a.agentContext = context
 }
 
 // Summarize condenses conversation history into a short summary.
@@ -67,6 +74,12 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisRe
 
 func (a *Analyzer) buildPrompt(conv *Conversation) string {
 	var sb strings.Builder
+
+	if a.agentContext != "" {
+		sb.WriteString("The agent you are routing for has the following purpose and capabilities:\n\n")
+		sb.WriteString(a.agentContext)
+		sb.WriteString("\n\n---\n\n")
+	}
 
 	sb.WriteString(`You are a conversation router for a specialized agent. The agent already has full domain knowledge via its own prompt — it knows what system it works with, what files to manage, and how to handle requests. Your ONLY job is to decide whether to run the agent immediately, confirm first, or ask for clarification.
 

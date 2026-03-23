@@ -95,6 +95,19 @@ func NewServer(cfg *config.Config) *Server {
 		BaseURL:  cfg.Analyzer.BaseURL,
 	}, exec)
 	analyzer := conversation.NewAnalyzer(llmClient)
+	if cfg.Agent.PromptFile != "" {
+		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
+			analyzer.SetAgentContext(string(data))
+		} else {
+			slog.Warn("analyzer: could not read prompt file for context", "path", cfg.Agent.PromptFile, "error", err)
+		}
+	} else if cfg.Agent.SystemPrompt != "" {
+		if data, err := os.ReadFile(cfg.Agent.SystemPrompt); err == nil {
+			analyzer.SetAgentContext(string(data))
+		} else {
+			slog.Warn("analyzer: could not read system prompt for context", "path", cfg.Agent.SystemPrompt, "error", err)
+		}
+	}
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
 	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
