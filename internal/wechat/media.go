@@ -26,10 +26,15 @@ type Downloader struct {
 }
 
 // NewDownloader creates a Downloader. cdnBaseURL defaults to the iLink API base
-// URL if empty. mediaDir is where downloaded files are written.
+// URL if empty. mediaDir is where downloaded files are written; it is resolved
+// to an absolute path so that file paths injected into agent messages remain
+// valid when the agent runs in a different working directory.
 func NewDownloader(cdnBaseURL, mediaDir string) *Downloader {
 	if cdnBaseURL == "" {
 		cdnBaseURL = defaultBaseURL
+	}
+	if abs, err := filepath.Abs(mediaDir); err == nil {
+		mediaDir = abs
 	}
 	return &Downloader{
 		cdnBaseURL: cdnBaseURL,
