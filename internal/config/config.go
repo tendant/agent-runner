@@ -46,6 +46,9 @@ type Config struct {
 	// Stream bot settings
 	Stream StreamConfig
 
+	// WeChat bot settings
+	WeChat WeChatConfig
+
 	// Runner settings
 	Runner RunnerConfig
 
@@ -85,6 +88,12 @@ type StreamConfig struct {
 	ServerURL       string   // STREAM_SERVER_URL
 	BotToken        string   // STREAM_BOT_TOKEN (pre-registered bot JWT)
 	ConversationIDs []string // STREAM_CONVERSATION_IDS
+}
+
+// WeChatConfig contains WeChat bot settings (iLink API).
+type WeChatConfig struct {
+	Token   string // WECHAT_TOKEN — bearer token obtained via QR login
+	BaseURL string // WECHAT_BASE_URL — default: https://ilinkai.weixin.qq.com
 }
 
 // RunnerConfig contains hybrid runner settings
@@ -215,6 +224,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.ServerURL = envOrDefault("STREAM_SERVER_URL", "")
 	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
 	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
+
+	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
+	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
 
 	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)
 	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)

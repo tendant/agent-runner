@@ -25,6 +25,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/runner"
 	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
+	"github.com/agent-runner/agent-runner/internal/wechat"
 )
 
 // Server represents the HTTP API server
@@ -34,6 +35,7 @@ type Server struct {
 	handlers     *Handlers
 	telegramBot  *telegram.Bot
 	streamBot    *stream.Bot
+	wechatBot    *wechat.Bot
 	jobManager   *jobs.Manager
 	agentManager *agent.Manager
 	convManager  *conversation.Manager
@@ -91,6 +93,7 @@ func NewServer(cfg *config.Config) *Server {
 	if streamBot != nil {
 		handlers.SetNotifier(streamBot)
 	}
+	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer)
 
 	return &Server{
 		config: cfg,
@@ -104,6 +107,7 @@ func NewServer(cfg *config.Config) *Server {
 		handlers:     handlers,
 		telegramBot:  telegramBot,
 		streamBot:    streamBot,
+		wechatBot:    wechatBot,
 		jobManager:   jobManager,
 		agentManager: agentManager,
 		convManager:  convManager,
@@ -144,6 +148,9 @@ func (s *Server) Start() error {
 		}
 
 		// Stop bots
+		if s.wechatBot != nil {
+			s.wechatBot.Stop()
+		}
 		if s.streamBot != nil {
 			s.streamBot.Stop()
 		}
@@ -188,6 +195,13 @@ func (s *Server) Start() error {
 	if s.streamBot != nil {
 		if err := s.streamBot.Start(context.Background()); err != nil {
 			slog.Warn("stream bot start failed", "error", err)
+		}
+	}
+
+	// Start WeChat bot
+	if s.wechatBot != nil {
+		if err := s.wechatBot.Start(context.Background()); err != nil {
+			slog.Warn("wechat bot start failed", "error", err)
 		}
 	}
 
