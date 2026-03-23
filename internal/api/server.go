@@ -134,7 +134,11 @@ func (s *Server) Start() error {
 		<-quit
 		slog.Info("server shutting down")
 
-		// Stop runner first (it may be executing a task)
+		// Cancel agent/job contexts first so running sessions stop promptly
+		s.agentManager.Stop()
+		s.jobManager.Stop()
+
+		// Stop runner (it may be executing a task)
 		if s.runner != nil {
 			s.runner.Stop()
 		}
@@ -147,8 +151,6 @@ func (s *Server) Start() error {
 			s.telegramBot.Stop()
 		}
 		s.convManager.Stop()
-		s.agentManager.Stop()
-		s.jobManager.Stop()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -158,6 +160,13 @@ func (s *Server) Start() error {
 			log.Fatalf("Could not gracefully shutdown the server: %v", err)
 		}
 		close(done)
+	}()
+
+	// Force exit on second signal
+	go func() {
+		<-quit
+		slog.Warn("forced shutdown")
+		os.Exit(1)
 	}()
 
 	// Bind the port first so we know the server is ready before starting
