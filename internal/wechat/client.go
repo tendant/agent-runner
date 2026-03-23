@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -43,6 +44,8 @@ func (c *Client) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResp, e
 	ctx, cancel := context.WithTimeout(ctx, 37*time.Second)
 	defer cancel()
 
+	slog.Debug("wechat: getupdates poll", "buf_len", len(buf))
+
 	body, err := c.do(ctx, http.MethodPost, "ilink/bot/getupdates", GetUpdatesReq{
 		GetUpdatesBuf: buf,
 		BaseInfo:      buildBaseInfo(),
@@ -54,6 +57,17 @@ func (c *Client) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResp, e
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("wechat: parse getupdates response: %w", err)
 	}
+	slog.Debug("wechat: getupdates response",
+		"ret", resp.Ret,
+		"errcode", resp.ErrCode,
+		"errmsg", resp.ErrMsg,
+		"msgs", len(resp.Msgs),
+		"new_buf_len", len(resp.GetUpdatesBuf),
+	)
+	if (resp.Ret != 0 || resp.ErrCode != 0) && resp.ErrMsg != "" {
+		slog.Warn("wechat: getupdates api error",
+			"ret", resp.Ret, "errcode", resp.ErrCode, "errmsg", resp.ErrMsg)
+	}
 	return &resp, nil
 }
 
@@ -63,6 +77,12 @@ func (c *Client) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResp, e
 func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken string) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+
+	slog.Debug("wechat: sendmessage",
+		"to_user_id", toUserID,
+		"text_len", len(text),
+		"has_context_token", contextToken != "",
+	)
 
 	req := SendMessageReq{
 		Msg: WeixinMessage{
@@ -74,8 +94,13 @@ func (c *Client) SendMessage(ctx context.Context, toUserID, text, contextToken s
 		},
 		BaseInfo: buildBaseInfo(),
 	}
-	_, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
-	return err
+	body, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
+	if err != nil {
+		slog.Warn("wechat: sendmessage failed", "to_user_id", toUserID, "error", err)
+		return err
+	}
+	slog.Debug("wechat: sendmessage response", "to_user_id", toUserID, "body", string(body))
+	return nil
 }
 
 // GetQRCode fetches a QR code for interactive login.
@@ -114,16 +139,19 @@ func (c *Client) PollQRCodeStatus(ctx context.Context, qrcode string) (*GetQRCod
 // do executes a request to the iLink API. Auth headers are added only when
 // a token is configured (QR login endpoints are unauthenticated).
 func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]byte, error) {
+	var rawBody []byte
 	var bodyReader io.Reader
 	if reqBody != nil {
 		b, err := json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("wechat: marshal request: %w", err)
 		}
+		rawBody = b
 		bodyReader = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+"/"+path, bodyReader)
+	url := c.baseURL + "/" + path
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("wechat: build request: %w", err)
 	}
@@ -138,8 +166,11 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 		req.Header.Set("iLink-App-ClientVersion", "1")
 	}
 
+	slog.Debug("wechat: http request", "method", method, "url", url, "body", string(rawBody))
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		slog.Warn("wechat: http error", "method", method, "url", url, "error", err)
 		return nil, fmt.Errorf("wechat: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
@@ -148,6 +179,9 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("wechat: read response body: %w", err)
 	}
+
+	slog.Debug("wechat: http response", "method", method, "url", url, "status", resp.StatusCode, "body", string(body))
+
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("wechat: %s %s: HTTP %d: %s", method, path, resp.StatusCode, body)
 	}

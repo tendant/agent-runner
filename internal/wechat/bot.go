@@ -62,7 +62,7 @@ func (b *Bot) Start(ctx context.Context) error {
 		b.runLoop(ctx)
 	}()
 
-	slog.Info("wechat bot started")
+	slog.Info("wechat bot started", "base_url", b.client.baseURL)
 	return nil
 }
 
@@ -78,19 +78,37 @@ func (b *Bot) Stop() {
 // runLoop continuously long-polls getupdates and dispatches inbound messages.
 func (b *Bot) runLoop(ctx context.Context) {
 	var buf string // sync cursor, updated after each poll
+	pollCount := 0
+
+	slog.Info("wechat: poll loop starting")
 
 	for {
 		if ctx.Err() != nil {
+			slog.Info("wechat: poll loop stopping", "polls", pollCount)
 			return
 		}
 
+		pollCount++
 		resp, err := b.client.GetUpdates(ctx, buf)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			slog.Warn("wechat: getupdates error", "error", err)
-			// Brief pause before retrying to avoid tight error loops.
+			slog.Warn("wechat: getupdates error, retrying in 3s", "error", err, "polls", pollCount)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+			continue
+		}
+
+		// Log API-level errors returned in the response body
+		if resp.Ret != 0 || resp.ErrCode != 0 {
+			slog.Error("wechat: getupdates returned api error",
+				"ret", resp.Ret, "errcode", resp.ErrCode, "errmsg", resp.ErrMsg,
+				"polls", pollCount,
+			)
 			select {
 			case <-ctx.Done():
 				return
@@ -100,10 +118,23 @@ func (b *Bot) runLoop(ctx context.Context) {
 		}
 
 		if resp.GetUpdatesBuf != "" {
+			slog.Debug("wechat: cursor updated", "buf_len", len(resp.GetUpdatesBuf))
 			buf = resp.GetUpdatesBuf
+		} else {
+			slog.Debug("wechat: empty poll (no new messages)", "polls", pollCount)
+		}
+
+		if len(resp.Msgs) > 0 {
+			slog.Info("wechat: received messages", "count", len(resp.Msgs))
 		}
 
 		for _, msg := range resp.Msgs {
+			slog.Info("wechat: inbound message",
+				"from_user_id", msg.FromUserID,
+				"message_type", msg.MessageType,
+				"items", len(msg.ItemList),
+				"has_context_token", msg.ContextToken != "",
+			)
 			b.storeContextToken(msg.FromUserID, msg.ContextToken)
 			b.handleMessage(msg)
 		}
@@ -113,11 +144,14 @@ func (b *Bot) runLoop(ctx context.Context) {
 // storeContextToken persists the latest context_token for a user.
 func (b *Bot) storeContextToken(userID, token string) {
 	if userID == "" || token == "" {
+		slog.Warn("wechat: missing user_id or context_token on inbound message",
+			"has_user_id", userID != "", "has_token", token != "")
 		return
 	}
 	b.tokenMu.Lock()
 	b.ctxTokens[userID] = token
 	b.tokenMu.Unlock()
+	slog.Debug("wechat: context_token stored", "user_id", userID)
 }
 
 func (b *Bot) getContextToken(userID string) string {
@@ -129,13 +163,17 @@ func (b *Bot) getContextToken(userID string) string {
 // handleMessage processes a single inbound WeChat message.
 func (b *Bot) handleMessage(msg WeixinMessage) {
 	if msg.MessageType != MessageTypeText {
+		slog.Info("wechat: ignoring non-text message", "from_user_id", msg.FromUserID, "message_type", msg.MessageType)
 		return // V1: text only
 	}
 
 	text := extractText(msg)
 	if text == "" {
+		slog.Warn("wechat: received text message with no text content", "from_user_id", msg.FromUserID)
 		return
 	}
+
+	slog.Info("wechat: handling text message", "from_user_id", msg.FromUserID, "text_len", len(text))
 
 	userID := msg.FromUserID
 	chatID := userID // use WeChat user ID as conversation key
@@ -151,6 +189,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	conv.AddMessage("user", text)
 
 	state := conv.GetState()
+	slog.Info("wechat: conversation state", "user_id", userID, "state", state)
 
 	if state == conversation.StateExecuting {
 		b.sendText(context.Background(), userID, "Message queued — I'll process it after the current task finishes.")
@@ -176,6 +215,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 // handleConfirmation starts the agent after the user confirms.
 func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conversation) {
+	slog.Info("wechat: starting agent", "user_id", userID)
 	b.sendText(context.Background(), userID, "Starting agent...")
 	conv.SetState(conversation.StateExecuting)
 
@@ -194,11 +234,13 @@ func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conve
 
 	sessionID, err := b.starter.StartAgent(message)
 	if err != nil {
+		slog.Error("wechat: failed to start agent", "user_id", userID, "error", err)
 		conv.SetState(conversation.StateGathering)
 		b.sendText(context.Background(), userID, fmt.Sprintf("Failed to start agent: %s", err))
 		return
 	}
 
+	slog.Info("wechat: agent session started", "user_id", userID, "session_id", sessionID)
 	b.sendText(context.Background(), userID, fmt.Sprintf("Agent session started: %s", sessionID))
 
 	b.wg.Add(1)
@@ -303,6 +345,9 @@ func (b *Bot) pollAndReport(userID, sessionID string) {
 // sendText sends a plain-text message to a WeChat user.
 func (b *Bot) sendText(ctx context.Context, userID, text string) {
 	token := b.getContextToken(userID)
+	if token == "" {
+		slog.Warn("wechat: sending message without context_token — reply routing may fail", "user_id", userID)
+	}
 	if err := b.client.SendMessage(ctx, userID, text, token); err != nil {
 		slog.Error("wechat: failed to send message", "user_id", userID, "error", err)
 	}
