@@ -172,10 +172,28 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadFromEnv loads configuration from environment variables and an optional .env file
+// LoadFromEnv loads configuration from environment variables and optional env
+// files. Priority order (highest to lowest):
+//
+//  1. OS environment — always wins
+//  2. .env.local     — gitignored local overrides; safe for the agent to write
+//  3. .env           — base config; committed as a template
+//
+// The agent should write config changes to .env.local, never to .env.
 func LoadFromEnv() (*Config, error) {
-	// Load .env file if present (silently ignore missing)
-	_ = godotenv.Load()
+	// Read both files; merge with .env.local taking priority over .env.
+	// Then set each key only if not already present in the OS environment,
+	// preserving the invariant that explicit env vars always win.
+	base, _ := godotenv.Read(".env")
+	local, _ := godotenv.Read(".env.local")
+	for k, v := range local {
+		base[k] = v
+	}
+	for k, v := range base {
+		if os.Getenv(k) == "" {
+			os.Setenv(k, v) //nolint:errcheck
+		}
+	}
 
 	cfg := DefaultConfig()
 
