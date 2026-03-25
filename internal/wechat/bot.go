@@ -34,8 +34,11 @@ type Bot struct {
 
 	// contextTokens maps fromUserID → most-recently-received context_token.
 	// The token must be echoed in replies so the iLink server can route them.
-	tokenMu   sync.Mutex
-	ctxTokens map[string]string
+	// ctxTokenTimes records when each token was last received so stale tokens
+	// can be detected and retried without the token on API failure.
+	tokenMu       sync.Mutex
+	ctxTokens     map[string]string
+	ctxTokenTimes map[string]time.Time
 
 	// loginMu prevents concurrent /wechat-login flows.
 	loginMu sync.Mutex
@@ -58,7 +61,8 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,
-		ctxTokens:   make(map[string]string),
+		ctxTokens:     make(map[string]string),
+		ctxTokenTimes: make(map[string]time.Time),
 	}
 }
 
@@ -218,6 +222,7 @@ func (b *Bot) storeContextToken(userID, token string) {
 	}
 	b.tokenMu.Lock()
 	b.ctxTokens[userID] = token
+	b.ctxTokenTimes[userID] = time.Now()
 	b.tokenMu.Unlock()
 	slog.Debug("wechat: context_token stored", "user_id", userID)
 }
@@ -226,6 +231,47 @@ func (b *Bot) getContextToken(userID string) string {
 	b.tokenMu.Lock()
 	defer b.tokenMu.Unlock()
 	return b.ctxTokens[userID]
+}
+
+// getContextTokenWithAge returns the stored token and how long ago it was received.
+func (b *Bot) getContextTokenWithAge(userID string) (string, time.Duration) {
+	b.tokenMu.Lock()
+	defer b.tokenMu.Unlock()
+	token := b.ctxTokens[userID]
+	age := time.Since(b.ctxTokenTimes[userID])
+	return token, age
+}
+
+// staleContextTokenAge is the threshold at which a context_token is considered
+// potentially expired. WeChat tokens are session-scoped but may lapse during
+// long-running agent sessions where the user sends no new messages.
+const staleContextTokenAge = 15 * time.Minute
+
+// sendWithRetry calls send(token) using the stored context_token for userID.
+// If the send returns an API error (WeChat rejected the request), it retries
+// once without the token so the message can still reach the user unthreaded.
+// Network/timeout errors are not retried to avoid duplicate delivery.
+// ctx is captured by the send closure; it is not used by sendWithRetry itself.
+func (b *Bot) sendWithRetry(userID string, send func(token string) error) error {
+	token, age := b.getContextTokenWithAge(userID)
+	if token == "" {
+		slog.Warn("wechat: sending without context_token — reply routing may fail", "user_id", userID)
+	} else if age > staleContextTokenAge {
+		slog.Warn("wechat: context_token is stale", "user_id", userID, "age", age.Round(time.Second))
+	}
+	err := send(token)
+	if err != nil && token != "" && isAPIError(err) {
+		slog.Warn("wechat: send failed with context_token, retrying without", "user_id", userID, "error", err)
+		err = send("")
+	}
+	return err
+}
+
+// isAPIError reports whether err is a WeChat API-level rejection (errcode != 0),
+// as opposed to a network or timeout error. Only API errors are safe to retry
+// because a network error may mean the first request succeeded.
+func isAPIError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "api error")
 }
 
 // handleMessage processes a single inbound WeChat message.
@@ -484,11 +530,9 @@ func (b *Bot) pollAndReport(userID, sessionID string) {
 
 // sendText sends a plain-text message to a WeChat user.
 func (b *Bot) sendText(ctx context.Context, userID, text string) {
-	token := b.getContextToken(userID)
-	if token == "" {
-		slog.Warn("wechat: sending message without context_token — reply routing may fail", "user_id", userID)
-	}
-	if err := b.client.SendMessage(ctx, userID, text, token); err != nil {
+	if err := b.sendWithRetry(userID, func(token string) error {
+		return b.client.SendMessage(ctx, userID, text, token)
+	}); err != nil {
 		slog.Error("wechat: failed to send message", "user_id", userID, "error", err)
 	}
 }
@@ -496,7 +540,6 @@ func (b *Bot) sendText(ctx context.Context, userID, text string) {
 // sendOutputFiles delivers each agent output file to the WeChat user.
 // Images are sent via SendImage; other files via SendFile.
 func (b *Bot) sendOutputFiles(ctx context.Context, userID string, files []agent.OutputFile) {
-	token := b.getContextToken(userID)
 	cdnBaseURL := b.downloader.cdnBaseURL
 
 	for _, f := range files {
@@ -507,7 +550,9 @@ func (b *Bot) sendOutputFiles(ctx context.Context, userID string, files []agent.
 				b.sendText(ctx, userID, fmt.Sprintf("[Image: %s — upload failed]", f.Name))
 				continue
 			}
-			if err := b.client.SendImage(ctx, userID, uploaded.DownloadParam, uploaded.AESKeyHex, token, uploaded.CiphertextSize); err != nil {
+			if err := b.sendWithRetry(userID, func(token string) error {
+				return b.client.SendImage(ctx, userID, uploaded.DownloadParam, uploaded.AESKeyHex, token, uploaded.CiphertextSize)
+			}); err != nil {
 				slog.Error("wechat: failed to send output image", "file", f.Name, "error", err)
 			}
 		} else {
@@ -517,7 +562,9 @@ func (b *Bot) sendOutputFiles(ctx context.Context, userID string, files []agent.
 				b.sendText(ctx, userID, fmt.Sprintf("[File: %s — upload failed]", f.Name))
 				continue
 			}
-			if err := b.client.SendFile(ctx, userID, f.Name, uploaded.DownloadParam, uploaded.AESKeyHex, uploaded.RawMD5Hex, token, uploaded.CiphertextSize); err != nil {
+			if err := b.sendWithRetry(userID, func(token string) error {
+				return b.client.SendFile(ctx, userID, f.Name, uploaded.DownloadParam, uploaded.AESKeyHex, uploaded.RawMD5Hex, token, uploaded.CiphertextSize)
+			}); err != nil {
 				slog.Error("wechat: failed to send output file", "file", f.Name, "error", err)
 			}
 		}
