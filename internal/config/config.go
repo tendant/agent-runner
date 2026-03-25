@@ -104,10 +104,11 @@ type WeChatConfig struct {
 // AnalyzerConfig configures the fast LLM used for conversation intent routing.
 // If no provider/key is set, falls back to the executor (Claude CLI).
 type AnalyzerConfig struct {
-	Provider string // "anthropic" | "openai" | "" (auto-detect from env)
-	Model    string // model ID; provider default used if empty
-	APIKey   string // ANALYZER_API_KEY; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY
-	BaseURL  string // override API base URL (e.g. http://localhost:11434 for Ollama)
+	Provider       string // "anthropic" | "openai" | "" (auto-detect from env)
+	Model          string // model ID; provider default used if empty
+	APIKey         string // ANALYZER_API_KEY; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY
+	BaseURL        string // override API base URL (e.g. http://localhost:11434 for Ollama)
+	TimeoutSeconds int    // per-call timeout; default 30s
 }
 
 // RunnerConfig contains hybrid runner settings
@@ -266,6 +267,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Analyzer.Model = envOrDefault("ANALYZER_MODEL", "")
 	cfg.Analyzer.APIKey = envOrDefault("ANALYZER_API_KEY", "")
 	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
+	cfg.Analyzer.TimeoutSeconds = envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30)
 
 	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)
 	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)

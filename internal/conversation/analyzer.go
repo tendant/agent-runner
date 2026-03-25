@@ -23,12 +23,20 @@ type AnalysisResult struct {
 // the next action. It falls back gracefully when no client is configured.
 type Analyzer struct {
 	client       llm.Client
-	agentContext string // optional: agent system prompt snippet for accurate routing
+	agentContext string        // optional: agent system prompt snippet for accurate routing
+	timeout      time.Duration // per-call timeout; defaults to 30s
 }
+
+const defaultAnalyzerTimeout = 30 * time.Second
 
 // NewAnalyzer creates a new conversation analyzer backed by the given LLM client.
 func NewAnalyzer(client llm.Client) *Analyzer {
-	return &Analyzer{client: client}
+	return &Analyzer{client: client, timeout: defaultAnalyzerTimeout}
+}
+
+// SetTimeout overrides the per-call LLM timeout. Useful for slow local models.
+func (a *Analyzer) SetTimeout(d time.Duration) {
+	a.timeout = d
 }
 
 // SetAgentContext provides the analyzer with the agent's system prompt so it
@@ -45,7 +53,7 @@ func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, e
 		fmt.Fprintf(&sb, "%s: %s\n", msg.Role, msg.Content)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
 
 	result, err := a.client.Complete(ctx, sb.String())
@@ -59,7 +67,7 @@ func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, e
 func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
 	prompt := a.buildPrompt(conv)
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
 
 	// Extract image paths from conversation messages for vision-capable clients.

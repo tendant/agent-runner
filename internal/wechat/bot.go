@@ -561,7 +561,7 @@ func (b *Bot) extractContent(ctx context.Context, msg WeixinMessage) string {
 					if item.VoiceItem != nil && item.VoiceItem.Playtime > 0 {
 						dur = fmt.Sprintf(", %ds", item.VoiceItem.Playtime/1000)
 					}
-					parts = append(parts, fmt.Sprintf("[Voice%s: %s]", dur, path))
+					parts = append(parts, fmt.Sprintf("[Voice%s (SILK format, requires ffmpeg to convert): %s]", dur, path))
 				}
 			}
 

@@ -95,6 +95,9 @@ func NewServer(cfg *config.Config) *Server {
 		BaseURL:  cfg.Analyzer.BaseURL,
 	}, exec)
 	analyzer := conversation.NewAnalyzer(llmClient)
+	if cfg.Analyzer.TimeoutSeconds > 0 {
+		analyzer.SetTimeout(time.Duration(cfg.Analyzer.TimeoutSeconds) * time.Second)
+	}
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
 			analyzer.SetAgentContext(string(data))
