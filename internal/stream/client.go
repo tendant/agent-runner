@@ -158,7 +158,7 @@ func (c *Client) UploadFile(ctx context.Context, conversationID, filename, conte
 	}
 
 	var result struct {
-		ID string `json:"file_id"`
+		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode upload response: %w", err)
