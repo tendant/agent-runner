@@ -66,6 +66,12 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 			continue
 		}
 
+		// Only clean workspace directories; leave other subdirs (e.g. conversations/) alone.
+		name := entry.Name()
+		if !strings.HasPrefix(name, "session-") && !strings.HasPrefix(name, "job-") {
+			continue
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
