@@ -62,26 +62,30 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 	}
 }
 
-// Reload updates the bot's credentials at runtime and starts the poll loop if
-// it is not already running. This is called after a successful QR login flow
-// bootstrapped from another client (e.g. agent-stream).
+// Reload updates the bot's credentials at runtime and restarts the poll loop
+// with the new token. Always cancels any existing loop so stale long-polls
+// using the old token are dropped immediately.
 func (b *Bot) Reload(token, baseURL string) {
 	b.client.SetToken(token, baseURL)
 	slog.Info("wechat: credentials reloaded", "has_base_url", baseURL != "")
 
-	// Start the poll loop if it hasn't been started yet (token was empty at New time).
 	b.reloadMu.Lock()
 	defer b.reloadMu.Unlock()
-	if b.cancel == nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		b.cancel = cancel
-		b.wg.Add(1)
-		go func() {
-			defer b.wg.Done()
-			b.runLoop(ctx)
-		}()
-		slog.Info("wechat: poll loop started via Reload")
+
+	// Cancel the existing poll loop if running so it exits cleanly.
+	if b.cancel != nil {
+		b.cancel()
+		b.cancel = nil
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = cancel
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		b.runLoop(ctx)
+	}()
+	slog.Info("wechat: poll loop restarted with new token")
 }
 
 // Start begins long-polling the iLink API. Non-blocking. If no token is
