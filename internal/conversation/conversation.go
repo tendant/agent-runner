@@ -287,7 +287,8 @@ func (m *Manager) loadAll() {
 		}
 		var conv Conversation
 		if err := json.Unmarshal(data, &conv); err != nil {
-			slog.Warn("conversation: failed to parse file", "path", path, "error", err)
+			slog.Warn("conversation: corrupt file deleted", "path", path, "error", err)
+			os.Remove(path)
 			continue
 		}
 		if conv.State == StateCompleted {

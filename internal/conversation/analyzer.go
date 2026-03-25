@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/llm"
 )
+
+var imagePathRe = regexp.MustCompile(`\[Image:\s*([^\]]+)\]`)
 
 // AnalysisResult is the structured response from the analyzer.
 type AnalysisResult struct {
@@ -59,7 +62,24 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisRe
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	output, err := a.client.Complete(ctx, prompt)
+	// Extract image paths from conversation messages for vision-capable clients.
+	var (
+		output string
+		err    error
+	)
+	if mc, ok := a.client.(llm.MultimodalClient); ok {
+		var imagePaths []string
+		for _, msg := range conv.GetMessages() {
+			for _, m := range imagePathRe.FindAllStringSubmatch(msg.Content, -1) {
+				if len(m) > 1 {
+					imagePaths = append(imagePaths, strings.TrimSpace(m[1]))
+				}
+			}
+		}
+		output, err = mc.CompleteWithImages(ctx, prompt, imagePaths)
+	} else {
+		output, err = a.client.Complete(ctx, prompt)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("analyzer failed: %w", err)
 	}

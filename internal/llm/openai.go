@@ -3,10 +3,12 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -34,11 +36,36 @@ func NewOpenAIClient(apiKey, model, baseURL string) *OpenAIClient {
 }
 
 func (c *OpenAIClient) Complete(ctx context.Context, prompt string) (string, error) {
+	return c.CompleteWithImages(ctx, prompt, nil)
+}
+
+func (c *OpenAIClient) CompleteWithImages(ctx context.Context, prompt string, imagePaths []string) (string, error) {
+	// Build content blocks: images first, then text.
+	var content []any
+	for _, path := range imagePaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue // skip unreadable images
+		}
+		mediaType := "image/jpeg"
+		if len(data) >= 4 && data[0] == 0x89 && data[1] == 0x50 {
+			mediaType = "image/png"
+		} else if len(data) >= 12 && string(data[8:12]) == "WEBP" {
+			mediaType = "image/webp"
+		}
+		dataURI := "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]string{"url": dataURI},
+		})
+	}
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+
 	payload := map[string]any{
 		"model":      c.model,
 		"max_tokens": 512,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
+		"messages": []map[string]any{
+			{"role": "user", "content": content},
 		},
 	}
 	body, err := json.Marshal(payload)

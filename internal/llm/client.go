@@ -16,6 +16,14 @@ type Client interface {
 	Complete(ctx context.Context, prompt string) (string, error)
 }
 
+// MultimodalClient extends Client with image support. Implementations that
+// can process images (e.g. vision models) should implement this interface.
+// imagePaths are absolute local file paths to include alongside the prompt.
+type MultimodalClient interface {
+	Client
+	CompleteWithImages(ctx context.Context, prompt string, imagePaths []string) (string, error)
+}
+
 // Config holds configuration for building an LLM client.
 type Config struct {
 	Provider string // "anthropic" | "openai" | "" (auto-detect)

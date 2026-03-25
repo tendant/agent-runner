@@ -94,6 +94,21 @@ func (d *Downloader) DownloadFile(ctx context.Context, item MessageItem) (string
 	return d.save(data, name)
 }
 
+// DownloadVoice downloads, decrypts, and saves a voice item.
+// Returns the absolute local file path. WeChat voice messages are typically
+// encoded as SILK audio (encode_type=6).
+func (d *Downloader) DownloadVoice(ctx context.Context, item MessageItem) (string, error) {
+	v := item.VoiceItem
+	if v == nil || v.Media == nil || v.Media.EncryptQueryParam == "" || v.Media.AESKey == "" {
+		return "", fmt.Errorf("voice item missing media ref or aes key")
+	}
+	data, err := d.downloadAndDecrypt(ctx, v.Media.EncryptQueryParam, v.Media.AESKey, "voice")
+	if err != nil {
+		return "", err
+	}
+	return d.save(data, "voice-"+uuid.New().String()[:8]+".silk")
+}
+
 // DownloadVideo downloads, decrypts, and saves a video item.
 // Returns the absolute local file path.
 func (d *Downloader) DownloadVideo(ctx context.Context, item MessageItem) (string, error) {

@@ -547,11 +547,22 @@ func (b *Bot) extractContent(ctx context.Context, msg WeixinMessage) string {
 				// Voice-to-text transcript is available — use it as the message.
 				parts = append(parts, item.VoiceItem.Text)
 			} else {
-				dur := ""
-				if item.VoiceItem != nil && item.VoiceItem.Playtime > 0 {
-					dur = fmt.Sprintf(" (%ds)", item.VoiceItem.Playtime/1000)
+				// No transcript — download the audio file and pass it to the agent.
+				path, err := b.downloader.DownloadVoice(ctx, item)
+				if err != nil {
+					slog.Warn("wechat: voice download failed", "error", err)
+					dur := ""
+					if item.VoiceItem != nil && item.VoiceItem.Playtime > 0 {
+						dur = fmt.Sprintf(" (%ds)", item.VoiceItem.Playtime/1000)
+					}
+					parts = append(parts, "[Voice message"+dur+" — could not download]")
+				} else {
+					dur := ""
+					if item.VoiceItem != nil && item.VoiceItem.Playtime > 0 {
+						dur = fmt.Sprintf(", %ds", item.VoiceItem.Playtime/1000)
+					}
+					parts = append(parts, fmt.Sprintf("[Voice%s: %s]", dur, path))
 				}
-				parts = append(parts, "[Voice message"+dur+" — no transcript available]")
 			}
 
 		case MessageItemTypeFile:
