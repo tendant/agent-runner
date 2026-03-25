@@ -258,6 +258,10 @@ func (m *Manager) persist(conv *Conversation) {
 		slog.Warn("conversation: marshal failed", "chat_id", conv.ChatID, "error", err)
 		return
 	}
+	if err := os.MkdirAll(m.dir, 0755); err != nil {
+		slog.Warn("conversation: persist failed to create dir", "dir", m.dir, "error", err)
+		return
+	}
 	if err := os.WriteFile(m.convFilePath(conv.ChatID), data, 0600); err != nil {
 		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
 	}
