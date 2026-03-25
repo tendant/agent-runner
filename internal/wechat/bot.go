@@ -577,10 +577,16 @@ func (b *Bot) extractContent(ctx context.Context, msg WeixinMessage) string {
 
 		case MessageItemTypeVoice:
 			if item.VoiceItem != nil && item.VoiceItem.Text != "" {
-				// Voice-to-text transcript is available — use it as the message.
+				// WeChat's iLink API performs server-side speech-to-text and
+				// populates VoiceItem.Text. This is the normal path for WeChat
+				// voice messages — no local audio processing needed.
 				parts = append(parts, item.VoiceItem.Text)
 			} else {
-				// No transcript — download the audio file and pass it to the agent.
+				// Fallback: no server-side transcript (unusual for WeChat; may
+				// occur for other future clients). Download the raw SILK file
+				// and pass the path so the agent can process it.
+				// TODO: add bot-layer ffmpeg + Whisper transcription here when
+				// a client that regularly omits transcripts is in scope.
 				path, err := b.downloader.DownloadVoice(ctx, item)
 				if err != nil {
 					slog.Warn("wechat: voice download failed", "error", err)
