@@ -3,7 +3,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,9 +27,10 @@ type AgentStarter interface {
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
-	token   string
-	chatID  int64
-	starter AgentStarter
+	token    string
+	chatID   int64
+	mediaDir string // directory for downloaded media files
+	starter  AgentStarter
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -36,8 +41,9 @@ type Bot struct {
 }
 
 // New creates a new Telegram bot. Returns nil if the token is empty.
+// tmpRoot is the base directory for downloaded media files.
 // The actual API connection is deferred to Start().
-func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer) *Bot {
+func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string) *Bot {
 	if cfg.BotToken == "" {
 		return nil
 	}
@@ -45,6 +51,7 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 	return &Bot{
 		token:       cfg.BotToken,
 		chatID:      cfg.ChatID,
+		mediaDir:    filepath.Join(tmpRoot, "telegram-media"),
 		starter:     starter,
 		convManager: convMgr,
 		analyzer:    analyzer,
@@ -125,14 +132,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	text := msg.Text
-	if text == "" {
+	content := b.extractContent(msg)
+	if content == "" {
 		return
 	}
 
 	// Get or create conversation
 	conv := b.convManager.GetOrCreate(chatID)
-	conv.AddMessage("user", text)
+	conv.AddMessage("user", content)
 
 	state := conv.GetState()
 
@@ -144,11 +151,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	// If confirming, check for yes/no
 	if state == conversation.StateConfirming {
-		if isConfirmation(text) {
+		if isConfirmation(content) {
 			b.handleConfirmation(tgChatID, chatID, conv)
 			return
 		}
-		if isDenial(text) {
+		if isDenial(content) {
 			conv.SetState(conversation.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
 			b.send(tgChatID, "OK, what would you like to change?")
@@ -291,6 +298,138 @@ func (b *Bot) pollAndReport(tgChatID int64, sessionID string) {
 	}
 }
 
+// extractContent assembles a text representation of a Telegram message.
+// Text and caption are included as-is. Photos, voice, audio, documents, and
+// video are downloaded to b.mediaDir and represented as path annotations so
+// the agent can reference them (same format WeChat uses: [Image: /path], etc.).
+func (b *Bot) extractContent(msg *tgbotapi.Message) string {
+	var parts []string
+
+	// Plain text or caption attached to a media message.
+	text := msg.Text
+	if text == "" {
+		text = msg.Caption
+	}
+	if text != "" {
+		parts = append(parts, text)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Photos — use the highest-resolution variant.
+	if len(msg.Photo) > 0 {
+		photo := msg.Photo[len(msg.Photo)-1]
+		path, err := b.downloadFile(ctx, photo.FileID, "photo-"+photo.FileUniqueID+".jpg")
+		if err != nil {
+			slog.Warn("telegram: photo download failed", "error", err)
+			parts = append(parts, "[Image — could not download]")
+		} else {
+			parts = append(parts, fmt.Sprintf("[Image: %s]", path))
+		}
+	}
+
+	// Voice messages (OGG/Opus — can be transcribed with Whisper if needed).
+	if msg.Voice != nil {
+		path, err := b.downloadFile(ctx, msg.Voice.FileID, "voice-"+msg.Voice.FileUniqueID+".ogg")
+		if err != nil {
+			slog.Warn("telegram: voice download failed", "error", err)
+			parts = append(parts, fmt.Sprintf("[Voice, %ds — could not download]", msg.Voice.Duration))
+		} else {
+			parts = append(parts, fmt.Sprintf("[Voice, %ds (OGG/Opus): %s]", msg.Voice.Duration, path))
+		}
+	}
+
+	// Audio files.
+	if msg.Audio != nil {
+		name := msg.Audio.FileName
+		if name == "" {
+			name = "audio-" + msg.Audio.FileUniqueID
+		}
+		path, err := b.downloadFile(ctx, msg.Audio.FileID, name)
+		if err != nil {
+			slog.Warn("telegram: audio download failed", "error", err)
+			parts = append(parts, fmt.Sprintf("[Audio '%s', %ds — could not download]", msg.Audio.Title, msg.Audio.Duration))
+		} else {
+			parts = append(parts, fmt.Sprintf("[Audio '%s', %ds: %s]", msg.Audio.Title, msg.Audio.Duration, path))
+		}
+	}
+
+	// Documents / arbitrary files.
+	if msg.Document != nil {
+		name := msg.Document.FileName
+		if name == "" {
+			name = "file-" + msg.Document.FileUniqueID
+		}
+		path, err := b.downloadFile(ctx, msg.Document.FileID, name)
+		if err != nil {
+			slog.Warn("telegram: document download failed", "file", name, "error", err)
+			parts = append(parts, fmt.Sprintf("[File '%s' — could not download]", name))
+		} else {
+			parts = append(parts, fmt.Sprintf("[File '%s': %s]", name, path))
+		}
+	}
+
+	// Video.
+	if msg.Video != nil {
+		name := "video-" + msg.Video.FileUniqueID + ".mp4"
+		path, err := b.downloadFile(ctx, msg.Video.FileID, name)
+		if err != nil {
+			slog.Warn("telegram: video download failed", "error", err)
+			parts = append(parts, fmt.Sprintf("[Video, %ds — could not download]", msg.Video.Duration))
+		} else {
+			parts = append(parts, fmt.Sprintf("[Video, %ds: %s]", msg.Video.Duration, path))
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// downloadFile downloads a Telegram file by FileID and saves it to b.mediaDir.
+// Returns the absolute path to the saved file.
+func (b *Bot) downloadFile(ctx context.Context, fileID, filename string) (string, error) {
+	file, err := b.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		return "", fmt.Errorf("get file info: %w", err)
+	}
+	downloadURL, err := b.api.GetFileDirectURL(file.FilePath)
+	if err != nil {
+		return "", fmt.Errorf("get download url: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download: status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read body: %w", err)
+	}
+
+	if err := os.MkdirAll(b.mediaDir, 0755); err != nil {
+		return "", fmt.Errorf("create media dir: %w", err)
+	}
+	savePath := filepath.Join(b.mediaDir, filename)
+	if err := os.WriteFile(savePath, data, 0644); err != nil {
+		return "", fmt.Errorf("save file: %w", err)
+	}
+
+	absPath, err := filepath.Abs(savePath)
+	if err != nil {
+		return savePath, nil
+	}
+	return absPath, nil
+}
+
 func (b *Bot) send(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
@@ -313,14 +452,6 @@ func (b *Bot) uploadOutputFiles(chatID int64, session *agent.Session) {
 	}
 }
 
-// sendDocument sends raw bytes as a Telegram document.
-func (b *Bot) sendDocument(chatID int64, name string, data []byte) {
-	fileBytes := tgbotapi.FileBytes{Name: name, Bytes: data}
-	doc := tgbotapi.NewDocument(chatID, fileBytes)
-	if _, err := b.api.Send(doc); err != nil {
-		slog.Error("telegram: failed to send document", "name", name, "error", err)
-	}
-}
 
 // summarizeConversation compacts old messages into a summary.
 func (b *Bot) summarizeConversation(conv *conversation.Conversation) {

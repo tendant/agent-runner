@@ -112,7 +112,7 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 	agentStarter := NewAgentStarterAdapter(handlers)
-	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer)
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot)
 	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
 	if streamBot != nil {
 		handlers.SetNotifier(streamBot)
