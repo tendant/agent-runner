@@ -399,11 +399,7 @@ func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conve
 				}
 			}
 			if len(session.OutputFiles) > 0 {
-				var names []string
-				for _, f := range session.OutputFiles {
-					names = append(names, f.Name)
-				}
-				b.sendText(context.Background(), userID, fmt.Sprintf("Output files: %s", strings.Join(names, ", ")))
+				b.sendOutputFiles(context.Background(), userID, session.OutputFiles)
 			}
 		}
 
@@ -495,6 +491,43 @@ func (b *Bot) sendText(ctx context.Context, userID, text string) {
 	if err := b.client.SendMessage(ctx, userID, text, token); err != nil {
 		slog.Error("wechat: failed to send message", "user_id", userID, "error", err)
 	}
+}
+
+// sendOutputFiles delivers each agent output file to the WeChat user.
+// Images are sent via SendImage; other files via SendFile.
+func (b *Bot) sendOutputFiles(ctx context.Context, userID string, files []agent.OutputFile) {
+	token := b.getContextToken(userID)
+	cdnBaseURL := b.downloader.cdnBaseURL
+
+	for _, f := range files {
+		if isImageContentType(f.ContentType) {
+			uploaded, err := UploadImage(ctx, b.client, cdnBaseURL, userID, f.Data)
+			if err != nil {
+				slog.Warn("wechat: output image upload failed, falling back to text", "file", f.Name, "error", err)
+				b.sendText(ctx, userID, fmt.Sprintf("[Image: %s — upload failed]", f.Name))
+				continue
+			}
+			if err := b.client.SendImage(ctx, userID, uploaded.DownloadParam, uploaded.AESKeyHex, token, uploaded.CiphertextSize); err != nil {
+				slog.Error("wechat: failed to send output image", "file", f.Name, "error", err)
+			}
+		} else {
+			uploaded, err := UploadFile(ctx, b.client, cdnBaseURL, userID, f.Data)
+			if err != nil {
+				slog.Warn("wechat: output file upload failed, falling back to text", "file", f.Name, "error", err)
+				b.sendText(ctx, userID, fmt.Sprintf("[File: %s — upload failed]", f.Name))
+				continue
+			}
+			if err := b.client.SendFile(ctx, userID, f.Name, uploaded.DownloadParam, uploaded.AESKeyHex, uploaded.RawMD5Hex, token, uploaded.CiphertextSize); err != nil {
+				slog.Error("wechat: failed to send output file", "file", f.Name, "error", err)
+			}
+		}
+	}
+}
+
+// isImageContentType returns true for common image MIME types.
+func isImageContentType(ct string) bool {
+	return ct == "image/jpeg" || ct == "image/png" || ct == "image/gif" ||
+		ct == "image/webp" || ct == "image/bmp" || ct == "image/tiff"
 }
 
 // summarizeConversation compacts old messages into a summary.

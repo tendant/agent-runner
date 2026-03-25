@@ -244,6 +244,55 @@ func (c *Client) SendImage(ctx context.Context, toUserID, downloadParam, aeskeyH
 	return nil
 }
 
+// SendFile sends a file message to a WeChat user.
+// downloadParam, aeskeyHex, md5Hex and cipherSize come from a prior UploadToCDN call.
+func (c *Client) SendFile(ctx context.Context, toUserID, fileName, downloadParam, aeskeyHex, md5Hex, contextToken string, cipherSize int) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	slog.Info("wechat: sendfile", "to_user_id", toUserID, "file_name", fileName)
+
+	req := SendMessageReq{
+		Msg: WeixinMessage{
+			FromUserID:   "",
+			ToUserID:     toUserID,
+			ClientID:     uuid.New().String(),
+			MessageType:  MessageTypeBot,
+			MessageState: MessageStateFinish,
+			ContextToken: contextToken,
+			ItemList: []MessageItem{
+				{
+					Type: MessageItemTypeFile,
+					FileItem: &FileItem{
+						FileName: fileName,
+						MD5:      md5Hex,
+						Media: &CDNMedia{
+							EncryptQueryParam: downloadParam,
+							AESKey:            base64.StdEncoding.EncodeToString([]byte(aeskeyHex)),
+							EncryptType:       1,
+						},
+					},
+				},
+			},
+		},
+		BaseInfo: buildBaseInfo(),
+	}
+	req.Msg.ItemList[0].FileItem.Len = strconv.Itoa(cipherSize)
+
+	body, err := c.do(ctx, http.MethodPost, "ilink/bot/sendmessage", req)
+	if err != nil {
+		return err
+	}
+	var sendResp SendMessageResp
+	if jsonErr := json.Unmarshal(body, &sendResp); jsonErr == nil {
+		if sendResp.Ret != 0 || sendResp.ErrCode != 0 {
+			return fmt.Errorf("wechat: sendfile api error ret=%d errcode=%d errmsg=%s", sendResp.Ret, sendResp.ErrCode, sendResp.ErrMsg)
+		}
+	}
+	slog.Info("wechat: sendfile ok", "to_user_id", toUserID, "file_name", fileName)
+	return nil
+}
+
 // GetQRCode fetches a QR code for interactive login.
 func (c *Client) GetQRCode(ctx context.Context) (*GetQRCodeResp, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

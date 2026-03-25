@@ -315,6 +315,65 @@ func UploadImage(ctx context.Context, client *Client, cdnBaseURL, toUserID strin
 	}, nil
 }
 
+// UploadedFile holds the result of a successful file CDN upload.
+type UploadedFile struct {
+	DownloadParam  string // encrypt_query_param for the sendmessage file_item
+	AESKeyHex      string // hex-encoded 16-byte AES key
+	CiphertextSize int    // encrypted byte length
+	RawMD5Hex      string // MD5 of the plaintext data
+}
+
+// UploadFile encrypts fileData and uploads it to the iLink CDN as a file attachment.
+// toUserID is required by the getuploadurl API.
+func UploadFile(ctx context.Context, client *Client, cdnBaseURL, toUserID string, fileData []byte) (*UploadedFile, error) {
+	keyRaw := make([]byte, 16)
+	if _, err := rand.Read(keyRaw); err != nil {
+		return nil, fmt.Errorf("generate aes key: %w", err)
+	}
+	filekeyRaw := make([]byte, 16)
+	if _, err := rand.Read(filekeyRaw); err != nil {
+		return nil, fmt.Errorf("generate filekey: %w", err)
+	}
+	aeskeyHex := hex.EncodeToString(keyRaw)
+	filekey := hex.EncodeToString(filekeyRaw)
+
+	rawMD5 := md5.Sum(fileData)
+	rawMD5Hex := hex.EncodeToString(rawMD5[:])
+	cipherSize := aesECBPaddedSize(len(fileData))
+
+	slog.Debug("wechat: upload file", "rawsize", len(fileData), "ciphersize", cipherSize, "md5", rawMD5Hex)
+
+	uploadResp, err := client.GetUploadUrl(ctx, GetUploadUrlReq{
+		FileKey:    filekey,
+		MediaType:  UploadMediaTypeFile,
+		ToUserID:   toUserID,
+		RawSize:    len(fileData),
+		RawFileMD5: rawMD5Hex,
+		FileSize:   cipherSize,
+		AESKey:     aeskeyHex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getuploadurl: %w", err)
+	}
+
+	encrypted, err := encryptAES128ECB(fileData, keyRaw)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: %w", err)
+	}
+
+	downloadParam, err := client.UploadToCDN(ctx, cdnBaseURL, uploadResp.UploadParam, filekey, encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("cdn upload: %w", err)
+	}
+
+	return &UploadedFile{
+		DownloadParam:  downloadParam,
+		AESKeyHex:      aeskeyHex,
+		CiphertextSize: cipherSize,
+		RawMD5Hex:      rawMD5Hex,
+	}, nil
+}
+
 // sniffImageExt returns a file extension inferred from magic bytes.
 func sniffImageExt(data []byte) string {
 	if len(data) < 4 {
