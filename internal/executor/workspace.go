@@ -3,12 +3,14 @@ package executor
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
 
 // WorkspaceManager handles workspace creation and cleanup
 type WorkspaceManager struct {
@@ -94,8 +96,10 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // workspace/ is the agent's CWD — shared repos, _send/, _progress.json live here.
 // state/ is runner-managed bookkeeping (TODO.md), invisible to the agent.
 // It pre-populates shared repos from the persistent repo cache into workspace/.
+// If skillsDir is set, skills are copied to .claude/skills/ and .agents/skills/ so
+// Claude Code, opencode, and Codex all discover them.
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
-func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, gitHost, gitOrg string) (string, error) {
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -110,6 +114,19 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 	stateDir := filepath.Join(workspacePath, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Pre-populate skills into both .claude/skills/ (Claude Code + opencode) and
+	// .agents/skills/ (Codex + opencode) so all supported CLIs discover them.
+	if skillsDir != "" {
+		for _, dst := range []string{
+			filepath.Join(agentDir, ".claude", "skills"),
+			filepath.Join(agentDir, ".agents", "skills"),
+		} {
+			if err := copyDir(skillsDir, dst); err != nil {
+				slog.Warn("workspace: failed to copy skills", "dst", dst, "error", err)
+			}
+		}
 	}
 
 	// Pre-populate shared repos from cache into workspace/

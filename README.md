@@ -33,6 +33,7 @@ Key variables:
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
 | `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
 | `AGENT_SHARED_REPOS` | | Comma-separated repos pre-populated in every workspace |
+| `AGENT_SKILLS_DIR` | | Directory of agent skills pre-populated in every workspace |
 | `AGENT_PLANNER_ENABLED` | `false` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |

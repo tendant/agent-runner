@@ -72,8 +72,9 @@ type AgentConfig struct {
 	CommitPrefix        string
 	Model               string   // Optional: --model flag for Claude CLI (e.g., "qwen3-coder:30b")
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
-	CLI                 string   // CLI backend: "claude" (default) or "codex"
+	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
+	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
@@ -246,6 +247,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
+	cfg.Agent.SkillsDir = os.Getenv("AGENT_SKILLS_DIR")
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)

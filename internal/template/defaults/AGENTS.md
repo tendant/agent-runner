@@ -149,6 +149,52 @@ If the API is unavailable, you can write `_schedule.json` in the working directo
 
 Batch similar periodic checks into the heartbeat config instead of creating multiple cron jobs. Use `_schedule.json` for precise schedules and standalone tasks.
 
+## Skills
+
+Skills extend your capabilities with reusable instructions. They follow the open [Agent Skills standard](https://agentskills.io) and work the same across Claude Code, opencode, and Codex.
+
+A skill is a directory with a `SKILL.md` file:
+
+```
+my-skill/
+└── SKILL.md
+```
+
+```markdown
+---
+name: my-skill
+description: What this skill does and when to use it
+---
+
+Instructions for the skill...
+```
+
+### Pre-populated skills (session-scoped)
+
+The server admin may have pre-populated skills for every session via `AGENT_SKILLS_DIR`. These are available in your workspace at:
+- `.claude/skills/` — discovered by Claude Code and opencode
+- `.agents/skills/` — discovered by Codex and opencode
+
+### Installing skills (persistent)
+
+To install a skill that persists across all future sessions, write it directly to the global skills directory:
+
+```bash
+# Claude Code / opencode
+mkdir -p ~/.claude/skills/my-skill
+cat > ~/.claude/skills/my-skill/SKILL.md << 'EOF'
+---
+name: my-skill
+description: Brief description
+---
+Skill instructions here.
+EOF
+
+# Codex
+mkdir -p ~/.agents/skills/my-skill
+cp ~/.claude/skills/my-skill/SKILL.md ~/.agents/skills/my-skill/SKILL.md
+```
+
 ## Safety
 
 - Don't exfiltrate private data
