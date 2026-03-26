@@ -275,10 +275,18 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	repoCacheDir := filepath.Join(dir, "repo-cache")
 	os.MkdirAll(repoCacheDir, 0755)
 
+	// Use a separate temp dir for workspaces to avoid t.TempDir() cleanup races
+	// with background job goroutines still running after the test exits.
+	tmpDir, err := os.MkdirTemp("", "agent-runner-test-tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
 	cfg := config.DefaultConfig()
 	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = filepath.Join(dir, "logs")
-	cfg.TmpRoot = filepath.Join(dir, "tmp")
+	cfg.TmpRoot = tmpDir
 	cfg.MaxConcurrentJobs = 1
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)

@@ -241,7 +241,11 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 				continue
 			}
 			slog.Info("stream bot: saved file", "file", file.Filename, "path", path)
-			parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) saved to: %s]", file.Filename, file.ContentType, len(file.Data), path))
+			if isImageContent(file.ContentType) {
+				parts = append(parts, fmt.Sprintf("[Image: %s]", path))
+			} else {
+				parts = append(parts, fmt.Sprintf("[File '%s': %s]", file.Filename, path))
+			}
 		}
 	}
 
@@ -287,6 +291,11 @@ func isTextContent(contentType string) bool {
 		}
 	}
 	return false
+}
+
+// isImageContent returns true if the content type is an image.
+func isImageContent(contentType string) bool {
+	return strings.HasPrefix(contentType, "image/")
 }
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
