@@ -1,6 +1,6 @@
 # Agent Runner
 
-An autonomous AI agent that executes tasks iteratively against Git repositories. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), and other compatible CLI agents — with planning, review phases, conversational interfaces (Telegram, web), and a REST API.
+An autonomous AI agent that executes tasks iteratively against Git repositories. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [opencode](https://github.com/sst/opencode), and other compatible CLI agents — with planning, review phases, conversational interfaces (Telegram, web), and a REST API.
 
 ## Prerequisites
 
@@ -8,6 +8,7 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
 - At least one supported agent CLI installed and on `$PATH`:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default)
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
+  - [opencode](https://github.com/sst/opencode) (set `AGENT_CLI=opencode`)
 - Git configured with credentials for your remote
 
 ## Quick Start
@@ -28,7 +29,7 @@ Key variables:
 |----------|---------|-------------|
 | `BIND` | `127.0.0.1:8080` | API listen address |
 | `API_KEY` | | Authentication key (optional) |
-| `AGENT_CLI` | `claude` | Agent CLI backend (`claude` or `codex`) |
+| `AGENT_CLI` | `claude` | Agent CLI backend (`claude`, `codex`, or `opencode`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
 | `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
 | `AGENT_SHARED_REPOS` | | Comma-separated repos pre-populated in every workspace |
