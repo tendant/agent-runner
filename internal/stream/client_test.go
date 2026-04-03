@@ -99,7 +99,7 @@ func TestUploadFile_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"id": "file-abc"})
+		json.NewEncoder(w).Encode(map[string]string{"file_id": "file-abc"})
 	}))
 	defer srv.Close()
 
