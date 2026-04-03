@@ -6,9 +6,9 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
-// AgentStarter is the interface used by the Telegram bot to start and poll agent sessions.
+// AgentStarter is the interface used by bots to start and poll agent sessions.
 type AgentStarter interface {
-	StartAgent(message string) (sessionID string, err error)
+	StartAgent(message, source string) (sessionID string, err error)
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
@@ -23,7 +23,7 @@ func NewAgentStarterAdapter(h *Handlers) *AgentStarterAdapter {
 }
 
 // StartAgent validates config, creates an agent session, and starts the background loop.
-func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
+func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error) {
 	h := a.handlers
 
 	paths := h.config.Agent.Paths
@@ -39,6 +39,7 @@ func (a *AgentStarterAdapter) StartAgent(message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session.Source = source
 
 	sessionID := session.ID
 	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {

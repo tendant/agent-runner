@@ -27,7 +27,7 @@ func integrationEnv(t *testing.T) (serverURL, token, convID string) {
 // mockStarter is a simple mock for integration testing.
 type mockStarter struct{}
 
-func (m *mockStarter) StartAgent(message string) (string, error) {
+func (m *mockStarter) StartAgent(message, source string) (string, error) {
 	return "test-session-123", nil
 }
 

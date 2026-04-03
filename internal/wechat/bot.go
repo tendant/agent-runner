@@ -18,7 +18,7 @@ import (
 
 // AgentStarter is the interface for starting and polling agent sessions.
 type AgentStarter interface {
-	StartAgent(message string) (sessionID string, err error)
+	StartAgent(message, source string) (sessionID string, err error)
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
@@ -422,7 +422,7 @@ func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conve
 		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
 	}
 
-	sessionID, err := b.starter.StartAgent(message)
+	sessionID, err := b.starter.StartAgent(message, "wechat")
 	if err != nil {
 		slog.Error("wechat: failed to start agent", "user_id", userID, "error", err)
 		conv.SetState(conversation.StateGathering)

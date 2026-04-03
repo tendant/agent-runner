@@ -53,6 +53,7 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	if err != nil {
 		return err
 	}
+	session.Source = "runner"
 
 	sessionID := session.ID
 	msgPreview := payload.Message

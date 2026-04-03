@@ -52,6 +52,7 @@ type Session struct {
 	mu sync.RWMutex
 
 	ID                   string            `json:"session_id"`
+	Source               string            `json:"source,omitempty"` // originating channel: api, telegram, wechat, stream, runner
 	Message              string            `json:"message"`
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
@@ -198,6 +199,7 @@ func (s *Session) Snapshot() *Session {
 
 	snap := &Session{
 		ID:                  s.ID,
+		Source:              s.Source,
 		Message:             s.Message,
 		Paths:               append([]string{}, s.Paths...),
 		Author:              s.Author,

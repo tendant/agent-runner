@@ -42,6 +42,10 @@ const maxReviewerCorrections = 3
 // in the workspace and records results.
 func (h *Handlers) executeAgent(session *agent.Session) {
 	sessionID := session.ID
+	source := session.Source
+	if source == "" {
+		source = "api"
+	}
 	message := session.Message
 	maxIter := session.MaxIterations
 	maxSeconds := session.MaxTotalSeconds
@@ -50,16 +54,16 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	startTime := time.Now()
 	deadline := startTime.Add(time.Duration(maxSeconds) * time.Second)
 
-	metrics.ActiveSessions.Inc()
+	metrics.ActiveSessions.WithLabelValues(source).Inc()
 
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 
 	defer func() {
-		metrics.ActiveSessions.Dec()
+		metrics.ActiveSessions.WithLabelValues(source).Dec()
 		snap0 := liveSession.Snapshot()
-		metrics.SessionsTotal.WithLabelValues(string(snap0.Status)).Inc()
+		metrics.SessionsTotal.WithLabelValues(string(snap0.Status), source).Inc()
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.RepoCacheRoot)
@@ -252,10 +256,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		result.Retry = errorContext != ""
 		liveSession.AddIteration(result)
 
-		metrics.IterationsTotal.WithLabelValues(string(result.Status)).Inc()
-		metrics.IterationDurationSeconds.Observe(float64(result.DurationSecs))
+		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
+		metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
 		if result.CostUSD > 0 {
-			metrics.CostUSDTotal.Add(result.CostUSD)
+			metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
 		}
 
 		// Update completed steps from progress file and sync to plan
@@ -345,10 +349,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			result.Retry = true
 			liveSession.AddIteration(result)
 
-			metrics.IterationsTotal.WithLabelValues(string(result.Status)).Inc()
-			metrics.IterationDurationSeconds.Observe(float64(result.DurationSecs))
+			metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
+			metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
 			if result.CostUSD > 0 {
-				metrics.CostUSDTotal.Add(result.CostUSD)
+				metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
 			}
 
 			// Update progress after correction

@@ -45,6 +45,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	session.Source = "api"
 
 	// Capture for response before goroutine
 	sessionID := session.ID

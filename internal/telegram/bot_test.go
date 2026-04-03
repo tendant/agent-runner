@@ -170,7 +170,7 @@ type mockStarter struct {
 	startErr     error
 }
 
-func (m *mockStarter) StartAgent(message string) (string, error) {
+func (m *mockStarter) StartAgent(message, source string) (string, error) {
 	m.startCalled = true
 	m.startMessage = message
 	return m.startID, m.startErr

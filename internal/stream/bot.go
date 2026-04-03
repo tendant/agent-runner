@@ -21,7 +21,7 @@ import (
 
 // AgentStarter is the interface for starting and polling agent sessions.
 type AgentStarter interface {
-	StartAgent(message string) (sessionID string, err error)
+	StartAgent(message, source string) (sessionID string, err error)
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
@@ -363,7 +363,7 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
 	}
 
-	sessionID, err := b.starter.StartAgent(message)
+	sessionID, err := b.starter.StartAgent(message, "stream")
 	if err != nil {
 		conv.SetState(conversation.StateGathering)
 		b.emitFinal(ctx, convID, fmt.Sprintf("Failed to start agent: %s", err))
