@@ -26,6 +26,7 @@ e2e/*.json
 # Binary
 agent-runner
 agent-cli
+wechat-login
 
 # OS files
 .DS_Store
