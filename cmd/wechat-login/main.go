@@ -8,10 +8,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
@@ -122,15 +124,70 @@ func main() {
 				fmt.Fprintln(os.Stderr, "error: confirmed but no bot_token in response")
 				os.Exit(1)
 			}
-			fmt.Printf("\nWECHAT_TOKEN=%s\n", statusResp.BotToken)
-			if statusResp.BaseURL != "" && statusResp.BaseURL != *baseURL {
-				fmt.Printf("WECHAT_BASE_URL=%s\n", statusResp.BaseURL)
+			updates := map[string]string{
+				"WECHAT_TOKEN": statusResp.BotToken,
 			}
-			fmt.Printf("\nAdd the above to your .env file and restart agent-runner.\n")
+			if statusResp.BaseURL != "" && statusResp.BaseURL != *baseURL {
+				updates["WECHAT_BASE_URL"] = statusResp.BaseURL
+			}
+			if err := upsertEnvFile(".env", updates); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not write .env: %v\n", err)
+				fmt.Printf("WECHAT_TOKEN=%s\n", statusResp.BotToken)
+				if statusResp.BaseURL != "" && statusResp.BaseURL != *baseURL {
+					fmt.Printf("WECHAT_BASE_URL=%s\n", statusResp.BaseURL)
+				}
+			} else {
+				fmt.Println("Saved to .env — restart agent-runner to apply.")
+			}
 			return
 
 		default:
 			fmt.Printf("\nunknown status: %s\n", statusResp.Status)
 		}
 	}
+}
+
+// upsertEnvFile updates or appends key=value pairs in a .env file.
+// Creates the file if it does not exist.
+func upsertEnvFile(path string, updates map[string]string) error {
+	var lines []string
+	remaining := make(map[string]string, len(updates))
+	for k, v := range updates {
+		remaining[k] = v
+	}
+
+	f, err := os.Open(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := scanner.Text()
+			key, _, found := strings.Cut(line, "=")
+			if found {
+				key = strings.TrimSpace(key)
+				if val, ok := remaining[key]; ok {
+					line = key + "=" + val
+					delete(remaining, key)
+				}
+			}
+			lines = append(lines, line)
+		}
+		f.Close()
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+	}
+
+	// Append keys that were not already present.
+	for k, v := range remaining {
+		lines = append(lines, k+"="+v)
+	}
+
+	out := strings.Join(lines, "\n")
+	if len(lines) > 0 {
+		out += "\n"
+	}
+	return os.WriteFile(path, []byte(out), 0600)
 }
