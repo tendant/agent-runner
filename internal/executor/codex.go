@@ -49,10 +49,12 @@ func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePa
 	if e.Model != "" {
 		args = append(args, "-m", e.Model)
 	}
-	args = append(args, prompt)
+	// Pass large prompts over stdin to avoid argv length limits.
+	args = append(args, "-")
 
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = workspacePath
+	cmd.Stdin = strings.NewReader(prompt)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -105,4 +107,3 @@ func (e *CodexExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, works
 
 	return result, executionLog, err
 }
-
