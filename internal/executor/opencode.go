@@ -66,7 +66,12 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 		return result, result.Error
 	}
 
-	result.Output = parseOpencodeOutput(stdout.Bytes())
+	output, parseErr := parseOpencodeOutput(stdout.Bytes())
+	if parseErr != nil {
+		result.Error = parseErr
+		return result, parseErr
+	}
+	result.Output = output
 	return result, nil
 }
 
@@ -91,19 +96,28 @@ func (e *OpencodeExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, wo
 // parseOpencodeOutput extracts the final assistant text from opencode's NDJSON event stream.
 // opencode emits one JSON event per line; text content accumulates in message.part.updated
 // events. The last non-empty text value is the complete assistant response.
-func parseOpencodeOutput(data []byte) string {
+// Returns ("", errMsg) if an error event is found with no text output.
+func parseOpencodeOutput(data []byte) (string, error) {
+	type errData struct {
+		Message string `json:"message"`
+	}
+	type errInfo struct {
+		Name string  `json:"name"`
+		Data errData `json:"data"`
+	}
 	type eventPart struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
 	type event struct {
-		Type string    `json:"type"`
-		Part eventPart `json:"part"`
+		Type  string    `json:"type"`
+		Part  eventPart `json:"part"`
+		Error errInfo   `json:"error"`
 	}
 
 	var lastText string
+	var lastErr error
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	// Increase buffer for large outputs
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -114,14 +128,30 @@ func parseOpencodeOutput(data []byte) string {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if ev.Type == "message.part.updated" && ev.Part.Type == "text" && ev.Part.Text != "" {
-			lastText = ev.Part.Text
+		switch ev.Type {
+		case "message.part.updated":
+			if ev.Part.Type == "text" && ev.Part.Text != "" {
+				lastText = ev.Part.Text
+				lastErr = nil
+			}
+		case "error":
+			msg := ev.Error.Data.Message
+			if msg == "" {
+				msg = ev.Error.Name
+			}
+			if msg == "" {
+				msg = "unknown opencode error"
+			}
+			lastErr = fmt.Errorf("OPENCODE_ERROR: %s", msg)
 		}
 	}
 
 	if lastText != "" {
-		return lastText
+		return lastText, nil
 	}
-	// Fallback: return raw stdout if no text events were found
-	return strings.TrimSpace(string(data))
+	if lastErr != nil {
+		return "", lastErr
+	}
+	// Fallback: return raw stdout if no structured events were found
+	return strings.TrimSpace(string(data)), nil
 }
