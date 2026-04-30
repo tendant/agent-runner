@@ -255,7 +255,7 @@ func fileState(path string) string {
 
 const helpText = `/help      show this message
 /config    show current configuration and readiness
-/set KEY VALUE  set a config value (saved to .env.local)
+/set KEY VALUE  set a config value (saved to .env.local, survives restart)
            examples:
              /set AGENT_CLI opencode
              /set AGENT_PROVIDER deepseek
