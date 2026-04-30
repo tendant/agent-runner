@@ -110,6 +110,21 @@ func (h *Handlers) UpdateExecutor() {
 	)
 }
 
+// getReasoningExecutor returns an executor using the reasoning model (for planner/reviewer).
+// Falls back to the main executor when no separate reasoning model is configured.
+func (h *Handlers) getReasoningExecutor() executor.Executor {
+	cfg := h.config.Agent
+	provider := cfg.ReasoningProvider
+	model := cfg.ReasoningModel
+	if provider == "" {
+		provider = cfg.Provider
+	}
+	if model == "" {
+		return h.getExecutor()
+	}
+	return executor.NewExecutor(cfg.CLI, provider, model, cfg.MaxTurns)
+}
+
 // RunRequest represents the POST /run request body
 type RunRequest struct {
 	Project       string   `json:"project"`

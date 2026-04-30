@@ -34,8 +34,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Agent.MaxTurns != 50 {
 		t.Errorf("expected Agent.MaxTurns 50, got %d", cfg.Agent.MaxTurns)
 	}
-	if cfg.Agent.Model != "" {
-		t.Errorf("expected Agent.Model empty, got %s", cfg.Agent.Model)
+	if cfg.Agent.Model != "deepseek-v4-flash" {
+		t.Errorf("expected Agent.Model deepseek-v4-flash, got %s", cfg.Agent.Model)
+	}
+	if cfg.Agent.ReasoningModel != "deepseek-v4-pro" {
+		t.Errorf("expected Agent.ReasoningModel deepseek-v4-pro, got %s", cfg.Agent.ReasoningModel)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should pass validation, got: %v", err)

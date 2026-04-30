@@ -182,7 +182,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	var plan *subagent.PlanResult
 	if h.config.Agent.PlannerEnabled {
 		slog.Info("running planner", "session_id", sessionID)
-		planner := subagent.NewPlanner(h.getExecutor(), preamble)
+		planner := subagent.NewPlanner(h.getReasoningExecutor(), preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
@@ -324,7 +324,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
-		reviewer := subagent.NewReviewer(h.getExecutor())
+		reviewer := subagent.NewReviewer(h.getReasoningExecutor())
 
 		for correction := 0; correction <= maxReviewerCorrections; correction++ {
 			if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {

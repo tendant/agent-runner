@@ -72,6 +72,8 @@ type AgentConfig struct {
 	CommitPrefix        string
 	Provider            string   // Optional: model provider (e.g., "deepseek", "openrouter") — opencode only; prepended to Model as "provider/model"
 	Model               string   // Optional: model name (e.g., "deepseek-chat"); combined with Provider when set
+	ReasoningProvider   string   // Provider for planner/reviewer (defaults to Provider)
+	ReasoningModel      string   // Model for planner/reviewer; falls back to Model if empty
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
@@ -171,6 +173,10 @@ func DefaultConfig() *Config {
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
 			CLI:                 "opencode",
+			Provider:          "deepseek",
+			Model:             "deepseek-v4-flash",
+			ReasoningProvider: "deepseek",
+			ReasoningModel:    "deepseek-v4-pro",
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
 		MemoryDays:          7,
@@ -246,6 +252,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
+	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
+	cfg.Agent.ReasoningModel = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.ReasoningModel)
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
