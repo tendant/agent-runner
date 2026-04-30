@@ -170,7 +170,7 @@ func DefaultConfig() *Config {
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
-			CLI:                 "claude",
+			CLI:                 "opencode",
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
 		MemoryDays:          7,

@@ -8,6 +8,11 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 )
 
+const (
+	cmdSetAgent  = "/set-agent"
+	cmdSetPrompt = "/set-prompt"
+)
+
 // Commander handles chat configuration commands. Zero LLM dependencies —
 // safe to call before any model or provider is configured.
 type Commander struct {
@@ -22,9 +27,24 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 
 // Handle parses text and executes a recognised command. Returns the reply
 // and true when a command was handled; returns ("", false) otherwise.
+// bareCommands are single-word commands that are safe to accept without a leading slash.
+// Multi-word commands (set, set-agent, set-prompt) require the slash to avoid false
+// positives on agent instructions that happen to start with those words.
+var bareCommands = []string{"help", "config", "bootstrap"}
+
 func (c *Commander) Handle(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
+	// Normalise: accept "config", "help", "bootstrap" without leading slash.
+	if !strings.HasPrefix(lower, "/") {
+		for _, cmd := range bareCommands {
+			if lower == cmd || strings.HasPrefix(lower, cmd+" ") {
+				text = "/" + text
+				lower = "/" + lower
+				break
+			}
+		}
+	}
 
 	switch {
 	case lower == "/help":
@@ -36,6 +56,15 @@ func (c *Commander) Handle(text string) (string, bool) {
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
 		return c.handleBootstrap(force), true
+	case lower == "/install-cli" || strings.HasPrefix(lower, "/install-cli "):
+		arg := strings.TrimSpace(text[len("/install-cli"):])
+		return c.handleInstallCLI(arg), true
+	case strings.HasPrefix(lower, cmdSetAgent+" ") || lower == cmdSetAgent:
+		content := strings.TrimSpace(text[len(cmdSetAgent):])
+		return c.handleSetFile("agent.md", content, true), true
+	case strings.HasPrefix(lower, cmdSetPrompt+" ") || lower == cmdSetPrompt:
+		content := strings.TrimSpace(text[len(cmdSetPrompt):])
+		return c.handleSetFile("prompt.md", content, false), true
 	}
 	return "", false
 }
@@ -49,9 +78,10 @@ func (c *Commander) handleConfig() string {
 	// CLI always shown — has default.
 	cli := c.cfg.Agent.CLI
 	if cli == "" {
-		cli = "claude"
+		cli = "opencode"
 	}
 	fmt.Fprintf(&b, "cli=%s\n", cli)
+	fmt.Fprintf(&b, "cli_installed=%v\n", CLIInstalled(cli))
 
 	if c.cfg.Agent.Provider != "" {
 		fmt.Fprintf(&b, "provider=%s\n", c.cfg.Agent.Provider)
@@ -121,6 +151,46 @@ func (c *Commander) handleSet(args string) string {
 	return fmt.Sprintf("ok %s=%s", key, val)
 }
 
+// handleInstallCLI installs the given agent CLI (or the configured default) via npm.
+func (c *Commander) handleInstallCLI(arg string) string {
+	cli := strings.TrimSpace(arg)
+	if cli == "" {
+		cli = c.cfg.Agent.CLI
+	}
+	if cli == "" {
+		cli = "opencode"
+	}
+	if CLIInstalled(cli) {
+		return fmt.Sprintf("ok %s already installed", cli)
+	}
+	out, err := installCLI(cli)
+	out = strings.TrimSpace(out)
+	if err != nil {
+		if out != "" {
+			return fmt.Sprintf("error installing %s: %v\n%s", cli, err, out)
+		}
+		return fmt.Sprintf("error installing %s: %v", cli, err)
+	}
+	return fmt.Sprintf("ok installed %s\n%s", cli, out)
+}
+
+// handleSetFile writes content to the given prompt file (agent.md or prompt.md).
+// isSystem=true targets the system-prompt path, isSystem=false targets the prompt-file path.
+func (c *Commander) handleSetFile(name, content string, isSystem bool) string {
+	if content == "" {
+		return fmt.Sprintf("error: usage: %s <content>", map[bool]string{true: cmdSetAgent, false: cmdSetPrompt}[isSystem])
+	}
+	systemPath, promptPath := c.handlers.bootstrapPaths()
+	path := promptPath
+	if isSystem {
+		path = systemPath
+	}
+	if err := os.WriteFile(path, []byte(content+"\n"), 0644); err != nil {
+		return fmt.Sprintf("error: write %s: %v", name, err)
+	}
+	return fmt.Sprintf("ok wrote %s (%d bytes)", name, len(content))
+}
+
 // handleBootstrap creates default agent.md and prompt.md.
 func (c *Commander) handleBootstrap(force bool) string {
 	systemPath, promptPath := c.handlers.bootstrapPaths()
@@ -140,7 +210,7 @@ func (c *Commander) handleBootstrap(force bool) string {
 
 	cli := c.cfg.Agent.CLI
 	if cli == "" {
-		cli = "claude"
+		cli = "opencode"
 	}
 	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
@@ -191,8 +261,12 @@ const helpText = `/help      show this message
              /set AGENT_PROVIDER deepseek
              /set AGENT_MODEL deepseek-chat
              /set DEEPSEEK_API_KEY <key>
-/bootstrap create default agent.md and prompt.md
-/bootstrap force  overwrite existing files`
+/install-cli [cli]  install agent CLI via npm (default: configured CLI)
+                    e.g. /install-cli opencode  /install-cli claude
+/bootstrap      create default agent.md and prompt.md (also installs CLI)
+/bootstrap force  overwrite existing files
+/set-agent <content>   overwrite agent.md with the given content
+/set-prompt <content>  overwrite prompt.md with the given content`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -36,11 +38,13 @@ const defaultPromptMD = `# Task Workflow
 
 // BootstrapResponse is returned by POST /bootstrap.
 type BootstrapResponse struct {
-	Created  []string        `json:"created"`
-	Skipped  []string        `json:"skipped"`
-	Config   BootstrapConfig `json:"config"`
-	Warnings []string        `json:"warnings"`
-	Ready    bool            `json:"ready"`
+	Created      []string        `json:"created"`
+	Skipped      []string        `json:"skipped"`
+	Config       BootstrapConfig `json:"config"`
+	Warnings     []string        `json:"warnings"`
+	Ready        bool            `json:"ready"`
+	CLIInstalled bool            `json:"cli_installed"`
+	CLIOutput    string          `json:"cli_output,omitempty"`
 }
 
 // BootstrapConfig summarises the current executor configuration.
@@ -121,15 +125,30 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	cli := h.config.Agent.CLI
 	if cli == "" {
-		cli = "claude"
+		cli = "opencode"
 	}
 	resp.Config = BootstrapConfig{
 		CLI:      cli,
 		Provider: h.config.Agent.Provider,
 		Model:    h.config.Agent.Model,
 	}
+
+	// Install the CLI if it is not already present.
+	if CLIInstalled(cli) {
+		resp.CLIInstalled = true
+	} else {
+		out, err := installCLI(cli)
+		resp.CLIOutput = strings.TrimSpace(out)
+		if err != nil {
+			resp.CLIOutput = fmt.Sprintf("install failed: %v\n%s", err, resp.CLIOutput)
+			resp.CLIInstalled = false
+		} else {
+			resp.CLIInstalled = true
+		}
+	}
+
 	resp.Warnings = bootstrapWarnings(cli, h.config.Agent.Provider)
-	resp.Ready = len(resp.Warnings) == 0
+	resp.Ready = len(resp.Warnings) == 0 && resp.CLIInstalled
 
 	h.writeJSON(w, http.StatusOK, resp)
 }
@@ -146,6 +165,54 @@ func (h *Handlers) bootstrapPaths() (systemPrompt, promptFile string) {
 		promptFile = "./prompt.md"
 	}
 	return
+}
+
+// CLIInstalled reports whether the given CLI binary is present in PATH.
+func CLIInstalled(cli string) bool {
+	if cli == "" {
+		cli = "opencode"
+	}
+	_, err := exec.LookPath(cli)
+	return err == nil
+}
+
+// installCLI installs the given agent CLI backend.
+// opencode is downloaded from GitHub releases; claude and codex use npm.
+// Returns combined output and any error.
+func installCLI(cli string) (string, error) {
+	var cmd *exec.Cmd
+	switch cli {
+	case "opencode":
+		// Download the latest Linux binary from GitHub releases.
+		script := `set -e
+ARCH=$(uname -m)
+URL=$(curl -fsSL https://api.github.com/repos/sst/opencode/releases/latest \
+  | grep browser_download_url | grep linux | grep "$ARCH" | head -1 \
+  | cut -d'"' -f4)
+curl -fsSL "$URL" -o /usr/local/bin/opencode
+chmod +x /usr/local/bin/opencode`
+		cmd = exec.Command("sh", "-c", script)
+	case "codex":
+		cmd = exec.Command("npm", "install", "-g", "@openai/codex")
+	default: // claude
+		cmd = exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code")
+	}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	return buf.String(), cmd.Run()
+}
+
+// cliInstallHint returns a human-readable install hint for /config output.
+func cliInstallHint(cli string) string {
+	switch cli {
+	case "opencode":
+		return "github.com/sst/opencode (latest linux binary)"
+	case "codex":
+		return "npm install -g @openai/codex"
+	default:
+		return "npm install -g @anthropic-ai/claude-code"
+	}
 }
 
 // bootstrapWarnings returns human-readable warnings for missing credentials.

@@ -6,6 +6,26 @@ import (
 	"strings"
 )
 
+const (
+	// DoneSignal is the marker the agent outputs when the task is fully complete.
+	DoneSignal = "TASK: DONE"
+
+	doneInstruction = "When the task is fully complete and no further iterations are needed, output `TASK: DONE` on its own line at the end of your response. If there is still work to do, do NOT output it."
+)
+
+// ParseDoneSignal checks whether the agent's output contains the completion signal.
+// Returns the output with the signal line removed and whether the task is done.
+func ParseDoneSignal(output string) (string, bool) {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) == DoneSignal {
+			rest := append(lines[:i], lines[i+1:]...)
+			return strings.TrimSpace(strings.Join(rest, "\n")), true
+		}
+	}
+	return output, false
+}
+
 // PromptBuilder assembles dynamic iteration prompts by combining
 // the preamble (resolved template), plan state, and workspace state.
 type PromptBuilder struct {
@@ -94,16 +114,20 @@ func (pb *PromptBuilder) Build(ctx context.Context, workspacePath string, plan *
 	}
 
 	// Iteration metadata — no workflow instructions here; the preamble drives behavior
-	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n", iteration))
+	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n\n", iteration))
+	sb.WriteString(doneInstruction)
+	sb.WriteString("\n")
 
 	return sb.String()
 }
 
-// BuildStatic returns the preamble, optionally with error context appended.
-// Used for backward compatibility when the planner is disabled.
+// BuildStatic returns the preamble with the done instruction appended,
+// optionally with error context. Used when the planner is disabled.
 func (pb *PromptBuilder) BuildStatic(message string, errorContext string) string {
+	parts := []string{pb.preamble}
 	if errorContext != "" {
-		return pb.preamble + "\n\n" + errorContext
+		parts = append(parts, errorContext)
 	}
-	return pb.preamble
+	parts = append(parts, doneInstruction)
+	return strings.Join(parts, "\n\n")
 }

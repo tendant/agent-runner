@@ -1,0 +1,11 @@
+.git
+.env
+.env.local
+*.md
+agent-runner
+agent-cli
+wechat-login
+logs/
+tmp/
+repos/
+repo-cache/

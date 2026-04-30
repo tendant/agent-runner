@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -187,6 +188,17 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
 		plan, err = planner.Plan(ctx, checkoutPath, message)
 		if err != nil {
+			var rejected *subagent.PlanRejectedError
+			if errors.As(err, &rejected) {
+				slog.Info("planner rejected message (not a task)", "session_id", sessionID)
+				liveSession.AddIteration(agent.IterationResult{
+					Iteration: 1,
+					Status:    agent.IterationStatusSuccess,
+					Output:    rejected.Reply,
+				})
+				liveSession.Complete()
+				return
+			}
 			slog.Warn("planner failed (non-fatal)", "session_id", sessionID, "error", err)
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
@@ -254,12 +266,24 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
+
+		// Check if the agent signalled task completion; strip the marker from output.
+		taskDone := false
+		if result.Output != "" {
+			result.Output, taskDone = subagent.ParseDoneSignal(result.Output)
+		}
+
 		liveSession.AddIteration(result)
 
 		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
 		metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
 		if result.CostUSD > 0 {
 			metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
+		}
+
+		if taskDone {
+			slog.Info("agent signalled task complete", "session_id", sessionID, "iteration", i)
+			break
 		}
 
 		// Update completed steps from progress file and sync to plan

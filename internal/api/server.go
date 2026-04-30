@@ -151,6 +151,15 @@ func (s *Server) Start() error {
 		return err
 	}
 
+	// Warn if the configured agent CLI is not installed.
+	cli := s.config.Agent.CLI
+	if cli == "" {
+		cli = "opencode"
+	}
+	if !CLIInstalled(cli) {
+		slog.Warn("agent CLI not found in PATH — run /install-cli or /bootstrap to install", "cli", cli, "install", cliInstallHint(cli))
+	}
+
 	// Startup cleanup
 	if s.config.StartupCleanupStaleJobs {
 		workspaceManager := executor.NewWorkspaceManager(s.config.TmpRoot, s.config.MaxRuntimeSeconds)

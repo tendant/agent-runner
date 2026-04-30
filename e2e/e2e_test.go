@@ -379,10 +379,32 @@ func TestE2E_ApiKeyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+
+	var jobResp map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&jobResp)
 	resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusAccepted {
 		t.Errorf("expected 202 with valid key, got %d", resp2.StatusCode)
+	}
+
+	// Wait for the job to finish so its goroutine releases files before TempDir cleanup.
+	if jobID, ok := jobResp["job_id"].(string); ok {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			r, _ := http.NewRequest(http.MethodGet, ts.URL+"/job/"+jobID, nil)
+			r.Header.Set("X-API-Key", "secret-key-123")
+			resp3, err := http.DefaultClient.Do(r)
+			if err == nil {
+				var jr map[string]interface{}
+				json.NewDecoder(resp3.Body).Decode(&jr)
+				resp3.Body.Close()
+				if s, _ := jr["status"].(string); s == "completed" || s == "failed" {
+					break
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 }
 

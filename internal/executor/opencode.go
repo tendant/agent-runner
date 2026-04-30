@@ -36,7 +36,7 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 		prompt = systemPrompt + "\n\n" + instruction
 	}
 
-	args := []string{"run", "--format", "json"}
+	args := []string{"run", "--dangerously-skip-permissions", "--format", "json"}
 	if e.Model != "" {
 		args = append(args, "--model", e.Model)
 	}

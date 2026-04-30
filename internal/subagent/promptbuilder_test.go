@@ -13,8 +13,11 @@ func TestPromptBuilder_BuildStatic(t *testing.T) {
 	pb := NewPromptBuilder("You are a helpful assistant.\n\nTask: Do something")
 	result := pb.BuildStatic("ignored message", "")
 
-	if result != "You are a helpful assistant.\n\nTask: Do something" {
-		t.Errorf("expected preamble unchanged, got '%s'", result)
+	if !strings.Contains(result, "You are a helpful assistant.") {
+		t.Error("expected preamble in output")
+	}
+	if !strings.Contains(result, DoneSignal) {
+		t.Error("expected done instruction in output")
 	}
 }
 

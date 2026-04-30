@@ -34,6 +34,14 @@ Rules:
 After completing a plan step, update ` + "`_progress.json`" + ` in the workspace root with: {"completed_steps": ["1", "2"]} listing all completed step IDs.
 `
 
+// PlanRejectedError is returned by Plan when the LLM responded conversationally
+// rather than producing a structured plan — the message is not an actionable task.
+type PlanRejectedError struct {
+	Reply string // the LLM's conversational reply
+}
+
+func (e *PlanRejectedError) Error() string { return "not a task: " + e.Reply }
+
 // Planner is a sub-agent that produces a structured plan before the iteration loop.
 type Planner struct {
 	executor executor.Executor
@@ -65,6 +73,11 @@ func (p *Planner) Plan(ctx context.Context, workspacePath, message string) (*Pla
 
 	plan, err := parsePlanResult(output)
 	if err != nil {
+		// If the output is non-empty and contains no JSON object, the LLM responded
+		// conversationally — treat it as a rejection rather than a parse failure.
+		if output != "" && !strings.Contains(output, "{") {
+			return nil, &PlanRejectedError{Reply: output}
+		}
 		return nil, fmt.Errorf("failed to parse planner response: %w (raw: %s)", err, output)
 	}
 
