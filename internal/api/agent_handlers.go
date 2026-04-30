@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
 // AgentRequest represents the POST /agent request body
@@ -30,10 +32,25 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle configuration commands directly — no agent session needed.
+	// Handle configuration commands: create a pre-completed session so the
+	// client's normal polling flow works without any special-casing.
 	if h.commander != nil {
 		if reply, ok := h.commander.Handle(req.Message); ok {
-			h.writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
+			session, err := h.agentManager.CreateSession(req.Message, nil, "", "", 1, 0)
+			if err != nil {
+				h.writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			session.AddIteration(agent.IterationResult{
+				Iteration: 1,
+				Status:    agent.IterationStatusSuccess,
+				Output:    reply,
+			})
+			session.Complete()
+			h.writeJSON(w, http.StatusAccepted, map[string]any{
+				"session_id": session.ID,
+				"status":     "queued",
+			})
 			return
 		}
 	}
