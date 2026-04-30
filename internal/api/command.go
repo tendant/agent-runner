@@ -27,6 +27,8 @@ func (c *Commander) Handle(text string) (string, bool) {
 	lower := strings.ToLower(text)
 
 	switch {
+	case lower == "/help":
+		return helpText, true
 	case lower == "/config":
 		return c.handleConfig(), true
 	case strings.HasPrefix(lower, "/set "):
@@ -180,6 +182,17 @@ func fileState(path string) string {
 	}
 	return "missing"
 }
+
+const helpText = `/help      show this message
+/config    show current configuration and readiness
+/set KEY VALUE  set a config value (saved to .env.local)
+           examples:
+             /set AGENT_CLI opencode
+             /set AGENT_PROVIDER deepseek
+             /set AGENT_MODEL deepseek-chat
+             /set DEEPSEEK_API_KEY <key>
+/bootstrap create default agent.md and prompt.md
+/bootstrap force  overwrite existing files`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{
