@@ -30,6 +30,14 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle configuration commands directly — no agent session needed.
+	if h.commander != nil {
+		if reply, ok := h.commander.Handle(req.Message); ok {
+			h.writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
+			return
+		}
+	}
+
 	paths := h.config.Agent.Paths
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix

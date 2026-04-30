@@ -38,6 +38,7 @@ type Handlers struct {
 	notifier         Notifier
 	workflowClient   WorkflowScheduler
 	runnerDB         RunnerDB // set when runner is enabled, for debug queries
+	commander        *Commander
 }
 
 // NewHandlers creates a new handlers instance
@@ -82,6 +83,11 @@ type RunnerDB interface {
 // SetRunnerDB sets the runner DB for debug endpoints.
 func (h *Handlers) SetRunnerDB(db RunnerDB) {
 	h.runnerDB = db
+}
+
+// SetCommander wires the commander for use in HTTP handlers.
+func (h *Handlers) SetCommander(c *Commander) {
+	h.commander = c
 }
 
 // getExecutor returns the current executor, safe for concurrent use.

@@ -113,6 +113,7 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 	commander := NewCommander(cfg, handlers)
+	handlers.SetCommander(commander)
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, commander)
 	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer, commander)
