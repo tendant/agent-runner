@@ -47,11 +47,16 @@ func NewClaudeExecutor(model string, maxTurns int) *ClaudeExecutor {
 
 // NewExecutor creates an Executor for the given CLI backend.
 // Supported values for cli: "claude" (default), "codex", "opencode".
-func NewExecutor(cli, model string, maxTurns int) Executor {
+// For the opencode backend, provider and model are combined as "provider/model"
+// when both are non-empty. For other backends, provider is ignored.
+func NewExecutor(cli, provider, model string, maxTurns int) Executor {
 	switch cli {
 	case "codex":
 		return NewCodexExecutor(model)
 	case "opencode":
+		if provider != "" && model != "" {
+			model = provider + "/" + model
+		}
 		return NewOpencodeExecutor(model, maxTurns)
 	default:
 		return NewClaudeExecutor(model, maxTurns)

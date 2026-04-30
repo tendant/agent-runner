@@ -129,7 +129,7 @@ func parseOpencodeOutput(data []byte) (string, error) {
 			continue
 		}
 		switch ev.Type {
-		case "message.part.updated":
+		case "message.part.updated", "text":
 			if ev.Part.Type == "text" && ev.Part.Text != "" {
 				lastText = ev.Part.Text
 				lastErr = nil

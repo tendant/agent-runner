@@ -181,7 +181,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	var plan *subagent.PlanResult
 	if h.config.Agent.PlannerEnabled {
 		slog.Info("running planner", "session_id", sessionID)
-		planner := subagent.NewPlanner(h.executor, preamble)
+		planner := subagent.NewPlanner(h.getExecutor(), preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
@@ -300,7 +300,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
-		reviewer := subagent.NewReviewer(h.executor)
+		reviewer := subagent.NewReviewer(h.getExecutor())
 
 		for correction := 0; correction <= maxReviewerCorrections; correction++ {
 			if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
@@ -453,7 +453,7 @@ func (h *Handlers) executeIteration(
 	defer cancel()
 
 	// Execute Claude Code with system prompt + user message
-	execResult, _, execErr := h.executor.ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
+	execResult, _, execErr := h.getExecutor().ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)

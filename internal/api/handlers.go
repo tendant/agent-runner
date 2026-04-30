@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -29,6 +30,7 @@ type Handlers struct {
 	jobManager       *jobs.Manager
 	agentManager     *agent.Manager
 	gitOps           *git.Operations
+	execMu           sync.RWMutex
 	executor         executor.Executor
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
@@ -80,6 +82,26 @@ type RunnerDB interface {
 // SetRunnerDB sets the runner DB for debug endpoints.
 func (h *Handlers) SetRunnerDB(db RunnerDB) {
 	h.runnerDB = db
+}
+
+// getExecutor returns the current executor, safe for concurrent use.
+func (h *Handlers) getExecutor() executor.Executor {
+	h.execMu.RLock()
+	defer h.execMu.RUnlock()
+	return h.executor
+}
+
+// UpdateExecutor recreates the executor from the current config. Called after
+// AGENT_CLI / AGENT_PROVIDER / AGENT_MODEL are changed at runtime.
+func (h *Handlers) UpdateExecutor() {
+	h.execMu.Lock()
+	defer h.execMu.Unlock()
+	h.executor = executor.NewExecutor(
+		h.config.Agent.CLI,
+		h.config.Agent.Provider,
+		h.config.Agent.Model,
+		h.config.Agent.MaxTurns,
+	)
 }
 
 // RunRequest represents the POST /run request body
@@ -293,7 +315,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	defer h.workspaceManager.CleanupWorkspace(workspacePath)
 
 	// Step 3: Execute Claude Code
-	result, executionLog, err := h.executor.ExecuteWithLog(ctx, workspacePath, jobInstruction)
+	result, executionLog, err := h.getExecutor().ExecuteWithLog(ctx, workspacePath, jobInstruction)
 	logData.ExecutionLog = executionLog
 
 	if err != nil {

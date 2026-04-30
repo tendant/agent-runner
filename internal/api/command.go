@@ -1,0 +1,193 @@
+package api
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/agent-runner/agent-runner/internal/config"
+)
+
+// Commander handles chat configuration commands. Zero LLM dependencies —
+// safe to call before any model or provider is configured.
+type Commander struct {
+	cfg      *config.Config
+	handlers *Handlers
+}
+
+// NewCommander creates a Commander backed by the given config and handlers.
+func NewCommander(cfg *config.Config, h *Handlers) *Commander {
+	return &Commander{cfg: cfg, handlers: h}
+}
+
+// Handle parses text and executes a recognised command. Returns the reply
+// and true when a command was handled; returns ("", false) otherwise.
+func (c *Commander) Handle(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	lower := strings.ToLower(text)
+
+	switch {
+	case lower == "/config":
+		return c.handleConfig(), true
+	case strings.HasPrefix(lower, "/set "):
+		return c.handleSet(text[5:]), true // strip "/set "
+	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
+		force := strings.Contains(lower, "force")
+		return c.handleBootstrap(force), true
+	}
+	return "", false
+}
+
+// handleConfig returns the current configuration state, one key=value per line.
+// Sensitive keys (API keys, tokens) are shown only when set; their values are
+// never echoed. Keys not present are omitted.
+func (c *Commander) handleConfig() string {
+	var b strings.Builder
+
+	// CLI always shown — has default.
+	cli := c.cfg.Agent.CLI
+	if cli == "" {
+		cli = "claude"
+	}
+	fmt.Fprintf(&b, "cli=%s\n", cli)
+
+	if c.cfg.Agent.Provider != "" {
+		fmt.Fprintf(&b, "provider=%s\n", c.cfg.Agent.Provider)
+	}
+	if c.cfg.Agent.Model != "" {
+		fmt.Fprintf(&b, "model=%s\n", c.cfg.Agent.Model)
+	}
+
+	// Show set API keys (never show values).
+	for _, key := range configAPIKeys {
+		if os.Getenv(key) != "" {
+			fmt.Fprintf(&b, "%s=set\n", key)
+		}
+	}
+
+	// File state always shown.
+	systemPath, promptPath := c.handlers.bootstrapPaths()
+	fmt.Fprintf(&b, "agent.md=%s\n", fileState(systemPath))
+	fmt.Fprintf(&b, "prompt.md=%s\n", fileState(promptPath))
+
+	// Ready = no credential warnings.
+	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	if len(warnings) == 0 {
+		fmt.Fprintf(&b, "ready=true\n")
+	} else {
+		fmt.Fprintf(&b, "ready=false\n")
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleSet parses "KEY VALUE" or "KEY=VALUE" and persists it.
+func (c *Commander) handleSet(args string) string {
+	key, val, ok := parseSetArgs(args)
+	if !ok {
+		return "error: usage: /set KEY VALUE  or  /set KEY=VALUE"
+	}
+
+	// Persist to .env.local and apply to current process.
+	if err := config.SetEnvLocal(key, val); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	os.Setenv(key, val) //nolint:errcheck
+
+	// Update live config + executor for agent-level settings.
+	switch key {
+	case "AGENT_CLI":
+		c.cfg.Agent.CLI = val
+		c.handlers.UpdateExecutor()
+	case "AGENT_PROVIDER":
+		c.cfg.Agent.Provider = val
+		c.handlers.UpdateExecutor()
+	case "AGENT_MODEL":
+		c.cfg.Agent.Model = val
+		c.handlers.UpdateExecutor()
+	case "AGENT_MAX_TURNS":
+		// Let executor.NewExecutor re-read via config; best-effort int parse.
+		var n int
+		fmt.Sscanf(val, "%d", &n)
+		c.cfg.Agent.MaxTurns = n
+		c.handlers.UpdateExecutor()
+	}
+
+	if isSensitiveKey(key) {
+		return "ok " + key
+	}
+	return fmt.Sprintf("ok %s=%s", key, val)
+}
+
+// handleBootstrap creates default agent.md and prompt.md.
+func (c *Commander) handleBootstrap(force bool) string {
+	systemPath, promptPath := c.handlers.bootstrapPaths()
+	results, err := createBootstrapFiles(systemPath, promptPath, force)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+
+	var b strings.Builder
+	for _, r := range results {
+		if r.created {
+			fmt.Fprintf(&b, "created %s\n", r.path)
+		} else {
+			fmt.Fprintf(&b, "skipped %s (already exists)\n", r.path)
+		}
+	}
+
+	cli := c.cfg.Agent.CLI
+	if cli == "" {
+		cli = "claude"
+	}
+	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	if len(warnings) == 0 {
+		b.WriteString("ready=true")
+	} else {
+		b.WriteString("ready=false")
+	}
+	return b.String()
+}
+
+// parseSetArgs parses "KEY VALUE" or "KEY=VALUE" into (key, value, true).
+func parseSetArgs(s string) (key, val string, ok bool) {
+	s = strings.TrimSpace(s)
+	if idx := strings.IndexByte(s, '='); idx > 0 {
+		return strings.TrimSpace(s[:idx]), s[idx+1:], true
+	}
+	parts := strings.SplitN(s, " ", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+	}
+	return "", "", false
+}
+
+// isSensitiveKey returns true for keys whose values must not be echoed.
+func isSensitiveKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
+		if strings.HasSuffix(upper, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// fileState returns "exists" or "missing" for a file path.
+func fileState(path string) string {
+	if _, err := os.Stat(path); err == nil {
+		return "exists"
+	}
+	return "missing"
+}
+
+// configAPIKeys is the set of provider API keys shown in /config when set.
+var configAPIKeys = []string{
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"DEEPSEEK_API_KEY",
+	"OPENROUTER_API_KEY",
+	"GEMINI_API_KEY",
+	"GROQ_API_KEY",
+	"MISTRAL_API_KEY",
+}

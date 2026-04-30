@@ -25,10 +25,16 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
+// Commander handles chat configuration commands without requiring an LLM.
+type Commander interface {
+	Handle(text string) (string, bool)
+}
+
 // Bot bridges agent-stream conversations to the agent runner.
 type Bot struct {
 	client         *Client
 	starter        AgentStarter
+	commander      Commander
 	convManager    *conversation.Manager
 	analyzer       *conversation.Analyzer
 	convIDs        []string
@@ -50,7 +56,7 @@ func (b *Bot) SetWeChatReloader(fn func(token, baseURL string), baseURL string) 
 }
 
 // New creates a new stream bot. Returns nil if ServerURL or BotToken is empty.
-func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer) *Bot {
+func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
 	if cfg.ServerURL == "" || cfg.BotToken == "" {
 		return nil
 	}
@@ -58,6 +64,7 @@ func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Ma
 	return &Bot{
 		client:      NewClient(cfg.ServerURL, cfg.BotToken),
 		starter:     starter,
+		commander:   commander,
 		convManager: convMgr,
 		analyzer:    analyzer,
 		convIDs:     cfg.ConversationIDs,
@@ -299,6 +306,14 @@ func isImageContent(contentType string) bool {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
+	// Handle configuration commands before any LLM or conversation logic.
+	if b.commander != nil {
+		if reply, ok := b.commander.Handle(text); ok {
+			b.emitFinal(ctx, convID, reply)
+			return
+		}
+	}
+
 	// Handle /cancel command
 	if text == "/cancel" {
 		b.convManager.Complete(convID)

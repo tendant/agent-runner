@@ -22,12 +22,18 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
+// Commander handles chat configuration commands without requiring an LLM.
+type Commander interface {
+	Handle(text string) (string, bool)
+}
+
 // Bot is a WeChat bot that bridges messages to the agent runner via the
 // Tencent iLink API.
 type Bot struct {
 	client     *Client
 	downloader *Downloader
 	starter    AgentStarter
+	commander  Commander
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -53,14 +59,15 @@ type Bot struct {
 // New creates a new WeChat bot. Always returns a non-nil bot; if no token is
 // configured the bot starts in a dormant state and becomes active after
 // Reload is called with a valid token.
-func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer) *Bot {
+func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	return &Bot{
-		client:      NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
-		downloader:  NewDownloader(cfg.CDNBaseURL, mediaDir),
-		starter:     starter,
-		convManager: convMgr,
-		analyzer:    analyzer,
+		client:        NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
+		downloader:    NewDownloader(cfg.CDNBaseURL, mediaDir),
+		starter:       starter,
+		commander:     commander,
+		convManager:   convMgr,
+		analyzer:      analyzer,
 		ctxTokens:     make(map[string]string),
 		ctxTokenTimes: make(map[string]time.Time),
 	}
@@ -292,6 +299,14 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 	userID := msg.FromUserID
 	chatID := userID // use WeChat user ID as conversation key
+
+	// Handle configuration commands before any LLM or conversation logic.
+	if b.commander != nil {
+		if reply, ok := b.commander.Handle(content); ok {
+			b.sendText(ctx, userID, reply)
+			return
+		}
+	}
 
 	// Handle /cancel command
 	if strings.EqualFold(strings.TrimSpace(content), "/cancel") {

@@ -70,7 +70,8 @@ type AgentConfig struct {
 	Paths               []string // Comma-separated allowed paths
 	Author              string
 	CommitPrefix        string
-	Model               string   // Optional: --model flag for Claude CLI (e.g., "qwen3-coder:30b")
+	Provider            string   // Optional: model provider (e.g., "deepseek", "openrouter") — opencode only; prepended to Model as "provider/model"
+	Model               string   // Optional: model name (e.g., "deepseek-chat"); combined with Provider when set
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
@@ -243,6 +244,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)
 	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
+	cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)

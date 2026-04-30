@@ -50,7 +50,7 @@ func NewServer(cfg *config.Config) *Server {
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.Model, cfg.Agent.MaxTurns)
+	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.Provider, cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
@@ -70,6 +70,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/schedules", handlers.HandleListSchedules)
 	mux.HandleFunc("/debug/schedules", handlers.HandleDebugSchedules)
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/bootstrap", handlers.HandleBootstrap)
 	mux.HandleFunc("/agent", handlers.HandleStartAgent)
 	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/stop") {
@@ -111,13 +112,14 @@ func NewServer(cfg *config.Config) *Server {
 			slog.Warn("analyzer: could not read system prompt for context", "path", cfg.Agent.SystemPrompt, "error", err)
 		}
 	}
+	commander := NewCommander(cfg, handlers)
 	agentStarter := NewAgentStarterAdapter(handlers)
-	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot)
-	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer)
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, commander)
+	streamBot := stream.New(cfg.Stream, agentStarter, convManager, analyzer, commander)
 	if streamBot != nil {
 		handlers.SetNotifier(streamBot)
 	}
-	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer)
+	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, commander)
 	if streamBot != nil {
 		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
 	}

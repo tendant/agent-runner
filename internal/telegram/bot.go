@@ -25,12 +25,18 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
+// Commander handles chat configuration commands without requiring an LLM.
+type Commander interface {
+	Handle(text string) (string, bool)
+}
+
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
-	token    string
-	chatID   int64
-	mediaDir string // directory for downloaded media files
-	starter  AgentStarter
+	token     string
+	chatID    int64
+	mediaDir  string // directory for downloaded media files
+	starter   AgentStarter
+	commander Commander
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -43,7 +49,7 @@ type Bot struct {
 // New creates a new Telegram bot. Returns nil if the token is empty.
 // tmpRoot is the base directory for downloaded media files.
 // The actual API connection is deferred to Start().
-func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string) *Bot {
+func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string, commander Commander) *Bot {
 	if cfg.BotToken == "" {
 		return nil
 	}
@@ -53,6 +59,7 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 		chatID:      cfg.ChatID,
 		mediaDir:    filepath.Join(tmpRoot, "telegram-media"),
 		starter:     starter,
+		commander:   commander,
 		convManager: convMgr,
 		analyzer:    analyzer,
 	}
@@ -135,6 +142,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	content := b.extractContent(msg)
 	if content == "" {
 		return
+	}
+
+	// Handle configuration commands before any LLM or conversation logic.
+	if b.commander != nil {
+		if reply, ok := b.commander.Handle(content); ok {
+			b.send(tgChatID, reply)
+			return
+		}
 	}
 
 	// Get or create conversation
