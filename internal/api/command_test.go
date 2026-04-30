@@ -8,17 +8,6 @@ import (
 
 )
 
-// newTestCommander creates a Commander with a real Handlers for tests that need
-// UpdateExecutor or bootstrapPaths, and a temp CWD so .env.local writes are isolated.
-func newTestCommander(t *testing.T) (*Commander, string) {
-	t.Helper()
-	env := setupTestEnv(t)
-	cfg := env.handlers.config
-	return NewCommander(cfg, env.handlers), env.tmpDir
-}
-
-// newMinimalCommander creates a Commander with a real Handlers backed by a temp dir.
-// The returned dir is set as CWD so .env.local / file writes land there.
 func withTempCWD(t *testing.T) (restore func()) {
 	t.Helper()
 	dir := t.TempDir()
