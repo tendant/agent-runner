@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -192,18 +191,9 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
 		plan, err = planner.Plan(ctx, checkoutPath, message)
 		if err != nil {
-			var rejected *subagent.PlanRejectedError
-			if errors.As(err, &rejected) {
-				slog.Info("planner rejected message (not a task)", "session_id", sessionID)
-				liveSession.AddIteration(agent.IterationResult{
-					Iteration: 1,
-					Status:    agent.IterationStatusSuccess,
-					Output:    rejected.Reply,
-				})
-				liveSession.Complete()
-				return
-			}
-			slog.Warn("planner failed — falling back to reasoning executor for iterations", "session_id", sessionID, "error", err)
+			// Any planner failure (including a conversational/rejection response)
+			// falls through to the executor — tier 3 handles it regardless.
+			slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
 			planFailed = true
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
