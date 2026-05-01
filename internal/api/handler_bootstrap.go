@@ -2,12 +2,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const defaultAgentMD = `# Agent
@@ -180,34 +182,56 @@ func CLIInstalled(cli string) bool {
 // opencode is downloaded from GitHub releases; claude and codex use npm.
 // Returns combined output and any error.
 func installCLI(cli string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
 	var cmd *exec.Cmd
 	switch cli {
 	case "opencode":
-		// Download the latest Linux binary from GitHub releases.
+		// Download the latest binary from GitHub releases (Linux and macOS).
+		// Falls back to ~/bin if /usr/local/bin is not writable (macOS without sudo).
 		script := `set -e
 ARCH=$(uname -m)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 URL=$(curl -fsSL https://api.github.com/repos/sst/opencode/releases/latest \
-  | grep browser_download_url | grep linux | grep "$ARCH" | head -1 \
+  | grep browser_download_url | grep "\"$OS\"" | grep "$ARCH" | head -1 \
   | cut -d'"' -f4)
-curl -fsSL "$URL" -o /usr/local/bin/opencode
-chmod +x /usr/local/bin/opencode`
-		cmd = exec.Command("sh", "-c", script)
+if [ -z "$URL" ]; then
+  # fallback: grep without quotes (older releases use different naming)
+  URL=$(curl -fsSL https://api.github.com/repos/sst/opencode/releases/latest \
+    | grep browser_download_url | grep "$OS" | grep "$ARCH" | head -1 \
+    | cut -d'"' -f4)
+fi
+if [ -z "$URL" ]; then
+  echo "no release binary found for $OS/$ARCH" >&2; exit 1
+fi
+INSTALL_DIR=/usr/local/bin
+if [ ! -w "$INSTALL_DIR" ]; then
+  INSTALL_DIR="$HOME/bin"
+  mkdir -p "$INSTALL_DIR"
+  echo "note: /usr/local/bin not writable, installing to $INSTALL_DIR"
+fi
+curl -fsSL "$URL" -o "$INSTALL_DIR/opencode"
+chmod +x "$INSTALL_DIR/opencode"
+echo "installed to $INSTALL_DIR/opencode"`
+		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "codex":
-		cmd = exec.Command("npm", "install", "-g", "@openai/codex")
+		cmd = exec.CommandContext(ctx, "npm", "install", "-g", "@openai/codex")
 	default: // claude
-		cmd = exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code")
+		cmd = exec.CommandContext(ctx, "npm", "install", "-g", "@anthropic-ai/claude-code")
 	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	return buf.String(), cmd.Run()
+	err := cmd.Run()
+	return buf.String(), err
 }
 
 // cliInstallHint returns a human-readable install hint for /config output.
 func cliInstallHint(cli string) string {
 	switch cli {
 	case "opencode":
-		return "github.com/sst/opencode (latest linux binary)"
+		return "github.com/sst/opencode (latest binary, linux/macos)"
 	case "codex":
 		return "npm install -g @openai/codex"
 	default:
