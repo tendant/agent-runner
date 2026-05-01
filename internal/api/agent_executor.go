@@ -22,11 +22,6 @@ import (
 
 const maxConsecutiveFailures = 5
 
-// isPreauthCLI returns true for CLIs that manage their own auth and internal planning
-// (claude, codex) — the planner sub-agent is skipped for these.
-func isPreauthCLI(cli string) bool {
-	return cli == "claude" || cli == "codex"
-}
 
 // backoffDelay returns a delay before retrying after consecutive failures.
 // 0 failures = no delay, 1 = 2s, 2 = 4s, 3 = 8s, 4 = 16s, capped at 30s.
@@ -185,12 +180,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
-	// Phase 1: Planner (optional, non-fatal).
-	// Pre-authorized CLIs (claude, codex) handle planning internally — skip.
-	cli := h.config.Agent.CLI
+	// Phase 1: Planner (optional, non-fatal). Runs regardless of CLI backend.
+	// If planner fails, iterations continue with the reasoning executor.
 	var plan *subagent.PlanResult
 	planFailed := false
-	if h.config.Agent.PlannerEnabled && !isPreauthCLI(cli) {
+	if h.config.Agent.PlannerEnabled {
 		slog.Info("running planner", "session_id", sessionID)
 		planner := subagent.NewPlanner(h.plannerClient, preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
