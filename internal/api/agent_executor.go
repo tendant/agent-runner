@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/subagent"
@@ -20,6 +21,12 @@ import (
 )
 
 const maxConsecutiveFailures = 5
+
+// isPreauthCLI returns true for CLIs that manage their own auth and internal planning
+// (claude, codex) — the planner sub-agent is skipped for these.
+func isPreauthCLI(cli string) bool {
+	return cli == "claude" || cli == "codex"
+}
 
 // backoffDelay returns a delay before retrying after consecutive failures.
 // 0 failures = no delay, 1 = 2s, 2 = 4s, 3 = 8s, 4 = 16s, capped at 30s.
@@ -178,9 +185,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
-	// Phase 1: Planner (optional, non-fatal)
+	// Phase 1: Planner (optional, non-fatal).
+	// Pre-authorized CLIs (claude, codex) handle planning internally — skip.
+	cli := h.config.Agent.CLI
 	var plan *subagent.PlanResult
-	if h.config.Agent.PlannerEnabled {
+	planFailed := false
+	if h.config.Agent.PlannerEnabled && !isPreauthCLI(cli) {
 		slog.Info("running planner", "session_id", sessionID)
 		planner := subagent.NewPlanner(h.getReasoningExecutor(), preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
@@ -199,11 +209,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				liveSession.Complete()
 				return
 			}
-			slog.Warn("planner failed (non-fatal)", "session_id", sessionID, "error", err)
+			slog.Warn("planner failed — falling back to reasoning executor for iterations", "session_id", sessionID, "error", err)
+			planFailed = true
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
 			liveSession.SetPlanResult(plan)
 		}
+	}
+
+	// Choose iteration executor: reasoning model when plan failed, fast model otherwise.
+	iterExec := h.getExecutor()
+	if planFailed {
+		iterExec = h.getReasoningExecutor()
 	}
 
 	// Phase 2: Iteration loop with dynamic prompts
@@ -263,7 +280,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline)
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, iterExec)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 
@@ -368,7 +385,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("running corrective iteration", "session_id", sessionID,
 				"iteration", iterNum, "issues", len(review.Issues))
 
-			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline)
+			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, iterExec)
 			result.Prompt = systemPrompt
 			result.Retry = true
 			liveSession.AddIteration(result)
@@ -450,6 +467,7 @@ func (h *Handlers) executeIteration(
 	workspacePath, systemPrompt, userMessage string,
 	iteration int,
 	deadline time.Time,
+	exec executor.Executor,
 ) (result agent.IterationResult) {
 	iterStart := time.Now()
 
@@ -477,7 +495,7 @@ func (h *Handlers) executeIteration(
 	defer cancel()
 
 	// Execute Claude Code with system prompt + user message
-	execResult, _, execErr := h.getExecutor().ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
+	execResult, _, execErr := exec.ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
