@@ -17,7 +17,7 @@ _INSTALL_CMD_ARG = $(if $(AGENT_CLI_INSTALL_CMD),--build-arg AGENT_CLI_INSTALL_C
 
 .DEFAULT_GOAL := help
 .PHONY: build build-cli build-wechat-login install clean test setup-cli \
-        docker-build docker-push docker-release docker-release-multiarch help
+        docker-build docker-push docker-release docker-release-multiarch release help
 
 build:
 	go build -o $(BINARY) $(CMD)
@@ -60,6 +60,21 @@ docker-release-multiarch:
 		--build-arg AGENT_CLI=$(DOCKER_CLI) $(_INSTALL_CMD_ARG) \
 		-t $(IMAGE):$(TAG) --push .
 
+release:
+	@LAST=$$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | head -1); \
+	if [ -z "$$LAST" ]; then NEXT=v0.0.1; \
+	else \
+	  MAJOR=$$(echo $$LAST | cut -d. -f1 | tr -d v); \
+	  MINOR=$$(echo $$LAST | cut -d. -f2); \
+	  PATCH=$$(echo $$LAST | cut -d. -f3); \
+	  NEXT=v$$MAJOR.$$MINOR.$$((PATCH+1)); \
+	fi; \
+	echo "Releasing $$NEXT → $(IMAGE)"; \
+	git tag $$NEXT && git push origin $$NEXT && \
+	docker buildx build --platform linux/amd64,linux/arm64 \
+	  --build-arg AGENT_CLI=$(DOCKER_CLI) $(_INSTALL_CMD_ARG) \
+	  -t $(IMAGE):$$NEXT -t $(IMAGE):latest --push .
+
 clean:
 	rm -f $(BINARY) $(CLI_BINARY) $(WECHAT_LOGIN_BINARY)
 
@@ -86,8 +101,11 @@ help:
 	@echo "  docker-push         Push image   IMAGE=<registry/name> TAG=<tag>"
 	@echo "  docker-release      Build + push (single arch)"
 	@echo "  docker-release-multiarch  Build + push linux/amd64 and linux/arm64"
+	@echo "  release             Auto-increment patch, git tag, push versioned + latest"
 	@echo ""
-	@echo "  Example:"
+	@echo "  Examples:"
+	@echo "    make release IMAGE=wang/agent-runner"
+	@echo "    make release IMAGE=wang/agent-runner DOCKER_CLI=opencode"
 	@echo "    make docker-release IMAGE=ghcr.io/myorg/agent-runner TAG=v1.2.3 DOCKER_CLI=opencode"
 	@echo "    make docker-release-multiarch IMAGE=ghcr.io/myorg/agent-runner TAG=latest"
 	@echo ""
