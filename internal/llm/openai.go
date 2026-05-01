@@ -20,17 +20,26 @@ type OpenAIClient struct {
 	apiKey     string
 	model      string
 	baseURL    string
+	maxTokens  int
 	httpClient *http.Client
 }
 
 func NewOpenAIClient(apiKey, model, baseURL string) *OpenAIClient {
+	return NewOpenAIClientWithTokens(apiKey, model, baseURL, 512)
+}
+
+func NewOpenAIClientWithTokens(apiKey, model, baseURL string, maxTokens int) *OpenAIClient {
 	if baseURL == "" {
 		baseURL = defaultOpenAIBaseURL
+	}
+	if maxTokens <= 0 {
+		maxTokens = 512
 	}
 	return &OpenAIClient{
 		apiKey:     apiKey,
 		model:      model,
 		baseURL:    baseURL,
+		maxTokens:  maxTokens,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -63,7 +72,7 @@ func (c *OpenAIClient) CompleteWithImages(ctx context.Context, prompt string, im
 
 	payload := map[string]any{
 		"model":      c.model,
-		"max_tokens": 512,
+		"max_tokens": c.maxTokens,
 		"messages": []map[string]any{
 			{"role": "user", "content": content},
 		},

@@ -19,17 +19,26 @@ type AnthropicClient struct {
 	apiKey     string
 	model      string
 	baseURL    string
+	maxTokens  int
 	httpClient *http.Client
 }
 
 func NewAnthropicClient(apiKey, model, baseURL string) *AnthropicClient {
+	return NewAnthropicClientWithTokens(apiKey, model, baseURL, 512)
+}
+
+func NewAnthropicClientWithTokens(apiKey, model, baseURL string, maxTokens int) *AnthropicClient {
 	if baseURL == "" {
 		baseURL = defaultAnthropicBaseURL
+	}
+	if maxTokens <= 0 {
+		maxTokens = 512
 	}
 	return &AnthropicClient{
 		apiKey:     apiKey,
 		model:      model,
 		baseURL:    baseURL,
+		maxTokens:  maxTokens,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -65,7 +74,7 @@ func (c *AnthropicClient) CompleteWithImages(ctx context.Context, prompt string,
 
 	payload := map[string]any{
 		"model":      c.model,
-		"max_tokens": 512,
+		"max_tokens": c.maxTokens,
 		"messages": []map[string]any{
 			{"role": "user", "content": content},
 		},

@@ -26,10 +26,11 @@ type MultimodalClient interface {
 
 // Config holds configuration for building an LLM client.
 type Config struct {
-	Provider string // "anthropic" | "openai" | "" (auto-detect)
-	Model    string // model ID; provider-specific default used if empty
-	APIKey   string // ANALYZER_API_KEY; falls back to provider-specific env var
-	BaseURL  string // override API base URL (e.g. Ollama endpoint)
+	Provider  string // "anthropic" | "openai" | "deepseek" | "" (auto-detect)
+	Model     string // model ID; provider-specific default used if empty
+	APIKey    string // falls back to provider-specific env var
+	BaseURL   string // override API base URL (e.g. Ollama endpoint)
+	MaxTokens int    // max tokens in response; 0 = provider default (512)
 }
 
 // NewClient builds a Client from cfg. Falls back to ExecutorClient (using exec)
@@ -61,6 +62,11 @@ func NewClient(cfg Config, exec executor.Executor) Client {
 		}
 	}
 
+	maxTokens := cfg.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 512
+	}
+
 	switch provider {
 	case "anthropic":
 		if apiKey == "" {
@@ -72,7 +78,7 @@ func NewClient(cfg Config, exec executor.Executor) Client {
 			model = "claude-haiku-4-5-20251001"
 		}
 		slog.Info("llm: using Anthropic client", "model", model)
-		return NewAnthropicClient(apiKey, model, cfg.BaseURL)
+		return NewAnthropicClientWithTokens(apiKey, model, cfg.BaseURL, maxTokens)
 
 	case "openai":
 		// API key is optional when a custom BaseURL is set (e.g. Ollama, local endpoints).
@@ -85,7 +91,26 @@ func NewClient(cfg Config, exec executor.Executor) Client {
 			model = "gpt-4o-mini"
 		}
 		slog.Info("llm: using OpenAI client", "model", model, "base_url", cfg.BaseURL)
-		return NewOpenAIClient(apiKey, model, cfg.BaseURL)
+		return NewOpenAIClientWithTokens(apiKey, model, cfg.BaseURL, maxTokens)
+
+	case "deepseek":
+		if apiKey == "" {
+			apiKey = os.Getenv("DEEPSEEK_API_KEY")
+		}
+		if apiKey == "" {
+			slog.Warn("llm: deepseek provider selected but no API key found, falling back to executor")
+			break
+		}
+		model := cfg.Model
+		if model == "" {
+			model = "deepseek-chat"
+		}
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "https://api.deepseek.com"
+		}
+		slog.Info("llm: using DeepSeek client", "model", model)
+		return NewOpenAIClientWithTokens(apiKey, model, baseURL, maxTokens)
 	}
 
 	// Fallback: use executor (Claude CLI).

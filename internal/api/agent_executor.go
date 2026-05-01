@@ -192,7 +192,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	planFailed := false
 	if h.config.Agent.PlannerEnabled && !isPreauthCLI(cli) {
 		slog.Info("running planner", "session_id", sessionID)
-		planner := subagent.NewPlanner(h.getReasoningExecutor(), preamble)
+		planner := subagent.NewPlanner(h.plannerClient, preamble)
 		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
 		plannerPromptText = planner.BuildPrompt(plannerState, message)
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))

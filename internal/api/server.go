@@ -87,6 +87,19 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
+	// Tier 2: direct LLM client for fast planning (uses reasoning model config).
+	// Falls back to ExecutorClient when no API credentials are configured.
+	reasoningProvider := cfg.Agent.ReasoningProvider
+	if reasoningProvider == "" {
+		reasoningProvider = cfg.Agent.Provider
+	}
+	plannerClient := llm.NewClient(llm.Config{
+		Provider:  reasoningProvider,
+		Model:     cfg.Agent.ReasoningModel,
+		MaxTokens: 4096,
+	}, exec)
+	handlers.SetPlannerClient(plannerClient)
+
 	// Create conversation components for Telegram bot
 	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	llmClient := llm.NewClient(llm.Config{

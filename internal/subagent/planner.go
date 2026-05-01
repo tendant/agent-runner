@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/agent-runner/agent-runner/internal/executor"
+	"github.com/agent-runner/agent-runner/internal/llm"
 )
 
 const plannerPrompt = `You are a planning agent. Analyze the workspace, the prompt template instructions, and the user's request, then produce a structured plan.
@@ -42,33 +42,30 @@ type PlanRejectedError struct {
 
 func (e *PlanRejectedError) Error() string { return "not a task: " + e.Reply }
 
-// Planner is a sub-agent that produces a structured plan before the iteration loop.
+// Planner is a sub-agent that produces a structured plan via a direct LLM API call
+// (fast, no CLI overhead). Falls back to executor-based planning when no API
+// credentials are configured (via llm.ExecutorClient).
 type Planner struct {
-	executor executor.Executor
+	client   llm.Client
 	preamble string // prompt template content for context
 }
 
-// NewPlanner creates a new planner sub-agent.
+// NewPlanner creates a new planner sub-agent backed by a direct LLM client.
 // The preamble is the resolved prompt template content, giving the planner
 // visibility into the user's workflow instructions.
-func NewPlanner(exec executor.Executor, preamble string) *Planner {
-	return &Planner{executor: exec, preamble: preamble}
+func NewPlanner(client llm.Client, preamble string) *Planner {
+	return &Planner{client: client, preamble: preamble}
 }
 
-// Plan runs the planner against the workspace and returns a structured plan.
+// Plan calls the LLM directly and returns a structured plan.
 func (p *Planner) Plan(ctx context.Context, workspacePath, message string) (*PlanResult, error) {
 	state := ReadWorkspaceState(ctx, workspacePath)
 
 	prompt := p.BuildPrompt(state, message)
 
-	result, err := p.executor.Execute(ctx, workspacePath, prompt)
+	output, err := p.client.Complete(ctx, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("planner execution failed: %w", err)
-	}
-
-	output := result.Output
-	if output == "" {
-		output = result.RawOutput
+		return nil, fmt.Errorf("planner LLM call failed: %w", err)
 	}
 
 	plan, err := parsePlanResult(output)

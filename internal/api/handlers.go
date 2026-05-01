@@ -16,6 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
+	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
 )
 
@@ -32,6 +33,7 @@ type Handlers struct {
 	gitOps           *git.Operations
 	execMu           sync.RWMutex
 	executor         executor.Executor
+	plannerClient    llm.Client // direct LLM API for fast planning (tier 2)
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
@@ -67,6 +69,11 @@ func NewHandlers(
 // SetNotifier sets the notifier used by HandleNotify. Called after bot initialization.
 func (h *Handlers) SetNotifier(n Notifier) {
 	h.notifier = n
+}
+
+// SetPlannerClient sets the direct LLM client used for fast planning (tier 2).
+func (h *Handlers) SetPlannerClient(c llm.Client) {
+	h.plannerClient = c
 }
 
 // SetWorkflowClient sets the workflow scheduler used for agent-created schedules.
