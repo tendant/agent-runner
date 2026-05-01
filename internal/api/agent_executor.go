@@ -21,7 +21,6 @@ import (
 
 const maxConsecutiveFailures = 5
 
-
 // backoffDelay returns a delay before retrying after consecutive failures.
 // 0 failures = no delay, 1 = 2s, 2 = 4s, 3 = 8s, 4 = 16s, capped at 30s.
 func backoffDelay(consecutiveFails int) time.Duration {

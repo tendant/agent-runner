@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -64,6 +65,8 @@ func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, e
 }
 
 // Analyze sends the conversation history to the LLM and returns a routing decision.
+// On non-timeout errors (LLM unavailable, parse failure, no credentials) it
+// degrades gracefully by returning "execute" so the message still reaches the agent.
 func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
 	prompt := a.buildPrompt(conv)
 
@@ -89,12 +92,22 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisRe
 		output, err = a.client.Complete(ctx, prompt)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("analyzer failed: %w", err)
+		if ctx.Err() != nil {
+			// Real timeout — surface it so the bot can show a meaningful message.
+			return nil, fmt.Errorf("analyzer timed out: %w", err)
+		}
+		// LLM unavailable (no credentials, CLI missing, network error) — degrade
+		// gracefully so messages still reach the agent instead of blocking the user.
+		slog.Warn("analyzer: LLM call failed, defaulting to execute", "error", err)
+		return &AnalysisResult{Action: "execute", Message: "Processing your request..."}, nil
 	}
 
-	analysisResult, err := parseAnalysisResult(output)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse analyzer response: %w (raw: %s)", err, output)
+	analysisResult, parseErr := parseAnalysisResult(output)
+	if parseErr != nil {
+		// Got output but it wasn't valid JSON — LLM returned prose instead of routing JSON.
+		// Degrade gracefully rather than blocking the user.
+		slog.Warn("analyzer: could not parse LLM response, defaulting to execute", "error", parseErr, "raw", output)
+		return &AnalysisResult{Action: "execute", Message: "Processing your request..."}, nil
 	}
 
 	return analysisResult, nil
