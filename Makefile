@@ -61,16 +61,13 @@ docker-release-multiarch:
 		-t $(IMAGE):$(TAG) --push .
 
 release:
-	@LAST=$$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | head -1); \
-	if [ -z "$$LAST" ]; then NEXT=v0.0.1; \
-	else \
-	  MAJOR=$$(echo $$LAST | cut -d. -f1 | tr -d v); \
-	  MINOR=$$(echo $$LAST | cut -d. -f2); \
-	  PATCH=$$(echo $$LAST | cut -d. -f3); \
-	  NEXT=v$$MAJOR.$$MINOR.$$((PATCH+1)); \
-	fi; \
+	@LAST=$$(cat VERSION | tr -d '[:space:]'); \
+	MAJOR=$$(echo $$LAST | cut -d. -f1 | tr -d v); \
+	MINOR=$$(echo $$LAST | cut -d. -f2); \
+	PATCH=$$(echo $$LAST | cut -d. -f3); \
+	NEXT=v$$MAJOR.$$MINOR.$$((PATCH+1)); \
+	echo $$NEXT > VERSION; \
 	echo "Releasing $$NEXT → $(IMAGE)"; \
-	git tag $$NEXT && git push origin $$NEXT && \
 	docker buildx build --platform linux/amd64,linux/arm64 \
 	  --build-arg AGENT_CLI=$(DOCKER_CLI) $(_INSTALL_CMD_ARG) \
 	  -t $(IMAGE):$$NEXT -t $(IMAGE):latest --push .
