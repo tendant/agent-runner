@@ -257,12 +257,15 @@ const helpText = `/help      show this message
 /config    show current configuration and readiness
 /set KEY VALUE  set a config value (saved to .env.local, survives restart)
            examples:
-             /set AGENT_CLI opencode
+             /set AGENT_CLI claude
+             /set ANTHROPIC_API_KEY <key>   ← auth for claude
+             /set OPENAI_API_KEY <key>      ← auth for codex
              /set AGENT_PROVIDER deepseek
              /set AGENT_MODEL deepseek-chat
              /set DEEPSEEK_API_KEY <key>
-/install-cli [cli]  install agent CLI via npm (default: configured CLI)
-                    e.g. /install-cli opencode  /install-cli claude
+/install-cli [cli]  install agent CLI (default: configured CLI)
+                    e.g. /install-cli claude  /install-cli codex  /install-cli opencode
+                    after installing, set the matching API key to authenticate
 /bootstrap      create default agent.md and prompt.md (also installs CLI)
 /bootstrap force  overwrite existing files
 /set-agent <content>   overwrite agent.md with the given content
