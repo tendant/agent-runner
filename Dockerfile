@@ -26,8 +26,9 @@ RUN if [ "$AGENT_CLI" = "none" ] || [ -z "$AGENT_CLI" ]; then \
         codex)    npm install -g @openai/codex ;; \
         opencode|opencode-ai) \
           ARCH=$(uname -m) && \
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]') && \
           URL=$(curl -fsSL https://api.github.com/repos/sst/opencode/releases/latest \
-            | grep browser_download_url | grep linux | grep "$ARCH" | head -1 \
+            | grep browser_download_url | grep "$OS" | grep "$ARCH" | head -1 \
             | cut -d'"' -f4) && \
           curl -fsSL "$URL" -o /usr/local/bin/opencode && \
           chmod +x /usr/local/bin/opencode ;; \
