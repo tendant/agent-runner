@@ -298,13 +298,15 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int 
 				dataLines = nil
 
 				var event Event
-				if err := json.Unmarshal([]byte(data), &event); err == nil {
-					select {
-					case ch <- event:
-						count++
-					case <-ctx.Done():
-						return count
-					}
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					slog.Warn("SSE event parse error", "error", err, "data", data)
+					continue
+				}
+				select {
+				case ch <- event:
+					count++
+				case <-ctx.Done():
+					return count
 				}
 			}
 			continue

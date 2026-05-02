@@ -141,8 +141,8 @@ func (b *Bot) mode() string {
 }
 
 // listenPoll polls GET /events?after_seq=N on a fixed interval.
-// afterSeq acts as the deduplication cursor: only events with seq > afterSeq
-// are processed, and afterSeq advances to the highest seq seen each poll.
+// Events are sorted by seq before processing so out-of-order delivery from the
+// server doesn't cause gaps. afterSeq advances after each event is handled.
 func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
 	ticker := time.NewTicker(b.pollInterval)
 	defer ticker.Stop()
@@ -160,13 +160,15 @@ func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
 			continue
 		}
 
+		sortBySeq(events)
 		for _, event := range events {
-			if event.Seq > afterSeq {
-				afterSeq = event.Seq
+			if event.Seq <= afterSeq {
+				continue // already processed
 			}
 			if event.Type == "message.created" {
 				b.handleMessageEvent(ctx, convID, event)
 			}
+			afterSeq = event.Seq // advance only after successful handling
 		}
 	}
 }
@@ -194,13 +196,14 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 
 		var received int
 		for event := range events {
-			if event.Seq > afterSeq {
-				afterSeq = event.Seq
-			}
 			received++
+			if event.Seq <= afterSeq {
+				continue // already processed (shouldn't happen, but guard it)
+			}
 			if event.Type == "message.created" {
 				b.handleMessageEvent(ctx, convID, event)
 			}
+			afterSeq = event.Seq // advance only after successful handling
 		}
 
 		delay := 2 * time.Second
@@ -235,8 +238,10 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 		return maxSeq
 	}
 
-	// SSE mode: open stream from 0, drain until idle for 2s.
-	catchUpCtx, cancel := context.WithCancel(ctx)
+	// SSE mode: open stream from 0 with a timeout. We cancel once the stream
+	// closes (server sent all existing events) or the timeout fires, whichever
+	// comes first. 30s is generous for any reasonable event backlog.
+	catchUpCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	events, err := b.client.StreamEvents(catchUpCtx, convID, 0)
@@ -246,15 +251,18 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 	}
 
 	var maxSeq int64
-	for {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				return maxSeq
-			}
-			maxSeq = event.Seq
-		case <-time.After(2 * time.Second):
-			return maxSeq
+	for event := range events {
+		maxSeq = event.Seq
+	}
+	return maxSeq
+}
+
+// sortBySeq sorts events ascending by seq so they are processed in order
+// regardless of server delivery order.
+func sortBySeq(events []Event) {
+	for i := 1; i < len(events); i++ {
+		for j := i; j > 0 && events[j].Seq < events[j-1].Seq; j-- {
+			events[j], events[j-1] = events[j-1], events[j]
 		}
 	}
 }
@@ -462,6 +470,7 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 
 	slog.Info("stream bot: agent session started", "session_id", sessionID)
 
+	goroutineCtx := ctx // capture for goroutine; respects bot shutdown
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
@@ -478,7 +487,7 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 
 			// Upload _send/ files
 			if len(session.OutputFiles) > 0 {
-				b.uploadOutputFiles(context.Background(), convID, session)
+				b.uploadOutputFiles(goroutineCtx, convID, session)
 			}
 		}
 
@@ -491,9 +500,9 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		if conv.ClearPendingInput() {
 			conv.SetState(conversation.StateGathering)
 			if b.analyzer == nil {
-				b.handleConfirmation(context.Background(), convID, conv)
+				b.handleConfirmation(goroutineCtx, convID, conv)
 			} else {
-				b.handleAnalysis(context.Background(), convID, conv)
+				b.handleAnalysis(goroutineCtx, convID, conv)
 			}
 			return
 		}
