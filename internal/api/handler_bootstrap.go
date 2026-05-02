@@ -178,6 +178,27 @@ func CLIInstalled(cli string) bool {
 	return err == nil
 }
 
+// ensureNodeScript is a shell snippet prepended to npm-based installs.
+// It detects the package manager and installs Node.js + npm if they are absent.
+const ensureNodeScript = `set -e
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm not found, installing Node.js..."
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache nodejs npm
+  elif command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y -qq nodejs npm
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y nodejs npm
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y nodejs npm
+  elif command -v brew >/dev/null 2>&1; then
+    brew install node
+  else
+    echo "cannot install npm: no supported package manager found (apk, apt, dnf, yum, brew)" >&2; exit 1
+  fi
+fi
+`
+
 // installCLI installs the given agent CLI backend.
 // opencode is downloaded from GitHub releases; claude and codex use npm.
 // Returns combined output and any error.
@@ -216,9 +237,9 @@ chmod +x "$INSTALL_DIR/opencode"
 echo "installed to $INSTALL_DIR/opencode"`
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "codex":
-		cmd = exec.CommandContext(ctx, "npm", "install", "-g", "@openai/codex")
+		cmd = exec.CommandContext(ctx, "sh", "-c", ensureNodeScript+"npm install -g @openai/codex")
 	default: // claude
-		cmd = exec.CommandContext(ctx, "npm", "install", "-g", "@anthropic-ai/claude-code")
+		cmd = exec.CommandContext(ctx, "sh", "-c", ensureNodeScript+"npm install -g @anthropic-ai/claude-code")
 	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -233,9 +254,9 @@ func cliInstallHint(cli string) string {
 	case "opencode":
 		return "github.com/sst/opencode (latest binary, linux/macos)"
 	case "codex":
-		return "npm install -g @openai/codex"
+		return "npm install -g @openai/codex (auto-installs Node.js if needed)"
 	default:
-		return "npm install -g @anthropic-ai/claude-code"
+		return "npm install -g @anthropic-ai/claude-code (auto-installs Node.js if needed)"
 	}
 }
 
