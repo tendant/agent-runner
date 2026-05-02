@@ -129,14 +129,14 @@ type AnalyzerConfig struct {
 
 // RunnerConfig contains hybrid runner settings
 type RunnerConfig struct {
-	Enabled           bool   // RUNNER_SCHEDULER_ENABLED
-	DatabaseURL       string // RUNNER_DATABASE_URL (postgres:// or sqlite://)
-	AgentID           string // RUNNER_AGENT_ID (default: hostname-pid)
-	LeaseDuration     int    // RUNNER_LEASE_DURATION (seconds, default: 60)
-	PollCap           int    // RUNNER_POLL_CAP (seconds, default: 30)
-	HeartbeatInterval int    // RUNNER_HEARTBEAT_INTERVAL (seconds, default: 300)
-	MaxAttempts       int    // RUNNER_MAX_ATTEMPTS (default: 10)
-	TypePrefix        string // RUNNER_TYPE_PREFIX (default: "agent.")
+	Enabled           bool   // SCHEDULER_ENABLED
+	DatabaseURL       string // SCHEDULER_DATABASE_URL (postgres:// or sqlite://)
+	AgentID           string // SCHEDULER_AGENT_ID (default: hostname-pid)
+	LeaseDuration     int    // SCHEDULER_LEASE_DURATION (seconds, default: 60)
+	PollCap           int    // SCHEDULER_POLL_CAP (seconds, default: 30)
+	HeartbeatInterval int    // SCHEDULER_HEARTBEAT_INTERVAL (seconds, default: 300)
+	MaxAttempts       int    // SCHEDULER_MAX_ATTEMPTS (default: 10)
+	TypePrefix        string // SCHEDULER_TYPE_PREFIX (default: "agent.")
 }
 
 // ValidationConfig contains diff validation settings
@@ -268,8 +268,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
-	cfg.MaxRuntimeSeconds = envIntOrDefault("MAX_RUNTIME_SECONDS", cfg.MaxRuntimeSeconds)
-	cfg.MaxConcurrentJobs = envIntOrDefault("MAX_CONCURRENT_JOBS", cfg.MaxConcurrentJobs)
+	cfg.MaxRuntimeSeconds = envIntOrDefault("JOB_MAX_RUNTIME", cfg.MaxRuntimeSeconds)
+	cfg.MaxConcurrentJobs = envIntOrDefault("JOB_MAX_CONCURRENT", cfg.MaxConcurrentJobs)
 	cfg.GitHost = envOrDefault("GIT_HOST", cfg.GitHost)
 	cfg.GitOrg = envOrDefault("GIT_ORG", cfg.GitOrg)
 	cfg.GitPushRetries = envIntOrDefault("GIT_PUSH_RETRIES", cfg.GitPushRetries)
@@ -278,7 +278,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)
 	cfg.Validation.BlockedPaths = envSliceOrDefault("VALIDATION_BLOCKED_PATHS", cfg.Validation.BlockedPaths)
 
-	cfg.API.Bind = envOrDefault("BIND", cfg.API.Bind)
+	cfg.API.Bind = envOrDefault("API_BIND", cfg.API.Bind)
 	cfg.API.APIKey = envOrDefault("API_KEY", cfg.API.APIKey)
 
 	cfg.Agent.SystemPrompt = envOrDefault("AGENT_SYSTEM_PROMPT", cfg.Agent.SystemPrompt)
@@ -287,8 +287,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Author = envOrDefault("AGENT_AUTHOR", cfg.Agent.Author)
 	cfg.Agent.CommitPrefix = envOrDefault("AGENT_COMMIT_PREFIX", cfg.Agent.CommitPrefix)
 	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)
-	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
-	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
+	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_TIMEOUT", cfg.Agent.MaxTotalSeconds)
+	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_ITERATION_TIMEOUT", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
@@ -325,17 +325,17 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
 	cfg.Analyzer.TimeoutSeconds = envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30)
 
-	cfg.Runner.Enabled = envBoolOrDefault("RUNNER_SCHEDULER_ENABLED", cfg.Runner.Enabled)
-	cfg.Runner.DatabaseURL = envOrDefault("RUNNER_DATABASE_URL", cfg.Runner.DatabaseURL)
-	cfg.Runner.AgentID = envOrDefault("RUNNER_AGENT_ID", cfg.Runner.AgentID)
-	cfg.Runner.LeaseDuration = envIntOrDefault("RUNNER_LEASE_DURATION", cfg.Runner.LeaseDuration)
-	cfg.Runner.PollCap = envIntOrDefault("RUNNER_POLL_CAP", cfg.Runner.PollCap)
-	cfg.Runner.HeartbeatInterval = envIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", cfg.Runner.HeartbeatInterval)
-	cfg.Runner.MaxAttempts = envIntOrDefault("RUNNER_MAX_ATTEMPTS", cfg.Runner.MaxAttempts)
-	cfg.Runner.TypePrefix = envOrDefault("RUNNER_TYPE_PREFIX", cfg.Runner.TypePrefix)
+	cfg.Runner.Enabled = envBoolOrDefault("SCHEDULER_ENABLED", cfg.Runner.Enabled)
+	cfg.Runner.DatabaseURL = envOrDefault("SCHEDULER_DATABASE_URL", cfg.Runner.DatabaseURL)
+	cfg.Runner.AgentID = envOrDefault("SCHEDULER_AGENT_ID", cfg.Runner.AgentID)
+	cfg.Runner.LeaseDuration = envIntOrDefault("SCHEDULER_LEASE_DURATION", cfg.Runner.LeaseDuration)
+	cfg.Runner.PollCap = envIntOrDefault("SCHEDULER_POLL_CAP", cfg.Runner.PollCap)
+	cfg.Runner.HeartbeatInterval = envIntOrDefault("SCHEDULER_HEARTBEAT_INTERVAL", cfg.Runner.HeartbeatInterval)
+	cfg.Runner.MaxAttempts = envIntOrDefault("SCHEDULER_MAX_ATTEMPTS", cfg.Runner.MaxAttempts)
+	cfg.Runner.TypePrefix = envOrDefault("SCHEDULER_TYPE_PREFIX", cfg.Runner.TypePrefix)
 
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
-	cfg.StartupCleanupStaleJobs = envBoolOrDefault("STARTUP_CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
+	cfg.StartupCleanupStaleJobs = envBoolOrDefault("CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)

@@ -69,7 +69,7 @@ func main() {
 			"db", cfg.Runner.DatabaseURL, "prefix", cfg.Runner.TypePrefix,
 			"lease_seconds", cfg.Runner.LeaseDuration, "poll_cap_seconds", cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
-			log.Fatalf("RUNNER_DATABASE_URL is required when RUNNER_SCHEDULER_ENABLED=true")
+			log.Fatalf("SCHEDULER_DATABASE_URL is required when SCHEDULER_ENABLED=true")
 		}
 
 		bridge := api.NewRunnerBridge(server.Handlers())
@@ -101,7 +101,7 @@ func main() {
 			}
 		}()
 	} else {
-		slog.Info("scheduler disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable)")
+		slog.Info("scheduler disabled (set SCHEDULER_ENABLED=true and SCHEDULER_DATABASE_URL to enable)")
 	}
 
 	if err := server.Start(); err != nil {

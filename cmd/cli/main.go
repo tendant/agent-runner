@@ -18,7 +18,7 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	bind := os.Getenv("BIND")
+	bind := os.Getenv("API_BIND")
 	if bind == "" {
 		bind = "127.0.0.1:8080"
 	}

@@ -149,32 +149,32 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	// Clear all env vars that LoadFromEnv reads
 	for _, key := range []string{
 		"REPO_CACHE_ROOT", "LOGS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
-		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
+		"JOB_MAX_RUNTIME", "JOB_MAX_CONCURRENT",
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
-		"BIND", "API_KEY",
+		"API_BIND", "API_KEY",
 		"AGENT_PROMPT_FILE", "AGENT_PATHS",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
-		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"AGENT_MAX_ITERATIONS", "AGENT_TIMEOUT", "AGENT_ITERATION_TIMEOUT",
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
+		"JOB_RETENTION_SECONDS", "CLEANUP_STALE_JOBS",
 	} {
 		t.Setenv(key, "")
 	}
 	// Unset them fully so envOrDefault returns defaults
 	for _, key := range []string{
 		"REPO_CACHE_ROOT", "LOGS_ROOT", "TMP_ROOT", "ALLOWED_PROJECTS",
-		"MAX_RUNTIME_SECONDS", "MAX_CONCURRENT_JOBS",
+		"JOB_MAX_RUNTIME", "JOB_MAX_CONCURRENT",
 		"GIT_PUSH_RETRIES", "GIT_PUSH_RETRY_DELAY_SECONDS",
 		"VALIDATION_BLOCK_BINARY_FILES", "VALIDATION_BLOCKED_PATHS",
-		"BIND", "API_KEY",
+		"API_BIND", "API_KEY",
 		"AGENT_PROMPT_FILE", "AGENT_PATHS",
 		"AGENT_AUTHOR", "AGENT_COMMIT_PREFIX",
-		"AGENT_MAX_ITERATIONS", "AGENT_MAX_TOTAL_SECONDS", "AGENT_MAX_ITERATION_SECONDS",
+		"AGENT_MAX_ITERATIONS", "AGENT_TIMEOUT", "AGENT_ITERATION_TIMEOUT",
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-		"JOB_RETENTION_SECONDS", "STARTUP_CLEANUP_STALE_JOBS",
+		"JOB_RETENTION_SECONDS", "CLEANUP_STALE_JOBS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -199,9 +199,9 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	t.Setenv("REPO_CACHE_ROOT", "/tmp/repos")
 	t.Setenv("LOGS_ROOT", "/tmp/logs")
 	t.Setenv("TMP_ROOT", "/tmp/workspaces")
-	t.Setenv("MAX_RUNTIME_SECONDS", "600")
-	t.Setenv("MAX_CONCURRENT_JOBS", "10")
-	t.Setenv("BIND", "0.0.0.0:9090")
+	t.Setenv("JOB_MAX_RUNTIME", "600")
+	t.Setenv("JOB_MAX_CONCURRENT", "10")
+	t.Setenv("API_BIND", "0.0.0.0:9090")
 	t.Setenv("API_KEY", "secret123")
 	t.Setenv("ALLOWED_PROJECTS", "project-a,project-b")
 	t.Setenv("AGENT_PATHS", "src/,docs/")
@@ -252,7 +252,7 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 
 func TestLoadFromEnv_InvalidConfig(t *testing.T) {
 	t.Setenv("REPO_CACHE_ROOT", "")
-	t.Setenv("MAX_RUNTIME_SECONDS", "0")
+	t.Setenv("JOB_MAX_RUNTIME", "0")
 
 	_, err := LoadFromEnv()
 	if err == nil {
@@ -262,7 +262,7 @@ func TestLoadFromEnv_InvalidConfig(t *testing.T) {
 
 func TestLoadFromEnv_BoolParsing(t *testing.T) {
 	t.Setenv("VALIDATION_BLOCK_BINARY_FILES", "true")
-	t.Setenv("STARTUP_CLEANUP_STALE_JOBS", "false")
+	t.Setenv("CLEANUP_STALE_JOBS", "false")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {

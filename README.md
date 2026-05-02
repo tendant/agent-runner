@@ -27,7 +27,7 @@ Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BIND` | `127.0.0.1:8080` | API listen address |
+| `API_BIND` | `127.0.0.1:8080` | API listen address |
 | `API_KEY` | | Authentication key (optional) |
 | `AGENT_CLI` | `claude` | Agent CLI backend (`claude`, `codex`, or `opencode`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |

@@ -15,7 +15,7 @@ func (h *Handlers) HandleDebugSchedules(w http.ResponseWriter, r *http.Request) 
 	if h.runnerDB == nil {
 		h.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"error":     "runner not enabled",
-			"hint":      "Set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable the runner",
+			"hint":      "Set SCHEDULER_ENABLED=true and SCHEDULER_DATABASE_URL to enable the runner",
 			"schedules": []interface{}{},
 			"runs":      []interface{}{},
 		})
