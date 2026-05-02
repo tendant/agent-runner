@@ -1,20 +1,29 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.RepoCacheRoot != "./repo-cache" {
-		t.Errorf("expected RepoCacheRoot ./repos, got %s", cfg.RepoCacheRoot)
+	data := defaultDataDir()
+	if cfg.RepoCacheRoot != filepath.Join(data, "repo-cache") {
+		t.Errorf("expected RepoCacheRoot under data dir, got %s", cfg.RepoCacheRoot)
 	}
-	if cfg.LogsRoot != "./logs" {
-		t.Errorf("expected LogsRoot ./logs, got %s", cfg.LogsRoot)
+	if cfg.LogsRoot != filepath.Join(data, "logs") {
+		t.Errorf("expected LogsRoot under data dir, got %s", cfg.LogsRoot)
 	}
-	if cfg.TmpRoot != "./tmp" {
-		t.Errorf("expected TmpRoot ./tmp, got %s", cfg.TmpRoot)
+	if cfg.TmpRoot != filepath.Join(data, "tmp") {
+		t.Errorf("expected TmpRoot under data dir, got %s", cfg.TmpRoot)
+	}
+	// Paths should be under home dir (or .agent-runner fallback)
+	home, _ := os.UserHomeDir()
+	if home != "" && !strings.HasPrefix(cfg.RepoCacheRoot, home) {
+		t.Errorf("expected RepoCacheRoot under home dir %s, got %s", home, cfg.RepoCacheRoot)
 	}
 	if cfg.MaxRuntimeSeconds != 300 {
 		t.Errorf("expected MaxRuntimeSeconds 300, got %d", cfg.MaxRuntimeSeconds)

@@ -39,5 +39,14 @@ RUN if [ "$AGENT_CLI" = "none" ] || [ -z "$AGENT_CLI" ]; then \
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
 
 WORKDIR /app
+
+# Mount /root as a persistent volume so all mutable data survives image updates:
+#   ~/.agent-runner/   — agent-runner data (logs, repo-cache, tmp, memory, .env.local)
+#   ~/.codex/          — codex auth + config
+#   ~/.claude/         — claude auth + config
+#   ~/.config/opencode/ — opencode config
+# Usage: docker run -v agent-data:/root ...  (or bind-mount a host directory)
+VOLUME /root
+
 EXPOSE 8080
 ENTRYPOINT ["agent-runner"]

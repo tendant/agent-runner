@@ -34,6 +34,18 @@ func backoffDelay(consecutiveFails int) time.Duration {
 	return delay
 }
 
+// isPermanentError returns true for errors that cannot be resolved by retrying,
+// such as a missing CLI binary or an authentication failure.
+func isPermanentError(errMsg string) bool {
+	lower := strings.ToLower(errMsg)
+	return strings.Contains(lower, "executable file not found in $path") ||
+		strings.Contains(lower, "no such file or directory") ||
+		strings.Contains(lower, "authentication") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "invalid api key") ||
+		strings.Contains(lower, "permission denied")
+}
+
 // maxReviewerCorrections is the maximum number of corrective iterations
 // the reviewer feedback loop can trigger after the main iteration loop.
 const maxReviewerCorrections = 3
@@ -190,7 +202,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
 		plan, err = planner.Plan(ctx, checkoutPath, message)
 		if err != nil {
-			// Any planner failure (including a conversational/rejection response)
+			if isPermanentError(err.Error()) {
+				slog.Error("aborting: permanent planner error", "session_id", sessionID, "error", err)
+				h.agentManager.FailSession(sessionID, err.Error())
+				return
+			}
+			// Any non-permanent planner failure (including a conversational/rejection response)
 			// falls through to the executor — tier 3 handles it regardless.
 			slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
 			planFailed = true
@@ -274,6 +291,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 
 		liveSession.AddIteration(result)
+
+		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
+			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
+			h.agentManager.FailSession(sessionID, result.Error)
+			return
+		}
 
 		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
 		metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))

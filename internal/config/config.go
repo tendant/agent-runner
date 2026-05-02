@@ -3,12 +3,22 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
+
+// defaultDataDir returns the default base directory for all mutable agent-runner
+// data: ~/.agent-runner. Falls back to .agent-runner if the home dir is unavailable.
+func defaultDataDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".agent-runner")
+	}
+	return ".agent-runner"
+}
 
 // Config represents the application configuration
 type Config struct {
@@ -143,11 +153,12 @@ type APIConfig struct {
 
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
+	data := defaultDataDir()
 	return &Config{
-		RepoCacheRoot:           "./repo-cache",
-		LogsRoot:                 "./logs",
-		TmpRoot:                  "./tmp",
-		MemoryDir:                "./memory",
+		RepoCacheRoot:           filepath.Join(data, "repo-cache"),
+		LogsRoot:                filepath.Join(data, "logs"),
+		TmpRoot:                 filepath.Join(data, "tmp"),
+		MemoryDir:               filepath.Join(data, "memory"),
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
 		MaxConcurrentJobs:        5,
@@ -198,21 +209,46 @@ func DefaultConfig() *Config {
 // LoadFromEnv loads configuration from environment variables and optional env
 // files. Priority order (highest to lowest):
 //
-//  1. OS environment — always wins
-//  2. .env.local     — gitignored local overrides; safe for the agent to write
-//  3. .env           — base config; committed as a template
+//  1. OS environment      — always wins
+//  2. DATA_DIR/.env.local — written by /set; survives image updates
+//  3. .env.<instance>     — instance-specific overrides (when INSTANCE is set)
+//  4. .env                — base config; committed as a template
 //
-// The agent should write config changes to .env.local, never to .env.
+// When INSTANCE is set (e.g. INSTANCE=prod), the app loads .env.prod and
+// defaults DATA_DIR to ~/.agent-runner/prod, isolating each instance's data.
 func LoadFromEnv() (*Config, error) {
-	// Read both files; merge with .env.local taking priority over .env.
-	// Then set each key only if not already present in the OS environment,
-	// preserving the invariant that explicit env vars always win.
-	base, _ := godotenv.Read(".env")
-	local, _ := godotenv.Read(".env.local")
-	for k, v := range local {
-		base[k] = v
+	// Determine instance name. Drives the default data dir and instance env file.
+	instance := os.Getenv("INSTANCE")
+
+	// Determine data dir: explicit DATA_DIR wins, then instance-scoped default,
+	// then global default.
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		base := defaultDataDir()
+		if instance != "" {
+			dataDir = filepath.Join(base, instance)
+		} else {
+			dataDir = base
+		}
 	}
-	for k, v := range base {
+
+	// Wire SetEnvLocal to write to the data dir's .env.local.
+	envLocalPath = filepath.Join(dataDir, ".env.local")
+
+	// Read files lowest-priority first; each layer overwrites keys from the one below.
+	// Priority: .env < .env.<instance> < DATA_DIR/.env.local < OS env
+	merged, _ := godotenv.Read(".env")
+	if instance != "" {
+		inst, _ := godotenv.Read(".env." + instance)
+		for k, v := range inst {
+			merged[k] = v
+		}
+	}
+	local, _ := godotenv.Read(envLocalPath)
+	for k, v := range local {
+		merged[k] = v
+	}
+	for k, v := range merged {
 		if os.Getenv(k) == "" {
 			os.Setenv(k, v) //nolint:errcheck
 		}
@@ -230,6 +266,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.RepoCacheRoot = envOrDefault("REPO_CACHE_ROOT", cfg.RepoCacheRoot)
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
+	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("MAX_RUNTIME_SECONDS", cfg.MaxRuntimeSeconds)
 	cfg.MaxConcurrentJobs = envIntOrDefault("MAX_CONCURRENT_JOBS", cfg.MaxConcurrentJobs)

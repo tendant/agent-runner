@@ -63,9 +63,9 @@ func main() {
 	// Create and start server
 	server := api.NewServer(cfg)
 
-	// Conditionally start hybrid runner
+	// Conditionally start hybrid scheduler
 	if cfg.Runner.Enabled {
-		slog.Info("runner enabled",
+		slog.Info("scheduler enabled",
 			"db", cfg.Runner.DatabaseURL, "prefix", cfg.Runner.TypePrefix,
 			"lease_seconds", cfg.Runner.LeaseDuration, "poll_cap_seconds", cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
@@ -84,7 +84,7 @@ func main() {
 			MemoryDir:         cfg.MemoryDir,
 		}, bridge)
 		if err != nil {
-			log.Fatalf("Failed to create runner: %v", err)
+			log.Fatalf("Failed to create scheduler: %v", err)
 		}
 		server.SetRunner(r)
 
@@ -92,16 +92,16 @@ func main() {
 		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
 		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
 		server.Handlers().SetRunnerDB(runner.NewDebugDB(r.DB(), r.Dialect().DriverName()))
-		slog.Info("runner workflow client initialized")
+		slog.Info("scheduler workflow client initialized")
 
 		go func() {
-			slog.Info("runner starting")
+			slog.Info("scheduler starting")
 			if err := r.Start(context.Background()); err != nil {
-				slog.Error("runner error", "error", err)
+				slog.Error("scheduler error", "error", err)
 			}
 		}()
 	} else {
-		slog.Info("runner disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable)")
+		slog.Info("scheduler disabled (set RUNNER_SCHEDULER_ENABLED=true and RUNNER_DATABASE_URL to enable)")
 	}
 
 	if err := server.Start(); err != nil {

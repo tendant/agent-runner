@@ -328,7 +328,7 @@ const helpText = `/help      show this message
 /set-agent <content>   overwrite agent.md with the given content
 /set-prompt <content>  overwrite prompt.md with the given content
 /auth [cli]     start OAuth flow via chat (claude or codex)
-                codex uses device code: enter URL + code in browser
+                codex uses device auth (codex login --device-auth)
 /auth cancel    stop an in-progress auth flow`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.

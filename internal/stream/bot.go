@@ -93,7 +93,7 @@ func (b *Bot) Start(ctx context.Context) error {
 		}()
 	}
 
-	slog.Info("stream bot started", "conversations", len(b.convIDs))
+	slog.Info("stream bot started", "conversations", b.convIDs)
 	return nil
 }
 
@@ -144,6 +144,7 @@ func (b *Bot) mode() string {
 // Events are sorted by seq before processing so out-of-order delivery from the
 // server doesn't cause gaps. afterSeq advances after each event is handled.
 func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
+	slog.Info("stream bot: polling started", "conversation_id", convID, "interval", b.pollInterval, "after_seq", afterSeq)
 	ticker := time.NewTicker(b.pollInterval)
 	defer ticker.Stop()
 
@@ -185,7 +186,7 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 
 		events, err := b.client.StreamEvents(ctx, convID, afterSeq)
 		if err != nil {
-			slog.Error("stream bot SSE connect error", "conversation_id", convID, "error", err)
+			slog.Error("stream bot: SSE connect error", "conversation_id", convID, "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -193,6 +194,7 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 				continue
 			}
 		}
+		slog.Info("stream bot: SSE connected", "conversation_id", convID, "after_seq", afterSeq)
 
 		var received int
 		for event := range events {
@@ -287,6 +289,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 	}
 
 	text := strings.TrimSpace(msg.Content)
+	slog.Info("stream bot: message received", "conversation_id", convID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
 
 	// Download and inline any attached files
 	if len(msg.FileIDs) > 0 {
@@ -390,9 +393,9 @@ func isImageContent(contentType string) bool {
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
-		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
+		asyncSend := func(msg string) { b.emitFinal(ctx, convID, fenceIfMultiline(msg)) }
 		if reply, ok := b.commander.Handle(text, asyncSend); ok {
-			b.emitFinal(ctx, convID, reply)
+			b.emitFinal(ctx, convID, fenceIfMultiline(reply))
 			return
 		}
 	}
@@ -756,6 +759,16 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 
 // extractBotUserID extracts a user ID from a JWT token (base64-decoded middle segment).
 // Falls back to empty string if parsing fails — own-message filtering will be skipped.
+// fenceIfMultiline wraps multi-line text in a markdown code block so that
+// clients that render markdown preserve newlines. Single-line strings are
+// returned as-is.
+func fenceIfMultiline(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	return "```\n" + s + "\n```"
+}
+
 func extractBotUserID(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

@@ -16,6 +16,13 @@ const authTimeout = 5 * time.Minute
 
 var urlRe = regexp.MustCompile(`https?://\S+`)
 
+// ansiRe matches ANSI/VT100 escape sequences (e.g. \x1b[0m, \x1b[1;32m).
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripANSI(s string) string {
+	return strings.TrimSpace(ansiRe.ReplaceAllString(s, ""))
+}
+
 // runCLIAuthFlowCtx runs the given CLI's auth command under the provided context
 // (which may be cancelled by /auth cancel) with an overall 5-minute timeout.
 // URLs found in the output are sent immediately so the user can open them.
@@ -31,7 +38,7 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 	case "codex":
 		// Device code grant (RFC 8628): CLI prints user_code + verification_uri;
 		// no browser redirect or local callback server required.
-		args = []string{"auth", "login", "--device-code"}
+		args = []string{"login", "--device-auth"}
 	default:
 		send(fmt.Sprintf("error: /auth only supports 'claude' and 'codex' (got %q)", cli))
 		return
@@ -54,7 +61,7 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 		defer func() { done <- struct{}{} }()
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
+			line := stripANSI(scanner.Text())
 			if line == "" {
 				continue
 			}

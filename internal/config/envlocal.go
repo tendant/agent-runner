@@ -3,14 +3,22 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// SetEnvLocal writes or updates a single key in .env.local.
+// envLocalPath is the absolute path to .env.local. Set by LoadFromEnv to
+// DATA_DIR/.env.local (default: ~/.agent-runner/.env.local).
+var envLocalPath = ".env.local"
+
+// SetEnvLocal writes or updates a single key in the data-dir .env.local.
 // Other keys already present in the file are preserved.
-// The file is created if it does not exist.
+// The file and its parent directory are created if they do not exist.
 func SetEnvLocal(key, value string) error {
-	return setEnvLocalFile(".env.local", key, value)
+	if err := os.MkdirAll(filepath.Dir(envLocalPath), 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	return setEnvLocalFile(envLocalPath, key, value)
 }
 
 func setEnvLocalFile(path, key, value string) error {
