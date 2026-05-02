@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -203,6 +204,34 @@ func (c *Client) SendMessage(ctx context.Context, conversationID, content string
 	return nil
 }
 
+// PollEvents fetches events after afterSeq in a single HTTP request (no SSE required).
+// Returns all new events sorted by seq. Suitable for polling loops.
+func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq int64) ([]Event, error) {
+	url := fmt.Sprintf("%s/v1/conversations/%s/events?after_seq=%d", c.serverURL, conversationID, afterSeq)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create poll request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("poll events: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("poll events: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var events []Event
+	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+		return nil, fmt.Errorf("poll events: decode: %w", err)
+	}
+	return events, nil
+}
+
 // StreamEvents opens an SSE connection and returns a channel of events.
 // The channel is closed when the context is cancelled or the connection drops.
 func (c *Client) StreamEvents(ctx context.Context, conversationID string, afterSeq int64) (<-chan Event, error) {
@@ -212,10 +241,18 @@ func (c *Client) StreamEvents(ctx context.Context, conversationID string, afterS
 		return nil, fmt.Errorf("create SSE request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
 
-	// Use a separate client without timeout for SSE (long-lived connection)
-	sseClient := &http.Client{}
+	// Use a separate client without timeout for SSE (long-lived connection).
+	// Disable HTTP/2: SSE requires chunked streaming which HTTP/2 multiplexing
+	// can interfere with on some server implementations.
+	sseClient := &http.Client{
+		Transport: &http.Transport{
+			ForceAttemptHTTP2: false,
+		},
+	}
 	resp, err := sseClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("SSE connect: %w", err)
@@ -238,14 +275,17 @@ func (c *Client) StreamEvents(ctx context.Context, conversationID string, afterS
 }
 
 // readSSE parses SSE lines from the reader and sends parsed events to the channel.
-func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) {
+// Returns the number of events successfully delivered.
+func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 256*1024), 1024*1024) // 1 MB max line
 	var dataLines []string
+	var count int
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return
+			return count
 		default:
 		}
 
@@ -261,8 +301,9 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) {
 				if err := json.Unmarshal([]byte(data), &event); err == nil {
 					select {
 					case ch <- event:
+						count++
 					case <-ctx.Done():
-						return
+						return count
 					}
 				}
 			}
@@ -273,4 +314,9 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) {
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}
 	}
+
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		slog.Warn("SSE scanner error", "error", err)
+	}
+	return count
 }

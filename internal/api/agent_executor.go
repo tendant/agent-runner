@@ -482,11 +482,9 @@ func (h *Handlers) executeIteration(
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
-		// Preserve partial output so it can be fed back into the next iteration
+		// Preserve structured output only — raw CLI terminal output is never shown to the user.
 		if execResult != nil && execResult.Output != "" {
 			result.Output = execResult.Output
-		} else if execResult != nil && execResult.RawOutput != "" {
-			result.Output = execResult.RawOutput
 		}
 		if execResult != nil {
 			result.CostUSD = execResult.CostUSD

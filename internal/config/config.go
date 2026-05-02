@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -92,9 +93,10 @@ type TelegramConfig struct {
 
 // StreamConfig contains agent-stream bot settings
 type StreamConfig struct {
-	ServerURL       string   // STREAM_SERVER_URL
-	BotToken        string   // STREAM_BOT_TOKEN (pre-registered bot JWT)
-	ConversationIDs []string // STREAM_CONVERSATION_IDS
+	ServerURL       string        // STREAM_SERVER_URL
+	BotToken        string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
+	ConversationIDs []string      // STREAM_CONVERSATION_IDS
+	PollInterval    time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
 }
 
 // WeChatConfig contains WeChat bot settings (iLink API).
@@ -269,6 +271,11 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.ServerURL = envOrDefault("STREAM_SERVER_URL", "")
 	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
 	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
+	if v := os.Getenv("STREAM_POLL_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Stream.PollInterval = d
+		}
+	}
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")

@@ -26,8 +26,9 @@ type AgentStarter interface {
 }
 
 // Commander handles chat configuration commands without requiring an LLM.
+// send is an optional callback for async messages (e.g. /auth URL relay).
 type Commander interface {
-	Handle(text string) (string, bool)
+	Handle(text string, send func(string)) (string, bool)
 }
 
 // Bot bridges agent-stream conversations to the agent runner.
@@ -39,6 +40,7 @@ type Bot struct {
 	analyzer       *conversation.Analyzer
 	convIDs        []string
 	botUserID      string
+	pollInterval   time.Duration // >0 = poll mode; 0 = SSE mode
 	wechatReloader  func(token, baseURL string) // called after a successful /wechat-login
 	wechatBaseURL   string                     // iLink API base URL for the login flow
 	wechatLoginMu   sync.Mutex                 // prevents concurrent /wechat-login flows
@@ -62,13 +64,14 @@ func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Ma
 	}
 
 	return &Bot{
-		client:      NewClient(cfg.ServerURL, cfg.BotToken),
-		starter:     starter,
-		commander:   commander,
-		convManager: convMgr,
-		analyzer:    analyzer,
-		convIDs:     cfg.ConversationIDs,
-		botUserID:   extractBotUserID(cfg.BotToken),
+		client:       NewClient(cfg.ServerURL, cfg.BotToken),
+		starter:      starter,
+		commander:    commander,
+		convManager:  convMgr,
+		analyzer:     analyzer,
+		convIDs:      cfg.ConversationIDs,
+		botUserID:    extractBotUserID(cfg.BotToken),
+		pollInterval: cfg.PollInterval,
 	}
 }
 
@@ -116,13 +119,61 @@ func (b *Bot) Stop() {
 	slog.Info("stream bot stopped")
 }
 
-// listenConversation connects to SSE for a single conversation and processes events.
+// listenConversation receives events for a single conversation.
+// Uses polling (GET /events?after_seq=N) when b.pollInterval > 0, otherwise SSE.
 func (b *Bot) listenConversation(ctx context.Context, convID string) {
-	// Catch up: connect from seq 0, drain all existing events to find
-	// the latest seq without processing them, so we only handle new messages.
+	// Catch up: find the latest existing seq so we only process new messages.
 	afterSeq := b.catchUpSeq(ctx, convID)
-	slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq)
+	slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
 
+	if b.pollInterval > 0 {
+		b.listenPoll(ctx, convID, afterSeq)
+	} else {
+		b.listenSSE(ctx, convID, afterSeq)
+	}
+}
+
+func (b *Bot) mode() string {
+	if b.pollInterval > 0 {
+		return "poll"
+	}
+	return "sse"
+}
+
+// listenPoll polls GET /events?after_seq=N on a fixed interval.
+// afterSeq acts as the deduplication cursor: only events with seq > afterSeq
+// are processed, and afterSeq advances to the highest seq seen each poll.
+func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
+	ticker := time.NewTicker(b.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		events, err := b.client.PollEvents(ctx, convID, afterSeq)
+		if err != nil {
+			slog.Error("stream bot poll error", "conversation_id", convID, "error", err)
+			continue
+		}
+
+		for _, event := range events {
+			if event.Seq > afterSeq {
+				afterSeq = event.Seq
+			}
+			if event.Type == "message.created" {
+				b.handleMessageEvent(ctx, convID, event)
+			}
+		}
+	}
+}
+
+// listenSSE connects to the SSE stream and processes events until the connection
+// drops, then reconnects. afterSeq acts as the deduplication cursor.
+func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -141,32 +192,56 @@ func (b *Bot) listenConversation(ctx context.Context, convID string) {
 			}
 		}
 
+		var received int
 		for event := range events {
-			afterSeq = event.Seq
+			if event.Seq > afterSeq {
+				afterSeq = event.Seq
+			}
+			received++
 			if event.Type == "message.created" {
 				b.handleMessageEvent(ctx, convID, event)
 			}
 		}
 
-		// Channel closed — reconnect after delay
-		slog.Info("stream bot SSE connection closed, reconnecting", "conversation_id", convID)
+		delay := 2 * time.Second
+		if received == 0 {
+			delay = 15 * time.Second
+		}
+		slog.Info("stream bot SSE connection closed, reconnecting", "conversation_id", convID, "events_received", received, "delay", delay)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(delay):
 		}
 	}
 }
 
-// catchUpSeq connects to SSE from seq 0, drains all existing events, and
-// returns the latest seq so the bot only processes new messages.
+// catchUpSeq returns the highest seq currently in the conversation so the bot
+// starts from "now" and skips existing history.
+// In poll mode it calls PollEvents(seq=0); in SSE mode it drains the stream.
 func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
+	if b.pollInterval > 0 {
+		events, err := b.client.PollEvents(ctx, convID, 0)
+		if err != nil {
+			slog.Warn("stream bot catch-up (poll) failed", "conversation_id", convID, "error", err)
+			return 0
+		}
+		var maxSeq int64
+		for _, e := range events {
+			if e.Seq > maxSeq {
+				maxSeq = e.Seq
+			}
+		}
+		return maxSeq
+	}
+
+	// SSE mode: open stream from 0, drain until idle for 2s.
 	catchUpCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	events, err := b.client.StreamEvents(catchUpCtx, convID, 0)
 	if err != nil {
-		slog.Warn("stream bot catch-up failed", "conversation_id", convID, "error", err)
+		slog.Warn("stream bot catch-up (sse) failed", "conversation_id", convID, "error", err)
 		return 0
 	}
 
@@ -179,7 +254,6 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 			}
 			maxSeq = event.Seq
 		case <-time.After(2 * time.Second):
-			// No events for 2s — we've caught up
 			return maxSeq
 		}
 	}
@@ -308,7 +382,8 @@ func isImageContent(contentType string) bool {
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
-		if reply, ok := b.commander.Handle(text); ok {
+		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
+		if reply, ok := b.commander.Handle(text, asyncSend); ok {
 			b.emitFinal(ctx, convID, reply)
 			return
 		}

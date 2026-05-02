@@ -27,7 +27,7 @@ func TestCommander_Handle_UnknownInput(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	_, handled := c.Handle("hello world")
+	_, handled := c.Handle("hello world", nil)
 	if handled {
 		t.Error("expected unrecognised input to return handled=false")
 	}
@@ -39,7 +39,7 @@ func TestCommander_Handle_BareCommandNormalization(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	for _, bare := range []string{"help", "Help", "HELP", "config", "bootstrap"} {
-		reply, handled := c.Handle(bare)
+		reply, handled := c.Handle(bare, nil)
 		if !handled {
 			t.Errorf("bare command %q should be handled", bare)
 		}
@@ -54,7 +54,7 @@ func TestCommander_Handle_MultiWordRequiresSlash(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// "set" alone should NOT be handled (multi-word command, needs slash)
-	_, handled := c.Handle("set AGENT_MODEL foo")
+	_, handled := c.Handle("set AGENT_MODEL foo", nil)
 	if handled {
 		t.Error("'set' without slash should not be handled")
 	}
@@ -66,7 +66,7 @@ func TestCommander_Help(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/help")
+	reply, handled := c.Handle("/help", nil)
 	if !handled {
 		t.Fatal("expected /help to be handled")
 	}
@@ -83,7 +83,7 @@ func TestCommander_Config_ShowsCLIDefault(t *testing.T) {
 	env.handlers.config.Agent.CLI = ""
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "cli=opencode") {
 		t.Errorf("expected cli=opencode when CLI is empty, got:\n%s", reply)
 	}
@@ -95,7 +95,7 @@ func TestCommander_Config_ShowsSetAPIKey(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "DEEPSEEK_API_KEY=set") {
 		t.Errorf("expected DEEPSEEK_API_KEY=set when key is set, got:\n%s", reply)
 	}
@@ -107,7 +107,7 @@ func TestCommander_Config_OmitsUnsetAPIKey(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 	if strings.Contains(reply, "DEEPSEEK_API_KEY") {
 		t.Errorf("unset API key should be omitted, got:\n%s", reply)
 	}
@@ -118,7 +118,7 @@ func TestCommander_Config_FileStateMissing(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "agent.md=missing") {
 		t.Errorf("expected agent.md=missing, got:\n%s", reply)
 	}
@@ -137,7 +137,7 @@ func TestCommander_Config_FileStateExists(t *testing.T) {
 	os.WriteFile(filepath.Join(cwd, "prompt.md"), []byte("test"), 0644)
 
 	c := NewCommander(env.handlers.config, env.handlers)
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 
 	if !strings.Contains(reply, "agent.md=exists") {
 		t.Errorf("expected agent.md=exists, got:\n%s", reply)
@@ -158,7 +158,7 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	env.handlers.config.Agent.Provider = ""
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config")
+	reply, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "ready=false") {
 		t.Errorf("expected ready=false when no API key, got:\n%s", reply)
 	}
@@ -171,7 +171,7 @@ func TestCommander_Set_InvalidFormat(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// "/set KEY" with no value — handled but returns usage error
-	reply, handled := c.Handle("/set ONLYKEY")
+	reply, handled := c.Handle("/set ONLYKEY", nil)
 	if !handled {
 		t.Fatal("expected /set ONLYKEY to be handled")
 	}
@@ -185,7 +185,7 @@ func TestCommander_Set_SpaceSyntax(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set AGENT_CLI claude")
+	reply, _ := c.Handle("/set AGENT_CLI claude", nil)
 	if reply != "ok AGENT_CLI=claude" {
 		t.Errorf("expected 'ok AGENT_CLI=claude', got: %s", reply)
 	}
@@ -196,7 +196,7 @@ func TestCommander_Set_EqualsSyntax(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set AGENT_CLI=codex")
+	reply, _ := c.Handle("/set AGENT_CLI=codex", nil)
 	if reply != "ok AGENT_CLI=codex" {
 		t.Errorf("expected 'ok AGENT_CLI=codex', got: %s", reply)
 	}
@@ -208,7 +208,7 @@ func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	for _, key := range []string{"DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "MY_SECRET", "DB_PASSWORD"} {
-		reply, _ := c.Handle("/set " + key + " super-secret-value")
+		reply, _ := c.Handle("/set " + key + " super-secret-value", nil)
 		if reply != "ok "+key {
 			t.Errorf("sensitive key %s: expected 'ok %s', got: %s", key, key, reply)
 		}
@@ -223,7 +223,7 @@ func TestCommander_Set_WritesEnvLocal(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	c.Handle("/set MY_VAR hello")
+	c.Handle("/set MY_VAR hello", nil)
 
 	cwd, _ := os.Getwd()
 	data, err := os.ReadFile(filepath.Join(cwd, ".env.local"))
@@ -240,7 +240,7 @@ func TestCommander_Set_LiveConfigUpdate_AgentCLI(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	c.Handle("/set AGENT_CLI claude")
+	c.Handle("/set AGENT_CLI claude", nil)
 	if env.handlers.config.Agent.CLI != "claude" {
 		t.Errorf("expected Agent.CLI=claude, got: %s", env.handlers.config.Agent.CLI)
 	}
@@ -251,7 +251,7 @@ func TestCommander_Set_LiveConfigUpdate_AgentModel(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	c.Handle("/set AGENT_MODEL my-model")
+	c.Handle("/set AGENT_MODEL my-model", nil)
 	if env.handlers.config.Agent.Model != "my-model" {
 		t.Errorf("expected Agent.Model=my-model, got: %s", env.handlers.config.Agent.Model)
 	}
@@ -262,7 +262,7 @@ func TestCommander_Set_LiveConfigUpdate_AgentMaxTurns(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	c.Handle("/set AGENT_MAX_TURNS 99")
+	c.Handle("/set AGENT_MAX_TURNS 99", nil)
 	if env.handlers.config.Agent.MaxTurns != 99 {
 		t.Errorf("expected Agent.MaxTurns=99, got: %d", env.handlers.config.Agent.MaxTurns)
 	}
@@ -279,7 +279,7 @@ func TestCommander_Bootstrap_CreatesFiles(t *testing.T) {
 	env.handlers.config.Agent.Provider = "deepseek"
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/bootstrap")
+	reply, handled := c.Handle("/bootstrap", nil)
 	if !handled {
 		t.Fatal("expected /bootstrap to be handled")
 	}
@@ -303,9 +303,9 @@ func TestCommander_Bootstrap_SkipsExisting(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// Create first
-	c.Handle("/bootstrap")
+	c.Handle("/bootstrap", nil)
 	// Run again without force
-	reply, _ := c.Handle("/bootstrap")
+	reply, _ := c.Handle("/bootstrap", nil)
 
 	if !strings.Contains(reply, "skipped") || !strings.Contains(reply, "agent.md") {
 		t.Errorf("expected 'skipped agent.md', got:\n%s", reply)
@@ -323,8 +323,8 @@ func TestCommander_Bootstrap_ForceOverwrites(t *testing.T) {
 	env.handlers.config.Agent.Provider = "deepseek"
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	c.Handle("/bootstrap")
-	reply, _ := c.Handle("/bootstrap force")
+	c.Handle("/bootstrap", nil)
+	reply, _ := c.Handle("/bootstrap force", nil)
 
 	if !strings.Contains(reply, "created") || !strings.Contains(reply, "agent.md") {
 		t.Errorf("expected 'created agent.md' with force, got:\n%s", reply)
@@ -338,7 +338,7 @@ func TestCommander_SetAgent_EmptyContent(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/set-agent")
+	reply, handled := c.Handle("/set-agent", nil)
 	if !handled {
 		t.Fatal("expected /set-agent to be handled")
 	}
@@ -352,7 +352,7 @@ func TestCommander_SetAgent_WritesFile(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set-agent you are a helpful agent")
+	reply, _ := c.Handle("/set-agent you are a helpful agent", nil)
 	if !strings.Contains(reply, "ok wrote agent.md") {
 		t.Errorf("expected 'ok wrote agent.md', got: %s", reply)
 	}
@@ -372,7 +372,7 @@ func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set-prompt do the task step by step")
+	reply, _ := c.Handle("/set-prompt do the task step by step", nil)
 	if !strings.Contains(reply, "ok wrote prompt.md") {
 		t.Errorf("expected 'ok wrote prompt.md', got: %s", reply)
 	}

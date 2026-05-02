@@ -35,7 +35,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	// Handle configuration commands: create a pre-completed session so the
 	// client's normal polling flow works without any special-casing.
 	if h.commander != nil {
-		if reply, ok := h.commander.Handle(req.Message); ok {
+		if reply, ok := h.commander.Handle(req.Message, nil); ok {
 			session, err := h.agentManager.CreateSession(req.Message, nil, "", "", 1, 0)
 			if err != nil {
 				h.writeError(w, http.StatusInternalServerError, err.Error())

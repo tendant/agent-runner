@@ -152,6 +152,5 @@ func parseOpencodeOutput(data []byte) (string, error) {
 	if lastErr != nil {
 		return "", lastErr
 	}
-	// Fallback: return raw stdout if no structured events were found
-	return strings.TrimSpace(string(data)), nil
+	return "", fmt.Errorf("opencode produced no output events (check version and auth)")
 }

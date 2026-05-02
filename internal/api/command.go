@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/agent-runner/agent-runner/internal/config"
 )
@@ -16,8 +18,10 @@ const (
 // Commander handles chat configuration commands. Zero LLM dependencies —
 // safe to call before any model or provider is configured.
 type Commander struct {
-	cfg      *config.Config
-	handlers *Handlers
+	cfg        *config.Config
+	handlers   *Handlers
+	authMu     sync.Mutex   // guards against concurrent /auth flows
+	authCancel func()       // non-nil while an auth flow is running
 }
 
 // NewCommander creates a Commander backed by the given config and handlers.
@@ -27,12 +31,14 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 
 // Handle parses text and executes a recognised command. Returns the reply
 // and true when a command was handled; returns ("", false) otherwise.
+// send is an optional callback for async messages (needed by /auth); pass nil
+// when async notifications are not available (e.g. REST API callers).
 // bareCommands are single-word commands that are safe to accept without a leading slash.
 // Multi-word commands (set, set-agent, set-prompt) require the slash to avoid false
 // positives on agent instructions that happen to start with those words.
 var bareCommands = []string{"help", "config", "bootstrap"}
 
-func (c *Commander) Handle(text string) (string, bool) {
+func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	// Normalise: accept "config", "help", "bootstrap" without leading slash.
@@ -65,8 +71,59 @@ func (c *Commander) Handle(text string) (string, bool) {
 	case strings.HasPrefix(lower, cmdSetPrompt+" ") || lower == cmdSetPrompt:
 		content := strings.TrimSpace(text[len(cmdSetPrompt):])
 		return c.handleSetFile("prompt.md", content, false), true
+	case lower == "/auth cancel":
+		return c.handleAuthCancel(), true
+	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
+		arg := strings.TrimSpace(text[len("/auth"):])
+		return c.handleAuth(arg, send), true
 	}
 	return "", false
+}
+
+// handleAuth starts a CLI auth flow in a background goroutine and relays
+// progress (including the auth URL) to send. Only 'claude' is supported.
+func (c *Commander) handleAuth(arg string, send func(string)) string {
+	if send == nil {
+		return "error: /auth is only available via chat (Telegram, WeChat, stream)"
+	}
+	cli := strings.TrimSpace(arg)
+	if cli == "" {
+		cli = c.cfg.Agent.CLI
+	}
+	if cli == "" || cli == "opencode" {
+		return "opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead"
+	}
+	if cli != "claude" && cli != "codex" {
+		return fmt.Sprintf("error: /auth only supports 'claude' and 'codex' (got %q)", cli)
+	}
+	if !CLIInstalled(cli) {
+		return fmt.Sprintf("error: %s is not installed — run /install-cli %s first", cli, cli)
+	}
+	if !c.authMu.TryLock() {
+		return "an auth flow is already in progress — use /auth cancel to stop it"
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.authCancel = cancel
+	go func() {
+		defer func() {
+			c.authCancel = nil
+			c.authMu.Unlock()
+		}()
+		runCLIAuthFlowCtx(ctx, cli, send)
+	}()
+	return "Starting " + cli + " auth — open the URL when it appears in chat... (/auth cancel to stop)"
+}
+
+// handleAuthCancel cancels any running auth flow.
+func (c *Commander) handleAuthCancel() string {
+	c.authMu.Lock()
+	cancel := c.authCancel
+	c.authMu.Unlock()
+	if cancel == nil {
+		return "no auth flow is running"
+	}
+	cancel()
+	return "auth flow cancelled"
 }
 
 // handleConfig returns the current configuration state, one key=value per line.
@@ -269,7 +326,10 @@ const helpText = `/help      show this message
 /bootstrap      create default agent.md and prompt.md (also installs CLI)
 /bootstrap force  overwrite existing files
 /set-agent <content>   overwrite agent.md with the given content
-/set-prompt <content>  overwrite prompt.md with the given content`
+/set-prompt <content>  overwrite prompt.md with the given content
+/auth [cli]     start OAuth flow via chat (claude or codex)
+                codex uses device code: enter URL + code in browser
+/auth cancel    stop an in-progress auth flow`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{
