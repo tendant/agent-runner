@@ -137,37 +137,38 @@ func (c *Commander) handleConfig() string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	fmt.Fprintf(&b, "cli=%s\n", cli)
-	fmt.Fprintf(&b, "cli_installed=%v\n", CLIInstalled(cli))
+
+	b.WriteString("**Configuration**\n\n")
+	fmt.Fprintf(&b, "**cli:** %s (%s)\n", cli, map[bool]string{true: "installed", false: "not installed"}[CLIInstalled(cli)])
 
 	if c.cfg.Agent.Provider != "" {
-		fmt.Fprintf(&b, "provider=%s\n", c.cfg.Agent.Provider)
+		fmt.Fprintf(&b, "**provider:** %s\n", c.cfg.Agent.Provider)
 	}
 	if c.cfg.Agent.Model != "" {
-		fmt.Fprintf(&b, "model=%s\n", c.cfg.Agent.Model)
+		fmt.Fprintf(&b, "**model:** %s\n", c.cfg.Agent.Model)
 	}
 
 	// Show set API keys (never show values).
 	for _, key := range configAPIKeys {
 		if os.Getenv(key) != "" {
-			fmt.Fprintf(&b, "%s=set\n", key)
+			fmt.Fprintf(&b, "**%s:** set\n", key)
 		}
 	}
 
 	// File state always shown.
 	systemPath, promptPath := c.handlers.bootstrapPaths()
-	fmt.Fprintf(&b, "agent.md=%s\n", fileState(systemPath))
-	fmt.Fprintf(&b, "prompt.md=%s\n", fileState(promptPath))
+	fmt.Fprintf(&b, "**agent.md:** %s\n", fileState(systemPath))
+	fmt.Fprintf(&b, "**prompt.md:** %s\n", fileState(promptPath))
 
 	// Ready = no credential warnings.
 	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
-		fmt.Fprintf(&b, "ready=true\n")
+		b.WriteString("**ready:** ✓")
 	} else {
-		fmt.Fprintf(&b, "ready=false\n")
+		b.WriteString("**ready:** ✗")
 	}
 
-	return strings.TrimRight(b.String(), "\n")
+	return b.String()
 }
 
 // handleSet parses "KEY VALUE" or "KEY=VALUE" and persists it.
@@ -310,26 +311,23 @@ func fileState(path string) string {
 	return "missing"
 }
 
-const helpText = `/help      show this message
-/config    show current configuration and readiness
-/set KEY VALUE  set a config value (saved to .env.local, survives restart)
-           examples:
-             /set AGENT_CLI claude
-             /set ANTHROPIC_API_KEY <key>   ← auth for claude
-             /set OPENAI_API_KEY <key>      ← auth for codex
-             /set AGENT_PROVIDER deepseek
-             /set AGENT_MODEL deepseek-chat
-             /set DEEPSEEK_API_KEY <key>
-/install-cli [cli]  install agent CLI (default: configured CLI)
-                    e.g. /install-cli claude  /install-cli codex  /install-cli opencode
-                    after installing, set the matching API key to authenticate
-/bootstrap      create default agent.md and prompt.md (also installs CLI)
-/bootstrap force  overwrite existing files
-/set-agent <content>   overwrite agent.md with the given content
-/set-prompt <content>  overwrite prompt.md with the given content
-/auth [cli]     start OAuth flow via chat (claude or codex)
-                codex uses device auth (codex login --device-auth)
-/auth cancel    stop an in-progress auth flow`
+const helpText = `**Agent Runner Commands**
+
+**/config** — show current configuration and readiness
+
+**/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
+Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEEPSEEK\_API\_KEY \<key\>
+
+**/install-cli** _[cli]_ — install agent CLI (claude / codex / opencode)
+
+**/bootstrap** — create default agent.md and prompt.md
+**/bootstrap force** — overwrite existing files
+
+**/auth** _[cli]_ — start OAuth login flow via chat (claude or codex)
+**/auth cancel** — stop an in-progress auth flow
+
+**/set-agent** _\<content\>_ — overwrite agent.md
+**/set-prompt** _\<content\>_ — overwrite prompt.md`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{

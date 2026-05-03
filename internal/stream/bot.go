@@ -435,9 +435,9 @@ func isImageContent(contentType string) bool {
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
-		asyncSend := func(msg string) { b.emitFinal(ctx, convID, fenceIfMultiline(msg)) }
+		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
 		if reply, ok := b.commander.Handle(text, asyncSend); ok {
-			b.emitFinal(ctx, convID, fenceIfMultiline(reply))
+			b.emitFinal(ctx, convID, reply)
 			return
 		}
 	}
@@ -801,16 +801,6 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 
 // extractBotUserID extracts a user ID from a JWT token (base64-decoded middle segment).
 // Falls back to empty string if parsing fails — own-message filtering will be skipped.
-// fenceIfMultiline wraps multi-line text in a markdown code block so that
-// clients that render markdown preserve newlines. Single-line strings are
-// returned as-is.
-func fenceIfMultiline(s string) string {
-	if !strings.Contains(s, "\n") {
-		return s
-	}
-	return "```\n" + s + "\n```"
-}
-
 func extractBotUserID(token string) string {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

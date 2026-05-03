@@ -84,8 +84,8 @@ func TestCommander_Config_ShowsCLIDefault(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	reply, _ := c.Handle("/config", nil)
-	if !strings.Contains(reply, "cli=opencode") {
-		t.Errorf("expected cli=opencode when CLI is empty, got:\n%s", reply)
+	if !strings.Contains(reply, "opencode") {
+		t.Errorf("expected opencode in config when CLI is empty, got:\n%s", reply)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestCommander_Config_ShowsSetAPIKey(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	reply, _ := c.Handle("/config", nil)
-	if !strings.Contains(reply, "DEEPSEEK_API_KEY=set") {
-		t.Errorf("expected DEEPSEEK_API_KEY=set when key is set, got:\n%s", reply)
+	if !strings.Contains(reply, "DEEPSEEK_API_KEY") || !strings.Contains(reply, "set") {
+		t.Errorf("expected DEEPSEEK_API_KEY: set when key is set, got:\n%s", reply)
 	}
 }
 
@@ -119,11 +119,11 @@ func TestCommander_Config_FileStateMissing(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	reply, _ := c.Handle("/config", nil)
-	if !strings.Contains(reply, "agent.md=missing") {
-		t.Errorf("expected agent.md=missing, got:\n%s", reply)
+	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "missing") {
+		t.Errorf("expected agent.md missing, got:\n%s", reply)
 	}
-	if !strings.Contains(reply, "prompt.md=missing") {
-		t.Errorf("expected prompt.md=missing, got:\n%s", reply)
+	if !strings.Contains(reply, "prompt.md") || !strings.Contains(reply, "missing") {
+		t.Errorf("expected prompt.md missing, got:\n%s", reply)
 	}
 }
 
@@ -139,11 +139,11 @@ func TestCommander_Config_FileStateExists(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 	reply, _ := c.Handle("/config", nil)
 
-	if !strings.Contains(reply, "agent.md=exists") {
-		t.Errorf("expected agent.md=exists, got:\n%s", reply)
+	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "exists") {
+		t.Errorf("expected agent.md exists, got:\n%s", reply)
 	}
-	if !strings.Contains(reply, "prompt.md=exists") {
-		t.Errorf("expected prompt.md=exists, got:\n%s", reply)
+	if !strings.Contains(reply, "prompt.md") || !strings.Contains(reply, "exists") {
+		t.Errorf("expected prompt.md exists, got:\n%s", reply)
 	}
 }
 
@@ -159,8 +159,8 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	reply, _ := c.Handle("/config", nil)
-	if !strings.Contains(reply, "ready=false") {
-		t.Errorf("expected ready=false when no API key, got:\n%s", reply)
+	if !strings.Contains(reply, "ready") || strings.Contains(reply, "✓") {
+		t.Errorf("expected ready ✗ when no API key, got:\n%s", reply)
 	}
 }
 
