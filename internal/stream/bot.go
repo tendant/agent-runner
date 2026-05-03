@@ -223,38 +223,19 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 
 // catchUpSeq returns the highest seq currently in the conversation so the bot
 // starts from "now" and skips existing history.
-// In poll mode it calls PollEvents(seq=0); in SSE mode it drains the stream.
+// Always uses PollEvents (a single HTTP GET) — fast in both poll and SSE modes.
+// The old SSE-drain approach required a 30s timeout since SSE connections stay open.
 func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
-	if b.pollInterval > 0 {
-		events, err := b.client.PollEvents(ctx, convID, 0)
-		if err != nil {
-			slog.Warn("stream bot catch-up (poll) failed", "conversation_id", convID, "error", err)
-			return 0
-		}
-		var maxSeq int64
-		for _, e := range events {
-			if e.Seq > maxSeq {
-				maxSeq = e.Seq
-			}
-		}
-		return maxSeq
-	}
-
-	// SSE mode: open stream from 0 with a timeout. We cancel once the stream
-	// closes (server sent all existing events) or the timeout fires, whichever
-	// comes first. 30s is generous for any reasonable event backlog.
-	catchUpCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	events, err := b.client.StreamEvents(catchUpCtx, convID, 0)
+	events, err := b.client.PollEvents(ctx, convID, 0)
 	if err != nil {
-		slog.Warn("stream bot catch-up (sse) failed", "conversation_id", convID, "error", err)
+		slog.Warn("stream bot catch-up failed", "conversation_id", convID, "error", err)
 		return 0
 	}
-
 	var maxSeq int64
-	for event := range events {
-		maxSeq = event.Seq
+	for _, e := range events {
+		if e.Seq > maxSeq {
+			maxSeq = e.Seq
+		}
 	}
 	return maxSeq
 }
