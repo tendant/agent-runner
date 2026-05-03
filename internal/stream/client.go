@@ -204,8 +204,13 @@ func (c *Client) SendMessage(ctx context.Context, conversationID, content string
 	return nil
 }
 
+// ErrNotFound is returned by PollEvents when the server responds with 404.
+// Callers can use errors.Is to detect this and fall back to SSE catch-up.
+var ErrNotFound = fmt.Errorf("not found")
+
 // PollEvents fetches events after afterSeq in a single HTTP request (no SSE required).
 // Returns all new events sorted by seq. Suitable for polling loops.
+// Returns ErrNotFound if the server responds with 404 (endpoint not supported).
 func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq int64) ([]Event, error) {
 	url := fmt.Sprintf("%s/v1/conversations/%s/events?after_seq=%d", c.serverURL, conversationID, afterSeq)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -220,6 +225,9 @@ func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("poll events: status %d: %s", resp.StatusCode, string(body))

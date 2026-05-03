@@ -223,21 +223,82 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 
 // catchUpSeq returns the highest seq currently in the conversation so the bot
 // starts from "now" and skips existing history.
-// Always uses PollEvents (a single HTTP GET) — fast in both poll and SSE modes.
-// The old SSE-drain approach required a 30s timeout since SSE connections stay open.
+//
+// Strategy:
+//  1. Try PollEvents (single HTTP GET, fast) — works on servers that support it.
+//  2. On 404 (server doesn't have the polling endpoint), fall back to an SSE
+//     idle-drain: open the stream from seq=0 and close it once 500ms pass with
+//     no new events — the silence signals that the history burst is done.
+//     A hard cap of 10s prevents hanging on very large histories.
 func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 	events, err := b.client.PollEvents(ctx, convID, 0)
-	if err != nil {
+	if err == nil {
+		var maxSeq int64
+		for _, e := range events {
+			if e.Seq > maxSeq {
+				maxSeq = e.Seq
+			}
+		}
+		return maxSeq
+	}
+
+	if err != ErrNotFound {
 		slog.Warn("stream bot catch-up failed", "conversation_id", convID, "error", err)
 		return 0
 	}
+
+	// Server doesn't support PollEvents — drain the SSE stream until idle.
+	slog.Debug("stream bot catch-up: poll endpoint not available, using SSE idle-drain", "conversation_id", convID)
+	return b.catchUpViaSSE(ctx, convID)
+}
+
+// catchUpViaSSE opens an SSE stream from seq=0 and returns the highest seq seen
+// once the stream has been idle (no events) for 500ms, or 10s have elapsed.
+func (b *Bot) catchUpViaSSE(ctx context.Context, convID string) int64 {
+	const idleTimeout = 500 * time.Millisecond
+	const hardCap = 10 * time.Second
+
+	capCtx, cancel := context.WithTimeout(ctx, hardCap)
+	defer cancel()
+
+	ch, err := b.client.StreamEvents(capCtx, convID, 0)
+	if err != nil {
+		slog.Warn("stream bot catch-up (SSE) failed", "conversation_id", convID, "error", err)
+		return 0
+	}
+
 	var maxSeq int64
-	for _, e := range events {
-		if e.Seq > maxSeq {
-			maxSeq = e.Seq
+	idle := time.NewTimer(idleTimeout)
+	defer idle.Stop()
+
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return maxSeq
+			}
+			if event.Seq > maxSeq {
+				maxSeq = event.Seq
+			}
+			// Reset idle timer on every event.
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(idleTimeout)
+		case <-idle.C:
+			// No events for 500ms — history burst is done.
+			cancel()
+			// Drain the channel so the SSE goroutine can exit.
+			for range ch {
+			}
+			return maxSeq
+		case <-capCtx.Done():
+			return maxSeq
 		}
 	}
-	return maxSeq
 }
 
 // sortBySeq sorts events ascending by seq so they are processed in order
