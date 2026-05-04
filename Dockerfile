@@ -47,6 +47,10 @@ RUN deluser --remove-home node 2>/dev/null || true && \
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
 
 USER app
+# Direct runtime npm installs (via /install-cli) to a user-writable prefix.
+# Build-time installs (ARG AGENT_CLI) run as root above and use the system prefix.
+ENV NPM_CONFIG_PREFIX=/home/app/.npm-global
+ENV PATH="${PATH}:/home/app/.npm-global/bin"
 WORKDIR /app
 
 # Mount /data as a persistent volume so all mutable data survives image updates:
