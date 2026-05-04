@@ -340,7 +340,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 			if text != "" {
 				text = text + "\n\n" + fileContent
 			} else {
-				text = fileContent
+				// Images only, no text — prepend a hint so the analyzer
+				// treats this as a conversational "ask" (describe/analyze)
+				// rather than routing to the agent CLI.
+				text = "[User sent images with no text. Analyze and describe them.]\n\n" + fileContent
 			}
 		}
 	}
