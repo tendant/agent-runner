@@ -185,7 +185,7 @@ func DefaultConfig() *Config {
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
-			CLI:                 "opencode",
+			CLI:               "opencode",
 			Provider:          "deepseek",
 			Model:             "deepseek-v4-flash",
 			ReasoningProvider: "deepseek",
@@ -289,12 +289,26 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)
 	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_TIMEOUT", cfg.Agent.MaxTotalSeconds)
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_ITERATION_TIMEOUT", cfg.Agent.MaxIterationSeconds)
+	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
+	// Apply per-CLI model defaults; AGENT_MODEL/AGENT_PROVIDER override below.
+	// claude and codex have no hardcoded defaults — their CLIs pick the model.
+	switch cfg.Agent.CLI {
+	case "claude", "codex":
+		cfg.Agent.Provider = ""
+		cfg.Agent.Model = ""
+		cfg.Agent.ReasoningProvider = ""
+		cfg.Agent.ReasoningModel = ""
+	default: // opencode
+		cfg.Agent.Provider = "deepseek"
+		cfg.Agent.Model = "deepseek-v4-flash"
+		cfg.Agent.ReasoningProvider = "deepseek"
+		cfg.Agent.ReasoningModel = "deepseek-v4-pro"
+	}
 	cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
 	cfg.Agent.ReasoningModel = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.ReasoningModel)
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
-	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.SkillsDir = os.Getenv("AGENT_SKILLS_DIR")
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
