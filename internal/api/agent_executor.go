@@ -217,19 +217,24 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// Phase 2: Iteration loop with dynamic prompts
 	promptBuilder := subagent.NewPromptBuilder(preamble)
 	iterReason := "first iteration"
+	stopReason := fmt.Sprintf("reached max iterations (%d)", maxIter)
+	iterationsRun := 0
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
+			stopReason = "stop requested"
 			slog.Info("stop requested", "session_id", sessionID, "after_iteration", i-1)
 			break
 		}
 		if ctx.Err() != nil {
+			stopReason = "context cancelled"
 			slog.Info("context cancelled", "session_id", sessionID, "after_iteration", i-1)
 			break
 		}
 
 		// Check time limit
 		if time.Now().After(deadline) {
+			stopReason = fmt.Sprintf("time limit reached (%ds)", maxSeconds)
 			slog.Info("time limit reached", "session_id", sessionID, "max_seconds", maxSeconds)
 			break
 		}
@@ -275,6 +280,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.getExecutor())
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
+		iterationsRun = i
 
 		// Check if the agent signalled task completion; strip the marker from output.
 		taskDone := false
@@ -297,6 +303,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 
 		if taskDone {
+			stopReason = "task complete"
 			slog.Info("agent signalled task complete", "session_id", sessionID, "iteration", i)
 			break
 		}
@@ -307,6 +314,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			if plan != nil {
 				plan.MarkDone(completedSteps)
 				if len(plan.RemainingSteps()) == 0 {
+					stopReason = "all plan steps completed"
 					slog.Info("all plan steps completed", "session_id", sessionID, "iteration", i)
 					break
 				}
@@ -318,6 +326,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			iterReason = "task not yet signalled done"
 		}
 	}
+	slog.Info("iteration loop finished", "session_id", sessionID, "stop_reason", stopReason, "iterations", iterationsRun, "elapsed_secs", int(time.Since(startTime).Seconds()))
 
 	// Collect output files from _send/ directory and persist to OutputsRoot.
 	sendDir := filepath.Join(checkoutPath, "_send")
