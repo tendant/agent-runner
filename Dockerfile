@@ -38,7 +38,10 @@ RUN if [ "$AGENT_CLI" = "none" ] || [ -z "$AGENT_CLI" ]; then \
 
 ARG APP_UID=1000
 ARG APP_GID=1000
-RUN addgroup -S -g ${APP_GID} app && adduser -S -G app -h /home/app -u ${APP_UID} app && \
+# node:alpine ships with a "node" user at 1000:1000 — remove it before creating "app".
+RUN deluser --remove-home node 2>/dev/null || true && \
+    delgroup node 2>/dev/null || true && \
+    addgroup -S -g ${APP_GID} app && adduser -S -G app -h /home/app -u ${APP_UID} app && \
     mkdir -p /app /data && chown app:app /app /data
 
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
