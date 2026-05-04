@@ -109,12 +109,8 @@ func (h *Handlers) getExecutor() executor.Executor {
 func (h *Handlers) UpdateExecutor() {
 	h.execMu.Lock()
 	defer h.execMu.Unlock()
-	h.executor = executor.NewExecutor(
-		h.config.Agent.CLI,
-		h.config.Agent.Provider,
-		h.config.Agent.Model,
-		h.config.Agent.MaxTurns,
-	)
+	provider, model := h.config.Agent.EffectiveModel()
+	h.executor = executor.NewExecutor(h.config.Agent.CLI, provider, model, h.config.Agent.MaxTurns)
 }
 
 // getReasoningExecutor returns an executor using the reasoning model (for planner/reviewer).

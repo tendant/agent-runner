@@ -95,6 +95,15 @@ type AgentConfig struct {
 	MemoryDays          int      // Number of daily memory logs to include (default: 7)
 }
 
+// EffectiveModel returns the model to use for the main agent executor.
+// Falls back to ReasoningModel/ReasoningProvider when Model is not set.
+func (a AgentConfig) EffectiveModel() (provider, model string) {
+	if a.Model != "" {
+		return a.Provider, a.Model
+	}
+	return a.ReasoningProvider, a.ReasoningModel
+}
+
 // TelegramConfig contains Telegram bot settings
 type TelegramConfig struct {
 	BotToken string
