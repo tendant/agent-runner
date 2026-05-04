@@ -47,21 +47,21 @@ RUN deluser --remove-home node 2>/dev/null || true && \
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
 
 USER app
-# Direct runtime npm installs (via /install-cli) to a user-writable prefix.
+# Set HOME=/data so every tool that writes to ~ (claude, codex, opencode, npm)
+# lands on the persistent volume automatically. DATA_DIR then defaults to
+# ~/.agent-runner = /data/.agent-runner with no extra env vars needed.
+ENV HOME=/data
+# Direct runtime npm installs (via /install-cli) to a user-writable prefix under HOME.
 # Build-time installs (ARG AGENT_CLI) run as root above and use the system prefix.
-ENV NPM_CONFIG_PREFIX=/home/app/.npm-global
-ENV PATH="${PATH}:/home/app/.npm-global/bin"
-# Route all mutable data through /data so it survives image updates when mounted as a volume.
-# Without this, DATA_DIR defaults to ~/.agent-runner (/home/app/.agent-runner) which is
-# ephemeral inside the container.
-ENV DATA_DIR=/data
-WORKDIR /home/app
+ENV NPM_CONFIG_PREFIX=/data/.npm-global
+ENV PATH="${PATH}:/data/.npm-global/bin"
+WORKDIR /data
 
 # Mount /data as a persistent volume so all mutable data survives image updates:
-#   /data/             — agent-runner data (logs, repo-cache, tmp, memory, outputs, uploads, .env.local)
-#   ~/.codex/          — codex auth + config
-#   ~/.claude/         — claude auth + config
-#   ~/.config/opencode/ — opencode config
+#   /data/.agent-runner/ — agent-runner data (logs, repo-cache, tmp, memory, outputs, uploads, .env.local)
+#   /data/.claude/       — claude auth + config
+#   /data/.codex/        — codex auth + config
+#   /data/.config/opencode/ — opencode config
 # Usage: docker run -v agent-data:/data ...  (or bind-mount a host directory)
 VOLUME /data
 
