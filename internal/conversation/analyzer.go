@@ -126,19 +126,20 @@ func (a *Analyzer) buildPrompt(conv *Conversation) string {
 	sb.WriteString("You MUST respond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n")
 	sb.WriteString("{\"action\": \"ask|plan|execute\", \"message\": \"your response text\"}\n\n")
 	sb.WriteString("Rules:\n")
-	sb.WriteString("- action \"execute\": The user's request contains a clear action (verb + target). Run immediately. \"message\" should be a brief description (e.g. \"Adding client Acme Corp\", \"Searching conflicts for Acme\"). This is the DEFAULT — use it whenever the user expresses intent to do something.\n")
+	sb.WriteString("- action \"execute\": The user's request contains a clear action (verb + target) that requires the agent to DO something (modify files, run code, fetch data, etc.). \"message\" should be a brief confirmation (e.g. \"Adding client Acme Corp\"). This is the DEFAULT for task requests.\n")
 	sb.WriteString("- action \"plan\": The request is unusually complex or destructive and warrants user confirmation before proceeding. \"message\" should describe what will be done.\n")
 
 	if a.agentContext != "" {
-		sb.WriteString("- action \"ask\": The user sent something with NO actionable intent (e.g. \"hello\", \"thanks\", \"ok\", or a general capability question). Answer general capability questions (\"what can you do\", \"help\", \"how does this work\") directly from the agent context above — no need to run the agent. Use \"execute\" if the question requires accessing live data or state that only the agent can retrieve.\n")
+		sb.WriteString("- action \"ask\": Use for conversational responses that do NOT require the agent to act. This includes: greetings, thanks, capability questions, image/photo analysis or description requests, and questions you can answer directly. Answer directly in \"message\" — do NOT run the agent for these. Use \"execute\" only if the task requires live data or side effects that only the agent can produce.\n")
 	} else {
-		sb.WriteString("- action \"ask\": The user sent something with NO actionable intent and no way to clarify further (e.g. just \"hello\", \"thanks\", \"ok\"). For capability questions (\"what can you do\", \"help\"), use \"execute\" instead so the agent can answer with accurate context.\n")
+		sb.WriteString("- action \"ask\": Use for conversational responses that do NOT require the agent to act — greetings, thanks, image analysis/description, or anything you can answer directly in \"message\".\n")
 	}
 
-	sb.WriteString("- NEVER use \"ask\" because you're unsure of task details — the agent already knows all context, files, systems, and domain knowledge.\n")
+	sb.WriteString("- Images/photos sent without a clear task (or with requests like \"what is this?\", \"describe this\", \"look at this\") should use \"ask\" — analyze the image and respond directly.\n")
+	sb.WriteString("- NEVER use \"ask\" because you're unsure of task details — the agent knows all context, files, and domain knowledge.\n")
 	sb.WriteString("- NEVER ask what \"merge\", \"add\", \"search\", \"delete\", \"update\", or similar action words mean — pass them through to the agent as-is.\n")
 	sb.WriteString("- Reminders, timers, and scheduling requests (e.g. \"remind me in 5 minutes\", \"check on X later\") ARE valid actions — use \"execute\" for these.\n")
-	sb.WriteString("- When in doubt, use \"execute\". The agent is always better equipped to handle the request than you are.\n\n")
+	sb.WriteString("- When in doubt between \"ask\" and \"execute\": if the response requires the agent to change something or access live state, use \"execute\"; if you can answer from the conversation or the image, use \"ask\".\n\n")
 
 	sb.WriteString("Conversation history:\n")
 	for _, msg := range conv.GetMessages() {
