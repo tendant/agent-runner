@@ -99,7 +99,7 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // If skillsDir is set, skills are copied to .claude/skills/ and .agents/skills/ so
 // Claude Code, opencode, and Codex all discover them.
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
-func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg string) (string, error) {
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, uploadsRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -114,6 +114,15 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 	stateDir := filepath.Join(workspacePath, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create state directory: %w", err)
+	}
+
+	// Symlink the uploads directory so the agent can access user-uploaded files.
+	if uploadsRoot != "" {
+		if _, err := os.Stat(uploadsRoot); err == nil {
+			if err := os.Symlink(uploadsRoot, filepath.Join(agentDir, "uploads")); err != nil {
+				slog.Warn("workspace: failed to symlink uploads dir", "error", err)
+			}
+		}
 	}
 
 	// Pre-populate skills into both .claude/skills/ (Claude Code + opencode) and

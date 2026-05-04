@@ -172,7 +172,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	}
 
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
-		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
+		h.config.RepoCacheRoot, h.config.UploadsRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg,
 	)
 	if err != nil {
