@@ -40,6 +40,7 @@ type Bot struct {
 	analyzer       *conversation.Analyzer
 	convIDs        []string
 	botUserID      string
+	uploadsDir     string        // persistent directory for user-uploaded files
 	pollInterval   time.Duration // >0 = poll mode; 0 = SSE mode
 	wechatReloader  func(token, baseURL string) // called after a successful /wechat-login
 	wechatBaseURL   string                     // iLink API base URL for the login flow
@@ -58,7 +59,7 @@ func (b *Bot) SetWeChatReloader(fn func(token, baseURL string), baseURL string) 
 }
 
 // New creates a new stream bot. Returns nil if ServerURL or BotToken is empty.
-func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
+func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
 	if cfg.ServerURL == "" || cfg.BotToken == "" {
 		return nil
 	}
@@ -70,6 +71,7 @@ func New(cfg config.StreamConfig, starter AgentStarter, convMgr *conversation.Ma
 		convManager:  convMgr,
 		analyzer:     analyzer,
 		convIDs:      cfg.ConversationIDs,
+		uploadsDir:   uploadsDir,
 		botUserID:    extractBotUserID(cfg.BotToken),
 		pollInterval: cfg.PollInterval,
 	}
@@ -371,7 +373,7 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 			parts = append(parts, fmt.Sprintf("--- File: %s ---\n%s\n--- End: %s ---", file.Filename, string(file.Data), file.Filename))
 		} else {
 			// Save binary file to temp dir so the agent can access it
-			path, err := saveToTemp(file)
+			path, err := b.saveFile(file)
 			if err != nil {
 				slog.Error("stream bot: failed to save file", "file", file.Filename, "error", err)
 				parts = append(parts, fmt.Sprintf("[Attached file: %s (%s, %d bytes) — failed to save]", file.Filename, file.ContentType, len(file.Data)))
@@ -389,21 +391,23 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// saveToTemp writes a downloaded file to a temp directory and returns the path.
-func saveToTemp(file *DownloadedFile) (string, error) {
-	dir := filepath.Join(os.TempDir(), "agent-runner-files")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
+// saveFile writes a downloaded file to uploadsDir (persistent) and returns the path.
+// Falls back to the system temp dir if uploadsDir is empty.
+func (b *Bot) saveFile(file *DownloadedFile) (string, error) {
+	dir := b.uploadsDir
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), "agent-runner-files")
+	} else {
+		dir = filepath.Join(dir, time.Now().UTC().Format("2006-01-02"))
 	}
-
-	// Use a unique prefix to avoid collisions
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create uploads dir: %w", err)
+	}
 	safeName := filepath.Base(file.Filename)
 	path := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().UnixMilli(), safeName))
-
 	if err := os.WriteFile(path, file.Data, 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
-
 	return path, nil
 }
 

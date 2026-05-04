@@ -28,6 +28,7 @@ type Config struct {
 	LogsRoot      string
 	TmpRoot       string
 	OutputsRoot   string // persistent storage for _send/ files across sessions
+	UploadsRoot   string // persistent storage for files uploaded by users via bots
 	MemoryDir string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 
 	// Project allowlist
@@ -160,6 +161,7 @@ func DefaultConfig() *Config {
 		LogsRoot:                filepath.Join(data, "logs"),
 		TmpRoot:                 filepath.Join(data, "tmp"),
 		OutputsRoot:             filepath.Join(data, "outputs"),
+		UploadsRoot:             filepath.Join(data, "uploads"),
 		MemoryDir:               filepath.Join(data, "memory"),
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
@@ -265,6 +267,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
+	cfg.UploadsRoot = envOrDefault("UPLOADS_ROOT", cfg.UploadsRoot)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("JOB_MAX_RUNTIME", cfg.MaxRuntimeSeconds)
