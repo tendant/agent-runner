@@ -36,17 +36,21 @@ RUN if [ "$AGENT_CLI" = "none" ] || [ -z "$AGENT_CLI" ]; then \
       esac; \
     fi
 
+RUN addgroup -S app && adduser -S -G app -h /home/app app && \
+    mkdir -p /app /data && chown app:app /app /data
+
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
 
+USER app
 WORKDIR /app
 
-# Mount /root as a persistent volume so all mutable data survives image updates:
+# Mount /data as a persistent volume so all mutable data survives image updates:
 #   ~/.agent-runner/   — agent-runner data (logs, repo-cache, tmp, memory, .env.local)
 #   ~/.codex/          — codex auth + config
 #   ~/.claude/         — claude auth + config
 #   ~/.config/opencode/ — opencode config
-# Usage: docker run -v agent-data:/root ...  (or bind-mount a host directory)
-VOLUME /root
+# Usage: docker run -v agent-data:/data ...  (or bind-mount a host directory)
+VOLUME /data
 
 EXPOSE 8080
 ENTRYPOINT ["agent-runner"]

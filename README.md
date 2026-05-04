@@ -19,6 +19,21 @@ cp .env.example .env   # edit with your settings
 ./agent-runner
 ```
 
+## Docker
+
+The image runs as a non-root `app` user. Mount `/data` as a persistent volume and set `DATA_DIR=/data` so all mutable state (logs, repo-cache, memory, `.env.local`) survives image updates.
+
+```bash
+docker run -d \
+  -v agent-data:/data \
+  -e DATA_DIR=/data \
+  -e ANTHROPIC_API_KEY=sk-... \
+  -p 8080:8080 \
+  agent-runner
+```
+
+Pass additional env vars (or bind-mount a `.env` file) for full configuration — see `.env.example`.
+
 ## Configuration
 
 All configuration is via environment variables (or `.env` file). See `.env.example` for the full list.
