@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -312,13 +313,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 	}
 
-	// Collect output files from _send/ directory
+	// Collect output files from _send/ directory and persist to OutputsRoot.
 	sendDir := filepath.Join(checkoutPath, "_send")
 	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
 		slog.Warn("failed to collect _send/ files", "session_id", sessionID, "error", err)
 	} else if len(outputFiles) > 0 {
 		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
 		liveSession.SetOutputFiles(outputFiles)
+		if h.config.OutputsRoot != "" {
+			if err := persistOutputFiles(sendDir, h.config.OutputsRoot, sessionID); err != nil {
+				slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
+			}
+		}
 	}
 
 	// Collect and submit scheduled tasks from _schedule.json
@@ -570,6 +576,51 @@ func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
 	}
 
 	return files, nil
+}
+
+// persistOutputFiles copies files from sendDir to outputsRoot/<date>/<sessionID>/
+// so they survive workspace cleanup and are accessible to subsequent sessions.
+func persistOutputFiles(sendDir, outputsRoot, sessionID string) error {
+	entries, err := os.ReadDir(sendDir)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	date := time.Now().UTC().Format("2006-01-02")
+	destDir := filepath.Join(outputsRoot, date, sessionID)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(sendDir, entry.Name())
+		dst := filepath.Join(destDir, entry.Name())
+		if err := copyFile(src, dst); err != nil {
+			slog.Warn("failed to persist output file", "file", entry.Name(), "error", err)
+		} else {
+			slog.Info("persisted output file", "path", dst)
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // notifySessionResult sends the agent session result to connected chat channels.

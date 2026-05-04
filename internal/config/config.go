@@ -25,8 +25,9 @@ type Config struct {
 	// Directory paths
 	ProjectDir   string // Resolved CWD at startup — the project root
 	RepoCacheRoot string
-	LogsRoot     string
-	TmpRoot      string
+	LogsRoot      string
+	TmpRoot       string
+	OutputsRoot   string // persistent storage for _send/ files across sessions
 	MemoryDir string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 
 	// Project allowlist
@@ -158,6 +159,7 @@ func DefaultConfig() *Config {
 		RepoCacheRoot:           filepath.Join(data, "repo-cache"),
 		LogsRoot:                filepath.Join(data, "logs"),
 		TmpRoot:                 filepath.Join(data, "tmp"),
+		OutputsRoot:             filepath.Join(data, "outputs"),
 		MemoryDir:               filepath.Join(data, "memory"),
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
@@ -262,6 +264,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.RepoCacheRoot = envOrDefault("REPO_CACHE_ROOT", cfg.RepoCacheRoot)
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
+	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
 	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("JOB_MAX_RUNTIME", cfg.MaxRuntimeSeconds)
