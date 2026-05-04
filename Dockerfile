@@ -42,7 +42,7 @@ ARG APP_GID=1000
 RUN deluser --remove-home node 2>/dev/null || true && \
     delgroup node 2>/dev/null || true && \
     addgroup -S -g ${APP_GID} app && adduser -S -G app -h /home/app -u ${APP_UID} app && \
-    mkdir -p /app /data && chown app:app /app /data
+    mkdir -p /data && chown app:app /data
 
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
 
@@ -51,7 +51,7 @@ USER app
 # Build-time installs (ARG AGENT_CLI) run as root above and use the system prefix.
 ENV NPM_CONFIG_PREFIX=/home/app/.npm-global
 ENV PATH="${PATH}:/home/app/.npm-global/bin"
-WORKDIR /app
+WORKDIR /home/app
 
 # Mount /data as a persistent volume so all mutable data survives image updates:
 #   ~/.agent-runner/   — agent-runner data (logs, repo-cache, tmp, memory, .env.local)
