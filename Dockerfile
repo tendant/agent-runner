@@ -51,10 +51,14 @@ USER app
 # Build-time installs (ARG AGENT_CLI) run as root above and use the system prefix.
 ENV NPM_CONFIG_PREFIX=/home/app/.npm-global
 ENV PATH="${PATH}:/home/app/.npm-global/bin"
+# Route all mutable data through /data so it survives image updates when mounted as a volume.
+# Without this, DATA_DIR defaults to ~/.agent-runner (/home/app/.agent-runner) which is
+# ephemeral inside the container.
+ENV DATA_DIR=/data
 WORKDIR /home/app
 
 # Mount /data as a persistent volume so all mutable data survives image updates:
-#   ~/.agent-runner/   — agent-runner data (logs, repo-cache, tmp, memory, .env.local)
+#   /data/             — agent-runner data (logs, repo-cache, tmp, memory, outputs, uploads, .env.local)
 #   ~/.codex/          — codex auth + config
 #   ~/.claude/         — claude auth + config
 #   ~/.config/opencode/ — opencode config
