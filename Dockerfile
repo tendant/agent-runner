@@ -36,7 +36,9 @@ RUN if [ "$AGENT_CLI" = "none" ] || [ -z "$AGENT_CLI" ]; then \
       esac; \
     fi
 
-RUN addgroup -S app && adduser -S -G app -h /home/app app && \
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN addgroup -S -g ${APP_GID} app && adduser -S -G app -h /home/app -u ${APP_UID} app && \
     mkdir -p /app /data && chown app:app /app /data
 
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner

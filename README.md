@@ -21,7 +21,7 @@ cp .env.example .env   # edit with your settings
 
 ## Docker
 
-The image runs as a non-root `app` user. Mount `/data` as a persistent volume and set `DATA_DIR=/data` so all mutable state (logs, repo-cache, memory, `.env.local`) survives image updates.
+The image runs as a non-root `app` user (uid/gid `1000:1000` by default). Mount `/data` as a persistent volume and set `DATA_DIR=/data` so all mutable state (logs, repo-cache, memory, `.env.local`) survives image updates.
 
 ```bash
 docker run -d \
@@ -30,6 +30,12 @@ docker run -d \
   -e ANTHROPIC_API_KEY=sk-... \
   -p 8080:8080 \
   agent-runner
+```
+
+If your host bind-mount is owned by a different uid/gid, override at build time:
+
+```bash
+docker build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) -t agent-runner .
 ```
 
 Pass additional env vars (or bind-mount a `.env` file) for full configuration — see `.env.example`.
