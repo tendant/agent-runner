@@ -624,25 +624,35 @@ func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
 }
 
 // uploadOutputFiles uploads output files from the agent session and sends them
-// as a message with file attachments.
+// as a message with file attachments. Files that fail to upload are reported
+// by name so the user knows they were generated but not delivered.
 func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *agent.Session) {
 	var fileIDs []string
-	var fileNames []string
+	var uploaded []string
+	var failed []string
 
 	for _, f := range session.OutputFiles {
+		slog.Info("stream bot: uploading file", "file", f.Name, "content_type", f.ContentType, "bytes", len(f.Data))
 		fileID, err := b.client.UploadFile(ctx, convID, f.Name, f.ContentType, f.Data)
 		if err != nil {
-			slog.Error("stream bot: failed to upload file", "file", f.Name, "error", err)
+			slog.Error("stream bot: failed to upload file", "file", f.Name, "bytes", len(f.Data), "error", err)
+			failed = append(failed, f.Name)
 			continue
 		}
 		slog.Info("stream bot: uploaded file", "file", f.Name, "file_id", fileID)
 		fileIDs = append(fileIDs, fileID)
-		fileNames = append(fileNames, f.Name)
+		uploaded = append(uploaded, f.Name)
 	}
 
-	if len(fileIDs) > 0 {
-		msg := fmt.Sprintf("Generated %d file(s): %s", len(fileIDs), strings.Join(fileNames, ", "))
-		if err := b.client.SendMessage(ctx, convID, msg, fileIDs); err != nil {
+	var parts []string
+	if len(uploaded) > 0 {
+		parts = append(parts, fmt.Sprintf("Generated %d file(s): %s", len(uploaded), strings.Join(uploaded, ", ")))
+	}
+	if len(failed) > 0 {
+		parts = append(parts, fmt.Sprintf("Could not deliver %d file(s) (upload failed): %s", len(failed), strings.Join(failed, ", ")))
+	}
+	if len(parts) > 0 {
+		if err := b.client.SendMessage(ctx, convID, strings.Join(parts, "\n"), fileIDs); err != nil {
 			slog.Error("stream bot: failed to send message with files", "error", err)
 		}
 	}

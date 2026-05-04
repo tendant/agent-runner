@@ -11,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"time"
 )
@@ -128,7 +129,14 @@ func (c *Client) UploadFile(ctx context.Context, conversationID, filename, conte
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
-	part, err := w.CreateFormFile("file", filename)
+	// Set the actual content type on the part so servers can handle video/audio correctly.
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	h.Set("Content-Type", contentType)
+	part, err := w.CreatePart(h)
 	if err != nil {
 		return "", fmt.Errorf("create form file: %w", err)
 	}
