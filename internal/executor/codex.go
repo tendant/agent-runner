@@ -76,7 +76,7 @@ func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePa
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("execution was canceled")
 		}
-		result.Error = fmt.Errorf("CODEX_ERROR: %v - %s", runErr, stderr.String())
+		result.Error = fmt.Errorf("CODEX_ERROR: %v - %s", runErr, firstLines(stderr.String(), 15))
 		return result, result.Error
 	}
 

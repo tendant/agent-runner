@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // Executor is the interface for CLI execution backends.
@@ -32,6 +33,15 @@ type ExecutionResult struct {
 	Error      error
 	CostUSD    float64
 	DurationMS int
+}
+
+// firstLines returns the first n lines of s, appending "[...truncated]" if more lines follow.
+func firstLines(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		return strings.Join(lines[:n], "\n") + "\n[...truncated]"
+	}
+	return s
 }
 
 // ClaudeExecutor handles Claude Code CLI execution
