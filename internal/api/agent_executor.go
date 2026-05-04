@@ -191,9 +191,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
 	// Phase 1: Planner (optional, non-fatal). Runs regardless of CLI backend.
-	// If planner fails, iterations continue with the reasoning executor.
 	var plan *subagent.PlanResult
-	planFailed := false
 	if h.config.Agent.PlannerEnabled {
 		slog.Info("running planner", "session_id", sessionID)
 		planner := subagent.NewPlanner(h.plannerClient, preamble)
@@ -207,20 +205,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				h.agentManager.FailSession(sessionID, err.Error())
 				return
 			}
-			// Any non-permanent planner failure (including a conversational/rejection response)
-			// falls through to the executor — tier 3 handles it regardless.
+			// Non-permanent planner failure falls through to the agent CLI executor.
 			slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
-			planFailed = true
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
 			liveSession.SetPlanResult(plan)
 		}
-	}
-
-	// Choose iteration executor: reasoning model when plan failed, fast model otherwise.
-	iterExec := h.getExecutor()
-	if planFailed {
-		iterExec = h.getReasoningExecutor()
 	}
 
 	// Phase 2: Iteration loop with dynamic prompts
@@ -280,7 +270,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, iterExec)
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.getExecutor())
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 
@@ -347,7 +337,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
-		reviewer := subagent.NewReviewer(h.getReasoningExecutor())
+		reviewer := subagent.NewReviewer(h.getExecutor())
 
 		for correction := 0; correction <= maxReviewerCorrections; correction++ {
 			if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
@@ -391,7 +381,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("running corrective iteration", "session_id", sessionID,
 				"iteration", iterNum, "issues", len(review.Issues))
 
-			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, iterExec)
+			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.getExecutor())
 			result.Prompt = systemPrompt
 			result.Retry = true
 			liveSession.AddIteration(result)

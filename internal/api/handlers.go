@@ -98,6 +98,7 @@ func (h *Handlers) SetCommander(c *Commander) {
 }
 
 // getExecutor returns the current executor, safe for concurrent use.
+// The executor uses AGENT_REASONING_MODEL/AGENT_REASONING_PROVIDER (agent CLI level).
 func (h *Handlers) getExecutor() executor.Executor {
 	h.execMu.RLock()
 	defer h.execMu.RUnlock()
@@ -105,27 +106,12 @@ func (h *Handlers) getExecutor() executor.Executor {
 }
 
 // UpdateExecutor recreates the executor from the current config. Called after
-// AGENT_CLI / AGENT_PROVIDER / AGENT_MODEL are changed at runtime.
+// AGENT_CLI / AGENT_REASONING_MODEL / AGENT_REASONING_PROVIDER are changed at runtime.
 func (h *Handlers) UpdateExecutor() {
 	h.execMu.Lock()
 	defer h.execMu.Unlock()
-	provider, model := h.config.Agent.EffectiveModel()
-	h.executor = executor.NewExecutor(h.config.Agent.CLI, provider, model, h.config.Agent.MaxTurns)
-}
-
-// getReasoningExecutor returns an executor using the reasoning model (for planner/reviewer).
-// Falls back to the main executor when no separate reasoning model is configured.
-func (h *Handlers) getReasoningExecutor() executor.Executor {
 	cfg := h.config.Agent
-	provider := cfg.ReasoningProvider
-	model := cfg.ReasoningModel
-	if provider == "" {
-		provider = cfg.Provider
-	}
-	if model == "" {
-		return h.getExecutor()
-	}
-	return executor.NewExecutor(cfg.CLI, provider, model, cfg.MaxTurns)
+	h.executor = executor.NewExecutor(cfg.CLI, cfg.ReasoningProvider, cfg.ReasoningModel, cfg.MaxTurns)
 }
 
 // RunRequest represents the POST /run request body

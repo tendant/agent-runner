@@ -50,8 +50,8 @@ func NewServer(cfg *config.Config) *Server {
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	agentProvider, agentModel := cfg.Agent.EffectiveModel()
-	exec := executor.NewExecutor(cfg.Agent.CLI, agentProvider, agentModel, cfg.Agent.MaxTurns)
+	// Level 3: agent CLI executor — uses reasoning model/provider (or CLI default if unset).
+	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
@@ -88,15 +88,11 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
-	// Tier 2: direct LLM client for fast planning (uses reasoning model config).
+	// Level 2: direct LLM client for fast planning/response — uses AGENT_MODEL/AGENT_PROVIDER.
 	// Falls back to ExecutorClient when no API credentials are configured.
-	reasoningProvider := cfg.Agent.ReasoningProvider
-	if reasoningProvider == "" {
-		reasoningProvider = cfg.Agent.Provider
-	}
 	plannerClient := llm.NewClient(llm.Config{
-		Provider:  reasoningProvider,
-		Model:     cfg.Agent.ReasoningModel,
+		Provider:  cfg.Agent.Provider,
+		Model:     cfg.Agent.Model,
 		MaxTokens: 4096,
 	}, exec)
 	handlers.SetPlannerClient(plannerClient)
