@@ -83,8 +83,8 @@ type AgentConfig struct {
 	CommitPrefix        string
 	Provider            string   // Optional: model provider (e.g., "deepseek", "openrouter") — opencode only; prepended to Model as "provider/model"
 	Model               string   // Optional: model name (e.g., "deepseek-chat"); combined with Provider when set
-	ReasoningProvider   string   // Provider for planner/reviewer (defaults to Provider)
-	ReasoningModel      string   // Model for planner/reviewer; falls back to Model if empty
+	ReasoningProvider   string   // Optional: provider for agent CLI execution (e.g., "openai"); omit to use CLI default
+	ReasoningModel      string   // Optional: model for agent CLI execution; omit to use CLI default
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
