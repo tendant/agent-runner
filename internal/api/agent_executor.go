@@ -216,6 +216,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	// Phase 2: Iteration loop with dynamic prompts
 	promptBuilder := subagent.NewPromptBuilder(preamble)
+	iterReason := "first iteration"
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
@@ -269,7 +270,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		} else {
 			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
 		}
-		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "prompt_chars", len(systemPrompt), "message_chars", len(message))
+		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.getExecutor())
 		result.Prompt = systemPrompt
@@ -310,6 +311,11 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 					break
 				}
 			}
+			iterReason = "plan steps remaining"
+		} else if result.Status == agent.IterationStatusError {
+			iterReason = fmt.Sprintf("retry after error: %s", result.Error)
+		} else {
+			iterReason = "task not yet signalled done"
 		}
 	}
 
