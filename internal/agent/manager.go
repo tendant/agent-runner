@@ -148,6 +148,52 @@ func (m *Manager) QueueLength() int {
 	return len(m.queue)
 }
 
+// LastCompletedSession returns a snapshot of the most recently completed or failed session,
+// or nil if no session has finished yet.
+func (m *Manager) LastCompletedSession() *Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var last *Session
+	for _, s := range m.sessions {
+		s.mu.RLock()
+		status := s.Status
+		completedAt := s.CompletedAt
+		s.mu.RUnlock()
+		if (status == SessionStatusCompleted || status == SessionStatusFailed) && completedAt != nil {
+			if last == nil {
+				last = s
+				continue
+			}
+			last.mu.RLock()
+			lastAt := last.CompletedAt
+			last.mu.RUnlock()
+			if completedAt.After(*lastAt) {
+				last = s
+			}
+		}
+	}
+	if last == nil {
+		return nil
+	}
+	return last.Snapshot()
+}
+
+// ListActiveSessions returns snapshots of all non-terminal sessions (queued, running, stopping).
+func (m *Manager) ListActiveSessions() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var active []*Session
+	for _, s := range m.sessions {
+		s.mu.RLock()
+		status := s.Status
+		s.mu.RUnlock()
+		if status != SessionStatusCompleted && status != SessionStatusFailed {
+			active = append(active, s.Snapshot())
+		}
+	}
+	return active
+}
+
 // CreateSession creates a new agent session
 func (m *Manager) CreateSession(message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()

@@ -6,7 +6,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 )
 
@@ -36,7 +38,7 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 // bareCommands are single-word commands that are safe to accept without a leading slash.
 // Multi-word commands (set, set-agent, set-prompt) require the slash to avoid false
 // positives on agent instructions that happen to start with those words.
-var bareCommands = []string{"help", "config", "bootstrap"}
+var bareCommands = []string{"help", "config", "status", "bootstrap"}
 
 func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 	text = strings.TrimSpace(text)
@@ -57,6 +59,8 @@ func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 		return helpText, true
 	case lower == "/config":
 		return c.handleConfig(), true
+	case lower == "/status":
+		return c.handleStatus(), true
 	case strings.HasPrefix(lower, "/set "):
 		return c.handleSet(text[5:]), true // strip "/set "
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
@@ -124,6 +128,79 @@ func (c *Commander) handleAuthCancel() string {
 	}
 	cancel()
 	return "auth flow cancelled"
+}
+
+// handleStatus returns the current runtime state of the bot.
+func (c *Commander) handleStatus() string {
+	var b strings.Builder
+	b.WriteString("**Status**\n\n")
+
+	// Active sessions
+	sessions := c.handlers.agentManager.ListActiveSessions()
+	var running, waiting []*agent.Session
+	for _, s := range sessions {
+		if s.Status == agent.SessionStatusRunning || s.Status == agent.SessionStatusStopping {
+			running = append(running, s)
+		} else if s.Status == agent.SessionStatusQueued {
+			waiting = append(waiting, s)
+		}
+	}
+
+	if len(running) == 0 {
+		b.WriteString("**agent:** idle\n")
+	} else {
+		for _, s := range running {
+			preview := s.Message
+			if len(preview) > 60 {
+				preview = preview[:60] + "..."
+			}
+			fmt.Fprintf(&b, "**agent:** %s — %q [iter %d/%d]\n",
+				s.Status, preview, s.CurrentIteration, s.MaxIterations)
+		}
+	}
+	fmt.Fprintf(&b, "**queued:** %d\n", len(waiting))
+
+	// Last completed session
+	if last := c.handlers.agentManager.LastCompletedSession(); last != nil {
+		ago := time.Since(*last.CompletedAt).Round(time.Second)
+		preview := last.Message
+		if len(preview) > 50 {
+			preview = preview[:50] + "..."
+		}
+		if last.Status == agent.SessionStatusCompleted {
+			fmt.Fprintf(&b, "**last:** completed ✓ %s ago — %q\n", ago, preview)
+		} else {
+			errMsg := last.Error
+			if len(errMsg) > 60 {
+				errMsg = errMsg[:60] + "..."
+			}
+			fmt.Fprintf(&b, "**last:** failed ✗ %s ago — %s\n", ago, errMsg)
+		}
+	}
+
+	// CLI
+	cli := c.cfg.Agent.CLI
+	if cli == "" {
+		cli = "opencode"
+	}
+	if CLIInstalled(cli) {
+		fmt.Fprintf(&b, "**cli:** %s ✓\n", cli)
+	} else {
+		fmt.Fprintf(&b, "**cli:** %s ✗ (not installed — /install-cli)\n", cli)
+	}
+
+	// Issues
+	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	if len(warnings) == 0 {
+		b.WriteString("**ready:** ✓")
+	} else {
+		b.WriteString("**ready:** ✗\n")
+		for _, w := range warnings {
+			fmt.Fprintf(&b, "  · %s\n", w)
+		}
+	}
+
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // handleConfig returns the current configuration state, one key=value per line.
@@ -313,6 +390,7 @@ func fileState(path string) string {
 
 const helpText = `**Agent Runner Commands**
 
+**/status** — show runtime state (agent, queue, CLI, issues)
 **/config** — show current configuration and readiness
 
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
