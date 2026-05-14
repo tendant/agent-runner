@@ -452,3 +452,139 @@ func TestIsSensitiveKey_NonSensitive(t *testing.T) {
 		}
 	}
 }
+
+// --- /memory ---
+
+func newMemoryCommander(t *testing.T) (*Commander, string) {
+	t.Helper()
+	env := setupTestEnv(t)
+	memDir := filepath.Join(t.TempDir(), "memory")
+	env.handlers.config.MemoryDir = memDir
+	return NewCommander(env.handlers.config, env.handlers), memDir
+}
+
+func TestCommander_Memory_NoSubcommand_ShowsStatus(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory", nil)
+	if !handled {
+		t.Fatal("expected /memory to be handled")
+	}
+	if !strings.Contains(reply, "Memory") {
+		t.Errorf("expected status output, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Status(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory status", nil)
+	if !handled {
+		t.Fatal("expected /memory status to be handled")
+	}
+	if !strings.Contains(reply, "Memory") {
+		t.Errorf("expected memory status output, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Git_MissingRemote(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory git", nil)
+	if !handled {
+		t.Fatal("expected /memory git to be handled")
+	}
+	if !strings.Contains(reply, "error") || !strings.Contains(reply, "usage") {
+		t.Errorf("expected usage error, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Git_InitialisesRepo(t *testing.T) {
+	c, memDir := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory git file:///"+t.TempDir(), nil)
+	if !handled {
+		t.Fatal("expected /memory git to be handled")
+	}
+	// Should have initialised git
+	if _, err := os.Stat(filepath.Join(memDir, ".git")); os.IsNotExist(err) {
+		t.Error("expected .git to be created in memory dir")
+	}
+	if !strings.Contains(reply, "initialised") && !strings.Contains(reply, "remote") {
+		t.Errorf("expected init confirmation, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Git_SameRemote_NoOp(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	remote := "file:///" + t.TempDir()
+	c.Handle("/memory git "+remote, nil) // first call: init
+	reply, _ := c.Handle("/memory git "+remote, nil) // second call: same remote
+	if !strings.Contains(reply, "already configured") {
+		t.Errorf("expected 'already configured', got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Git_UpdatesRemote(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	remote1 := "file:///" + t.TempDir()
+	remote2 := "file:///" + t.TempDir()
+	c.Handle("/memory git "+remote1, nil)
+	reply, _ := c.Handle("/memory git "+remote2, nil)
+	if !strings.Contains(reply, "remote updated") {
+		t.Errorf("expected 'remote updated', got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Keygen(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory keygen", nil)
+	if !handled {
+		t.Fatal("expected /memory keygen to be handled")
+	}
+	if !strings.Contains(reply, "ssh-ed25519") {
+		t.Errorf("expected public key in output, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Keygen_ExistingKey(t *testing.T) {
+	c, memDir := newMemoryCommander(t)
+	// Generate key first
+	c.Handle("/memory keygen", nil)
+	// Call again — should print existing key, not regenerate
+	reply, _ := c.Handle("/memory keygen", nil)
+	if !strings.Contains(reply, "already exists") {
+		t.Errorf("expected 'already exists', got: %s", reply)
+	}
+	if !strings.Contains(reply, "ssh-ed25519") {
+		t.Errorf("expected public key content in output, got: %s", reply)
+	}
+	_ = memDir
+}
+
+func TestCommander_Memory_Pubkey_NoKey(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory pubkey", nil)
+	if !handled {
+		t.Fatal("expected /memory pubkey to be handled")
+	}
+	if !strings.Contains(reply, "no public key") {
+		t.Errorf("expected 'no public key' message, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Pubkey_AfterKeygen(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	c.Handle("/memory keygen", nil)
+	reply, _ := c.Handle("/memory pubkey", nil)
+	if !strings.Contains(reply, "ssh-ed25519") {
+		t.Errorf("expected public key content, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_UnknownSubcommand(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	reply, handled := c.Handle("/memory bogus", nil)
+	if !handled {
+		t.Fatal("expected /memory bogus to be handled")
+	}
+	if !strings.Contains(reply, "unknown subcommand") {
+		t.Errorf("expected unknown subcommand error, got: %s", reply)
+	}
+}

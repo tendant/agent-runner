@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 const (
 	cmdSetAgent  = "/set-agent"
 	cmdSetPrompt = "/set-prompt"
+	cmdMemory    = "/memory"
 )
 
 // Commander handles chat configuration commands. Zero LLM dependencies —
@@ -80,6 +84,9 @@ func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
 		arg := strings.TrimSpace(text[len("/auth"):])
 		return c.handleAuth(arg, send), true
+	case lower == cmdMemory || strings.HasPrefix(lower, cmdMemory+" "):
+		arg := strings.TrimSpace(text[len(cmdMemory):])
+		return c.handleMemory(arg), true
 	}
 	return "", false
 }
@@ -356,6 +363,133 @@ func (c *Commander) handleBootstrap(force bool) string {
 	return b.String()
 }
 
+// handleMemory dispatches /memory subcommands.
+func (c *Commander) handleMemory(arg string) string {
+	sub, rest, _ := strings.Cut(strings.TrimSpace(arg), " ")
+	switch strings.ToLower(sub) {
+	case "git":
+		return c.handleMemoryGit(strings.TrimSpace(rest))
+	case "keygen":
+		return c.handleMemoryKeygen()
+	case "pubkey":
+		return c.handleMemoryPubkey()
+	case "status", "":
+		return c.handleMemoryStatus()
+	default:
+		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory keygen · /memory pubkey · /memory status"
+	}
+}
+
+// handleMemoryGit initialises or updates git-backed memory.
+func (c *Commander) handleMemoryGit(remote string) string {
+	if remote == "" {
+		return "error: usage: /memory git <remote-url>"
+	}
+	creds := tmpl.MemoryGitCreds{
+		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+	}
+	res, err := tmpl.InitMemoryGit(c.cfg.MemoryDir, remote, creds)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	var b strings.Builder
+	if res.Initialised {
+		fmt.Fprintf(&b, "initialised git in %s\n", c.cfg.MemoryDir)
+	}
+	if res.RemoteChanged {
+		if res.RemoteOld == "" {
+			fmt.Fprintf(&b, "remote set: %s\n", res.RemoteNew)
+		} else {
+			fmt.Fprintf(&b, "remote updated: %s → %s\n", res.RemoteOld, res.RemoteNew)
+		}
+	} else {
+		fmt.Fprintf(&b, "already configured: %s\n", res.RemoteNew)
+	}
+	if res.Pushed {
+		b.WriteString("pushed")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleMemoryKeygen generates an ed25519 SSH key pair for memory git access.
+// If a key already exists it is not overwritten; the public key is always printed.
+func (c *Commander) handleMemoryKeygen() string {
+	keyPath := filepath.Join(filepath.Dir(c.cfg.MemoryDir), "memory_key")
+	pubPath := keyPath + ".pub"
+
+	if _, err := os.Stat(keyPath); err == nil {
+		// Key already exists — just print the public key
+		pub, err := os.ReadFile(pubPath)
+		if err != nil {
+			return fmt.Sprintf("key exists at %s but cannot read public key: %v", keyPath, err)
+		}
+		return fmt.Sprintf("key already exists at %s\n\n%s\nAdd the public key above to GitHub/GitLab → Deploy Keys.", keyPath, strings.TrimSpace(string(pub)))
+	}
+
+	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-f", keyPath, "-N", "", "-C", "agent-runner-memory")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Sprintf("error: ssh-keygen failed: %v\n%s", err, stderr.String())
+	}
+
+	pub, err := os.ReadFile(pubPath)
+	if err != nil {
+		return fmt.Sprintf("key generated at %s but cannot read public key: %v", keyPath, err)
+	}
+
+	// Auto-save MEMORY_GIT_SSH_KEY
+	if err := config.SetEnvLocal("MEMORY_GIT_SSH_KEY", keyPath); err != nil {
+		return fmt.Sprintf("error: failed to save MEMORY_GIT_SSH_KEY: %v", err)
+	}
+	os.Setenv("MEMORY_GIT_SSH_KEY", keyPath) //nolint:errcheck
+
+	return fmt.Sprintf("generated SSH key: %s\nMEMORY_GIT_SSH_KEY saved.\n\nAdd this public key to GitHub/GitLab → Deploy Keys:\n\n%s", keyPath, strings.TrimSpace(string(pub)))
+}
+
+// handleMemoryPubkey prints the existing public key.
+func (c *Commander) handleMemoryPubkey() string {
+	keyPath := os.Getenv("MEMORY_GIT_SSH_KEY")
+	if keyPath == "" {
+		keyPath = filepath.Join(filepath.Dir(c.cfg.MemoryDir), "memory_key")
+	}
+	pubPath := keyPath + ".pub"
+	pub, err := os.ReadFile(pubPath)
+	if err != nil {
+		return fmt.Sprintf("no public key found at %s — run /memory keygen first", pubPath)
+	}
+	return strings.TrimSpace(string(pub))
+}
+
+// handleMemoryStatus shows the state of the memory directory.
+func (c *Commander) handleMemoryStatus() string {
+	var b strings.Builder
+	b.WriteString("**Memory**\n\n")
+	fmt.Fprintf(&b, "**dir:** %s\n", c.cfg.MemoryDir)
+
+	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); os.IsNotExist(err) {
+		b.WriteString("**git:** not initialised (run /memory git <remote-url>)")
+		return b.String()
+	}
+	b.WriteString("**git:** initialised\n")
+
+	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+		fmt.Fprintf(&b, "**remote:** %s\n", strings.TrimSpace(string(out)))
+	} else {
+		b.WriteString("**remote:** none\n")
+	}
+
+	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "log", "-1", "--format=%s").Output(); err == nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			fmt.Fprintf(&b, "**last commit:** %s", msg)
+		}
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // parseSetArgs parses "KEY VALUE" or "KEY=VALUE" into (key, value, true).
 func parseSetArgs(s string) (key, val string, ok bool) {
 	s = strings.TrimSpace(s)
@@ -405,7 +539,13 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 **/auth cancel** — stop an in-progress auth flow
 
 **/set-agent** _\<content\>_ — overwrite agent.md
-**/set-prompt** _\<content\>_ — overwrite prompt.md`
+**/set-prompt** _\<content\>_ — overwrite prompt.md
+
+**/memory git** _\<remote-url\>_ — init or update git remote for memory dir
+  HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> first · SSH: /memory keygen
+**/memory keygen** — generate SSH deploy key and print public key
+**/memory pubkey** — print existing public key
+**/memory status** — show memory dir, remote, and last commit`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{

@@ -137,7 +137,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 		}
-		if err := tmpl.CommitAndPushMemory(h.config.MemoryDir); err != nil {
+		if err := tmpl.CommitAndPushMemory(h.config.MemoryDir, tmpl.MemoryGitCreds{
+				Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+				SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+			}); err != nil {
 			slog.Warn("failed to commit memory", "session_id", sessionID, "error", err)
 		}
 
