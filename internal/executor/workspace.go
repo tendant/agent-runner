@@ -99,7 +99,9 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // If skillsDir is set, skills are copied to .claude/skills/ and .agents/skills/ so
 // Claude Code, opencode, and Codex all discover them.
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
-func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg string) (string, error) {
+// gitToken is injected into HTTPS remote URLs stored in each workspace repo so the
+// agent's own git commands pick up credentials without extra configuration.
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
@@ -143,9 +145,13 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 			}
 			log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
 
-			// Ensure git remote origin matches expected URL
+			// Ensure git remote origin matches expected URL; inject token for HTTPS
+			// so the agent's own git commands work without extra credential setup.
 			if gitHost != "" && gitOrg != "" {
 				expectedURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+				if gitToken != "" {
+					expectedURL = fmt.Sprintf("https://oauth2:%s@%s/%s/%s.git", gitToken, gitHost, gitOrg, repo)
+				}
 				configureGitRemote(dst, repo, expectedURL)
 			}
 		}

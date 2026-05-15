@@ -248,6 +248,14 @@ func (c *Commander) handleConfig() string {
 		}
 	}
 
+	// Repo git credentials (shown when set; token value hidden).
+	if os.Getenv("GIT_TOKEN") != "" {
+		b.WriteString("**GIT_TOKEN:** set\n")
+	}
+	if v := os.Getenv("GIT_SSH_KEY"); v != "" {
+		fmt.Fprintf(&b, "**GIT_SSH_KEY:** %s\n", v)
+	}
+
 	// Memory git credentials (shown when set; values hidden).
 	if os.Getenv("MEMORY_GIT_TOKEN") != "" {
 		b.WriteString("**MEMORY_GIT_TOKEN:** set\n")

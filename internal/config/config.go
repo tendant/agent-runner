@@ -41,6 +41,8 @@ type Config struct {
 	// Git settings
 	GitHost                  string // e.g. "gitea.example.com"
 	GitOrg                   string // e.g. "sites"
+	GitToken                 string // GIT_TOKEN — injected into HTTPS repo URLs at runtime
+	GitSSHKey                string // GIT_SSH_KEY — path to SSH private key for repo operations
 	GitPushRetries           int
 	GitPushRetryDelaySeconds int
 
@@ -274,8 +276,16 @@ func LoadFromEnv() (*Config, error) {
 	cfg.MaxConcurrentJobs = envIntOrDefault("JOB_MAX_CONCURRENT", cfg.MaxConcurrentJobs)
 	cfg.GitHost = envOrDefault("GIT_HOST", cfg.GitHost)
 	cfg.GitOrg = envOrDefault("GIT_ORG", cfg.GitOrg)
+	cfg.GitToken = envOrDefault("GIT_TOKEN", cfg.GitToken)
+	cfg.GitSSHKey = envOrDefault("GIT_SSH_KEY", cfg.GitSSHKey)
 	cfg.GitPushRetries = envIntOrDefault("GIT_PUSH_RETRIES", cfg.GitPushRetries)
 	cfg.GitPushRetryDelaySeconds = envIntOrDefault("GIT_PUSH_RETRY_DELAY_SECONDS", cfg.GitPushRetryDelaySeconds)
+
+	// Propagate GIT_SSH_KEY into GIT_SSH_COMMAND so all git subprocesses
+	// (including the agent CLI) inherit it without extra wiring.
+	if cfg.GitSSHKey != "" && os.Getenv("GIT_SSH_COMMAND") == "" {
+		os.Setenv("GIT_SSH_COMMAND", "ssh -i "+cfg.GitSSHKey+" -o StrictHostKeyChecking=no") //nolint:errcheck
+	}
 
 	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)
 	cfg.Validation.BlockedPaths = envSliceOrDefault("VALIDATION_BLOCKED_PATHS", cfg.Validation.BlockedPaths)

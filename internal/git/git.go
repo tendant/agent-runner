@@ -21,6 +21,7 @@ type DiffSummary struct {
 type Operations struct {
 	PushRetries           int
 	PushRetryDelaySeconds int
+	Token                 string // GIT_TOKEN — injected into HTTPS URLs at runtime
 }
 
 // NewOperations creates a new Git operations handler
@@ -33,8 +34,8 @@ func NewOperations(pushRetries, pushRetryDelaySeconds int) *Operations {
 
 // FetchAndReset fetches from origin and resets to origin/main
 func (o *Operations) FetchAndReset(ctx context.Context, repoPath string) error {
-	// Fetch from origin
-	if err := o.runGitCommand(ctx, repoPath, "fetch", "origin"); err != nil {
+	fetchTarget := o.resolveRemote(ctx, repoPath)
+	if err := o.runGitCommand(ctx, repoPath, "fetch", fetchTarget); err != nil {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
 
@@ -156,16 +157,49 @@ func (o *Operations) Commit(ctx context.Context, repoPath, message, author, inst
 	return strings.TrimSpace(string(hashOutput)), nil
 }
 
+// resolveRemote returns the push/fetch target for repoPath. When Token is set
+// and the stored remote is an HTTPS URL, it returns an ephemeral URL with the
+// token embedded. Otherwise it returns "origin" so normal git credential
+// helpers remain in effect.
+func (o *Operations) resolveRemote(ctx context.Context, repoPath string) string {
+	if o.Token == "" {
+		return "origin"
+	}
+	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "origin"
+	}
+	remote := strings.TrimSpace(string(out))
+	if injected := injectToken(remote, o.Token); injected != remote {
+		return injected
+	}
+	return "origin"
+}
+
+// injectToken rewrites an HTTPS URL to embed the token as credentials.
+// Returns remote unchanged for SSH URLs or when token is empty.
+func injectToken(remote, token string) string {
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(remote, prefix) {
+			return prefix + "oauth2:" + token + "@" + remote[len(prefix):]
+		}
+	}
+	return remote
+}
+
 // Push pushes to origin with retry logic
 func (o *Operations) Push(ctx context.Context, repoPath string) error {
 	var lastErr error
+	pushTarget := o.resolveRemote(ctx, repoPath)
 
 	for i := 0; i < o.PushRetries; i++ {
 		if i > 0 {
 			time.Sleep(time.Duration(o.PushRetryDelaySeconds) * time.Second)
 		}
 
-		err := o.runGitCommand(ctx, repoPath, "push", "origin", "HEAD")
+		err := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD")
 		if err == nil {
 			return nil
 		}

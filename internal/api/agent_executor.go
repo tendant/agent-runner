@@ -176,7 +176,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
-		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg,
+		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
 	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
