@@ -94,7 +94,7 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 
 	// Push
 	pushTarget := injectToken(remote, creds.Token)
-	env := gitSSHEnv(remote, creds.SSHKey)
+	env := GitSSHEnv(remote, creds.SSHKey)
 	if err := gitRunEnv(memoryDir, env, "push", "-u", "origin", pushTarget); err != nil {
 		slog.Warn("memory git push failed", "error", err)
 	} else {
@@ -138,7 +138,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 		remote = strings.TrimSpace(string(remoteOut))
 	}
 	pushTarget := injectToken(remote, creds.Token)
-	env := gitSSHEnv(remote, creds.SSHKey)
+	env := GitSSHEnv(remote, creds.SSHKey)
 
 	if err := gitRunEnv(memoryDir, env, "push", "-u", "origin", pushTarget); err != nil {
 		slog.Warn("memory git push failed (no remote configured?)", "error", err)
@@ -162,9 +162,9 @@ func injectToken(remote, token string) string {
 	return remote
 }
 
-// gitSSHEnv returns env vars to use a specific SSH key for git operations.
+// GitSSHEnv returns env vars to use a specific SSH key for git operations.
 // Returns nil when SSHKey is empty or the remote is not SSH-based.
-func gitSSHEnv(remote, sshKey string) []string {
+func GitSSHEnv(remote, sshKey string) []string {
 	if sshKey == "" {
 		return nil
 	}

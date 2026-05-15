@@ -196,6 +196,15 @@ func (c *Commander) handleStatus() string {
 		fmt.Fprintf(&b, "**cli:** %s ✗ (not installed — /install-cli)\n", cli)
 	}
 
+	// Memory git state
+	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); err == nil {
+		if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+			fmt.Fprintf(&b, "**memory:** git ✓ → %s\n", strings.TrimSpace(string(out)))
+		} else {
+			b.WriteString("**memory:** git (no remote)\n")
+		}
+	}
+
 	// Issues
 	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
@@ -237,6 +246,14 @@ func (c *Commander) handleConfig() string {
 		if os.Getenv(key) != "" {
 			fmt.Fprintf(&b, "**%s:** set\n", key)
 		}
+	}
+
+	// Memory git credentials (shown when set; values hidden).
+	if os.Getenv("MEMORY_GIT_TOKEN") != "" {
+		b.WriteString("**MEMORY_GIT_TOKEN:** set\n")
+	}
+	if v := os.Getenv("MEMORY_GIT_SSH_KEY"); v != "" {
+		fmt.Fprintf(&b, "**MEMORY_GIT_SSH_KEY:** %s\n", v)
 	}
 
 	// File state always shown.
@@ -369,6 +386,8 @@ func (c *Commander) handleMemory(arg string) string {
 	switch strings.ToLower(sub) {
 	case "git":
 		return c.handleMemoryGit(strings.TrimSpace(rest))
+	case "pull":
+		return c.handleMemoryPull()
 	case "keygen":
 		return c.handleMemoryKeygen()
 	case "pubkey":
@@ -376,8 +395,30 @@ func (c *Commander) handleMemory(arg string) string {
 	case "status", "":
 		return c.handleMemoryStatus()
 	default:
-		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory keygen · /memory pubkey · /memory status"
+		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory pull · /memory keygen · /memory pubkey · /memory status"
 	}
+}
+
+// handleMemoryPull fetches and fast-forwards the memory dir from origin.
+func (c *Commander) handleMemoryPull() string {
+	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); os.IsNotExist(err) {
+		return "error: memory dir is not a git repo — run /memory git <remote-url> first"
+	}
+	remote := ""
+	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+		remote = strings.TrimSpace(string(out))
+	}
+	env := tmpl.GitSSHEnv(remote, os.Getenv("MEMORY_GIT_SSH_KEY"))
+	pullCmd := exec.Command("git", "-C", c.cfg.MemoryDir, "pull", "--ff-only", "origin", "HEAD")
+	if len(env) > 0 {
+		pullCmd.Env = append(os.Environ(), env...)
+	}
+	var stderr strings.Builder
+	pullCmd.Stderr = &stderr
+	if err := pullCmd.Run(); err != nil {
+		return fmt.Sprintf("error: git pull failed: %s", strings.TrimSpace(stderr.String()))
+	}
+	return "memory pulled from " + remote
 }
 
 // handleMemoryGit initialises or updates git-backed memory.
@@ -543,6 +584,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/memory git** _\<remote-url\>_ — init or update git remote for memory dir
   HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> first · SSH: /memory keygen
+**/memory pull** — pull latest memory from remote
 **/memory keygen** — generate SSH deploy key and print public key
 **/memory pubkey** — print existing public key
 **/memory status** — show memory dir, remote, and last commit`
