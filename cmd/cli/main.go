@@ -97,6 +97,11 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 	}
 	defer resp.Body.Close()
 
+	// Auth commands return 200 text/event-stream — read the SSE inline.
+	if resp.Header.Get("Content-Type") == "text/event-stream" {
+		return readSSEStream(resp.Body)
+	}
+
 	// Commander commands return 200 OK with a reply directly — no streaming needed.
 	if resp.StatusCode == http.StatusOK {
 		var result struct {
@@ -165,7 +170,12 @@ func streamSession(ctx context.Context, baseURL, apiKey, sessionID string) error
 		}
 	}()
 
-	scanner := bufio.NewScanner(resp.Body)
+	return readSSEStream(resp.Body)
+}
+
+// readSSEStream reads an SSE stream from r until a done event or EOF.
+func readSSEStream(r io.Reader) error {
+	scanner := bufio.NewScanner(r)
 	var eventType, dataLine string
 
 	for scanner.Scan() {
@@ -193,6 +203,12 @@ func streamSession(ctx context.Context, baseURL, apiKey, sessionID string) error
 // handleSSEEvent prints progress for known events. Returns true when the session is done.
 func handleSSEEvent(eventType, data string) (done bool) {
 	switch eventType {
+	case "output":
+		var e struct {
+			Text string `json:"text"`
+		}
+		json.Unmarshal([]byte(data), &e)
+		fmt.Println(e.Text)
 	case "iteration_start":
 		var e iterationStartEvent
 		json.Unmarshal([]byte(data), &e)

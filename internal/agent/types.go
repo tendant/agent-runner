@@ -77,6 +77,18 @@ type Session struct {
 	ReviewJSON           any               `json:"-"`
 
 	stopRequested bool
+
+	// LogLines holds streaming output lines (e.g. auth flow progress).
+	// Not included in API responses; delivered to SSE subscribers as output events.
+	LogLines []string
+}
+
+// AppendLog appends a line to the session log and notifies SSE subscribers.
+func (s *Session) AppendLog(line string) {
+	s.mu.Lock()
+	s.LogLines = append(s.LogLines, line)
+	s.mu.Unlock()
+	s.notifyUpdate()
 }
 
 // Subscribe returns the session's update channel. It receives a value on every
@@ -247,6 +259,7 @@ func (s *Session) Snapshot() *Session {
 		CompletedSteps:      append([]string{}, s.CompletedSteps...),
 		PlanJSON:            s.PlanJSON,
 		ReviewJSON:          s.ReviewJSON,
+		LogLines:            append([]string{}, s.LogLines...),
 	}
 	copy(snap.Iterations, s.Iterations)
 

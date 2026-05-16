@@ -27,7 +27,8 @@ func stripANSI(s string) string {
 // (which may be cancelled by /auth cancel) with an overall 5-minute timeout.
 // URLs found in the output are sent immediately so the user can open them.
 // The function blocks until the CLI exits, the context is cancelled, or the timeout fires.
-func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
+// Returns nil on success, non-nil on cancellation, timeout, or auth failure.
+func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) error {
 	ctx, cancel := context.WithTimeout(parent, authTimeout)
 	defer cancel()
 
@@ -41,7 +42,7 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 		args = []string{"login", "--device-auth"}
 	default:
 		send(fmt.Sprintf("error: /auth only supports 'claude' and 'codex' (got %q)", cli))
-		return
+		return fmt.Errorf("unsupported cli: %s", cli)
 	}
 
 	cmd := exec.CommandContext(ctx, cli, args...)
@@ -53,12 +54,12 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 
 	if err := cmd.Start(); err != nil {
 		send(fmt.Sprintf("error: failed to start %s auth: %v", cli, err))
-		return
+		return err
 	}
 
-	done := make(chan struct{}, 2)
+	scanDone := make(chan struct{}, 2)
 	scanLines := func(r io.Reader) {
-		defer func() { done <- struct{}{} }()
+		defer func() { scanDone <- struct{}{} }()
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := stripANSI(scanner.Text())
@@ -77,8 +78,8 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 	go scanLines(outPR)
 	go scanLines(errPR)
 
-	<-done
-	<-done
+	<-scanDone
+	<-scanDone
 	outPW.Close()
 	errPW.Close()
 
@@ -86,12 +87,15 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) {
 		switch ctx.Err() {
 		case context.Canceled:
 			send("auth cancelled")
+			return fmt.Errorf("cancelled")
 		case context.DeadlineExceeded:
 			send("auth timed out (5 min)")
+			return fmt.Errorf("timed out")
 		default:
 			send(fmt.Sprintf("%s auth failed: %v", cli, err))
+			return err
 		}
-		return
 	}
 	send(cli + " authenticated successfully.")
+	return nil
 }

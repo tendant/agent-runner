@@ -92,37 +92,68 @@ func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 }
 
 // handleAuth starts a CLI auth flow in a background goroutine and relays
-// progress (including the auth URL) to send. Only 'claude' is supported.
+// progress (including the auth URL) to send.
 func (c *Commander) handleAuth(arg string, send func(string)) string {
 	if send == nil {
 		return "error: /auth is only available via chat (Telegram, WeChat, stream)"
 	}
 	cli := strings.TrimSpace(arg)
+	msg, err := c.startAuthFlow(cli, send)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return msg
+}
+
+// validateAuth resolves and validates the CLI name for an auth flow.
+func (c *Commander) validateAuth(cli string) (string, error) {
 	if cli == "" {
 		cli = c.cfg.Agent.CLI
 	}
 	if cli == "" || cli == "opencode" {
-		return "opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead"
+		return "", fmt.Errorf("opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead")
 	}
 	if cli != "claude" && cli != "codex" {
-		return fmt.Sprintf("error: /auth only supports 'claude' and 'codex' (got %q)", cli)
+		return "", fmt.Errorf("/auth only supports 'claude' and 'codex' (got %q)", cli)
 	}
 	if !CLIInstalled(cli) {
-		return fmt.Sprintf("error: %s is not installed — run /install-cli %s first", cli, cli)
+		return "", fmt.Errorf("%s is not installed — run /install-cli %s first", cli, cli)
 	}
+	return cli, nil
+}
+
+// registerAuthCancel locks the auth mutex and stores cancel for /auth cancel.
+// Returns an error if another flow is already running.
+func (c *Commander) registerAuthCancel(cancel context.CancelFunc) error {
 	if !c.authMu.TryLock() {
-		return "an auth flow is already in progress — use /auth cancel to stop it"
+		return fmt.Errorf("an auth flow is already in progress — use /auth cancel to stop it")
+	}
+	c.authCancel = cancel
+	return nil
+}
+
+// releaseAuthCancel clears the stored cancel and unlocks the auth mutex.
+func (c *Commander) releaseAuthCancel() {
+	c.authCancel = nil
+	c.authMu.Unlock()
+}
+
+// startAuthFlow starts an async auth flow for chat channels (Telegram, WeChat, stream).
+func (c *Commander) startAuthFlow(cli string, send func(string)) (string, error) {
+	cli, err := c.validateAuth(cli)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c.authCancel = cancel
+	if err := c.registerAuthCancel(cancel); err != nil {
+		cancel()
+		return "", err
+	}
 	go func() {
-		defer func() {
-			c.authCancel = nil
-			c.authMu.Unlock()
-		}()
-		runCLIAuthFlowCtx(ctx, cli, send)
+		defer c.releaseAuthCancel()
+		runCLIAuthFlowCtx(ctx, cli, send) //nolint:errcheck
 	}()
-	return "Starting " + cli + " auth — open the URL when it appears in chat... (/auth cancel to stop)"
+	return "Starting " + cli + " auth — open the URL when it appears... (/auth cancel to stop)", nil
 }
 
 // handleAuthCancel cancels any running auth flow.

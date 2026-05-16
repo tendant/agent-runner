@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -30,6 +31,16 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Message == "" {
 		h.writeError(w, http.StatusBadRequest, "message is required")
 		return
+	}
+
+	// /auth needs a streaming session so the URL reaches the caller via SSE.
+	// Detect it before the synchronous commander check.
+	lower := strings.ToLower(strings.TrimSpace(req.Message))
+	if (lower == "/auth" || strings.HasPrefix(lower, "/auth ")) && lower != "/auth cancel" {
+		if h.commander != nil {
+			h.handleAuthStream(w, r, req.Message)
+			return
+		}
 	}
 
 	// Handle configuration commands synchronously — return reply directly so the
@@ -131,6 +142,57 @@ func (h *Handlers) HandleStopAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAuthStream runs /auth synchronously, streaming output as SSE directly
+// on the POST /agent response — no session required.
+func (h *Handlers) handleAuthStream(w http.ResponseWriter, r *http.Request, message string) {
+	arg := strings.TrimSpace(message[5:]) // strip "/auth"
+
+	cli, valErr := h.commander.validateAuth(arg)
+	if valErr != nil {
+		h.writeJSON(w, http.StatusOK, map[string]any{"reply": "error: " + valErr.Error()})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	// Acquire auth lock so /auth cancel can stop this flow.
+	ctx, cancel := context.WithCancel(r.Context())
+	if err := h.commander.registerAuthCancel(cancel); err != nil {
+		cancel()
+		h.writeJSON(w, http.StatusOK, map[string]any{"reply": "error: " + err.Error()})
+		return
+	}
+	defer func() {
+		cancel()
+		h.commander.releaseAuthCancel()
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sendLine := func(text string) {
+		b, _ := json.Marshal(map[string]string{"text": text})
+		fmt.Fprintf(w, "event: output\ndata: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	authErr := runCLIAuthFlowCtx(ctx, cli, sendLine)
+
+	status := "completed"
+	if authErr != nil {
+		status = "failed"
+	}
+	b, _ := json.Marshal(map[string]string{"status": status})
+	fmt.Fprintf(w, "event: done\ndata: %s\n\n", b)
+	flusher.Flush()
+}
+
 // HandleStreamAgent streams session events via Server-Sent Events.
 // GET /agent/{id}/stream
 func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
@@ -174,9 +236,20 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 	defer heartbeat.Stop()
 
 	lastSentCount := 0
+	lastLogCount := 0
 
 	emit := func() (done bool) {
 		snap := liveSession.Snapshot()
+
+		// emit new log lines (auth flow progress, etc.)
+		for _, line := range snap.LogLines[lastLogCount:] {
+			sendEvent("output", map[string]any{
+				"session_id": snap.ID,
+				"text":       line,
+			})
+		}
+		lastLogCount = len(snap.LogLines)
+
 		// emit any newly completed iterations
 		for _, iter := range snap.Iterations[lastSentCount:] {
 			sendEvent("iteration_done", map[string]any{
