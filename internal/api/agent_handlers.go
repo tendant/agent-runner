@@ -171,6 +171,9 @@ func (h *Handlers) handleAuthStream(w http.ResponseWriter, r *http.Request, mess
 		h.commander.releaseAuthCancel()
 	}()
 
+	// Disable the server write deadline — SSE connections are long-lived.
+	http.NewResponseController(w).SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -219,6 +222,9 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
+
+	// Disable the server write deadline — SSE connections are long-lived.
+	http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
