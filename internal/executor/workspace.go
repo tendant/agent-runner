@@ -137,23 +137,32 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 			continue
 		}
 		cachedRepo := filepath.Join(repoCacheRoot, repo)
-		if info, err := os.Stat(cachedRepo); err == nil && info.IsDir() {
-			dst := filepath.Join(agentDir, repo)
-			if err := copyDir(cachedRepo, dst); err != nil {
-				log.Printf("Agent workspace: warning: failed to copy shared repo %s: %v", repo, err)
-				continue
+		info, err := os.Stat(cachedRepo)
+		if err != nil || !info.IsDir() {
+			if suggestion := suggestCachedRepo(repoCacheRoot, repo); suggestion != "" {
+				slog.Warn("shared repo not found in cache; did you mean a different name?",
+					"repo", repo, "suggestion", suggestion)
+			} else {
+				slog.Warn("shared repo not found in cache", "repo", repo, "cache", repoCacheRoot)
 			}
-			log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
+			continue
+		}
 
-			// Ensure git remote origin matches expected URL; inject token for HTTPS
-			// so the agent's own git commands work without extra credential setup.
-			if gitHost != "" && gitOrg != "" {
-				expectedURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
-				if gitToken != "" {
-					expectedURL = fmt.Sprintf("https://oauth2:%s@%s/%s/%s.git", gitToken, gitHost, gitOrg, repo)
-				}
-				configureGitRemote(dst, repo, expectedURL)
+		dst := filepath.Join(agentDir, repo)
+		if err := copyDir(cachedRepo, dst); err != nil {
+			log.Printf("Agent workspace: warning: failed to copy shared repo %s: %v", repo, err)
+			continue
+		}
+		log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
+
+		// Ensure git remote origin matches expected URL; inject token for HTTPS
+		// so the agent's own git commands work without extra credential setup.
+		if gitHost != "" && gitOrg != "" {
+			expectedURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+			if gitToken != "" {
+				expectedURL = fmt.Sprintf("https://oauth2:%s@%s/%s/%s.git", gitToken, gitHost, gitOrg, repo)
 			}
+			configureGitRemote(dst, repo, expectedURL)
 		}
 	}
 
@@ -179,14 +188,79 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 		src := filepath.Join(agentDir, entry.Name())
 		dst := filepath.Join(repoCacheRoot, entry.Name())
 
-		// Remove old cache and replace with updated version
-		os.RemoveAll(dst)
-		if err := copyDir(src, dst); err != nil {
+		if err := cacheRepoAtomic(src, dst); err != nil {
 			log.Printf("Agent workspace: warning: failed to cache repo %s: %v", entry.Name(), err)
 			continue
 		}
 		log.Printf("Agent workspace: cached repo %s back to workspaces", entry.Name())
 	}
+}
+
+// cacheRepoAtomic copies src into dst without risking data loss if the copy
+// fails mid-way. It uses a two-rename swap:
+//
+//  1. Copy src → dst.tmp   (original dst untouched if this fails)
+//  2. Rename dst → dst.old (atomic; makes room for the new copy)
+//  3. Rename dst.tmp → dst (atomic; new copy is now live)
+//  4. Remove dst.old       (clean up; harmless if it lingers)
+//
+// If step 3 fails we attempt to restore dst from dst.old before returning.
+func cacheRepoAtomic(src, dst string) error {
+	tmp := dst + ".tmp"
+	old := dst + ".old"
+
+	// Clean up any leftovers from a previous failed run.
+	os.RemoveAll(tmp)
+	os.RemoveAll(old)
+
+	// Step 1: copy into temp location — original dst is safe if this fails.
+	if err := copyDir(src, tmp); err != nil {
+		os.RemoveAll(tmp)
+		return fmt.Errorf("copy to temp: %w", err)
+	}
+
+	// Step 2: move old cache out of the way (no-op if dst doesn't exist yet).
+	if _, err := os.Stat(dst); err == nil {
+		if err := os.Rename(dst, old); err != nil {
+			os.RemoveAll(tmp)
+			return fmt.Errorf("rename old cache aside: %w", err)
+		}
+	}
+
+	// Step 3: move new copy into place.
+	if err := os.Rename(tmp, dst); err != nil {
+		// Restore old cache so we don't lose it.
+		if _, statErr := os.Stat(old); statErr == nil {
+			os.Rename(old, dst)
+		}
+		os.RemoveAll(tmp)
+		return fmt.Errorf("rename new cache into place: %w", err)
+	}
+
+	// Step 4: remove old cache (best-effort; a lingering .old is harmless).
+	os.RemoveAll(old)
+	return nil
+}
+
+// suggestCachedRepo looks for a cached repo whose normalised name matches
+// repo's normalised name. Normalisation folds to lowercase and treats '-' and
+// '_' as equivalent, catching the most common typos.
+// Returns the suggested name, or "" if nothing close is found.
+func suggestCachedRepo(repoCacheRoot, repo string) string {
+	normalise := func(s string) string {
+		return strings.ToLower(strings.ReplaceAll(s, "-", "_"))
+	}
+	target := normalise(repo)
+	entries, err := os.ReadDir(repoCacheRoot)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if e.IsDir() && normalise(e.Name()) == target {
+			return e.Name()
+		}
+	}
+	return ""
 }
 
 // configureGitRemote ensures the origin remote matches the expected URL.
