@@ -104,6 +104,18 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 	}
 	defer resp.Body.Close()
 
+	// Commander commands return 200 OK with a reply directly — no polling needed.
+	if resp.StatusCode == http.StatusOK {
+		var result struct {
+			Reply string `json:"reply"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("decode reply: %w", err)
+		}
+		fmt.Println(result.Reply)
+		return nil
+	}
+
 	var start startResponse
 	if err := json.NewDecoder(resp.Body).Decode(&start); err != nil {
 		return fmt.Errorf("decode start response: %w", err)
