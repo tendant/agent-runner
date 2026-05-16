@@ -280,6 +280,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
+		liveSession.BeginIteration(i)
 		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.getExecutor())
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -209,6 +210,7 @@ func (m *Manager) CreateSession(message string, paths []string, author, commitPr
 		Status:              SessionStatusQueued,
 		Iterations:          []IterationResult{},
 		StartedAt:           time.Now(),
+		notify:              make(chan struct{}, 1),
 	}
 
 	m.mu.Lock()
@@ -276,4 +278,35 @@ func (m *Manager) GetSessionDirect(sessionID string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	session, exists := m.sessions[sessionID]
 	return session, exists
+}
+
+// ListSessions returns up to limit session snapshots sorted newest-first.
+// Pass limit <= 0 for all sessions.
+func (m *Manager) ListSessions(limit int) []*Session {
+	m.mu.RLock()
+	all := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		all = append(all, s)
+	}
+	m.mu.RUnlock()
+
+	sort.Slice(all, func(i, j int) bool {
+		all[i].mu.RLock()
+		ti := all[i].StartedAt
+		all[i].mu.RUnlock()
+		all[j].mu.RLock()
+		tj := all[j].StartedAt
+		all[j].mu.RUnlock()
+		return ti.After(tj)
+	})
+
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+
+	result := make([]*Session, len(all))
+	for i, s := range all {
+		result[i] = s.Snapshot()
+	}
+	return result
 }

@@ -75,12 +75,16 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/bootstrap", handlers.HandleBootstrap)
 	mux.HandleFunc("/agent", handlers.HandleStartAgent)
 	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/stop") {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/stop"):
 			handlers.HandleStopAgent(w, r)
-		} else {
+		case strings.HasSuffix(r.URL.Path, "/stream"):
+			handlers.HandleStreamAgent(w, r)
+		default:
 			handlers.HandleGetAgent(w, r)
 		}
 	})
+	mux.HandleFunc("/sessions", handlers.HandleListSessions)
 
 	// Apply middleware
 	var handler http.Handler = mux

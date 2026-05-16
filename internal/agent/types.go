@@ -49,7 +49,8 @@ type IterationResult struct {
 
 // Session represents an agent session that runs multiple iterations
 type Session struct {
-	mu sync.RWMutex
+	mu     sync.RWMutex
+	notify chan struct{} // buffered(1); signalled on any state change for SSE subscribers
 
 	ID                   string            `json:"session_id"`
 	Source               string            `json:"source,omitempty"` // originating channel: api, telegram, wechat, stream, runner
@@ -78,6 +79,30 @@ type Session struct {
 	stopRequested bool
 }
 
+// Subscribe returns the session's update channel. It receives a value on every
+// state change (iteration added, status changed). The channel is buffered(1) so
+// callers that are slow to read will not block the writer.
+func (s *Session) Subscribe() <-chan struct{} {
+	return s.notify
+}
+
+// notifyUpdate sends a non-blocking signal to SSE subscribers.
+func (s *Session) notifyUpdate() {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+
+// BeginIteration marks iteration n as in-progress before the CLI call blocks.
+// This lets SSE subscribers emit an iteration_start event immediately.
+func (s *Session) BeginIteration(n int) {
+	s.mu.Lock()
+	s.CurrentIteration = n
+	s.mu.Unlock()
+	s.notifyUpdate()
+}
+
 // RequestStop sets the stop flag so the loop exits after the current iteration
 func (s *Session) RequestStop() {
 	s.mu.Lock()
@@ -86,6 +111,7 @@ func (s *Session) RequestStop() {
 	if s.Status == SessionStatusRunning {
 		s.Status = SessionStatusStopping
 	}
+	s.notifyUpdate()
 }
 
 // StopRequested returns true if a stop has been requested
@@ -98,7 +124,6 @@ func (s *Session) StopRequested() bool {
 // AddIteration appends an iteration result and updates counters
 func (s *Session) AddIteration(result IterationResult) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Iterations = append(s.Iterations, result)
 	s.CurrentIteration = result.Iteration
 	s.TotalCostUSD += result.CostUSD
@@ -111,27 +136,31 @@ func (s *Session) AddIteration(result IterationResult) {
 	} else {
 		s.ConsecutiveFailures++
 	}
+	s.mu.Unlock()
+	s.notifyUpdate()
 }
 
 // Complete marks the session as completed
 func (s *Session) Complete() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now()
 	s.CompletedAt = &now
 	s.Status = SessionStatusCompleted
 	s.ElapsedSeconds = int(now.Sub(s.StartedAt).Seconds())
+	s.mu.Unlock()
+	s.notifyUpdate()
 }
 
 // Fail marks the session as failed with an error
 func (s *Session) Fail(err string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now()
 	s.CompletedAt = &now
 	s.Status = SessionStatusFailed
 	s.Error = err
 	s.ElapsedSeconds = int(now.Sub(s.StartedAt).Seconds())
+	s.mu.Unlock()
+	s.notifyUpdate()
 }
 
 // SetWorkspacePath stores the workspace path on the session.

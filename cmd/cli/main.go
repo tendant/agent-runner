@@ -76,23 +76,16 @@ type startResponse struct {
 	Error     string `json:"error"`
 }
 
-type iterationResult struct {
-	Iteration int      `json:"iteration"`
-	Status    string   `json:"status"`
-	Output    string   `json:"output"`
-	Error     string   `json:"error"`
-	Files     []string `json:"changed_files"`
-	Duration  float64  `json:"duration_seconds"`
+type iterationStartEvent struct {
+	Iteration int `json:"iteration"`
 }
 
-type pollResponse struct {
-	SessionID            string            `json:"session_id"`
-	Status               string            `json:"status"`
-	CurrentIteration     int               `json:"current_iteration"`
-	SuccessfulIterations int               `json:"successful_iterations"`
-	ElapsedSeconds       float64           `json:"elapsed_seconds"`
-	Error                string            `json:"error"`
-	Iterations           []iterationResult `json:"iterations"`
+type doneEvent struct {
+	Status               string  `json:"status"`
+	SuccessfulIterations int     `json:"successful_iterations"`
+	ElapsedSeconds       float64 `json:"elapsed_seconds"`
+	Error                string  `json:"error"`
+	Output               string  `json:"output"`
 }
 
 func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
@@ -104,7 +97,7 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 	}
 	defer resp.Body.Close()
 
-	// Commander commands return 200 OK with a reply directly — no polling needed.
+	// Commander commands return 200 OK with a reply directly — no streaming needed.
 	if resp.StatusCode == http.StatusOK {
 		var result struct {
 			Reply string `json:"reply"`
@@ -127,78 +120,99 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 	sid := start.SessionID
 	fmt.Printf("[queued] session %s\n", sid)
 
-	// Poll loop
-	var lastIteration int
-	stopSent := false
-	pollURL := baseURL + "/agent/" + sid
-
-	for {
-		select {
-		case <-ctx.Done():
-			if !stopSent {
-				stopSent = true
-				fmt.Println("\n[stopping] sending stop signal...")
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				stopResp, stopErr := apiRequest(stopCtx, http.MethodPost, pollURL+"/stop", apiKey, nil)
-				if stopErr == nil {
-					stopResp.Body.Close()
-				}
-				stopCancel()
-			}
-		default:
-		}
-
-		time.Sleep(2 * time.Second)
-
-		pollCtx, pollCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		resp, err := apiRequest(pollCtx, http.MethodGet, pollURL, apiKey, nil)
-		pollCancel()
-		if err != nil {
-			return fmt.Errorf("GET /agent/%s: %w", sid, err)
-		}
-
-		var poll pollResponse
-		if err := json.NewDecoder(resp.Body).Decode(&poll); err != nil {
-			resp.Body.Close()
-			return fmt.Errorf("decode poll response: %w", err)
-		}
-		resp.Body.Close()
-
-		// Print new iteration progress
-		for poll.CurrentIteration > lastIteration {
-			lastIteration++
-			fmt.Printf("[running] iteration %d...\n", lastIteration)
-		}
-
-		switch poll.Status {
-		case "completed":
-			fmt.Printf("[completed] %d iterations, %.0fs\n", poll.SuccessfulIterations, poll.ElapsedSeconds)
-			printOutput(poll)
-			return nil
-		case "failed":
-			fmt.Printf("[failed] %s\n", poll.Error)
-			printOutput(poll)
-			return nil
-		case "stopping":
-			if !stopSent {
-				fmt.Println("[stopping]...")
-			}
-			// Keep polling until terminal state
-		}
-	}
+	return streamSession(ctx, baseURL, apiKey, sid)
 }
 
-func printOutput(poll pollResponse) {
-	if len(poll.Iterations) == 0 {
-		return
+// streamSession connects to GET /agent/{id}/stream and renders events to stdout.
+func streamSession(ctx context.Context, baseURL, apiKey, sessionID string) error {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet,
+		baseURL+"/agent/"+sessionID+"/stream", nil)
+	if err != nil {
+		return err
 	}
-	last := poll.Iterations[len(poll.Iterations)-1]
-	if last.Output != "" {
-		fmt.Printf("\nOutput:\n%s\n", last.Output)
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
 	}
-	if last.Error != "" {
-		fmt.Printf("\nError:\n%s\n", last.Error)
+
+	// Long-lived connection — no timeout on the client transport
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET /agent/%s/stream: %w", sessionID, err)
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("stream returned %d", resp.StatusCode)
+	}
+
+	// Handle Ctrl+C: send stop signal then keep reading until done event
+	stopSent := false
+	go func() {
+		<-ctx.Done()
+		if !stopSent {
+			stopSent = true
+			fmt.Println("\n[stopping] sending stop signal...")
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopCancel()
+			stopResp, stopErr := apiRequest(stopCtx, http.MethodPost,
+				baseURL+"/agent/"+sessionID+"/stop", apiKey, nil)
+			if stopErr == nil {
+				stopResp.Body.Close()
+			}
+		}
+	}()
+
+	scanner := bufio.NewScanner(resp.Body)
+	var eventType, dataLine string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			eventType = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			dataLine = strings.TrimPrefix(line, "data: ")
+		case line == "":
+			if eventType == "" {
+				continue
+			}
+			done := handleSSEEvent(eventType, dataLine)
+			eventType, dataLine = "", ""
+			if done {
+				return nil
+			}
+		}
+		// ":" prefix = heartbeat comment — ignore
+	}
+	return scanner.Err()
+}
+
+// handleSSEEvent prints progress for known events. Returns true when the session is done.
+func handleSSEEvent(eventType, data string) (done bool) {
+	switch eventType {
+	case "iteration_start":
+		var e iterationStartEvent
+		json.Unmarshal([]byte(data), &e)
+		fmt.Printf("[running] iteration %d...\n", e.Iteration)
+	case "iteration_done":
+		// silent — wait for the done event to print output
+	case "done":
+		var e doneEvent
+		json.Unmarshal([]byte(data), &e)
+		if e.Status == "failed" {
+			fmt.Printf("[failed] %s\n", e.Error)
+		} else {
+			fmt.Printf("[completed] %d iterations, %.0fs\n", e.SuccessfulIterations, e.ElapsedSeconds)
+		}
+		if e.Output != "" {
+			fmt.Printf("\nOutput:\n%s\n", e.Output)
+		}
+		return true
+	}
+	return false
 }
 
 func apiRequest(ctx context.Context, method, url, apiKey string, body io.Reader) (*http.Response, error) {
