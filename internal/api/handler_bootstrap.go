@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -271,8 +272,8 @@ func bootstrapWarnings(cli, provider string) []string {
 			w = append(w, "claude backend requires ANTHROPIC_API_KEY (or ANTHROPIC_BASE_URL for local models)")
 		}
 	case "codex":
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			w = append(w, "codex backend requires OPENAI_API_KEY")
+		if os.Getenv("OPENAI_API_KEY") == "" && !codexHasOAuthCredentials() {
+			w = append(w, "codex backend requires OPENAI_API_KEY or /auth codex")
 		}
 	case "opencode":
 		key := providerEnvKey(p)
@@ -286,6 +287,17 @@ func bootstrapWarnings(cli, provider string) []string {
 		}
 	}
 	return w
+}
+
+// codexHasOAuthCredentials returns true if codex has OAuth credentials from
+// a previous `codex login --device-auth` run (stored in ~/.codex/auth.json).
+func codexHasOAuthCredentials() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".codex", "auth.json"))
+	return err == nil
 }
 
 // providerEnvKey returns the expected API key env var for a known opencode provider.
