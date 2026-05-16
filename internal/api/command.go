@@ -396,6 +396,8 @@ func (c *Commander) handleMemory(arg string) string {
 		return c.handleMemoryGit(strings.TrimSpace(rest))
 	case "pull":
 		return c.handleMemoryPull()
+	case "push":
+		return c.handleMemoryPush()
 	case "keygen":
 		return c.handleMemoryKeygen()
 	case "pubkey":
@@ -403,7 +405,7 @@ func (c *Commander) handleMemory(arg string) string {
 	case "status", "":
 		return c.handleMemoryStatus()
 	default:
-		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory pull · /memory keygen · /memory pubkey · /memory status"
+		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory pull · /memory push · /memory keygen · /memory pubkey · /memory status"
 	}
 }
 
@@ -427,6 +429,28 @@ func (c *Commander) handleMemoryPull() string {
 		return fmt.Sprintf("error: git pull failed: %s", strings.TrimSpace(stderr.String()))
 	}
 	return "memory pulled from " + remote
+}
+
+// handleMemoryPush commits any pending changes and pushes memory to origin.
+func (c *Commander) handleMemoryPush() string {
+	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); os.IsNotExist(err) {
+		return "error: memory dir is not a git repo — run /memory git <remote-url> first"
+	}
+	creds := tmpl.MemoryGitCreds{
+		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+	}
+	if err := tmpl.CommitAndPushMemory(c.cfg.MemoryDir, creds); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	remote := ""
+	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+		remote = strings.TrimSpace(string(out))
+	}
+	if remote == "" {
+		return "memory pushed"
+	}
+	return "memory pushed to " + remote
 }
 
 // handleMemoryGit initialises or updates git-backed memory.
@@ -593,6 +617,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 **/memory git** _\<remote-url\>_ — init or update git remote for memory dir
   HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> first · SSH: /memory keygen
 **/memory pull** — pull latest memory from remote
+**/memory push** — commit and push memory to remote
 **/memory keygen** — generate SSH deploy key and print public key
 **/memory pubkey** — print existing public key
 **/memory status** — show memory dir, remote, and last commit`
