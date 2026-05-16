@@ -512,6 +512,8 @@ func (c *Commander) handleMemoryGit(remote string) string {
 	}
 	if res.Pushed {
 		b.WriteString("pushed")
+	} else if res.PushErr != nil {
+		fmt.Fprintf(&b, "push failed: %v\nIf the new remote has unrelated history, force-push manually:\n  git -C <memory-dir> push origin HEAD --force", res.PushErr)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

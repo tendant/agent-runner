@@ -23,7 +23,8 @@ type InitMemoryGitResult struct {
 	RemoteOld     string // previous remote URL, empty if none existed
 	RemoteNew     string // remote URL after the call
 	RemoteChanged bool   // remote was added or updated
-	Pushed        bool   // a push was attempted
+	Pushed        bool   // push succeeded
+	PushErr       error  // non-nil if push was attempted but failed
 }
 
 // InitMemoryGit initialises memoryDir as a git repository backed by remote.
@@ -92,11 +93,14 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 		}
 	}
 
-	// Push
+	// Push — if a token was injected, push directly to the credentialed URL
+	// so it is never stored in .git/config. Otherwise push to the named remote
+	// (which may have credentials embedded in the stored URL).
 	pushTarget := injectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
-	if err := gitRunEnv(memoryDir, env, "push", "-u", "origin", pushTarget); err != nil {
+	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
 		slog.Warn("memory git push failed", "error", err)
+		res.PushErr = err
 	} else {
 		res.Pushed = true
 	}
@@ -123,16 +127,15 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if err != nil {
 		return err
 	}
-	if len(bytes.TrimSpace(out)) == 0 {
-		return nil
+	if len(bytes.TrimSpace(out)) > 0 {
+		msg := "[memory] " + time.Now().Format("2006-01-02")
+		if err := gitRunEnv(memoryDir, nil, "commit", "-m", msg); err != nil {
+			return err
+		}
 	}
 
-	msg := "[memory] " + time.Now().Format("2006-01-02")
-	if err := gitRunEnv(memoryDir, nil, "commit", "-m", msg); err != nil {
-		return err
-	}
-
-	// Resolve push target and SSH env from stored remote
+	// Always push — even if nothing new was committed, there may be local
+	// commits that haven't been pushed yet.
 	remote := ""
 	if remoteOut, err := gitOutput(memoryDir, "remote", "get-url", "origin"); err == nil {
 		remote = strings.TrimSpace(string(remoteOut))
@@ -140,23 +143,63 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	pushTarget := injectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
-	if err := gitRunEnv(memoryDir, env, "push", "-u", "origin", pushTarget); err != nil {
+	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
 		slog.Warn("memory git push failed (no remote configured?)", "error", err)
 	}
 
 	return nil
 }
 
+// pushMemory pushes local commits to the remote. If the push is rejected
+// because the remote is ahead (non-fast-forward), it pulls with rebase and
+// retries once. On rebase conflict it aborts and returns an error.
+//
+// When a token was injected into pushTarget, we push directly to the
+// credentialed URL so git treats it as a repository rather than a refspec
+// (passing a URL after a remote name causes git to interpret it as src:dst).
+func pushMemory(memoryDir string, env []string, remote, pushTarget string) error {
+	// Specifying HEAD as the refspec tells git "push the current branch to the
+	// same-named remote branch" without requiring upstream tracking info.
+	doPush := func() error {
+		if pushTarget != remote {
+			return gitRunEnv(memoryDir, env, "push", pushTarget, "HEAD")
+		}
+		return gitRunEnv(memoryDir, env, "push", "origin", "HEAD")
+	}
+
+	if err := doPush(); err == nil {
+		return nil
+	}
+
+	// Push rejected — pull with rebase then retry.
+	// HEAD as the refspec fetches the remote's default branch.
+	pullTarget := pushTarget
+	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
+		// Rebase conflict — abort so the repo is not left mid-rebase.
+		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
+		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
+	}
+
+	return doPush()
+}
+
 // injectToken rewrites an HTTPS remote URL to embed the token as credentials.
 // The original remote stored in .git/config is never modified.
-// Returns remote unchanged if it is not an HTTPS URL or token is empty.
+// Returns remote unchanged if it is not an HTTPS URL, token is empty, or the
+// URL already contains credentials (user:pass@ prefix) — double-injecting
+// produces a mangled URL that git rejects.
 func injectToken(remote, token string) string {
 	if token == "" || remote == "" {
 		return remote
 	}
 	for _, prefix := range []string{"https://", "http://"} {
 		if strings.HasPrefix(remote, prefix) {
-			return prefix + "oauth2:" + token + "@" + remote[len(prefix):]
+			rest := remote[len(prefix):]
+			if strings.Contains(rest, "@") {
+				// Credentials already embedded in the URL — leave it alone.
+				return remote
+			}
+			return prefix + "oauth2:" + token + "@" + rest
 		}
 	}
 	return remote
