@@ -78,12 +78,16 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) er
 	go scanLines(outPR)
 	go scanLines(errPR)
 
-	<-scanDone
-	<-scanDone
+	// cmd.Wait() blocks until the process exits AND all internal I/O goroutines
+	// finish writing to outPW/errPW. Only after that is it safe to close the
+	// write ends, which signals EOF to the scanner goroutines.
+	waitErr := cmd.Wait()
 	outPW.Close()
 	errPW.Close()
+	<-scanDone
+	<-scanDone
 
-	if err := cmd.Wait(); err != nil {
+	if waitErr != nil {
 		switch ctx.Err() {
 		case context.Canceled:
 			send("auth cancelled")
@@ -92,8 +96,8 @@ func runCLIAuthFlowCtx(parent context.Context, cli string, send func(string)) er
 			send("auth timed out (5 min)")
 			return fmt.Errorf("timed out")
 		default:
-			send(fmt.Sprintf("%s auth failed: %v", cli, err))
-			return err
+			send(fmt.Sprintf("%s auth failed: %v", cli, waitErr))
+			return waitErr
 		}
 	}
 	send(cli + " authenticated successfully.")
