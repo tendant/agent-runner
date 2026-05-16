@@ -111,3 +111,68 @@ func TestInitMemoryGit_URLChange(t *testing.T) {
 		t.Error("remoteB has no commits after URL-change push")
 	}
 }
+
+func TestPullMemory_DivergedLocal(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	remote := t.TempDir()
+	if err := exec.Command("git", "init", "--bare", remote).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+
+	// Set up local repo A — initial commit, push to remote.
+	repoA := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoA, "a.md"), []byte("from A"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitMemoryGit(repoA, remote, MemoryGitCreds{}); err != nil {
+		t.Fatalf("InitMemoryGit(repoA): %v", err)
+	}
+
+	// Clone remote into repo B and push a new commit — remote is now ahead of A.
+	repoB := t.TempDir()
+	if err := exec.Command("git", "clone", remote, repoB).Run(); err != nil {
+		t.Fatalf("git clone: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoB, "b.md"), []byte("from B"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"config", "user.email", "b@local"},
+		{"config", "user.name", "B"},
+		{"add", "-A"},
+		{"commit", "-m", "from B"},
+		{"push", "origin", "HEAD"},
+	} {
+		if err := exec.Command("git", append([]string{"-C", repoB}, args...)...).Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	// Add a local commit to A (diverged from remote).
+	if err := os.WriteFile(filepath.Join(repoA, "local.md"), []byte("local only"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", "-A"},
+		{"commit", "-m", "local only"},
+	} {
+		if err := exec.Command("git", append([]string{"-C", repoA}, args...)...).Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	// PullMemory should rebase A's local commit on top of B's remote commit.
+	if _, err := PullMemory(repoA, MemoryGitCreds{}); err != nil {
+		t.Fatalf("PullMemory: %v", err)
+	}
+
+	// Both files should be present after rebase.
+	for _, name := range []string{"a.md", "b.md", "local.md"} {
+		if _, err := os.Stat(filepath.Join(repoA, name)); err != nil {
+			t.Errorf("expected %s to exist after pull --rebase: %v", name, err)
+		}
+	}
+}

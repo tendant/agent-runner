@@ -440,24 +440,15 @@ func (c *Commander) handleMemory(arg string) string {
 	}
 }
 
-// handleMemoryPull fetches and fast-forwards the memory dir from origin.
+// handleMemoryPull fetches from origin and rebases local commits on top.
 func (c *Commander) handleMemoryPull() string {
-	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); os.IsNotExist(err) {
-		return "error: memory dir is not a git repo — run /memory git <remote-url> first"
+	creds := tmpl.MemoryGitCreds{
+		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
 	}
-	remote := ""
-	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
-		remote = strings.TrimSpace(string(out))
-	}
-	env := tmpl.GitSSHEnv(remote, os.Getenv("MEMORY_GIT_SSH_KEY"))
-	pullCmd := exec.Command("git", "-C", c.cfg.MemoryDir, "pull", "--ff-only", "origin", "HEAD")
-	if len(env) > 0 {
-		pullCmd.Env = append(os.Environ(), env...)
-	}
-	var stderr strings.Builder
-	pullCmd.Stderr = &stderr
-	if err := pullCmd.Run(); err != nil {
-		return fmt.Sprintf("error: git pull failed: %s", strings.TrimSpace(stderr.String()))
+	remote, err := tmpl.PullMemory(c.cfg.MemoryDir, creds)
+	if err != nil {
+		return "error: " + err.Error()
 	}
 	return "memory pulled from " + remote
 }

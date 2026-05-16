@@ -108,6 +108,36 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 	return res, nil
 }
 
+// PullMemory fetches the latest commits from origin and rebases local commits
+// on top. Uses --rebase so local work is preserved when the remote is ahead.
+// Returns the remote URL on success.
+func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
+	if memoryDir == "" {
+		return "", fmt.Errorf("memoryDir is required")
+	}
+	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
+		return "", fmt.Errorf("memory dir is not a git repo — run /memory git <remote-url> first")
+	}
+
+	remote := ""
+	if out, err := gitOutput(memoryDir, "remote", "get-url", "origin"); err == nil {
+		remote = strings.TrimSpace(string(out))
+	}
+	if remote == "" {
+		return "", fmt.Errorf("no remote configured — run /memory git <remote-url> first")
+	}
+
+	pullTarget := injectToken(remote, creds.Token)
+	env := GitSSHEnv(remote, creds.SSHKey)
+
+	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
+		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
+		return "", fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
+	}
+
+	return remote, nil
+}
+
 // CommitAndPushMemory stages all changes in memoryDir, commits them, and
 // pushes to origin. No-op if memoryDir is not a git repository.
 // Push failure is logged but not returned as an error.

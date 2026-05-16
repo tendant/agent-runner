@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
 )
 
@@ -30,15 +31,21 @@ func main() {
 }
 
 func repl(baseURL, apiKey string) {
-	scanner := bufio.NewScanner(os.Stdin)
+	rl, err := readline.New("> ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "readline init failed: %v\n", err)
+		return
+	}
+	defer rl.Close()
+
 	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			// Ctrl+D / EOF
+		line, err := rl.Readline()
+		if err != nil {
+			// Ctrl+D (io.EOF) or Ctrl+C (readline.ErrInterrupt) at empty prompt
 			fmt.Println()
 			return
 		}
-		line := strings.TrimSpace(scanner.Text())
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
@@ -59,7 +66,7 @@ func repl(baseURL, apiKey string) {
 			}
 		}()
 
-		err := startAndPoll(ctx, baseURL, apiKey, line)
+		err = startAndPoll(ctx, baseURL, apiKey, line)
 		cancel()
 		signal.Stop(sigCh)
 
