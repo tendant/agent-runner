@@ -339,6 +339,12 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
+// Unwrap lets http.ResponseController traverse the wrapper chain so that
+// SetWriteDeadline / SetReadDeadline reach the underlying net/http connection.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // Handler returns the HTTP handler for use in tests
 func (s *Server) Handler() http.Handler {
 	return s.httpServer.Handler
