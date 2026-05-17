@@ -164,6 +164,14 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 			}
 			configureGitRemote(dst, repo, expectedURL)
 		}
+
+		// Fetch latest from origin and reset to remote HEAD so the agent
+		// starts with up-to-date code, not just whatever was in the cache.
+		// Non-fatal: if fetch fails (no network, bad token) the agent still
+		// gets the cached state.
+		if err := fetchAndResetRepo(dst, repo); err != nil {
+			slog.Warn("workspace: fetch failed, using cached state", "repo", repo, "error", err)
+		}
 	}
 
 	return workspacePath, nil
@@ -261,6 +269,49 @@ func suggestCachedRepo(repoCacheRoot, repo string) string {
 		}
 	}
 	return ""
+}
+
+// fetchAndResetRepo fetches from origin and hard-resets the working tree to
+// origin/<default-branch>. It mirrors the job handler's FetchAndReset logic
+// but uses plain exec.Command so workspace.go stays free of the git package.
+// The remote must already have credentials configured (via configureGitRemote).
+func fetchAndResetRepo(repoPath, repoName string) error {
+	run := func(args ...string) error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoPath
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	}
+
+	if err := run("fetch", "origin"); err != nil {
+		return fmt.Errorf("git fetch: %w", err)
+	}
+
+	// Detect default branch via the symbolic ref; fall back to "main".
+	branch := "main"
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = repoPath
+	if out, err := cmd.Output(); err == nil {
+		// output: "refs/remotes/origin/main\n"
+		parts := strings.Split(strings.TrimSpace(string(out)), "/")
+		if len(parts) > 0 {
+			branch = parts[len(parts)-1]
+		}
+	}
+
+	if err := run("reset", "--hard", "origin/"+branch); err != nil {
+		return fmt.Errorf("git reset: %w", err)
+	}
+	if err := run("clean", "-fdx"); err != nil {
+		return fmt.Errorf("git clean: %w", err)
+	}
+
+	log.Printf("Agent workspace: fetched and reset %s to origin/%s", repoName, branch)
+	return nil
 }
 
 // configureGitRemote ensures the origin remote matches the expected URL.
