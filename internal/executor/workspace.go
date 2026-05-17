@@ -155,14 +155,16 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		}
 		log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
 
-		// Ensure git remote origin matches expected URL; inject token for HTTPS
-		// so the agent's own git commands work without extra credential setup.
+		// Ensure git remote origin is set to the clean URL (no embedded token).
+		// Credentials are provided at runtime via a credential helper that reads
+		// GIT_TOKEN from the environment — consistent with how memory and job
+		// repos handle auth.
 		if gitHost != "" && gitOrg != "" {
-			expectedURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+			cleanURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
+			configureGitRemote(dst, repo, cleanURL)
 			if gitToken != "" {
-				expectedURL = fmt.Sprintf("https://oauth2:%s@%s/%s/%s.git", gitToken, gitHost, gitOrg, repo)
+				configureCredHelper(dst)
 			}
-			configureGitRemote(dst, repo, expectedURL)
 		}
 
 		// Fetch latest from origin and reset to remote HEAD so the agent
@@ -312,6 +314,21 @@ func fetchAndResetRepo(repoPath, repoName string) error {
 
 	log.Printf("Agent workspace: fetched and reset %s to origin/%s", repoName, branch)
 	return nil
+}
+
+// configureCredHelper sets a git credential helper on the repo that reads
+// GIT_TOKEN from the subprocess environment at auth time. The token is never
+// written to disk — only the shell expression that reads it is stored.
+func configureCredHelper(repoPath string) {
+	cmd := exec.Command("git", "config", "credential.helper",
+		`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
+	cmd.Dir = repoPath
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("Agent workspace: warning: failed to configure credential helper for %s: %s",
+			repoPath, strings.TrimSpace(stderr.String()))
+	}
 }
 
 // configureGitRemote ensures the origin remote matches the expected URL.
