@@ -655,7 +655,27 @@ func (c *Commander) handleRepoAdd(url string) string {
 		credCmd.Run() //nolint:errcheck
 	}
 
-	return fmt.Sprintf("added %s from %s", name, url)
+	// Auto-append to AGENT_SHARED_REPOS so the repo is available to agents.
+	shared := c.cfg.Agent.SharedRepos
+	alreadyShared := false
+	for _, r := range shared {
+		if r == name {
+			alreadyShared = true
+			break
+		}
+	}
+	sharedNote := ""
+	if !alreadyShared {
+		shared = append(shared, name)
+		newVal := strings.Join(shared, ",")
+		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
+			os.Setenv("AGENT_SHARED_REPOS", newVal) //nolint:errcheck
+			c.cfg.Agent.SharedRepos = shared
+			sharedNote = "; added to AGENT_SHARED_REPOS"
+		}
+	}
+
+	return fmt.Sprintf("added %s from %s%s", name, url, sharedNote)
 }
 
 // handleRepoList walks REPO_CACHE_ROOT and prints each git repo with its
@@ -756,6 +776,16 @@ func (c *Commander) handleRepoUpdate(name string) string {
 			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 		}
 		return nil
+	}
+
+	// Ensure credential helper is configured for repos not added via /repo add.
+	// Use --local so we only check the repo's own config, not the global one.
+	if token := os.Getenv("GIT_TOKEN"); token != "" {
+		credCheck := exec.Command("git", "-C", p, "config", "--local", "credential.helper")
+		if out, _ := credCheck.Output(); len(strings.TrimSpace(string(out))) == 0 {
+			exec.Command("git", "-C", p, "config", "credential.helper", //nolint:errcheck
+				`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`).Run()
+		}
 	}
 
 	if err := run("fetch", "origin"); err != nil {

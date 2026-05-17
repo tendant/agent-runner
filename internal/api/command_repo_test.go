@@ -1,0 +1,324 @@
+package api
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// makeBarRepo creates a bare git repo at path and returns its path.
+func makeBarRepo(t *testing.T, path string) string {
+	t.Helper()
+	if err := exec.Command("git", "init", "--bare", path).Run(); err != nil {
+		t.Fatalf("git init --bare %s: %v", path, err)
+	}
+	return path
+}
+
+// makePopulatedRepo creates a non-bare repo with an initial commit, pushes to
+// remote, and returns its path.
+func makePopulatedRepo(t *testing.T, remote string) string {
+	t.Helper()
+	src := t.TempDir()
+	for _, args := range [][]string{
+		{"init", src},
+		{"-C", src, "config", "user.email", "test@local"},
+		{"-C", src, "config", "user.name", "test"},
+	} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-C", src, "add", "-A"},
+		{"-C", src, "commit", "-m", "init"},
+		{"-C", src, "push", remote, "HEAD:main"},
+	} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	return src
+}
+
+func repoCommander(t *testing.T) (*Commander, string) {
+	t.Helper()
+	env := setupTestEnv(t)
+	// Give the Commander a real RepoCacheRoot that exists.
+	env.handlers.config.RepoCacheRoot = env.repoCacheDir
+	c := NewCommander(env.handlers.config, env.handlers)
+	return c, env.repoCacheDir
+}
+
+// --- /repo add ---
+
+func TestRepoAdd_ClonesAndStripsToken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+
+	reply := c.handleRepoAdd(remote)
+	if !strings.Contains(reply, "added myrepo") {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+
+	// Repo must exist in cache.
+	if _, err := os.Stat(filepath.Join(cacheDir, "myrepo", ".git")); err != nil {
+		t.Fatalf("repo not cloned into cache: %v", err)
+	}
+
+	// Stored remote must be the clean URL (no token).
+	out, err := exec.Command("git", "-C", filepath.Join(cacheDir, "myrepo"), "remote", "get-url", "origin").Output()
+	if err != nil {
+		t.Fatalf("get-url: %v", err)
+	}
+	if strings.Contains(string(out), "oauth2:") {
+		t.Errorf("token must not be stored in remote URL, got: %s", out)
+	}
+}
+
+func TestRepoAdd_AlreadyCached(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+
+	c.handleRepoAdd(remote)
+	// Second add should report already-in-cache.
+	reply := c.handleRepoAdd(remote)
+	if !strings.Contains(reply, "already in cache") {
+		t.Errorf("expected already-in-cache message, got: %s", reply)
+	}
+	_ = cacheDir
+}
+
+func TestRepoAdd_AppendsToSharedRepos(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, _ := repoCommander(t)
+	// Point .env.local writes to a temp dir so they don't pollute the repo.
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+
+	reply := c.handleRepoAdd(remote)
+	if !strings.Contains(reply, "AGENT_SHARED_REPOS") {
+		t.Errorf("expected AGENT_SHARED_REPOS note in reply, got: %s", reply)
+	}
+	found := false
+	for _, r := range c.cfg.Agent.SharedRepos {
+		if r == "myrepo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("myrepo not added to cfg.Agent.SharedRepos: %v", c.cfg.Agent.SharedRepos)
+	}
+}
+
+func TestRepoAdd_NoDoubleAppendToSharedRepos(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, _ := repoCommander(t)
+	defer withTempCWD(t)()
+	c.cfg.Agent.SharedRepos = []string{"myrepo"} // already there
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+
+	reply := c.handleRepoAdd(remote)
+	// Should not mention AGENT_SHARED_REPOS again.
+	if strings.Contains(reply, "AGENT_SHARED_REPOS") {
+		t.Errorf("should not re-add already-shared repo, got: %s", reply)
+	}
+}
+
+func TestRepoAdd_EmptyURL(t *testing.T) {
+	c, _ := repoCommander(t)
+	reply := c.handleRepoAdd("")
+	if !strings.Contains(reply, "usage") {
+		t.Errorf("expected usage error, got: %s", reply)
+	}
+}
+
+// --- /repo list ---
+
+func TestRepoList_Empty(t *testing.T) {
+	c, _ := repoCommander(t)
+	reply := c.handleRepoList()
+	if !strings.Contains(reply, "no repos") {
+		t.Errorf("expected empty message, got: %s", reply)
+	}
+}
+
+func TestRepoList_ShowsRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	reply := c.handleRepoList()
+	if !strings.Contains(reply, "myrepo") {
+		t.Errorf("expected myrepo in list, got: %s", reply)
+	}
+	_ = cacheDir
+}
+
+// --- /repo remove ---
+
+func TestRepoRemove_RemovesDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	reply := c.handleRepoRemove("myrepo")
+	if !strings.Contains(reply, "removed myrepo") {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "myrepo")); !os.IsNotExist(err) {
+		t.Error("expected repo dir to be gone")
+	}
+}
+
+func TestRepoRemove_NotFound_Suggests(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	// Create a cached repo named "my-repo" (with hyphen).
+	remote := makeBarRepo(t, t.TempDir()+"/my-repo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	// Ask to remove "my_repo" (with underscore) — should suggest "my-repo".
+	reply := c.handleRepoRemove("my_repo")
+	if !strings.Contains(reply, "did you mean") {
+		t.Errorf("expected typo suggestion, got: %s", reply)
+	}
+	_ = cacheDir
+}
+
+func TestRepoRemove_EmptyName(t *testing.T) {
+	c, _ := repoCommander(t)
+	reply := c.handleRepoRemove("")
+	if !strings.Contains(reply, "usage") {
+		t.Errorf("expected usage error, got: %s", reply)
+	}
+}
+
+// --- /repo update ---
+
+func TestRepoUpdate_ResetsToOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	src := makePopulatedRepo(t, remote)
+
+	c.handleRepoAdd(remote)
+
+	// Push a new commit to remote from src.
+	if err := os.WriteFile(filepath.Join(src, "new.md"), []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-C", src, "add", "-A"},
+		{"-C", src, "commit", "-m", "second"},
+		{"-C", src, "push", remote, "HEAD:main"},
+	} {
+		if err := exec.Command("git", args...).Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	reply := c.handleRepoUpdate("myrepo")
+	if !strings.Contains(reply, "updated myrepo") {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+
+	// new.md should be present in cache after update.
+	if _, err := os.Stat(filepath.Join(cacheDir, "myrepo", "new.md")); err != nil {
+		t.Errorf("expected new.md after update: %v", err)
+	}
+}
+
+func TestRepoUpdate_NotFound_Suggests(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/my-repo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	reply := c.handleRepoUpdate("my_repo")
+	if !strings.Contains(reply, "did you mean") {
+		t.Errorf("expected typo suggestion, got: %s", reply)
+	}
+	_ = cacheDir
+}
+
+func TestRepoUpdate_EmptyName(t *testing.T) {
+	c, _ := repoCommander(t)
+	reply := c.handleRepoUpdate("")
+	if !strings.Contains(reply, "usage") {
+		t.Errorf("expected usage error, got: %s", reply)
+	}
+}
+
+func TestRepoUpdate_SetsCredHelperWhenMissing(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+	t.Setenv("GIT_TOKEN", "testtoken")
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	// Clear the credential helper to simulate a manually-cloned repo.
+	exec.Command("git", "-C", filepath.Join(cacheDir, "myrepo"), "config", "--unset", "credential.helper").Run() //nolint:errcheck
+
+	// Update — should re-configure the helper.
+	c.handleRepoUpdate("myrepo")
+
+	out, err := exec.Command("git", "-C", filepath.Join(cacheDir, "myrepo"), "config", "--local", "credential.helper").Output()
+	if err != nil || !strings.Contains(string(out), "GIT_TOKEN") {
+		t.Errorf("expected local credential.helper to reference GIT_TOKEN after update, got: %q (err: %v)", out, err)
+	}
+}
