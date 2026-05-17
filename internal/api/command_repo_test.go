@@ -184,6 +184,37 @@ func TestRepoList_ShowsRepo(t *testing.T) {
 	_ = cacheDir
 }
 
+func TestRepoList_SharedStatus(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+
+	// shared-repo: add via handleRepoAdd (auto-appends to SharedRepos).
+	remoteA := makeBarRepo(t, t.TempDir()+"/shared-repo.git")
+	makePopulatedRepo(t, remoteA)
+	c.handleRepoAdd(remoteA)
+
+	// unshared-repo: cloned directly into cache, not in SharedRepos.
+	remoteB := makeBarRepo(t, t.TempDir()+"/unshared-repo.git")
+	makePopulatedRepo(t, remoteB)
+	dst := filepath.Join(cacheDir, "unshared-repo")
+	exec.Command("git", "clone", remoteB, dst).Run() //nolint:errcheck
+
+	reply := c.handleRepoList()
+	if !strings.Contains(reply, "shared-repo") || !strings.Contains(reply, "shared") {
+		t.Errorf("expected shared-repo marked as shared, got:\n%s", reply)
+	}
+	// Count occurrences of "shared" — shared-repo line should have it, unshared-repo should not.
+	lines := strings.Split(reply, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "unshared-repo") && strings.Contains(line, "✓ shared") {
+			t.Errorf("unshared-repo should not be marked shared, got: %s", line)
+		}
+	}
+}
+
 // --- /repo remove ---
 
 func TestRepoRemove_RemovesDir(t *testing.T) {

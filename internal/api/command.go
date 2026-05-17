@@ -692,6 +692,11 @@ func (c *Commander) handleRepoList() string {
 		return "error: " + err.Error()
 	}
 
+	sharedSet := make(map[string]bool, len(c.cfg.Agent.SharedRepos))
+	for _, r := range c.cfg.Agent.SharedRepos {
+		sharedSet[r] = true
+	}
+
 	var b strings.Builder
 	b.WriteString("**Cached repos**\n\n")
 	count := 0
@@ -713,6 +718,9 @@ func (c *Commander) handleRepoList() string {
 			last = strings.TrimSpace(string(out))
 		}
 		fmt.Fprintf(&b, "**%s**", e.Name())
+		if sharedSet[e.Name()] {
+			b.WriteString(" ✓ shared")
+		}
 		if remote != "" {
 			fmt.Fprintf(&b, " — %s", remote)
 		}
