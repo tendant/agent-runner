@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +18,10 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	envFile := flag.String("env", ".env", "env file to load (e.g. .env.video)")
+	flag.Parse()
+
+	_ = godotenv.Load(*envFile)
 
 	bind := os.Getenv("API_BIND")
 	if bind == "" {
@@ -26,7 +30,7 @@ func main() {
 	baseURL := "http://" + bind
 	apiKey := os.Getenv("API_KEY")
 
-	fmt.Printf("agent-cli connected to %s\n", baseURL)
+	fmt.Printf("agent-cli connected to %s (env: %s)\n", baseURL, *envFile)
 	repl(baseURL, apiKey)
 }
 
