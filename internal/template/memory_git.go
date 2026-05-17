@@ -25,8 +25,6 @@ type InitMemoryGitResult struct {
 	RemoteOld     string // previous remote URL, empty if none existed
 	RemoteNew     string // remote URL after the call
 	RemoteChanged bool   // remote was added or updated
-	Pushed        bool   // push succeeded
-	PushErr       error  // non-nil if push was attempted but failed
 }
 
 // InitMemoryGit initialises memoryDir as a git repository backed by remote.
@@ -93,18 +91,6 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 		if err := gitRunEnv(memoryDir, nil, "commit", "-m", msg); err != nil {
 			return res, fmt.Errorf("git commit: %w", err)
 		}
-	}
-
-	// Push — if a token was injected, push directly to the credentialed URL
-	// so it is never stored in .git/config. Otherwise push to the named remote
-	// (which may have credentials embedded in the stored URL).
-	pushTarget := InjectToken(remote, creds.Token)
-	env := GitSSHEnv(remote, creds.SSHKey)
-	if err := pushMemory(memoryDir, env, remote, pushTarget, creds.Token); err != nil {
-		slog.Warn("memory git push failed", "error", err)
-		res.PushErr = err
-	} else {
-		res.Pushed = true
 	}
 
 	return res, nil

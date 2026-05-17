@@ -81,16 +81,20 @@ func TestInitMemoryGit_URLChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Init with remoteA.
+	// Init with remoteA — should configure remote but NOT push.
 	res, err := InitMemoryGit(memDir, remoteA, MemoryGitCreds{})
 	if err != nil {
 		t.Fatalf("InitMemoryGit(remoteA): %v", err)
 	}
-	if !res.Pushed {
-		t.Error("expected push to remoteA to succeed")
+	if !res.RemoteChanged {
+		t.Error("expected RemoteChanged=true on first init")
+	}
+	// Push explicitly.
+	if err := CommitAndPushMemory(memDir, MemoryGitCreds{}); err != nil {
+		t.Fatalf("CommitAndPushMemory(remoteA): %v", err)
 	}
 
-	// Switch to remoteB (empty).
+	// Switch to remoteB — remote should be updated, no implicit push.
 	res2, err := InitMemoryGit(memDir, remoteB, MemoryGitCreds{})
 	if err != nil {
 		t.Fatalf("InitMemoryGit(remoteB): %v", err)
@@ -98,8 +102,10 @@ func TestInitMemoryGit_URLChange(t *testing.T) {
 	if !res2.RemoteChanged {
 		t.Error("expected RemoteChanged=true after URL update")
 	}
-	if !res2.Pushed {
-		t.Error("expected push to remoteB to succeed")
+
+	// Push explicitly to remoteB.
+	if err := CommitAndPushMemory(memDir, MemoryGitCreds{}); err != nil {
+		t.Fatalf("CommitAndPushMemory(remoteB): %v", err)
 	}
 
 	// Verify remoteB actually has the commit.
@@ -108,7 +114,7 @@ func TestInitMemoryGit_URLChange(t *testing.T) {
 		t.Fatalf("git log on remoteB: %v", err)
 	}
 	if len(strings.TrimSpace(string(out))) == 0 {
-		t.Error("remoteB has no commits after URL-change push")
+		t.Error("remoteB has no commits after explicit push")
 	}
 }
 
