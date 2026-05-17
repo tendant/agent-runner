@@ -16,6 +16,7 @@ import (
 // MemoryGitCreds holds optional credentials for memory git operations.
 type MemoryGitCreds struct {
 	Token  string // MEMORY_GIT_TOKEN — injected into HTTPS push URLs at runtime
+	User   string // MEMORY_GIT_USER  — git username; defaults to "oauth2" when empty
 	SSHKey string // MEMORY_GIT_SSH_KEY — path to private key; sets GIT_SSH_COMMAND
 }
 
@@ -115,7 +116,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 		return "", fmt.Errorf("no remote configured — run /memory git <remote-url> first")
 	}
 
-	pullTarget := InjectToken(remote, creds.Token)
+	pullTarget := InjectToken(remote, creds.Token, creds.User)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
 	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
@@ -158,7 +159,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if remoteOut, err := gitOutput(memoryDir, "remote", "get-url", "origin"); err == nil {
 		remote = strings.TrimSpace(string(remoteOut))
 	}
-	pushTarget := InjectToken(remote, creds.Token)
+	pushTarget := InjectToken(remote, creds.Token, creds.User)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
 	if err := pushMemory(memoryDir, env, remote, pushTarget, creds.Token); err != nil {
@@ -315,13 +316,19 @@ func giteaUserLogin(apiBase, token string, client *http.Client) string {
 }
 
 // InjectToken rewrites an HTTPS remote URL to embed the token as credentials.
+// user is the git username (e.g. the Gitea account name); when empty it
+// defaults to "oauth2" which Gitea accepts for personal access tokens.
 // The original remote stored in .git/config is never modified.
 // Returns remote unchanged if it is not an HTTPS URL, token is empty, or the
 // URL already contains credentials (user:pass@ prefix) — double-injecting
 // produces a mangled URL that git rejects.
-func InjectToken(remote, token string) string {
+func InjectToken(remote, token, user string) string {
 	if token == "" || remote == "" {
 		return remote
+	}
+	gitUser := user
+	if gitUser == "" {
+		gitUser = "oauth2"
 	}
 	for _, prefix := range []string{"https://", "http://"} {
 		if strings.HasPrefix(remote, prefix) {
@@ -330,7 +337,7 @@ func InjectToken(remote, token string) string {
 				// Credentials already embedded in the URL — leave it alone.
 				return remote
 			}
-			return prefix + "oauth2:" + token + "@" + rest
+			return prefix + gitUser + ":" + token + "@" + rest
 		}
 	}
 	return remote

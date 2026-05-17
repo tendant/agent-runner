@@ -296,6 +296,9 @@ func (c *Commander) handleConfig() string {
 	if os.Getenv("MEMORY_GIT_TOKEN") != "" {
 		b.WriteString("**MEMORY_GIT_TOKEN:** set\n")
 	}
+	if v := os.Getenv("MEMORY_GIT_USER"); v != "" {
+		fmt.Fprintf(&b, "**MEMORY_GIT_USER:** %s\n", v)
+	}
 	if v := os.Getenv("MEMORY_GIT_SSH_KEY"); v != "" {
 		fmt.Fprintf(&b, "**MEMORY_GIT_SSH_KEY:** %s\n", v)
 	}
@@ -448,6 +451,7 @@ func (c *Commander) handleMemory(arg string) string {
 // handleMemoryPull fetches from origin and rebases local commits on top.
 func (c *Commander) handleMemoryPull() string {
 	creds := tmpl.MemoryGitCreds{
+		User:   os.Getenv("MEMORY_GIT_USER"),
 		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
 		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
 	}
@@ -464,6 +468,7 @@ func (c *Commander) handleMemoryPush() string {
 		return "error: memory dir is not a git repo — run /memory git <remote-url> first"
 	}
 	creds := tmpl.MemoryGitCreds{
+		User:   os.Getenv("MEMORY_GIT_USER"),
 		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
 		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
 	}
@@ -486,6 +491,7 @@ func (c *Commander) handleMemoryGit(remote string) string {
 		return "error: usage: /memory git <remote-url>"
 	}
 	creds := tmpl.MemoryGitCreds{
+		User:   os.Getenv("MEMORY_GIT_USER"),
 		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
 		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
 	}
@@ -629,7 +635,7 @@ func (c *Commander) handleRepoAdd(url string) string {
 
 	// Clone — inject token into URL so credentials aren't stored.
 	token := os.Getenv("GIT_TOKEN")
-	cloneURL := tmpl.InjectToken(url, token)
+	cloneURL := tmpl.InjectToken(url, token, "")
 	cloneCmd := exec.Command("git", "clone", cloneURL, cachePath)
 	var cloneStderr strings.Builder
 	cloneCmd.Stderr = &cloneStderr
@@ -886,7 +892,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 **/set-prompt** _\<content\>_ — overwrite prompt.md
 
 **/memory git** _\<remote-url\>_ — init or update git remote for memory dir
-  HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> first · SSH: /memory keygen
+  HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> · /set MEMORY\_GIT\_USER \<username\> (optional, defaults to oauth2) · SSH: /memory keygen
 **/memory pull** — pull latest memory from remote
 **/memory push** — commit and push memory to remote
 **/memory keygen** — generate SSH deploy key and print public key
