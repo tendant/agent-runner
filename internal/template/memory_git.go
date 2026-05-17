@@ -198,10 +198,23 @@ func pushMemory(memoryDir string, env []string, remote, pushTarget, token string
 	}
 
 	// Push rejected (non-fast-forward) — pull with rebase then retry.
+	// If pull also reports repo-not-found (happens when initial push fails with
+	// an auth error rather than a 404, but the repo truly doesn't exist), try
+	// the same API-create path here before giving up.
 	pullTarget := pushTarget
-	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
+	pullErr := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD")
+	if pullErr != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
-		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
+		if isRepoNotFound(pullErr) {
+			if createErr := tryCreateGiteaRepo(remote, token); createErr == nil {
+				return doPush()
+			}
+			// No token or API failed — give the clearest hint we can.
+			if token == "" {
+				return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN so the server can authenticate and auto-create it, or create the repo manually: %w", pullErr)
+			}
+		}
+		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", pullErr)
 	}
 
 	return doPush()
