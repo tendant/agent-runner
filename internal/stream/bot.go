@@ -189,6 +189,12 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 		events, err := b.client.StreamEvents(ctx, convID, afterSeq)
 		if err != nil {
 			slog.Error("stream bot: SSE connect error", "conversation_id", convID, "error", err)
+			// Permanent errors (auth failure, not found) will never recover —
+			// stop retrying immediately so the log isn't flooded.
+			if isPermanentSSEError(err) {
+				slog.Error("stream bot: permanent error, stopping SSE listener", "conversation_id", convID, "error", err)
+				return
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -836,4 +842,20 @@ func extractBotUserID(token string) string {
 		return ""
 	}
 	return claims.Sub
+}
+
+// isPermanentSSEError reports whether an SSE connection error is permanent
+// (will never succeed on retry). HTTP 401 and 403 are auth failures that
+// won't change without a config fix; 404 means the conversation is gone.
+func isPermanentSSEError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, code := range []string{"status 401", "status 403", "status 404"} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
 }
