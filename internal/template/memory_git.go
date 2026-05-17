@@ -221,8 +221,11 @@ func isRepoNotFound(err error) bool {
 }
 
 // tryCreateGiteaRepo creates a repository on a Gitea/Forgejo host via its
-// REST API. It parses the remote URL for host, owner, and repo name, then
-// tries the org endpoint first and the user endpoint as a fallback.
+// REST API. It parses the remote URL for host, owner, and repo name.
+// It tries the org endpoint first. If the owner is not an org (or the token
+// lacks org-write permission), it falls back to the user endpoint — but only
+// when the authenticated user's login matches the URL owner, so the repo is
+// never created under the wrong account.
 // Returns nil if the repo was created; non-nil if creation was not possible.
 func tryCreateGiteaRepo(remote, token string) error {
 	if token == "" {
@@ -256,27 +259,59 @@ func tryCreateGiteaRepo(remote, token string) error {
 	apiBase := scheme + "://" + host + "/api/v1"
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	for _, endpoint := range []string{
-		apiBase + "/orgs/" + owner + "/repos",
-		apiBase + "/user/repos",
-	} {
+	doPost := func(endpoint string) bool {
 		req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
 		if err != nil {
-			continue
+			return false
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "token "+token)
 		resp, err := client.Do(req)
 		if err != nil {
-			continue
+			return false
 		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusCreated {
-			slog.Info("memory git: created remote repo via API", "owner", owner, "repo", repoName)
+		return resp.StatusCode == http.StatusCreated
+	}
+
+	// Try org endpoint first.
+	if doPost(apiBase + "/orgs/" + owner + "/repos") {
+		slog.Info("memory git: created remote repo via org API", "owner", owner, "repo", repoName)
+		return nil
+	}
+
+	// Fall back to user endpoint only when the URL owner matches the
+	// authenticated user — avoids creating under the wrong account.
+	if login := giteaUserLogin(apiBase, token, client); login == owner {
+		if doPost(apiBase + "/user/repos") {
+			slog.Info("memory git: created remote repo via user API", "owner", owner, "repo", repoName)
 			return nil
 		}
 	}
+
 	return fmt.Errorf("could not create %s/%s via Gitea API", owner, repoName)
+}
+
+// giteaUserLogin returns the login name of the authenticated Gitea user,
+// or "" if the request fails.
+func giteaUserLogin(apiBase, token string, client *http.Client) string {
+	req, err := http.NewRequest(http.MethodGet, apiBase+"/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "token "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return ""
+	}
+	return u.Login
 }
 
 // InjectToken rewrites an HTTPS remote URL to embed the token as credentials.
