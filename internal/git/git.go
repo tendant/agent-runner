@@ -179,11 +179,19 @@ func (o *Operations) resolveRemote(ctx context.Context, repoPath string) string 
 }
 
 // injectToken rewrites an HTTPS URL to embed the token as credentials.
-// Returns remote unchanged for SSH URLs or when token is empty.
+// Returns remote unchanged for SSH URLs, when token is empty, or when the
+// URL already carries credentials — double-injecting produces a mangled URL.
 func injectToken(remote, token string) string {
+	if token == "" || remote == "" {
+		return remote
+	}
 	for _, prefix := range []string{"https://", "http://"} {
 		if strings.HasPrefix(remote, prefix) {
-			return prefix + "oauth2:" + token + "@" + remote[len(prefix):]
+			rest := remote[len(prefix):]
+			if strings.Contains(rest, "@") {
+				return remote // credentials already present
+			}
+			return prefix + "oauth2:" + token + "@" + rest
 		}
 	}
 	return remote

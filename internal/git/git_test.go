@@ -98,3 +98,51 @@ func TestParseDiffStat_MultipleFiles(t *testing.T) {
 		t.Errorf("expected 10 deletions, got %d", s.Deletions)
 	}
 }
+
+func TestInjectToken(t *testing.T) {
+	cases := []struct {
+		name   string
+		remote string
+		token  string
+		want   string
+	}{
+		{
+			name:   "injects token into clean https URL",
+			remote: "https://git.example.com/org/repo.git",
+			token:  "mytoken",
+			want:   "https://oauth2:mytoken@git.example.com/org/repo.git",
+		},
+		{
+			name:   "injects token into clean http URL",
+			remote: "http://git.example.com/org/repo.git",
+			token:  "mytoken",
+			want:   "http://oauth2:mytoken@git.example.com/org/repo.git",
+		},
+		{
+			name:   "skips injection when URL already has credentials",
+			remote: "https://user:existingtoken@git.example.com/org/repo.git",
+			token:  "newtoken",
+			want:   "https://user:existingtoken@git.example.com/org/repo.git",
+		},
+		{
+			name:   "SSH URL returned unchanged",
+			remote: "git@github.com:org/repo.git",
+			token:  "mytoken",
+			want:   "git@github.com:org/repo.git",
+		},
+		{
+			name:   "empty token returns remote unchanged",
+			remote: "https://git.example.com/org/repo.git",
+			token:  "",
+			want:   "https://git.example.com/org/repo.git",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := injectToken(tc.remote, tc.token)
+			if got != tc.want {
+				t.Errorf("injectToken(%q, %q) = %q, want %q", tc.remote, tc.token, got, tc.want)
+			}
+		})
+	}
+}
