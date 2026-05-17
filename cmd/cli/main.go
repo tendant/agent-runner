@@ -30,8 +30,24 @@ func main() {
 	baseURL := "http://" + bind
 	apiKey := os.Getenv("API_KEY")
 
-	fmt.Printf("agent-cli connected to %s (env: %s)\n", baseURL, *envFile)
+	if checkServer(baseURL, apiKey) {
+		fmt.Printf("agent-cli connected to %s (env: %s)\n", baseURL, *envFile)
+	} else {
+		fmt.Printf("agent-cli targeting %s (env: %s) — server not reachable\n", baseURL, *envFile)
+	}
 	repl(baseURL, apiKey)
+}
+
+// checkServer pings /health and returns true if the server is up.
+func checkServer(baseURL, apiKey string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resp, err := apiRequest(ctx, http.MethodGet, baseURL+"/health", apiKey, nil)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func repl(baseURL, apiKey string) {
