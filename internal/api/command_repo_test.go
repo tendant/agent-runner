@@ -234,6 +234,57 @@ func TestRepoRemove_EmptyName(t *testing.T) {
 	}
 }
 
+func TestRepoRemove_DropsFromSharedRepos(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, _ := repoCommander(t)
+	defer withTempCWD(t)()
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+
+	// Add — which appends to AGENT_SHARED_REPOS.
+	c.handleRepoAdd(remote)
+	if len(c.cfg.Agent.SharedRepos) == 0 {
+		t.Fatal("expected myrepo in SharedRepos after add")
+	}
+
+	// Remove — should drop it from AGENT_SHARED_REPOS.
+	reply := c.handleRepoRemove("myrepo")
+	if !strings.Contains(reply, "AGENT_SHARED_REPOS") {
+		t.Errorf("expected AGENT_SHARED_REPOS note in reply, got: %s", reply)
+	}
+	for _, r := range c.cfg.Agent.SharedRepos {
+		if r == "myrepo" {
+			t.Errorf("myrepo should have been removed from SharedRepos, still present: %v", c.cfg.Agent.SharedRepos)
+		}
+	}
+}
+
+func TestRepoRemove_NoSharedNote_WhenNotShared(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, _ := repoCommander(t)
+	defer withTempCWD(t)()
+	// Repo is in cache but NOT in SharedRepos.
+	c.cfg.Agent.SharedRepos = []string{"other-repo"}
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+	// Clone directly into cache without going through handleRepoAdd.
+	exec.Command("git", "clone", remote, filepath.Join(c.cfg.RepoCacheRoot, "myrepo")).Run() //nolint:errcheck
+
+	reply := c.handleRepoRemove("myrepo")
+	if strings.Contains(reply, "AGENT_SHARED_REPOS") {
+		t.Errorf("should not mention AGENT_SHARED_REPOS when repo was not shared, got: %s", reply)
+	}
+	if !strings.Contains(reply, "removed myrepo") {
+		t.Errorf("expected removed message, got: %s", reply)
+	}
+}
+
 // --- /repo update ---
 
 func TestRepoUpdate_ResetsToOrigin(t *testing.T) {

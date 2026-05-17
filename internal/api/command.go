@@ -746,7 +746,26 @@ func (c *Commander) handleRepoRemove(name string) string {
 	if err := os.RemoveAll(p); err != nil {
 		return fmt.Sprintf("error: remove %s: %v", name, err)
 	}
-	return "removed " + name
+
+	// Drop from AGENT_SHARED_REPOS to keep it in sync with the cache.
+	sharedNote := ""
+	shared := c.cfg.Agent.SharedRepos
+	filtered := shared[:0:0]
+	for _, r := range shared {
+		if r != name {
+			filtered = append(filtered, r)
+		}
+	}
+	if len(filtered) < len(shared) {
+		newVal := strings.Join(filtered, ",")
+		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
+			os.Setenv("AGENT_SHARED_REPOS", newVal) //nolint:errcheck
+			c.cfg.Agent.SharedRepos = filtered
+			sharedNote = "; removed from AGENT_SHARED_REPOS"
+		}
+	}
+
+	return "removed " + name + sharedNote
 }
 
 // handleRepoUpdate fetches the latest from origin and resets the cached repo
