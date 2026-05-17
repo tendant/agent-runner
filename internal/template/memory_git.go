@@ -96,7 +96,7 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 	// Push — if a token was injected, push directly to the credentialed URL
 	// so it is never stored in .git/config. Otherwise push to the named remote
 	// (which may have credentials embedded in the stored URL).
-	pushTarget := injectToken(remote, creds.Token)
+	pushTarget := InjectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
 	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
 		slog.Warn("memory git push failed", "error", err)
@@ -127,7 +127,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 		return "", fmt.Errorf("no remote configured — run /memory git <remote-url> first")
 	}
 
-	pullTarget := injectToken(remote, creds.Token)
+	pullTarget := InjectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
 	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
@@ -170,7 +170,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if remoteOut, err := gitOutput(memoryDir, "remote", "get-url", "origin"); err == nil {
 		remote = strings.TrimSpace(string(remoteOut))
 	}
-	pushTarget := injectToken(remote, creds.Token)
+	pushTarget := InjectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
 	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
@@ -213,12 +213,12 @@ func pushMemory(memoryDir string, env []string, remote, pushTarget string) error
 	return doPush()
 }
 
-// injectToken rewrites an HTTPS remote URL to embed the token as credentials.
+// InjectToken rewrites an HTTPS remote URL to embed the token as credentials.
 // The original remote stored in .git/config is never modified.
 // Returns remote unchanged if it is not an HTTPS URL, token is empty, or the
 // URL already contains credentials (user:pass@ prefix) — double-injecting
 // produces a mangled URL that git rejects.
-func injectToken(remote, token string) string {
+func InjectToken(remote, token string) string {
 	if token == "" || remote == "" {
 		return remote
 	}

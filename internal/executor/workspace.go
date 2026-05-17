@@ -139,7 +139,7 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		cachedRepo := filepath.Join(repoCacheRoot, repo)
 		info, err := os.Stat(cachedRepo)
 		if err != nil || !info.IsDir() {
-			if suggestion := suggestCachedRepo(repoCacheRoot, repo); suggestion != "" {
+			if suggestion := SuggestCachedRepo(repoCacheRoot, repo); suggestion != "" {
 				slog.Warn("shared repo not found in cache; did you mean a different name?",
 					"repo", repo, "suggestion", suggestion)
 			} else {
@@ -252,11 +252,11 @@ func cacheRepoAtomic(src, dst string) error {
 	return nil
 }
 
-// suggestCachedRepo looks for a cached repo whose normalised name matches
+// SuggestCachedRepo looks for a cached repo whose normalised name matches
 // repo's normalised name. Normalisation folds to lowercase and treats '-' and
 // '_' as equivalent, catching the most common typos.
 // Returns the suggested name, or "" if nothing close is found.
-func suggestCachedRepo(repoCacheRoot, repo string) string {
+func SuggestCachedRepo(repoCacheRoot, repo string) string {
 	normalise := func(s string) string {
 		return strings.ToLower(strings.ReplaceAll(s, "-", "_"))
 	}

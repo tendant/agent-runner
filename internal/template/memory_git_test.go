@@ -55,9 +55,9 @@ func TestInjectToken(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := injectToken(tc.remote, tc.token)
+			got := InjectToken(tc.remote, tc.token)
 			if got != tc.want {
-				t.Errorf("injectToken(%q, %q) = %q, want %q", tc.remote, tc.token, got, tc.want)
+				t.Errorf("InjectToken(%q, %q) = %q, want %q", tc.remote, tc.token, got, tc.want)
 			}
 		})
 	}
