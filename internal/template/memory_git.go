@@ -189,30 +189,23 @@ func pushMemory(memoryDir string, env []string, remote, pushTarget, token string
 		return nil
 	}
 
-	// If the remote repo doesn't exist, try to create it via API then retry.
-	if isRepoNotFound(pushErr) {
+	// Whenever push fails and we have a token, attempt to create the repo via
+	// the Gitea API — regardless of what the push error says, because the server
+	// may return a permission/auth error before it even checks whether the repo
+	// exists. Only retry the push if creation actually succeeded (HTTP 201).
+	if token != "" {
 		if createErr := tryCreateGiteaRepo(remote, token); createErr == nil {
 			return doPush()
 		}
-		return pushErr
 	}
 
 	// Push rejected (non-fast-forward) — pull with rebase then retry.
-	// If pull also reports repo-not-found (happens when initial push fails with
-	// an auth error rather than a 404, but the repo truly doesn't exist), try
-	// the same API-create path here before giving up.
 	pullTarget := pushTarget
 	pullErr := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD")
 	if pullErr != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
-		if isRepoNotFound(pullErr) {
-			if createErr := tryCreateGiteaRepo(remote, token); createErr == nil {
-				return doPush()
-			}
-			// No token or API failed — give the clearest hint we can.
-			if token == "" {
-				return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN so the server can authenticate and auto-create it, or create the repo manually: %w", pullErr)
-			}
+		if isRepoNotFound(pullErr) && token == "" {
+			return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN to enable auto-create, or create the repo manually: %w", pullErr)
 		}
 		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", pullErr)
 	}
