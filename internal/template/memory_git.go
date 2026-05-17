@@ -2,8 +2,10 @@ package template
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,7 +100,7 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 	// (which may have credentials embedded in the stored URL).
 	pushTarget := InjectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
-	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
+	if err := pushMemory(memoryDir, env, remote, pushTarget, creds.Token); err != nil {
 		slog.Warn("memory git push failed", "error", err)
 		res.PushErr = err
 	} else {
@@ -173,23 +175,22 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	pushTarget := InjectToken(remote, creds.Token)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
-	if err := pushMemory(memoryDir, env, remote, pushTarget); err != nil {
-		slog.Warn("memory git push failed (no remote configured?)", "error", err)
+	if err := pushMemory(memoryDir, env, remote, pushTarget, creds.Token); err != nil {
+		return fmt.Errorf("push failed: %w", err)
 	}
 
 	return nil
 }
 
-// pushMemory pushes local commits to the remote. If the push is rejected
-// because the remote is ahead (non-fast-forward), it pulls with rebase and
-// retries once. On rebase conflict it aborts and returns an error.
+// pushMemory pushes local commits to the remote. If the remote repository does
+// not exist and a token is available, it attempts to create it via the Gitea
+// API and retries. If the push is rejected because the remote is ahead
+// (non-fast-forward), it pulls with rebase and retries once.
 //
 // When a token was injected into pushTarget, we push directly to the
 // credentialed URL so git treats it as a repository rather than a refspec
 // (passing a URL after a remote name causes git to interpret it as src:dst).
-func pushMemory(memoryDir string, env []string, remote, pushTarget string) error {
-	// Specifying HEAD as the refspec tells git "push the current branch to the
-	// same-named remote branch" without requiring upstream tracking info.
+func pushMemory(memoryDir string, env []string, remote, pushTarget, token string) error {
 	doPush := func() error {
 		if pushTarget != remote {
 			return gitRunEnv(memoryDir, env, "push", pushTarget, "HEAD")
@@ -197,20 +198,93 @@ func pushMemory(memoryDir string, env []string, remote, pushTarget string) error
 		return gitRunEnv(memoryDir, env, "push", "origin", "HEAD")
 	}
 
-	if err := doPush(); err == nil {
+	pushErr := doPush()
+	if pushErr == nil {
 		return nil
 	}
 
-	// Push rejected — pull with rebase then retry.
-	// HEAD as the refspec fetches the remote's default branch.
+	// If the remote repo doesn't exist, try to create it via API then retry.
+	if isRepoNotFound(pushErr) {
+		if createErr := tryCreateGiteaRepo(remote, token); createErr == nil {
+			return doPush()
+		}
+		return pushErr
+	}
+
+	// Push rejected (non-fast-forward) — pull with rebase then retry.
 	pullTarget := pushTarget
 	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
-		// Rebase conflict — abort so the repo is not left mid-rebase.
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
 		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
 	}
 
 	return doPush()
+}
+
+// isRepoNotFound reports whether a git error looks like the remote repository
+// does not exist (as opposed to auth failure, network error, etc.).
+func isRepoNotFound(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "does not exist")
+}
+
+// tryCreateGiteaRepo creates a repository on a Gitea/Forgejo host via its
+// REST API. It parses the remote URL for host, owner, and repo name, then
+// tries the org endpoint first and the user endpoint as a fallback.
+// Returns nil if the repo was created; non-nil if creation was not possible.
+func tryCreateGiteaRepo(remote, token string) error {
+	if token == "" {
+		return fmt.Errorf("no token")
+	}
+	var scheme, rest string
+	for _, prefix := range []string{"https://", "http://"} {
+		if strings.HasPrefix(remote, prefix) {
+			scheme = strings.TrimSuffix(prefix, "://")
+			rest = remote[len(prefix):]
+			break
+		}
+	}
+	if scheme == "" {
+		return fmt.Errorf("not an HTTPS remote")
+	}
+	// Strip embedded credentials (oauth2:token@host/…)
+	if at := strings.Index(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	parts := strings.SplitN(rest, "/", 3)
+	if len(parts) < 3 {
+		return fmt.Errorf("cannot parse owner/repo from %s", remote)
+	}
+	host := parts[0]
+	owner := parts[1]
+	repoName := strings.TrimSuffix(parts[2], ".git")
+
+	nameJSON, _ := json.Marshal(repoName)
+	body := fmt.Sprintf(`{"name":%s,"private":true,"auto_init":false}`, string(nameJSON))
+	apiBase := scheme + "://" + host + "/api/v1"
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	for _, endpoint := range []string{
+		apiBase + "/orgs/" + owner + "/repos",
+		apiBase + "/user/repos",
+	} {
+		req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "token "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusCreated {
+			slog.Info("memory git: created remote repo via API", "owner", owner, "repo", repoName)
+			return nil
+		}
+	}
+	return fmt.Errorf("could not create %s/%s via Gitea API", owner, repoName)
 }
 
 // InjectToken rewrites an HTTPS remote URL to embed the token as credentials.
