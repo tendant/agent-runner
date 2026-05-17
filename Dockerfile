@@ -4,7 +4,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /agent-runner ./cmd/server
+RUN CGO_ENABLED=0 go build -o /agent-runner ./cmd/server && \
+    CGO_ENABLED=0 go build -o /agent-cli    ./cmd/cli
 
 # Stage 2: runtime — node:alpine provides npm for agent CLI installation
 FROM node:22-alpine
@@ -45,6 +46,7 @@ RUN deluser --remove-home node 2>/dev/null || true && \
     mkdir -p /data && chown app:app /data
 
 COPY --from=builder /agent-runner /usr/local/bin/agent-runner
+COPY --from=builder /agent-cli    /usr/local/bin/agent-cli
 
 USER app
 # Set HOME=/data so every tool that writes to ~ (claude, codex, opencode, npm)
