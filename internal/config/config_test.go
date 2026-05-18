@@ -1,9 +1,7 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -20,10 +18,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.TmpRoot != filepath.Join(data, "tmp") {
 		t.Errorf("expected TmpRoot under data dir, got %s", cfg.TmpRoot)
 	}
-	// Paths should be under home dir (or .agent-runner fallback)
-	home, _ := os.UserHomeDir()
-	if home != "" && !strings.HasPrefix(cfg.RepoCacheRoot, home) {
-		t.Errorf("expected RepoCacheRoot under home dir %s, got %s", home, cfg.RepoCacheRoot)
+	// Paths should be relative (CWD-based default).
+	if filepath.IsAbs(cfg.RepoCacheRoot) {
+		t.Errorf("expected relative RepoCacheRoot by default, got %s", cfg.RepoCacheRoot)
 	}
 	if cfg.MaxRuntimeSeconds != 300 {
 		t.Errorf("expected MaxRuntimeSeconds 300, got %d", cfg.MaxRuntimeSeconds)

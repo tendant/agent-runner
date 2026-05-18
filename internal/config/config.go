@@ -12,12 +12,10 @@ import (
 )
 
 // defaultDataDir returns the default base directory for all mutable agent-runner
-// data: ~/.agent-runner. Falls back to .agent-runner if the home dir is unavailable.
+// data: the process working directory. Using CWD means each agent-runner instance
+// running from its own directory gets isolated data without any explicit DATA_DIR.
 func defaultDataDir() string {
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".agent-runner")
-	}
-	return ".agent-runner"
+	return "."
 }
 
 // Config represents the application configuration
@@ -217,7 +215,7 @@ func DefaultConfig() *Config {
 //  4. .env                — base config; committed as a template
 //
 // When INSTANCE is set (e.g. INSTANCE=prod), the app loads .env.prod and
-// defaults DATA_DIR to ~/.agent-runner/prod, isolating each instance's data.
+// defaults DATA_DIR to the process working directory, isolating each instance's data.
 func LoadFromEnv() (*Config, error) {
 	// Determine instance name. Drives the default data dir and instance env file.
 	instance := os.Getenv("INSTANCE")
