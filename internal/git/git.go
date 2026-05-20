@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -134,15 +135,21 @@ func (o *Operations) Commit(ctx context.Context, repoPath, message, author, inst
 	}
 
 	// Build commit command
-	args := []string{"commit", "-m", message}
-	if author != "" {
-		args = append(args, "--author", fmt.Sprintf("%s <bot@local>", author))
+	commitAuthor := author
+	if commitAuthor == "" {
+		commitAuthor = "agent-runner"
 	}
+	args := []string{"commit", "-m", message, "--author", fmt.Sprintf("%s <bot@local>", commitAuthor)}
 	if instruction != "" {
 		args = append(args, "--trailer", fmt.Sprintf("Instruction: %s", instruction))
 	}
 
-	if err := o.runGitCommand(ctx, repoPath, args...); err != nil {
+	// Inject committer identity via env so git never needs a global user config.
+	// --author sets the author; GIT_COMMITTER_* sets the committer.
+	if err := o.runGitCommandEnv(ctx, repoPath, []string{
+		"GIT_COMMITTER_NAME=" + commitAuthor,
+		"GIT_COMMITTER_EMAIL=bot@local",
+	}, args...); err != nil {
 		return "", fmt.Errorf("git commit failed: %w", err)
 	}
 
@@ -291,8 +298,15 @@ func (o *Operations) getDefaultBranch(ctx context.Context, repoPath string) (str
 }
 
 func (o *Operations) runGitCommand(ctx context.Context, repoPath string, args ...string) error {
+	return o.runGitCommandEnv(ctx, repoPath, nil, args...)
+}
+
+func (o *Operations) runGitCommandEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
