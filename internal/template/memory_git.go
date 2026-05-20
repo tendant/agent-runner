@@ -148,16 +148,22 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	}
 	if len(bytes.TrimSpace(out)) > 0 {
 		msg := "[memory] " + time.Now().Format("2006-01-02")
+		// Ensure a local identity exists — avoids commit failure in environments
+		// (e.g. Docker) where no global git user is configured.
+		_ = gitRunEnv(memoryDir, nil, "config", "user.email", "agent-runner@local")
+		_ = gitRunEnv(memoryDir, nil, "config", "user.name", "agent-runner")
 		if err := gitRunEnv(memoryDir, nil, "commit", "-m", msg); err != nil {
 			return err
 		}
 	}
 
-	// Always push — even if nothing new was committed, there may be local
-	// commits that haven't been pushed yet.
+	// Push only when a remote is configured.
 	remote := ""
 	if remoteOut, err := gitOutput(memoryDir, "remote", "get-url", "origin"); err == nil {
 		remote = strings.TrimSpace(string(remoteOut))
+	}
+	if remote == "" {
+		return nil
 	}
 	pushTarget := InjectToken(remote, creds.Token, creds.User)
 	env := GitSSHEnv(remote, creds.SSHKey)
