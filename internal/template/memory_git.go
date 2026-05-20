@@ -233,14 +233,24 @@ func pushMemory(memoryDir string, env []string, remote, token string) error {
 		}
 	}
 
-	// Push rejected (non-fast-forward) — pull with rebase then retry.
-	pullErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD")
-	if pullErr != nil {
+	// Remote is ahead — sync then retry. Try rebase first for a clean history;
+	// fall back to a merge (with --allow-unrelated-histories) when the local
+	// and remote histories have diverged completely (e.g. fresh local init vs
+	// existing remote). Always prefer local content on conflicts (-Xours).
+	rebaseErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "-Xtheirs", "origin", "HEAD")
+	if rebaseErr != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
-		if isRepoNotFound(pullErr) && token == "" {
-			return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN to enable auto-create, or create the repo manually: %w", pullErr)
+		// Rebase failed (likely unrelated histories or unresolvable conflict).
+		// Fall back to a merge that allows unrelated histories, keeping local
+		// content on conflict.
+		mergeErr := gitRunEnv(memoryDir, env, "pull", "--no-rebase",
+			"--allow-unrelated-histories", "-Xours", "origin", "HEAD")
+		if mergeErr != nil {
+			if isRepoNotFound(mergeErr) && token == "" {
+				return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN to enable auto-create, or create the repo manually: %w", mergeErr)
+			}
+			return fmt.Errorf("sync with remote failed: %w", mergeErr)
 		}
-		return fmt.Errorf("pull --rebase failed, rebase aborted: %w", pullErr)
 	}
 
 	return doPush()
