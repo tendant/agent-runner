@@ -28,10 +28,22 @@ type InitMemoryGitResult struct {
 	RemoteChanged bool   // remote was added or updated
 }
 
+// configureCredHelper writes a git credential.helper to the repo's local
+// config. The helper echoes username and reads MEMORY_GIT_TOKEN from the
+// process environment at runtime, so the token itself is never stored.
+// user is baked into the script; re-call when MEMORY_GIT_USER changes.
+func configureCredHelper(memoryDir, user string) error {
+	if user == "" {
+		user = "oauth2"
+	}
+	helper := fmt.Sprintf(`!f() { echo username=%s; echo "password=$MEMORY_GIT_TOKEN"; }; f`, user)
+	return gitRunEnv(memoryDir, nil, "config", "--local", "credential.helper", helper)
+}
+
 // InitMemoryGit initialises memoryDir as a git repository backed by remote.
 // Idempotent: safe to call on an already-initialised repo. If the remote
 // differs from the existing one it is updated via set-url. Credentials are
-// applied at push time only — the stored remote URL stays clean.
+// applied via a git credential helper — the stored remote URL stays clean.
 func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGitResult, error) {
 	var res InitMemoryGitResult
 	if memoryDir == "" {
@@ -76,6 +88,14 @@ func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGi
 		// Same remote — still attempt push in case there are uncommitted files
 	}
 
+	// Configure credential helper when a token is available so subsequent
+	// push/pull operations authenticate without embedding the token in the URL.
+	if creds.Token != "" {
+		if err := configureCredHelper(memoryDir, creds.User); err != nil {
+			slog.Warn("memory git: failed to configure credential helper", "error", err)
+		}
+	}
+
 	// Stage and commit any existing content
 	if err := gitRunEnv(memoryDir, nil, "add", "-A"); err != nil {
 		return res, fmt.Errorf("git add: %w", err)
@@ -116,10 +136,16 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 		return "", fmt.Errorf("no remote configured — run /memory git <remote-url> first")
 	}
 
-	pullTarget := InjectToken(remote, creds.Token, creds.User)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
-	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD"); err != nil {
+	// Ensure credential helper is current (user may have changed since init).
+	if creds.Token != "" {
+		if err := configureCredHelper(memoryDir, creds.User); err != nil {
+			slog.Warn("memory git: failed to configure credential helper", "error", err)
+		}
+	}
+
+	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD"); err != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
 		return "", fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
 	}
@@ -165,29 +191,30 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if remote == "" {
 		return nil
 	}
-	pushTarget := InjectToken(remote, creds.Token, creds.User)
+
+	// Ensure credential helper is current before pushing.
+	if creds.Token != "" {
+		if err := configureCredHelper(memoryDir, creds.User); err != nil {
+			slog.Warn("memory git: failed to configure credential helper", "error", err)
+		}
+	}
+
 	env := GitSSHEnv(remote, creds.SSHKey)
 
-	if err := pushMemory(memoryDir, env, remote, pushTarget, creds.Token); err != nil {
+	if err := pushMemory(memoryDir, env, remote, creds.Token); err != nil {
 		return fmt.Errorf("push failed: %w", err)
 	}
 
 	return nil
 }
 
-// pushMemory pushes local commits to the remote. If the remote repository does
-// not exist and a token is available, it attempts to create it via the Gitea
-// API and retries. If the push is rejected because the remote is ahead
+// pushMemory pushes local commits to origin. If the remote repository does not
+// exist and a token is available, it attempts to create it via the Gitea API
+// and retries. If the push is rejected because the remote is ahead
 // (non-fast-forward), it pulls with rebase and retries once.
-//
-// When a token was injected into pushTarget, we push directly to the
-// credentialed URL so git treats it as a repository rather than a refspec
-// (passing a URL after a remote name causes git to interpret it as src:dst).
-func pushMemory(memoryDir string, env []string, remote, pushTarget, token string) error {
+// Authentication is handled by the credential helper configured in the repo.
+func pushMemory(memoryDir string, env []string, remote, token string) error {
 	doPush := func() error {
-		if pushTarget != remote {
-			return gitRunEnv(memoryDir, env, "push", pushTarget, "HEAD")
-		}
 		return gitRunEnv(memoryDir, env, "push", "origin", "HEAD")
 	}
 
@@ -207,8 +234,7 @@ func pushMemory(memoryDir string, env []string, remote, pushTarget, token string
 	}
 
 	// Push rejected (non-fast-forward) — pull with rebase then retry.
-	pullTarget := pushTarget
-	pullErr := gitRunEnv(memoryDir, env, "pull", "--rebase", pullTarget, "HEAD")
+	pullErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD")
 	if pullErr != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
 		if isRepoNotFound(pullErr) && token == "" {
