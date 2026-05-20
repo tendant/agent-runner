@@ -438,21 +438,26 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1, h.config.ProjectDir, runnerURL, h.config.API.APIKey)
 	memoryDir := h.config.MemoryDir
 
-	// Load prompt files directly from source (no copy into memory dir)
+	// Load prompt files directly from source (no copy into memory dir).
+	// Fall back to conventional on-disk names when env vars are not set,
+	// mirroring bootstrapPaths() so /bootstrap → run agent produces a prompt.
+	systemPromptPath, promptFilePath := h.bootstrapPaths()
+	explicitSystem := h.config.Agent.SystemPrompt != ""
+	explicitPrompt := h.config.Agent.PromptFile != ""
 	var extras []tmpl.TemplateFile
-	if h.config.Agent.SystemPrompt != "" {
-		if tf, err := tmpl.LoadPromptFile(h.config.Agent.SystemPrompt, "system-prompt.md"); err != nil {
+	if tf, err := tmpl.LoadPromptFile(systemPromptPath, "system-prompt.md"); err != nil {
+		if explicitSystem {
 			slog.Warn("failed to load system prompt", "error", err)
-		} else if tf != nil {
-			extras = append(extras, *tf)
 		}
+	} else if tf != nil {
+		extras = append(extras, *tf)
 	}
-	if h.config.Agent.PromptFile != "" {
-		if tf, err := tmpl.LoadPromptFile(h.config.Agent.PromptFile, "prompt.md"); err != nil {
+	if tf, err := tmpl.LoadPromptFile(promptFilePath, "prompt.md"); err != nil {
+		if explicitPrompt {
 			slog.Warn("failed to load prompt file", "error", err)
-		} else if tf != nil {
-			extras = append(extras, *tf)
 		}
+	} else if tf != nil {
+		extras = append(extras, *tf)
 	}
 
 	// Check for bootstrap (first_run)
