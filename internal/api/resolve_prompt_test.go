@@ -146,6 +146,49 @@ func TestResolvePrompt_MissingFallbackFilesNoError(t *testing.T) {
 	}
 }
 
+// TestBootstrapPaths_PrefersMemoryDir verifies that bootstrapPaths returns
+// paths from the memory dir when agent.md/prompt.md exist there.
+func TestBootstrapPaths_PrefersMemoryDir(t *testing.T) {
+	h, dir := makeHandlers(t)
+	memDir := filepath.Join(dir, "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create agent.md and prompt.md in the memory dir
+	os.WriteFile(filepath.Join(memDir, "agent.md"), []byte("MEM AGENT"), 0644)
+	os.WriteFile(filepath.Join(memDir, "prompt.md"), []byte("MEM PROMPT"), 0644)
+	// Also create bare fallback files in CWD — should NOT be used
+	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("CWD AGENT"), 0644)
+	os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("CWD PROMPT"), 0644)
+
+	got, err := h.resolvePrompt("task")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "MEM AGENT") {
+		t.Error("expected memory dir agent.md to be used")
+	}
+	if strings.Contains(got, "CWD AGENT") {
+		t.Error("CWD agent.md should not be used when memory dir has one")
+	}
+}
+
+// TestBootstrapPaths_FallsBackToCWD verifies that bootstrapPaths falls back to
+// CWD agent.md/prompt.md when memory dir files don't exist.
+func TestBootstrapPaths_FallsBackToCWD(t *testing.T) {
+	h, dir := makeHandlers(t)
+	// Only CWD file, no memory dir file
+	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("CWD AGENT CONTENT"), 0644)
+
+	got, err := h.resolvePrompt("task")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "CWD AGENT CONTENT") {
+		t.Error("expected CWD agent.md to be used as fallback")
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

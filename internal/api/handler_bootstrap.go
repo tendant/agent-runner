@@ -156,18 +156,34 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-// bootstrapPaths returns the system prompt and prompt file paths from config,
-// falling back to conventional names.
+// bootstrapPaths returns the system prompt and prompt file paths from config.
+// When not explicitly configured, prefers ./memory/agent.md and ./memory/prompt.md
+// (git-tracked) over the bare ./agent.md and ./prompt.md fallbacks.
 func (h *Handlers) bootstrapPaths() (systemPrompt, promptFile string) {
 	systemPrompt = h.config.Agent.SystemPrompt
 	if systemPrompt == "" {
-		systemPrompt = "./agent.md"
+		memAgent := filepath.Join(h.config.MemoryDir, "agent.md")
+		if fileExists(memAgent) {
+			systemPrompt = memAgent
+		} else {
+			systemPrompt = "./agent.md"
+		}
 	}
 	promptFile = h.config.Agent.PromptFile
 	if promptFile == "" {
-		promptFile = "./prompt.md"
+		memPrompt := filepath.Join(h.config.MemoryDir, "prompt.md")
+		if fileExists(memPrompt) {
+			promptFile = memPrompt
+		} else {
+			promptFile = "./prompt.md"
+		}
 	}
 	return
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // CLIInstalled reports whether the given CLI binary is present in PATH.

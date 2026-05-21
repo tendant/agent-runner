@@ -95,6 +95,8 @@ type AgentConfig struct {
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
 	MemoryDays          int      // Number of daily memory logs to include (default: 7)
+	MemoryPullOnStart   bool     // Pull memory from git before each session
+	MemoryCharCap       int      // Max characters in composed memory section (0 = no limit)
 }
 
 // TelegramConfig contains Telegram bot settings
@@ -193,6 +195,7 @@ func DefaultConfig() *Config {
 		PlannerEnabled:      true,
 		MaxQueueSize:        10,
 		MemoryDays:          7,
+		MemoryCharCap:       12000,
 		},
 		Runner: RunnerConfig{
 			LeaseDuration:     60,
@@ -318,6 +321,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
+	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
+	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)

@@ -146,7 +146,7 @@ func TestIntegration_Memory(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Fixed auth middleware"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Added user dashboard"), 0644)
 
-	result := ComposeMemorySection(memDir, 7)
+	result := ComposeMemorySection(memDir, 7, 0)
 	t.Logf("=== Memory section ===\n%s", result)
 
 	assertContains(t, result, "## Memory", "should have Memory header")
@@ -155,7 +155,7 @@ func TestIntegration_Memory(t *testing.T) {
 	assertContains(t, result, "Added user dashboard", "should contain today's log")
 
 	// Test with days=2 limit
-	result2 := ComposeMemorySection(memDir, 2)
+	result2 := ComposeMemorySection(memDir, 2, 0)
 	assertNotContains(t, result2, "Set up CI pipeline", "oldest log should be excluded with days=2")
 	assertContains(t, result2, "Fixed auth middleware", "second day should be included")
 	assertContains(t, result2, "Added user dashboard", "today should be included")
@@ -286,7 +286,7 @@ First time setup: run npm install.`), 0644)
 		t.Fatalf("error: %v", err)
 	}
 
-	memorySec := ComposeMemorySection(dir, 7)
+	memorySec := ComposeMemorySection(dir, 7, 0)
 	if memorySec != "" {
 		result += "\n\n" + memorySec
 	}

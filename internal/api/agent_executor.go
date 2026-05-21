@@ -126,14 +126,45 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
 
-		// Write daily memory log
+		// Merge _memory/ write-back files from the agent workspace into the memory dir
+		if liveSession.WorkspacePath != "" {
+			wsCheckout := filepath.Join(liveSession.WorkspacePath, "workspace")
+			if err := mergeAgentMemory(wsCheckout, h.config.MemoryDir); err != nil {
+				slog.Warn("failed to merge agent memory", "session_id", sessionID, "error", err)
+			}
+		}
+
+		// Write daily memory log with rich session details
 		snap2 := liveSession.Snapshot()
 		msgPreview := message
 		if len(msgPreview) > 80 {
 			msgPreview = msgPreview[:80] + "..."
 		}
-		dailyEntry := fmt.Sprintf("[%s] session %s: %s, %d iterations — %s",
-			time.Now().Format("15:04"), sessionID, snap2.Status, snap2.SuccessfulIterations, msgPreview)
+		var changedFiles []string
+		seen := make(map[string]bool)
+		for _, iter := range snap2.Iterations {
+			for _, f := range iter.ChangedFiles {
+				if !seen[f] {
+					seen[f] = true
+					changedFiles = append(changedFiles, f)
+				}
+			}
+		}
+		var logLines []string
+		logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
+			time.Now().Format("15:04"), snap2.Status, snap2.SuccessfulIterations, snap2.TotalCostUSD))
+		logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
+		if len(changedFiles) > 0 {
+			logLines = append(logLines, fmt.Sprintf("**Files:** %s", strings.Join(changedFiles, ", ")))
+		}
+		if snap2.Error != "" {
+			errPreview := snap2.Error
+			if len(errPreview) > 120 {
+				errPreview = errPreview[:120] + "..."
+			}
+			logLines = append(logLines, fmt.Sprintf("**Error:** %s", errPreview))
+		}
+		dailyEntry := strings.Join(logLines, "\n")
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 		}
@@ -160,6 +191,20 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath)
 		}
 	}()
+
+	// Auto-pull memory from git before resolving prompt (optional)
+	if h.config.Agent.MemoryPullOnStart {
+		creds := tmpl.MemoryGitCreds{
+			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+			User:   os.Getenv("MEMORY_GIT_USER"),
+			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+		}
+		if _, err := tmpl.PullMemory(h.config.MemoryDir, creds); err != nil {
+			slog.Warn("auto-pull memory failed (non-fatal)", "session_id", sessionID, "error", err)
+		} else {
+			slog.Info("memory pulled before session", "session_id", sessionID)
+		}
+	}
 
 	// Resolve prompt: combine base system prompt (agent.md) + workflow template (prompt.md)
 	if h.config.Agent.SystemPrompt != "" {
@@ -445,14 +490,14 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	explicitSystem := h.config.Agent.SystemPrompt != ""
 	explicitPrompt := h.config.Agent.PromptFile != ""
 	var extras []tmpl.TemplateFile
-	if tf, err := tmpl.LoadPromptFile(systemPromptPath, "system-prompt.md"); err != nil {
+	if tf, err := tmpl.LoadPromptFile(systemPromptPath, filepath.Base(systemPromptPath)); err != nil {
 		if explicitSystem {
 			slog.Warn("failed to load system prompt", "error", err)
 		}
 	} else if tf != nil {
 		extras = append(extras, *tf)
 	}
-	if tf, err := tmpl.LoadPromptFile(promptFilePath, "prompt.md"); err != nil {
+	if tf, err := tmpl.LoadPromptFile(promptFilePath, filepath.Base(promptFilePath)); err != nil {
 		if explicitPrompt {
 			slog.Warn("failed to load prompt file", "error", err)
 		}
@@ -475,7 +520,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	}
 
 	// Append memory section
-	memorySec := tmpl.ComposeMemorySection(h.config.MemoryDir, h.config.Agent.MemoryDays)
+	memorySec := tmpl.ComposeMemorySection(h.config.MemoryDir, h.config.Agent.MemoryDays, h.config.Agent.MemoryCharCap)
 	if memorySec != "" {
 		parts = append(parts, memorySec)
 	}
@@ -731,6 +776,36 @@ func buildReviewerContext(review *subagent.ReviewResult) string {
 	}
 	sb.WriteString("Please address the issues above.\n")
 	return sb.String()
+}
+
+// mergeAgentMemory copies files from the agent's _memory/ write-back directory
+// into the runner's persistent memory dir. This lets the agent update MEMORY.md
+// and other memory files without needing direct access to the runner's file system.
+func mergeAgentMemory(checkoutPath, memoryDir string) error {
+	src := filepath.Join(checkoutPath, "_memory")
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read _memory/: %w", err)
+	}
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return fmt.Errorf("create memory dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(memoryDir, entry.Name())
+		if err := copyFile(srcPath, dstPath); err != nil {
+			slog.Warn("failed to merge memory file", "file", entry.Name(), "error", err)
+		} else {
+			slog.Info("merged memory file from agent", "file", entry.Name())
+		}
+	}
+	return nil
 }
 
 const maxPartialOutputChars = 2000

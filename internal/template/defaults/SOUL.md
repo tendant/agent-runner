@@ -31,7 +31,7 @@ priority: 20
 "Done" means:
 1. The change works as intended
 2. It is committed with a clear message
-3. MEMORY.md and TODO.md are updated if anything changed that future sessions should know
+3. `_memory/MEMORY.md` is updated (via the `_memory/` write-back dir) if anything changed that future sessions should know
 4. No debug artifacts remain
 
 ## Self-Awareness

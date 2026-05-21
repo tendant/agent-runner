@@ -8,7 +8,7 @@ import (
 )
 
 func TestComposeMemorySection_Empty(t *testing.T) {
-	result := ComposeMemorySection("", 7)
+	result := ComposeMemorySection("", 7, 0)
 	if result != "" {
 		t.Errorf("expected empty for no memoryDir, got %q", result)
 	}
@@ -16,7 +16,7 @@ func TestComposeMemorySection_Empty(t *testing.T) {
 
 func TestComposeMemorySection_NoFiles(t *testing.T) {
 	dir := t.TempDir()
-	result := ComposeMemorySection(dir, 7)
+	result := ComposeMemorySection(dir, 7, 0)
 	if result != "" {
 		t.Errorf("expected empty when no memory files exist, got %q", result)
 	}
@@ -26,7 +26,7 @@ func TestComposeMemorySection_MemoryMDOnly(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Long-term memory\n\nImportant fact."), 0644)
 
-	result := ComposeMemorySection(dir, 7)
+	result := ComposeMemorySection(dir, 7, 0)
 	if !strings.Contains(result, "## Memory") {
 		t.Error("should have Memory header")
 	}
@@ -42,7 +42,7 @@ func TestComposeMemorySection_DailyLogs(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Did task B"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Did task C"), 0644)
 
-	result := ComposeMemorySection(memDir, 2)
+	result := ComposeMemorySection(memDir, 2, 0)
 	if strings.Contains(result, "Did task A") {
 		t.Error("should not include oldest log when days=2")
 	}
@@ -56,7 +56,7 @@ func TestComposeMemorySection_CombinedMemoryAndLogs(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("Curated memory"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Today's log"), 0644)
 
-	result := ComposeMemorySection(memDir, 7)
+	result := ComposeMemorySection(memDir, 7, 0)
 	if !strings.Contains(result, "Curated memory") {
 		t.Error("should contain MEMORY.md")
 	}
@@ -117,11 +117,89 @@ func TestComposeMemorySection_InvalidFilenames(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Not a date"), 0644)
 	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("Valid"), 0644)
 
-	result := ComposeMemorySection(memDir, 7)
+	result := ComposeMemorySection(memDir, 7, 0)
 	if strings.Contains(result, "Not a date") {
 		t.Error("should skip non-date filenames")
 	}
 	if !strings.Contains(result, "Valid") {
 		t.Error("should include valid date file")
+	}
+}
+
+// TestComposeMemorySection_HostnameSuffixedLogs verifies that daily log files
+// with a hostname suffix (YYYY-MM-DD-hostname.md) are parsed correctly.
+func TestComposeMemorySection_HostnameSuffixedLogs(t *testing.T) {
+	memDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(memDir, "2026-05-20-myhost.md"), []byte("Entry from myhost"), 0644)
+	os.WriteFile(filepath.Join(memDir, "2026-05-21-other-host.md"), []byte("Entry from other-host"), 0644)
+
+	result := ComposeMemorySection(memDir, 7, 0)
+	if !strings.Contains(result, "Entry from myhost") {
+		t.Error("should parse hostname-suffixed log file")
+	}
+	if !strings.Contains(result, "Entry from other-host") {
+		t.Error("should parse hostname-suffixed log file with hyphen in hostname")
+	}
+}
+
+// TestAppendDailyLog_HostnameSuffix verifies that AppendDailyLog creates files
+// with the YYYY-MM-DD-<hostname>.md pattern and they are loadable.
+func TestAppendDailyLog_HostnameSuffix(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "memory")
+	if err := AppendDailyLog(dir, "hostname test entry"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(entries))
+	}
+	name := entries[0].Name()
+	// Must be at least YYYY-MM-DD-x.md (len >= 15)
+	if len(name) < 15 {
+		t.Errorf("expected hostname-suffixed filename, got %q", name)
+	}
+	// First 10 chars must be a valid date
+	stem := strings.TrimSuffix(name, ".md")
+	if len(stem) < 11 || stem[10] != '-' {
+		t.Errorf("expected YYYY-MM-DD-hostname format, got %q", name)
+	}
+	// Must be loadable by ComposeMemorySection
+	result := ComposeMemorySection(dir, 7, 0)
+	if !strings.Contains(result, "hostname test entry") {
+		t.Error("hostname-suffixed file should be readable by ComposeMemorySection")
+	}
+}
+
+// TestComposeMemorySection_CharCap verifies that the char cap drops oldest logs first.
+func TestComposeMemorySection_CharCap(t *testing.T) {
+	memDir := t.TempDir()
+
+	// Three logs of ~20 chars each; cap of 50 should drop the oldest
+	os.WriteFile(filepath.Join(memDir, "2026-03-01.md"), []byte("Old entry content here"), 0644)
+	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Mid entry content here"), 0644)
+	os.WriteFile(filepath.Join(memDir, "2026-03-03.md"), []byte("New entry content here"), 0644)
+
+	result := ComposeMemorySection(memDir, 7, 50)
+	// With a tight cap, oldest logs should be dropped
+	if strings.Contains(result, "Old entry content here") && strings.Contains(result, "New entry content here") {
+		t.Error("char cap should drop oldest when over limit")
+	}
+	// Newest should survive
+	if !strings.Contains(result, "New entry content here") {
+		t.Error("newest entry should survive char cap")
+	}
+}
+
+// TestComposeMemorySection_CharCapZeroMeansNoLimit verifies that charCap=0 imposes no limit.
+func TestComposeMemorySection_CharCapZeroMeansNoLimit(t *testing.T) {
+	memDir := t.TempDir()
+	os.WriteFile(filepath.Join(memDir, "2026-03-01.md"), []byte("Entry A"), 0644)
+	os.WriteFile(filepath.Join(memDir, "2026-03-02.md"), []byte("Entry B"), 0644)
+
+	result := ComposeMemorySection(memDir, 7, 0)
+	if !strings.Contains(result, "Entry A") || !strings.Contains(result, "Entry B") {
+		t.Error("charCap=0 should include all entries")
 	}
 }
