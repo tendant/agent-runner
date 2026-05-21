@@ -66,7 +66,6 @@ func newLineStream(rl *readline.Instance) *lineStream {
 	ls := &lineStream{ch: make(chan lineResult, 64)}
 	go func() {
 		for {
-			rl.SetPrompt("> ")
 			line, err := rl.Readline()
 			ls.ch <- lineResult{line, err}
 			if err != nil {
@@ -104,7 +103,7 @@ func (ls *lineStream) read() (string, error) {
 }
 
 func repl(baseURL, apiKey string) {
-	rl, err := readline.New("> ")
+	rl, err := readline.New("") // prompt printed manually so it never appears before output
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "readline init failed: %v\n", err)
 		return
@@ -114,6 +113,7 @@ func repl(baseURL, apiKey string) {
 	ls := newLineStream(rl)
 
 	for {
+		fmt.Print("> ")
 		line, err := ls.read()
 		if err != nil {
 			// Ctrl+D (io.EOF) or Ctrl+C (readline.ErrInterrupt) at empty prompt
