@@ -55,6 +55,16 @@ func repoCommander(t *testing.T) (*Commander, string) {
 	return c, env.repoCacheDir
 }
 
+// --- /repo dispatcher ---
+
+func TestRepo_UnknownSubcommand(t *testing.T) {
+	c, _ := repoCommander(t)
+	reply := c.handleRepo("bogus")
+	if !strings.Contains(reply, "unknown subcommand") {
+		t.Errorf("expected unknown subcommand error, got: %s", reply)
+	}
+}
+
 // --- /repo add ---
 
 func TestRepoAdd_ClonesAndStripsToken(t *testing.T) {
@@ -156,6 +166,28 @@ func TestRepoAdd_EmptyURL(t *testing.T) {
 	}
 }
 
+func TestRepoAdd_CredHelperConfiguredWithToken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	c, cacheDir := repoCommander(t)
+	defer withTempCWD(t)()
+	t.Setenv("GIT_TOKEN", "testtoken123")
+
+	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
+	makePopulatedRepo(t, remote)
+	c.handleRepoAdd(remote)
+
+	out, err := exec.Command("git", "-C", filepath.Join(cacheDir, "myrepo"),
+		"config", "--local", "credential.helper").Output()
+	if err != nil {
+		t.Fatalf("get credential.helper: %v", err)
+	}
+	if !strings.Contains(string(out), "GIT_TOKEN") {
+		t.Errorf("credential.helper should reference GIT_TOKEN, got: %s", out)
+	}
+}
+
 // --- /repo list ---
 
 func TestRepoList_Empty(t *testing.T) {
@@ -163,6 +195,15 @@ func TestRepoList_Empty(t *testing.T) {
 	reply := c.handleRepoList()
 	if !strings.Contains(reply, "no repos") {
 		t.Errorf("expected empty message, got: %s", reply)
+	}
+}
+
+func TestRepoList_CacheDirNotExist(t *testing.T) {
+	c, _ := repoCommander(t)
+	c.cfg.RepoCacheRoot = filepath.Join(t.TempDir(), "nonexistent")
+	reply := c.handleRepoList()
+	if !strings.Contains(reply, "no repos") {
+		t.Errorf("expected no-repos message for missing cache dir, got: %s", reply)
 	}
 }
 
