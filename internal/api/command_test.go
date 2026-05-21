@@ -2,10 +2,10 @@ package api
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
 )
 
 func withTempCWD(t *testing.T) (restore func()) {
@@ -586,5 +586,163 @@ func TestCommander_Memory_UnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(reply, "unknown subcommand") {
 		t.Errorf("expected unknown subcommand error, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Push_NotGitRepo(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	// Memory dir not initialised — push must return a clear error.
+	reply, handled := c.Handle("/memory push", nil)
+	if !handled {
+		t.Fatal("expected /memory push to be handled")
+	}
+	if !strings.Contains(reply, "error") || !strings.Contains(reply, "not a git repo") {
+		t.Errorf("expected not-a-git-repo error, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Push_Success(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	defer withTempCWD(t)()
+	c, memDir := newMemoryCommander(t)
+
+	bare := makeBarRepo(t, filepath.Join(t.TempDir(), "mem.git"))
+	c.Handle("/memory git "+bare, nil)
+
+	// Create a file so there is something to commit and push.
+	if err := os.WriteFile(filepath.Join(memDir, "note.md"), []byte("hello\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, _ := c.Handle("/memory push", nil)
+	if !strings.Contains(reply, "memory pushed") {
+		t.Errorf("expected push success, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Push_Idempotent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	defer withTempCWD(t)()
+	c, memDir := newMemoryCommander(t)
+
+	bare := makeBarRepo(t, filepath.Join(t.TempDir(), "mem.git"))
+	c.Handle("/memory git "+bare, nil)
+	if err := os.WriteFile(filepath.Join(memDir, "note.md"), []byte("hello\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c.Handle("/memory push", nil) // first push
+
+	// Second push with no changes must not return an error.
+	reply, _ := c.Handle("/memory push", nil)
+	if strings.HasPrefix(reply, "error") {
+		t.Errorf("expected no error on idempotent push, got: %s", reply)
+	}
+	if !strings.Contains(reply, "memory pushed") {
+		t.Errorf("expected push success on second push, got: %s", reply)
+	}
+}
+
+func TestCommander_Memory_Pull_NotGitRepo(t *testing.T) {
+	c, _ := newMemoryCommander(t)
+	// Memory dir not initialised — pull must return a clear error.
+	reply, handled := c.Handle("/memory pull", nil)
+	if !handled {
+		t.Fatal("expected /memory pull to be handled")
+	}
+	if !strings.Contains(reply, "error") || !strings.Contains(reply, "not a git repo") {
+		t.Errorf("expected not-a-git-repo error, got: %s", reply)
+	}
+}
+
+// --- /status ---
+
+func TestCommander_Status_ShowsFields(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, handled := c.Handle("/status", nil)
+	if !handled {
+		t.Fatal("expected /status to be handled")
+	}
+	for _, field := range []string{"agent:", "queued:", "cli:", "ready:"} {
+		if !strings.Contains(reply, field) {
+			t.Errorf("expected %q field in status, got:\n%s", field, reply)
+		}
+	}
+}
+
+func TestCommander_Status_IdleWhenNoSessions(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _ := c.Handle("/status", nil)
+	if !strings.Contains(reply, "idle") {
+		t.Errorf("expected idle status with no sessions, got:\n%s", reply)
+	}
+}
+
+func TestCommander_Status_ReadyFalseWhenNoAPIKey(t *testing.T) {
+	for _, k := range []string{"ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"} {
+		t.Setenv(k, "")
+	}
+	env := setupTestEnv(t)
+	env.handlers.config.Agent.CLI = "claude"
+	env.handlers.config.Agent.Provider = ""
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _ := c.Handle("/status", nil)
+	if !strings.Contains(reply, "ready:") || strings.Contains(reply, "ready: ✓") {
+		t.Errorf("expected ready ✗ when no API key, got:\n%s", reply)
+	}
+}
+
+// --- /auth ---
+
+func TestCommander_Auth_RESTCallReturnsError(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	// send=nil simulates a REST caller with no chat channel.
+	reply, handled := c.Handle("/auth claude", nil)
+	if !handled {
+		t.Fatal("expected /auth to be handled")
+	}
+	if !strings.Contains(reply, "error") || !strings.Contains(reply, "only available via chat") {
+		t.Errorf("expected chat-only error, got: %s", reply)
+	}
+}
+
+func TestCommander_AuthCancel_NoFlow(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, handled := c.Handle("/auth cancel", nil)
+	if !handled {
+		t.Fatal("expected /auth cancel to be handled")
+	}
+	if reply != "no auth flow is running" {
+		t.Errorf("expected 'no auth flow is running', got: %s", reply)
+	}
+}
+
+func TestCommander_Auth_OpencodeNotSupported(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.config.Agent.CLI = "opencode"
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	var sent []string
+	send := func(msg string) { sent = append(sent, msg) }
+
+	// /auth with no arg falls back to configured CLI (opencode), which isn't supported.
+	reply, handled := c.Handle("/auth", send)
+	if !handled {
+		t.Fatal("expected /auth to be handled")
+	}
+	if !strings.Contains(reply, "error") {
+		t.Errorf("expected error for opencode auth, got: %s", reply)
 	}
 }
