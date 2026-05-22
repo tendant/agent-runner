@@ -239,10 +239,14 @@ func pushMemory(memoryDir string, env []string, remote, token string) error {
 	// existing remote). Always prefer local content on conflicts (-Xours).
 	rebaseErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "-Xtheirs", "origin", "HEAD")
 	if rebaseErr != nil {
-		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
-		// Rebase failed (likely unrelated histories or unresolvable conflict).
-		// Fall back to a merge that allows unrelated histories, keeping local
-		// content on conflict.
+		// [H6] If abort itself fails the repo is stuck in an in-progress rebase;
+		// the merge fallback would immediately fail with "unfinished rebase".
+		// Surface both errors so the operator can run 'git rebase --abort' manually.
+		if abortErr := gitRunEnv(memoryDir, nil, "rebase", "--abort"); abortErr != nil {
+			return fmt.Errorf("pull --rebase failed (%w); rebase --abort also failed (%v) — run 'git rebase --abort' in %s manually", rebaseErr, abortErr, memoryDir)
+		}
+		// Rebase aborted cleanly. Fall back to a merge that allows unrelated
+		// histories, keeping local content on conflict.
 		mergeErr := gitRunEnv(memoryDir, env, "pull", "--no-rebase",
 			"--allow-unrelated-histories", "-Xours", "origin", "HEAD")
 		if mergeErr != nil {

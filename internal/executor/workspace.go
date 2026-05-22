@@ -2,7 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 )
-
 
 // WorkspaceManager handles workspace creation and cleanup
 type WorkspaceManager struct {
@@ -83,8 +81,7 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 		if info.ModTime().Before(cutoff) {
 			path := filepath.Join(w.TmpRoot, entry.Name())
 			if err := os.RemoveAll(path); err != nil {
-				// Log but continue
-				fmt.Printf("Warning: failed to clean up stale workspace %s: %v\n", path, err)
+				slog.Warn("failed to clean up stale workspace", "path", path, "error", err)
 			}
 		}
 	}
@@ -101,21 +98,32 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
 // gitToken is injected into HTTPS remote URLs stored in each workspace repo so the
 // agent's own git commands pick up credentials without extra configuration.
-func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, error) {
+// Returns the workspace path, a list of repos that were listed in sharedRepos but
+// missing from the cache, and any setup error.
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, []string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
+	// [C1] Clean up the session directory if setup fails partway through, so
+	// partially-created directories don't accumulate in tmp/.
+	var setupDone bool
+	defer func() {
+		if !setupDone {
+			os.RemoveAll(workspacePath) //nolint:errcheck
+		}
+	}()
+
 	if err := os.MkdirAll(w.TmpRoot, 0755); err != nil {
-		return "", fmt.Errorf("failed to create tmp directory: %w", err)
+		return "", nil, fmt.Errorf("failed to create tmp directory: %w", err)
 	}
 
 	agentDir := filepath.Join(workspacePath, "workspace")
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create workspace directory: %w", err)
+		return "", nil, fmt.Errorf("failed to create workspace directory: %w", err)
 	}
 
 	stateDir := filepath.Join(workspacePath, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create state directory: %w", err)
+		return "", nil, fmt.Errorf("failed to create state directory: %w", err)
 	}
 
 	// Pre-populate skills into both .claude/skills/ (Claude Code + opencode) and
@@ -132,6 +140,7 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 	}
 
 	// Pre-populate shared repos from cache into workspace/
+	var missingRepos []string
 	for _, repo := range sharedRepos {
 		if repo == "" {
 			continue
@@ -139,6 +148,8 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		cachedRepo := filepath.Join(repoCacheRoot, repo)
 		info, err := os.Stat(cachedRepo)
 		if err != nil || !info.IsDir() {
+			// [M7] Track missing repos so the caller can surface them as warnings.
+			missingRepos = append(missingRepos, repo)
 			if suggestion := SuggestCachedRepo(repoCacheRoot, repo); suggestion != "" {
 				slog.Warn("shared repo not found in cache; did you mean a different name?",
 					"repo", repo, "suggestion", suggestion)
@@ -150,10 +161,10 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 
 		dst := filepath.Join(agentDir, repo)
 		if err := copyDir(cachedRepo, dst); err != nil {
-			log.Printf("Agent workspace: warning: failed to copy shared repo %s: %v", repo, err)
+			slog.Warn("workspace: failed to copy shared repo", "repo", repo, "error", err)
 			continue
 		}
-		log.Printf("Agent workspace: pre-populated shared repo %s from cache", repo)
+		slog.Info("workspace: pre-populated shared repo from cache", "repo", repo)
 
 		// Ensure git remote origin is set to the clean URL (no embedded token).
 		// Credentials are provided at runtime via a credential helper that reads
@@ -176,7 +187,8 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		}
 	}
 
-	return workspacePath, nil
+	setupDone = true
+	return workspacePath, missingRepos, nil
 }
 
 // CacheReposBack copies repos from workspace/ back to repoCacheRoot/ for future runs.
@@ -199,10 +211,10 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 		dst := filepath.Join(repoCacheRoot, entry.Name())
 
 		if err := cacheRepoAtomic(src, dst); err != nil {
-			log.Printf("Agent workspace: warning: failed to cache repo %s: %v", entry.Name(), err)
+			slog.Warn("workspace: failed to cache repo back", "repo", entry.Name(), "error", err)
 			continue
 		}
-		log.Printf("Agent workspace: cached repo %s back to workspaces", entry.Name())
+		slog.Info("workspace: cached repo back", "repo", entry.Name())
 	}
 }
 
@@ -220,35 +232,39 @@ func cacheRepoAtomic(src, dst string) error {
 	old := dst + ".old"
 
 	// Clean up any leftovers from a previous failed run.
-	os.RemoveAll(tmp)
-	os.RemoveAll(old)
+	os.RemoveAll(tmp) //nolint:errcheck
+	os.RemoveAll(old) //nolint:errcheck
 
 	// Step 1: copy into temp location — original dst is safe if this fails.
 	if err := copyDir(src, tmp); err != nil {
-		os.RemoveAll(tmp)
+		os.RemoveAll(tmp) //nolint:errcheck
 		return fmt.Errorf("copy to temp: %w", err)
 	}
 
 	// Step 2: move old cache out of the way (no-op if dst doesn't exist yet).
 	if _, err := os.Stat(dst); err == nil {
 		if err := os.Rename(dst, old); err != nil {
-			os.RemoveAll(tmp)
+			os.RemoveAll(tmp) //nolint:errcheck
 			return fmt.Errorf("rename old cache aside: %w", err)
 		}
 	}
 
 	// Step 3: move new copy into place.
 	if err := os.Rename(tmp, dst); err != nil {
-		// Restore old cache so we don't lose it.
+		// [C2] Attempt to restore the old cache. If the restore also fails,
+		// surface both errors so the operator knows the cache entry is gone
+		// and which path needs manual repair.
 		if _, statErr := os.Stat(old); statErr == nil {
-			os.Rename(old, dst)
+			if restoreErr := os.Rename(old, dst); restoreErr != nil {
+				return fmt.Errorf("rename new cache into place: %w; restore of old cache also failed: %v (manual fix: rename %s to %s)", err, restoreErr, old, dst)
+			}
 		}
-		os.RemoveAll(tmp)
+		os.RemoveAll(tmp) //nolint:errcheck
 		return fmt.Errorf("rename new cache into place: %w", err)
 	}
 
 	// Step 4: remove old cache (best-effort; a lingering .old is harmless).
-	os.RemoveAll(old)
+	os.RemoveAll(old) //nolint:errcheck
 	return nil
 }
 
@@ -305,14 +321,14 @@ func fetchAndResetRepo(repoPath, repoName string) error {
 		}
 	}
 
+	// [M10] Reset to the remote HEAD. git clean -fdx is intentionally omitted:
+	// the workspace is already a fresh copy from cache so cleaning is unnecessary,
+	// and running it would destroy build artifacts that the agent may rely on.
 	if err := run("reset", "--hard", "origin/"+branch); err != nil {
 		return fmt.Errorf("git reset: %w", err)
 	}
-	if err := run("clean", "-fdx"); err != nil {
-		return fmt.Errorf("git clean: %w", err)
-	}
 
-	log.Printf("Agent workspace: fetched and reset %s to origin/%s", repoName, branch)
+	slog.Info("workspace: fetched and reset repo", "repo", repoName, "branch", branch)
 	return nil
 }
 
@@ -326,8 +342,8 @@ func configureCredHelper(repoPath string) {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		log.Printf("Agent workspace: warning: failed to configure credential helper for %s: %s",
-			repoPath, strings.TrimSpace(stderr.String()))
+		slog.Warn("workspace: failed to configure credential helper",
+			"path", repoPath, "error", strings.TrimSpace(stderr.String()))
 	}
 }
 
@@ -341,29 +357,30 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 	if err == nil {
 		currentURL := strings.TrimSpace(string(out))
 		if currentURL == expectedURL {
-			log.Printf("Agent workspace: git remote for %s already correct: %s", repoName, expectedURL)
+			slog.Debug("workspace: git remote already correct", "repo", repoName, "url", expectedURL)
 			return
 		}
-		// Remote exists but URL differs — update it
-		log.Printf("Agent workspace: updating git remote for %s: %s → %s", repoName, currentURL, expectedURL)
+		slog.Info("workspace: updating git remote", "repo", repoName, "old", currentURL, "new", expectedURL)
 		setURL := exec.Command("git", "remote", "set-url", "origin", expectedURL)
 		setURL.Dir = repoPath
 		if err := setURL.Run(); err != nil {
-			log.Printf("Agent workspace: warning: failed to update git remote for %s: %v", repoName, err)
+			slog.Warn("workspace: failed to update git remote", "repo", repoName, "error", err)
 		}
 		return
 	}
 
 	// No remote — add it
-	log.Printf("Agent workspace: adding git remote for %s: %s", repoName, expectedURL)
+	slog.Info("workspace: adding git remote", "repo", repoName, "url", expectedURL)
 	addRemote := exec.Command("git", "remote", "add", "origin", expectedURL)
 	addRemote.Dir = repoPath
 	if err := addRemote.Run(); err != nil {
-		log.Printf("Agent workspace: warning: failed to add git remote for %s: %v", repoName, err)
+		slog.Warn("workspace: failed to add git remote", "repo", repoName, "error", err)
 	}
 }
 
-// copyDir recursively copies a directory
+// copyDir recursively copies a directory. Symlinks are resolved to their
+// content rather than reproduced, preventing agents from placing links that
+// point outside the workspace into persistent storage (memory dir, outputs).
 func copyDir(src, dst string) error {
 	srcInfo, err := os.Stat(src)
 	if err != nil {
@@ -380,6 +397,14 @@ func copyDir(src, dst string) error {
 	}
 
 	for _, entry := range entries {
+		// [H4] Skip symlinks at the directory level — copyFile handles them at
+		// the file level, but a symlink to a directory would recurse outside
+		// the workspace. Skipping is safer than attempting to resolve.
+		if entry.Type()&os.ModeSymlink != 0 {
+			slog.Warn("workspace: skipping symlink", "path", filepath.Join(src, entry.Name()))
+			continue
+		}
+
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
@@ -397,20 +422,25 @@ func copyDir(src, dst string) error {
 	return nil
 }
 
-// copyFile copies a single file
+// copyFile copies a single file. Symlinks are resolved to their content
+// rather than reproduced. [H4]
 func copyFile(src, dst string) error {
-	srcInfo, err := os.Stat(src)
+	// Use Lstat so we can detect symlinks before os.ReadFile follows them.
+	srcInfo, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
 
-	// Handle symlinks
+	// [H4] Resolve symlinks to content instead of reproducing the link.
+	// Re-creating a symlink whose target points outside the workspace would
+	// allow content from arbitrary host paths to land in the memory dir or outputs.
 	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		link, err := os.Readlink(src)
+		data, err := os.ReadFile(src) // follows the symlink to read content
 		if err != nil {
-			return err
+			slog.Warn("workspace: skipping unreadable symlink", "src", src, "error", err)
+			return nil
 		}
-		return os.Symlink(link, dst)
+		return os.WriteFile(dst, data, 0644)
 	}
 
 	data, err := os.ReadFile(src)

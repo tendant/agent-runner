@@ -67,6 +67,7 @@ type Session struct {
 	StartedAt            time.Time         `json:"started_at"`
 	CompletedAt          *time.Time        `json:"completed_at,omitempty"`
 	Error                string            `json:"error,omitempty"`
+	Warnings             []string          `json:"warnings,omitempty"`
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	TotalCostUSD         float64           `json:"total_cost_usd,omitempty"`
@@ -175,6 +176,13 @@ func (s *Session) Fail(err string) {
 	s.notifyUpdate()
 }
 
+// AddWarning appends a non-fatal warning to the session (e.g. memory sync failure).
+func (s *Session) AddWarning(msg string) {
+	s.mu.Lock()
+	s.Warnings = append(s.Warnings, msg)
+	s.mu.Unlock()
+}
+
 // SetWorkspacePath stores the workspace path on the session.
 func (s *Session) SetWorkspacePath(path string) {
 	s.mu.Lock()
@@ -254,6 +262,7 @@ func (s *Session) Snapshot() *Session {
 		StartedAt:           s.StartedAt,
 		CompletedAt:         s.CompletedAt,
 		Error:               s.Error,
+		Warnings:            append([]string{}, s.Warnings...),
 		TotalCostUSD:        s.TotalCostUSD,
 		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
 		CompletedSteps:      append([]string{}, s.CompletedSteps...),
@@ -305,6 +314,9 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if s.Error != "" {
 		resp["error"] = s.Error
+	}
+	if len(s.Warnings) > 0 {
+		resp["warnings"] = s.Warnings
 	}
 	if len(s.Iterations) > 0 {
 		resp["iterations"] = s.Iterations

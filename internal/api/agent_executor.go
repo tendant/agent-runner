@@ -76,24 +76,27 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 	defer func() {
 		metrics.ActiveSessions.WithLabelValues(source).Dec()
-		snap0 := liveSession.Snapshot()
-		metrics.SessionsTotal.WithLabelValues(string(snap0.Status), source).Inc()
+
+		// [L13] Take a single snapshot here; the iteration loop is done so the
+		// session won't change further. Reuse it for metrics, logging, and daily log.
+		snap := liveSession.Snapshot()
+		metrics.SessionsTotal.WithLabelValues(string(snap.Status), source).Inc()
+
 		// Cache repos back for future runs
 		if liveSession.WorkspacePath != "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.RepoCacheRoot)
 		}
 
 		// Write agent audit log
-		snap := liveSession.Snapshot()
 		logData := &logging.AgentLogData{
-			SessionID:    sessionID,
-			Status:       string(snap.Status),
-			Duration:     int(time.Since(startTime).Seconds()),
-			Message:      message,
-			Author:       authorName,
+			SessionID:            sessionID,
+			Status:               string(snap.Status),
+			Duration:             int(time.Since(startTime).Seconds()),
+			Message:              message,
+			Author:               authorName,
 			SuccessfulIterations: snap.SuccessfulIterations,
-			TotalCostUSD: snap.TotalCostUSD,
-			Error:        snap.Error,
+			TotalCostUSD:         snap.TotalCostUSD,
+			Error:                snap.Error,
 		}
 		for _, iter := range snap.Iterations {
 			logData.Iterations = append(logData.Iterations, logging.AgentIterationLog{
@@ -109,7 +112,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			})
 		}
 		logData.PlannerPrompt = plannerPromptText
-		// Include plan/review in audit log
 		if snap.PlanJSON != nil {
 			if data, err := json.Marshal(snap.PlanJSON); err == nil {
 				logData.Plan = string(data)
@@ -126,23 +128,24 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
 
-		// Merge _memory/ write-back files from the agent workspace into the memory dir
+		// Merge _memory/ write-back files from the agent workspace into the memory dir.
+		// [C3] Surface failures as session warnings rather than silently dropping them.
 		if liveSession.WorkspacePath != "" {
 			wsCheckout := filepath.Join(liveSession.WorkspacePath, "workspace")
 			if err := mergeAgentMemory(wsCheckout, h.config.MemoryDir); err != nil {
 				slog.Warn("failed to merge agent memory", "session_id", sessionID, "error", err)
+				liveSession.AddWarning("memory merge failed: " + err.Error())
 			}
 		}
 
 		// Write daily memory log with rich session details
-		snap2 := liveSession.Snapshot()
 		msgPreview := message
 		if len(msgPreview) > 80 {
 			msgPreview = msgPreview[:80] + "..."
 		}
 		var changedFiles []string
 		seen := make(map[string]bool)
-		for _, iter := range snap2.Iterations {
+		for _, iter := range snap.Iterations {
 			for _, f := range iter.ChangedFiles {
 				if !seen[f] {
 					seen[f] = true
@@ -152,13 +155,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 		var logLines []string
 		logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
-			time.Now().Format("15:04"), snap2.Status, snap2.SuccessfulIterations, snap2.TotalCostUSD))
+			time.Now().Format("15:04"), snap.Status, snap.SuccessfulIterations, snap.TotalCostUSD))
 		logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
 		if len(changedFiles) > 0 {
 			logLines = append(logLines, fmt.Sprintf("**Files:** %s", strings.Join(changedFiles, ", ")))
 		}
-		if snap2.Error != "" {
-			errPreview := snap2.Error
+		if snap.Error != "" {
+			errPreview := snap.Error
 			if len(errPreview) > 120 {
 				errPreview = errPreview[:120] + "..."
 			}
@@ -167,19 +170,35 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		dailyEntry := strings.Join(logLines, "\n")
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
+			liveSession.AddWarning("daily log failed: " + err.Error())
 		}
-		if err := tmpl.CommitAndPushMemory(h.config.MemoryDir, tmpl.MemoryGitCreds{
-				Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-				User:   os.Getenv("MEMORY_GIT_USER"),
-				SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-			}); err != nil {
-			slog.Warn("failed to commit memory", "session_id", sessionID, "error", err)
+
+		// [H5] Retry memory push up to 3 times to survive transient network errors.
+		memoryCreds := tmpl.MemoryGitCreds{
+			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+			User:   os.Getenv("MEMORY_GIT_USER"),
+			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+		}
+		var pushErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(2 * time.Second)
+				slog.Info("retrying memory push", "session_id", sessionID, "attempt", attempt+1)
+			}
+			if pushErr = tmpl.CommitAndPushMemory(h.config.MemoryDir, memoryCreds); pushErr == nil {
+				break
+			}
+			slog.Warn("memory push attempt failed", "session_id", sessionID, "attempt", attempt+1, "error", pushErr)
+		}
+		if pushErr != nil {
+			liveSession.AddWarning("memory push failed: " + pushErr.Error())
 		}
 
 		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
-		if liveSession.Status == agent.SessionStatusCompleted {
+		if snap.Status == agent.SessionStatusCompleted {
 			if err := tmpl.CompleteBootstrap(h.config.MemoryDir); err != nil {
 				slog.Warn("bootstrap completion failed", "session_id", sessionID, "error", err)
+				liveSession.AddWarning("bootstrap completion failed: " + err.Error())
 			}
 		}
 
@@ -188,7 +207,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 		// Cleanup workspace after cache-back and logging are done
 		if liveSession.WorkspacePath != "" {
-			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath)
+			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath) //nolint:errcheck
 		}
 	}()
 
@@ -220,13 +239,18 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		return
 	}
 
-	workspacePath, err := h.workspaceManager.PrepareAgentWorkspace(
+	workspacePath, missingRepos, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
 	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return
+	}
+	// [M7] Surface missing shared repos as session warnings so the user knows
+	// the agent ran with an incomplete workspace.
+	for _, repo := range missingRepos {
+		liveSession.AddWarning("shared repo not found in cache: " + repo)
 	}
 	liveSession.SetWorkspacePath(workspacePath)
 	// NOTE: cleanup is done in the top-level defer (after CacheReposBack), not here.
@@ -255,8 +279,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				h.agentManager.FailSession(sessionID, err.Error())
 				return
 			}
-			// Non-permanent planner failure falls through to the agent CLI executor.
+			// [M8] Non-permanent planner failure: fall through to the executor without
+			// a plan, and record a warning so the user knows planning was skipped.
 			slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
+			liveSession.AddWarning("planner failed: " + err.Error())
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
 			liveSession.SetPlanResult(plan)
@@ -461,6 +487,14 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
 			if result.CostUSD > 0 {
 				metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
+			}
+
+			// [M9] Stop corrective iterations if the workspace is broken — further
+			// corrections will fail for the same reason.
+			if result.Status == agent.IterationStatusError {
+				slog.Warn("corrective iteration failed, stopping reviewer loop",
+					"session_id", sessionID, "iteration", iterNum, "error", result.Error)
+				break
 			}
 
 			// Update progress after correction
