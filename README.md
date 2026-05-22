@@ -6,18 +6,40 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
 
 - Go 1.25+
 - At least one supported agent CLI installed and on `$PATH`:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default)
+  - [opencode](https://github.com/sst/opencode) (default — pairs with DeepSeek, Anthropic, or any OpenAI-compatible provider)
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (set `AGENT_CLI=claude`)
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
-  - [opencode](https://github.com/sst/opencode) (set `AGENT_CLI=opencode`)
 - Git configured with credentials for your remote
 
 ## Quick Start
 
 ```bash
 go build -o agent-runner ./cmd/server
-cp .env.example .env   # edit with your settings
+cp .env.example .env   # set at minimum an API key (see below)
 ./agent-runner
 ```
+
+**Minimum config — opencode + DeepSeek** (default, recommended):
+```bash
+DEEPSEEK_API_KEY=sk-...
+AGENT_MODEL=deepseek-v4-flash
+AGENT_REASONING_MODEL=deepseek-v4-pro
+```
+
+**Minimum config — Claude Code** (if already installed and `claude login` done):
+```bash
+AGENT_CLI=claude
+# No API key needed — claude manages its own credentials
+```
+
+For git operations against a self-hosted server:
+```bash
+GIT_HOST=git.example.com
+GIT_ORG=myorg
+GIT_TOKEN=your-personal-access-token   # or GIT_SSH_KEY=/path/to/key for SSH
+```
+
+> **Tip:** If you have a bot connected (Telegram, Stream), you can configure everything without SSH using `/set KEY VALUE` — e.g. `/set DEEPSEEK_API_KEY sk-...`. Changes persist to `.env.local` and take effect immediately.
 
 ## Docker
 
@@ -27,7 +49,9 @@ The image runs as a non-root `app` user (uid/gid `1000:1000` by default). Mount 
 docker run -d \
   -v agent-data:/data \
   -e DATA_DIR=/data \
-  -e ANTHROPIC_API_KEY=sk-... \
+  -e DEEPSEEK_API_KEY=sk-... \
+  -e AGENT_MODEL=deepseek-v4-flash \
+  -e AGENT_REASONING_MODEL=deepseek-v4-pro \
   -p 8080:8080 \
   agent-runner
 ```
@@ -50,7 +74,7 @@ Key variables:
 |----------|---------|-------------|
 | `API_BIND` | `127.0.0.1:8080` | API listen address |
 | `API_KEY` | | Authentication key (optional) |
-| `AGENT_CLI` | `claude` | Agent CLI backend (`claude`, `codex`, or `opencode`) |
+| `AGENT_CLI` | `opencode` | Agent CLI backend (`opencode`, `claude`, or `codex`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
 | `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
 | `AGENT_SHARED_REPOS` | | Comma-separated repos pre-populated in every workspace |
