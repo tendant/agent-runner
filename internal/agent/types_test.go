@@ -141,3 +141,67 @@ func TestToResponse_OmitsEmptyCompletedSteps(t *testing.T) {
 		t.Error("expected completed_steps to be omitted when empty")
 	}
 }
+
+// [C3/M7/M8] Warnings field tests
+
+func TestAddWarning_AppendsWarnings(t *testing.T) {
+	s := &Session{ID: "warn-1", StartedAt: time.Now()}
+	s.AddWarning("first warning")
+	s.AddWarning("second warning")
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.Warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d", len(s.Warnings))
+	}
+	if s.Warnings[0] != "first warning" || s.Warnings[1] != "second warning" {
+		t.Errorf("unexpected warnings: %v", s.Warnings)
+	}
+}
+
+func TestSnapshot_IncludesWarnings(t *testing.T) {
+	s := &Session{ID: "warn-2", StartedAt: time.Now(), Status: SessionStatusRunning}
+	s.AddWarning("memory push failed: timeout")
+
+	snap := s.Snapshot()
+	if len(snap.Warnings) != 1 || snap.Warnings[0] != "memory push failed: timeout" {
+		t.Errorf("expected 1 warning in snapshot, got %v", snap.Warnings)
+	}
+
+	// Deep copy: mutating original must not affect the snapshot.
+	s.AddWarning("another warning")
+	if len(snap.Warnings) != 1 {
+		t.Error("snapshot warnings were mutated after adding to original")
+	}
+}
+
+func TestToResponse_IncludesWarnings(t *testing.T) {
+	s := &Session{
+		ID:        "warn-3",
+		StartedAt: time.Now(),
+		Status:    SessionStatusCompleted,
+		Warnings:  []string{"shared repo not found in cache: myrepo"},
+	}
+
+	resp := s.ToResponse()
+	warnings, ok := resp["warnings"].([]string)
+	if !ok {
+		t.Fatal("expected warnings key in response")
+	}
+	if len(warnings) != 1 || warnings[0] != "shared repo not found in cache: myrepo" {
+		t.Errorf("unexpected warnings in response: %v", warnings)
+	}
+}
+
+func TestToResponse_OmitsEmptyWarnings(t *testing.T) {
+	s := &Session{
+		ID:        "warn-4",
+		StartedAt: time.Now(),
+		Status:    SessionStatusCompleted,
+	}
+
+	resp := s.ToResponse()
+	if _, ok := resp["warnings"]; ok {
+		t.Error("expected warnings to be omitted when empty")
+	}
+}

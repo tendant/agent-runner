@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInjectToken(t *testing.T) {
@@ -180,5 +181,74 @@ func TestPullMemory_DivergedLocal(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(repoA, name)); err != nil {
 			t.Errorf("expected %s to exist after pull --rebase: %v", name, err)
 		}
+	}
+}
+
+// [H6] When pull --rebase fails and rebase --abort also fails (e.g. no rebase
+// in progress because the remote was unreachable), pushMemory must return a
+// combined error that mentions both failure reasons and the manual recovery hint.
+func TestPushMemory_SurfacesBothErrors_WhenRebaseAbortFails(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+
+	// Build a minimal local repo with a commit but a bad remote so that:
+	//   push → fails (unreachable)
+	//   pull --rebase → fails (unreachable, no rebase starts)
+	//   rebase --abort → fails ("no rebase in progress")
+	// → H6 combined error path is triggered.
+	badRemote := "https://127.0.0.1:1/nonexistent.git"
+	gitCmds := [][]string{
+		{"init"},
+		{"config", "user.email", "test@local"},
+		{"config", "user.name", "Test"},
+		{"remote", "add", "origin", badRemote},
+	}
+	for _, args := range gitCmds {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "init"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	// pushMemory has no timeout knob; wrap in a channel to bound test time.
+	type result struct{ err error }
+	ch := make(chan result, 1)
+	go func() {
+		ch <- result{pushMemory(dir, nil, badRemote, "")}
+	}()
+
+	var err error
+	select {
+	case r := <-ch:
+		err = r.err
+	case <-time.After(30 * time.Second):
+		t.Fatal("pushMemory took longer than 30 s — bad remote did not fail fast")
+	}
+
+	if err == nil {
+		t.Fatal("expected error from pushMemory with unreachable remote")
+	}
+
+	// H6: combined error must mention the rebase --abort failure and recovery hint.
+	msg := err.Error()
+	if !strings.Contains(msg, "rebase --abort also failed") {
+		t.Errorf("expected combined error mentioning rebase --abort failure, got: %q", msg)
+	}
+	if !strings.Contains(msg, "git rebase --abort") {
+		t.Errorf("expected manual recovery hint in error, got: %q", msg)
 	}
 }
