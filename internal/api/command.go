@@ -493,14 +493,14 @@ func (c *Commander) handleMigrate() (reply, sessionID string) {
 	var found []string
 	for _, name := range migrateFiles {
 		if _, err := os.Stat(filepath.Join(memDir, name)); err == nil {
-			found = append(found, "memory/"+name)
+			found = append(found, filepath.Join(memDir, name))
 		}
 	}
 	if len(found) == 0 {
 		return "nothing to migrate: no old memory files found", ""
 	}
 
-	task := migrationTask(found)
+	task := migrationTask(memDir, found)
 	startFn := c.startAgentFn
 	if startFn == nil {
 		startFn = c.agentStarter().StartAgent
@@ -513,27 +513,31 @@ func (c *Commander) handleMigrate() (reply, sessionID string) {
 }
 
 // migrationTask builds the task message for the migration agent session.
-func migrationTask(files []string) string {
+// memDir and files are absolute paths.
+func migrationTask(memDir string, files []string) string {
 	return `Migrate old memory files to the new format.
 
+Memory directory: ` + memDir + `
+
 The following files were found and need to be migrated:
-` + "  - " + strings.Join(files, "\n  - ") + `
+  - ` + strings.Join(files, "\n  - ") + `
 
 Migration rules:
-- memory/MEMORY.md → split by section headers into per-topic files:
-    "## User Preferences"  → memory/user_preferences.md
-    "## Project Context"   → memory/project_summary.md
-    "## Lessons Learned"   → memory/decisions.md
-    "## Recurring Patterns"→ memory/workflows.md
+- ` + filepath.Join(memDir, "MEMORY.md") + ` → split by section headers into per-topic files in ` + memDir + `:
+    "## User Preferences"   → user_preferences.md
+    "## Project Context"    → project_summary.md
+    "## Lessons Learned"    → decisions.md
+    "## Recurring Patterns" → workflows.md
   If a section is missing, skip that target file.
-- memory/USER.md → append content to memory/user_preferences.md (skip if empty template)
-- memory/IDENTITY.md → append content to memory/agent.md if agent.md already exists; otherwise skip
-- memory/SOUL.md → same as IDENTITY.md
+- ` + filepath.Join(memDir, "USER.md") + ` → append to ` + filepath.Join(memDir, "user_preferences.md") + ` (skip if empty template)
+- ` + filepath.Join(memDir, "IDENTITY.md") + ` → append to ` + filepath.Join(memDir, "agent.md") + ` if it exists; otherwise skip
+- ` + filepath.Join(memDir, "SOUL.md") + ` → same as IDENTITY.md
 
 Rules for all files:
+- Only process files listed above that actually exist.
 - Do not overwrite a target file that already has meaningful content — append instead.
 - After migrating a source file, rename it to <name>.migrated (e.g. MEMORY.md → MEMORY.md.migrated).
-- Skip any source file that is empty or contains only the default template placeholder text.
+- Skip any source file that is empty or contains only default template placeholder text.
 
 Report a summary of what was migrated.`
 }
