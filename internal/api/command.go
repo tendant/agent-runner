@@ -26,10 +26,11 @@ const (
 // Commander handles chat configuration commands. Zero LLM dependencies —
 // safe to call before any model or provider is configured.
 type Commander struct {
-	cfg        *config.Config
-	handlers   *Handlers
-	authMu     sync.Mutex   // guards against concurrent /auth flows
-	authCancel func()       // non-nil while an auth flow is running
+	cfg          *config.Config
+	handlers     *Handlers
+	authMu       sync.Mutex // guards against concurrent /auth flows
+	authCancel   func()     // non-nil while an auth flow is running
+	startAgentFn func(message, source string) (string, error) // nil = use AgentStarterAdapter
 }
 
 // NewCommander creates a Commander backed by the given config and handlers.
@@ -72,6 +73,8 @@ func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
 		return c.handleBootstrap(force), true
+	case lower == "/migrate":
+		return c.handleMigrate(), true
 	case lower == "/install-cli" || strings.HasPrefix(lower, "/install-cli "):
 		arg := strings.TrimSpace(text[len("/install-cli"):])
 		return c.handleInstallCLI(arg), true
@@ -428,6 +431,66 @@ func (c *Commander) handleBootstrap(force bool) string {
 		b.WriteString("ready=false")
 	}
 	return b.String()
+}
+
+// migrateFiles are old template-system files that should be migrated to the new format.
+var migrateFiles = []string{"MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"}
+
+// handleMigrate starts an agent session that migrates old memory files to the new format.
+func (c *Commander) handleMigrate() string {
+	memDir := c.cfg.MemoryDir
+
+	var found []string
+	for _, name := range migrateFiles {
+		if _, err := os.Stat(filepath.Join(memDir, name)); err == nil {
+			found = append(found, "memory/"+name)
+		}
+	}
+	if len(found) == 0 {
+		return "nothing to migrate: no old memory files found"
+	}
+
+	task := migrationTask(found)
+	startFn := c.startAgentFn
+	if startFn == nil {
+		startFn = c.agentStarter().StartAgent
+	}
+	sid, err := startFn(task, "migrate")
+	if err != nil {
+		return "error starting migration: " + err.Error()
+	}
+	return fmt.Sprintf("migration started — session %s\n\nFiles: %s", sid, strings.Join(found, ", "))
+}
+
+// migrationTask builds the task message for the migration agent session.
+func migrationTask(files []string) string {
+	return `Migrate old memory files to the new format.
+
+The following files were found and need to be migrated:
+` + "  - " + strings.Join(files, "\n  - ") + `
+
+Migration rules:
+- memory/MEMORY.md → split by section headers into per-topic files:
+    "## User Preferences"  → memory/user_preferences.md
+    "## Project Context"   → memory/project_summary.md
+    "## Lessons Learned"   → memory/decisions.md
+    "## Recurring Patterns"→ memory/workflows.md
+  If a section is missing, skip that target file.
+- memory/USER.md → append content to memory/user_preferences.md (skip if empty template)
+- memory/IDENTITY.md → append content to memory/agent.md if agent.md already exists; otherwise skip
+- memory/SOUL.md → same as IDENTITY.md
+
+Rules for all files:
+- Do not overwrite a target file that already has meaningful content — append instead.
+- After migrating a source file, rename it to <name>.migrated (e.g. MEMORY.md → MEMORY.md.migrated).
+- Skip any source file that is empty or contains only the default template placeholder text.
+
+Report a summary of what was migrated.`
+}
+
+// agentStarter returns an AgentStarterAdapter for starting agent sessions.
+func (c *Commander) agentStarter() *AgentStarterAdapter {
+	return NewAgentStarterAdapter(c.handlers)
 }
 
 // handleMemory dispatches /memory subcommands.
@@ -887,6 +950,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files
+**/migrate** — start an agent session to migrate old memory files (MEMORY.md, USER.md, etc.) to the new format
 
 **/auth** _[cli]_ — start OAuth login flow via chat (claude or codex)
 **/auth cancel** — stop an in-progress auth flow

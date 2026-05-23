@@ -388,6 +388,53 @@ func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 	}
 }
 
+// --- /migrate ---
+
+func TestCommander_Migrate_NothingToMigrate(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, handled := c.Handle("/migrate", nil)
+	if !handled {
+		t.Fatal("expected /migrate to be handled")
+	}
+	if !strings.Contains(reply, "nothing to migrate") {
+		t.Errorf("expected 'nothing to migrate', got: %s", reply)
+	}
+}
+
+func TestCommander_Migrate_StartsSessionWhenFilesExist(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	// Inject a mock to avoid triggering real agent execution.
+	var capturedTask string
+	c.startAgentFn = func(msg, _ string) (string, error) {
+		capturedTask = msg
+		return "test-session-id", nil
+	}
+
+	memDir := env.handlers.config.MemoryDir
+	os.MkdirAll(memDir, 0755)
+	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("## User Preferences\n- prefers Go"), 0644)
+
+	reply, handled := c.Handle("/migrate", nil)
+	if !handled {
+		t.Fatal("expected /migrate to be handled")
+	}
+	if !strings.Contains(reply, "migration started") {
+		t.Errorf("expected 'migration started', got: %s", reply)
+	}
+	if !strings.Contains(reply, "MEMORY.md") {
+		t.Errorf("expected MEMORY.md in reply, got: %s", reply)
+	}
+	if !strings.Contains(capturedTask, "MEMORY.md") {
+		t.Errorf("expected MEMORY.md in task message, got: %s", capturedTask)
+	}
+}
+
 // --- parseSetArgs ---
 
 func TestParseSetArgs_SpaceSyntax(t *testing.T) {
