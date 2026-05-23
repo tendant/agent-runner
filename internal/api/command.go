@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -489,6 +490,18 @@ var migrateFiles = []string{"MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"}
 // Returns a human-readable reply and the started session ID (empty on error or nothing to migrate).
 func (c *Commander) handleMigrate() (reply, sessionID string) {
 	memDir := c.cfg.MemoryDir
+
+	// Pull memory from git first so old files are present before scanning.
+	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
+		creds := tmpl.MemoryGitCreds{
+			User:   os.Getenv("MEMORY_GIT_USER"),
+			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+		}
+		if _, err := tmpl.PullMemory(memDir, creds); err != nil {
+			slog.Warn("memory pull before migrate failed (non-fatal)", "error", err)
+		}
+	}
 
 	var found []string
 	for _, name := range migrateFiles {
