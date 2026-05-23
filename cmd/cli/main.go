@@ -50,31 +50,57 @@ func checkServer(baseURL, apiKey string) bool {
 }
 
 func repl(baseURL, apiKey string) {
-	scanner := bufio.NewScanner(os.Stdin)
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("> ")
-		var lines []string
-		for {
-			if !scanner.Scan() {
-				fmt.Println()
-				return
-			}
-			text := scanner.Text()
-			if text == "" {
-				break // blank line = send
-			}
-			lines = append(lines, text)
-			fmt.Print("  ")
+
+		first, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println()
+			return
 		}
-		if len(lines) == 0 {
+		first = strings.TrimRight(first, "\r\n")
+		if first == "" {
 			continue
 		}
+		if strings.TrimSpace(first) == "/quit" {
+			return
+		}
+
+		lines := []string{first}
+
+		if reader.Buffered() > 0 {
+			// Data already buffered — this was a paste. Drain it all.
+			for reader.Buffered() > 0 {
+				line, err := reader.ReadString('\n')
+				line = strings.TrimRight(line, "\r\n")
+				if line != "" {
+					lines = append(lines, line)
+				}
+				if err != nil {
+					break
+				}
+			}
+		} else {
+			// Manual entry: collect more lines until blank Enter.
+			fmt.Print("  ")
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				line = strings.TrimRight(line, "\r\n")
+				if line == "" {
+					break
+				}
+				lines = append(lines, line)
+				fmt.Print("  ")
+			}
+		}
+
 		line := strings.TrimSpace(strings.Join(lines, "\n"))
 		if line == "" {
 			continue
-		}
-		if line == "/quit" {
-			return
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -90,12 +116,12 @@ func repl(baseURL, apiKey string) {
 			}
 		}()
 
-		err := startAndPoll(ctx, baseURL, apiKey, line)
+		pollErr := startAndPoll(ctx, baseURL, apiKey, line)
 		cancel()
 		signal.Stop(sigCh)
 
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if pollErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", pollErr)
 		}
 		fmt.Println()
 	}
