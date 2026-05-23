@@ -31,7 +31,6 @@ type Commander struct {
 	handlers     *Handlers
 	authMu       sync.Mutex // guards against concurrent /auth flows
 	authCancel   func()     // non-nil while an auth flow is running
-	startAgentFn func(message, source string) (string, error) // nil = use AgentStarterAdapter
 }
 
 // NewCommander creates a Commander backed by the given config and handlers.
@@ -486,8 +485,16 @@ func (c *Commander) handleBootstrap(force bool) string {
 // migrateFiles are old template-system files that should be migrated to the new format.
 var migrateFiles = []string{"MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"}
 
-// handleMigrate starts an agent session that migrates old memory files to the new format.
-// Returns a human-readable reply and the started session ID (empty on error or nothing to migrate).
+// memorySectionTargets maps MEMORY.md section headers to target filenames.
+var memorySectionTargets = map[string]string{
+	"User Preferences":   "user_preferences.md",
+	"Project Context":    "project_summary.md",
+	"Lessons Learned":    "decisions.md",
+	"Recurring Patterns": "workflows.md",
+}
+
+// handleMigrate migrates old memory files to the new per-topic format in Go.
+// Returns a human-readable reply and an empty session ID (runs synchronously).
 func (c *Commander) handleMigrate() (reply, sessionID string) {
 	memDir := c.cfg.MemoryDir
 
@@ -503,56 +510,136 @@ func (c *Commander) handleMigrate() (reply, sessionID string) {
 		}
 	}
 
-	var found []string
-	for _, name := range migrateFiles {
-		if _, err := os.Stat(filepath.Join(memDir, name)); err == nil {
-			found = append(found, filepath.Join(memDir, name))
+	var migrated []string
+	var errs []string
+
+	// MEMORY.md → split by ## section headers
+	if data, err := os.ReadFile(filepath.Join(memDir, "MEMORY.md")); err == nil {
+		sections := splitMemorySections(string(data))
+		wrote := false
+		for header, content := range sections {
+			target, ok := memorySectionTargets[header]
+			if !ok || strings.TrimSpace(content) == "" {
+				continue
+			}
+			if err := appendToMemoryFile(memDir, target, content); err != nil {
+				errs = append(errs, "MEMORY.md/"+header+": "+err.Error())
+			} else {
+				wrote = true
+			}
+		}
+		if wrote {
+			os.Rename(filepath.Join(memDir, "MEMORY.md"), filepath.Join(memDir, "MEMORY.md.migrated"))
+			migrated = append(migrated, "MEMORY.md")
 		}
 	}
-	if len(found) == 0 {
+
+	// USER.md → user_preferences.md
+	if data, err := os.ReadFile(filepath.Join(memDir, "USER.md")); err == nil {
+		if content := strings.TrimSpace(string(data)); content != "" && !isTemplatePlaceholder(content) {
+			if err := appendToMemoryFile(memDir, "user_preferences.md", content); err != nil {
+				errs = append(errs, "USER.md: "+err.Error())
+			} else {
+				os.Rename(filepath.Join(memDir, "USER.md"), filepath.Join(memDir, "USER.md.migrated"))
+				migrated = append(migrated, "USER.md")
+			}
+		}
+	}
+
+	// IDENTITY.md + SOUL.md → agent.md (only if agent.md already exists)
+	agentMDPath := filepath.Join(memDir, "agent.md")
+	if _, err := os.Stat(agentMDPath); err == nil {
+		for _, name := range []string{"IDENTITY.md", "SOUL.md"} {
+			if data, err := os.ReadFile(filepath.Join(memDir, name)); err == nil {
+				if content := strings.TrimSpace(string(data)); content != "" && !isTemplatePlaceholder(content) {
+					if err := appendToMemoryFile(memDir, "agent.md", content); err != nil {
+						errs = append(errs, name+": "+err.Error())
+					} else {
+						os.Rename(filepath.Join(memDir, name), filepath.Join(memDir, name+".migrated"))
+						migrated = append(migrated, name)
+					}
+				}
+			}
+		}
+	}
+
+	if len(migrated) == 0 && len(errs) == 0 {
 		return "nothing to migrate: no old memory files found", ""
 	}
 
-	task := migrationTask(memDir, found)
-	startFn := c.startAgentFn
-	if startFn == nil {
-		startFn = c.agentStarter().StartAgent
+	// Push migrated files to git if configured.
+	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
+		creds := tmpl.MemoryGitCreds{
+			User:   os.Getenv("MEMORY_GIT_USER"),
+			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+		}
+		if err := tmpl.CommitAndPushMemory(memDir, creds); err != nil {
+			errs = append(errs, "git push: "+err.Error())
+		}
 	}
-	sid, err := startFn(task, "migrate")
-	if err != nil {
-		return "error starting migration: " + err.Error(), ""
+
+	var b strings.Builder
+	if len(migrated) > 0 {
+		b.WriteString("migrated: " + strings.Join(migrated, ", "))
 	}
-	return fmt.Sprintf("migrating %s", strings.Join(found, ", ")), sid
+	if len(errs) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\nerrors: ")
+		} else {
+			b.WriteString("errors: ")
+		}
+		b.WriteString(strings.Join(errs, "; "))
+	}
+	return b.String(), ""
 }
 
-// migrationTask builds the task message for the migration agent session.
-// memDir and files are absolute paths.
-func migrationTask(memDir string, files []string) string {
-	return `Migrate old memory files to the new format.
+// splitMemorySections parses MEMORY.md content into a map of section header → body text.
+func splitMemorySections(content string) map[string]string {
+	sections := map[string]string{}
+	var currentHeader string
+	var currentLines []string
 
-Memory directory: ` + memDir + `
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			if currentHeader != "" {
+				sections[currentHeader] = strings.TrimSpace(strings.Join(currentLines, "\n"))
+			}
+			currentHeader = strings.TrimSpace(line[3:])
+			currentLines = nil
+		} else {
+			currentLines = append(currentLines, line)
+		}
+	}
+	if currentHeader != "" {
+		sections[currentHeader] = strings.TrimSpace(strings.Join(currentLines, "\n"))
+	}
+	return sections
+}
 
-The following files were found and need to be migrated:
-  - ` + strings.Join(files, "\n  - ") + `
+// appendToMemoryFile appends content to a file in memDir, creating it if needed.
+func appendToMemoryFile(memDir, name, content string) error {
+	path := filepath.Join(memDir, name)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Add a separator if the file already has content.
+	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
+		f.WriteString("\n\n")
+	}
+	_, err = f.WriteString(content + "\n")
+	return err
+}
 
-Migration rules:
-- ` + filepath.Join(memDir, "MEMORY.md") + ` → split by section headers into per-topic files in ` + memDir + `:
-    "## User Preferences"   → user_preferences.md
-    "## Project Context"    → project_summary.md
-    "## Lessons Learned"    → decisions.md
-    "## Recurring Patterns" → workflows.md
-  If a section is missing, skip that target file.
-- ` + filepath.Join(memDir, "USER.md") + ` → append to ` + filepath.Join(memDir, "user_preferences.md") + ` (skip if empty template)
-- ` + filepath.Join(memDir, "IDENTITY.md") + ` → append to ` + filepath.Join(memDir, "agent.md") + ` if it exists; otherwise skip
-- ` + filepath.Join(memDir, "SOUL.md") + ` → same as IDENTITY.md
-
-Rules for all files:
-- Only process files listed above that actually exist.
-- Do not overwrite a target file that already has meaningful content — append instead.
-- After migrating a source file, rename it to <name>.migrated (e.g. MEMORY.md → MEMORY.md.migrated).
-- Skip any source file that is empty or contains only default template placeholder text.
-
-Report a summary of what was migrated.`
+// isTemplatePlaceholder returns true if the content looks like an unfilled template stub.
+func isTemplatePlaceholder(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "<!-- fill in") ||
+		strings.Contains(lower, "your preferences here") ||
+		strings.Contains(lower, "add your") ||
+		(len(content) < 60 && strings.Contains(lower, "todo"))
 }
 
 // agentStarter returns an AgentStarterAdapter for starting agent sessions.
