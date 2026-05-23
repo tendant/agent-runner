@@ -46,10 +46,15 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	// Handle configuration commands synchronously — return reply directly so the
 	// client doesn't need to poll and doesn't see spurious "iteration 1" output.
 	if h.commander != nil {
-		if reply, ok := h.commander.Handle(req.Message, nil); ok {
-			h.writeJSON(w, http.StatusOK, map[string]any{
-				"reply": reply,
-			})
+		if reply, sessionID, ok := h.commander.Handle(req.Message, nil); ok {
+			if sessionID != "" {
+				h.writeJSON(w, http.StatusAccepted, map[string]any{
+					"session_id": sessionID,
+					"status":     "queued",
+				})
+			} else {
+				h.writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
+			}
 			return
 		}
 	}

@@ -28,7 +28,7 @@ type AgentStarter interface {
 // Commander handles chat configuration commands without requiring an LLM.
 // send is an optional callback for async messages (e.g. /auth URL relay).
 type Commander interface {
-	Handle(text string, send func(string)) (string, bool)
+	Handle(text string, send func(string)) (string, string, bool)
 }
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
@@ -148,7 +148,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
 		asyncSend := func(msg string) { b.send(tgChatID, msg) }
-		if reply, ok := b.commander.Handle(content, asyncSend); ok {
+		if reply, _, ok := b.commander.Handle(content, asyncSend); ok {
 			b.send(tgChatID, reply)
 			return
 		}

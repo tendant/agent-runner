@@ -28,7 +28,7 @@ type AgentStarter interface {
 // Commander handles chat configuration commands without requiring an LLM.
 // send is an optional callback for async messages (e.g. /auth URL relay).
 type Commander interface {
-	Handle(text string, send func(string)) (string, bool)
+	Handle(text string, send func(string)) (string, string, bool)
 }
 
 // Bot bridges agent-stream conversations to the agent runner.
@@ -449,7 +449,7 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
 		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
-		if reply, ok := b.commander.Handle(text, asyncSend); ok {
+		if reply, _, ok := b.commander.Handle(text, asyncSend); ok {
 			b.emitFinal(ctx, convID, reply)
 			return
 		}

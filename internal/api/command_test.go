@@ -27,7 +27,7 @@ func TestCommander_Handle_UnknownInput(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	_, handled := c.Handle("hello world", nil)
+	_, _, handled := c.Handle("hello world", nil)
 	if handled {
 		t.Error("expected unrecognised input to return handled=false")
 	}
@@ -39,7 +39,7 @@ func TestCommander_Handle_BareCommandNormalization(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	for _, bare := range []string{"help", "Help", "HELP", "config", "bootstrap"} {
-		reply, handled := c.Handle(bare, nil)
+		reply, _, handled := c.Handle(bare, nil)
 		if !handled {
 			t.Errorf("bare command %q should be handled", bare)
 		}
@@ -54,7 +54,7 @@ func TestCommander_Handle_MultiWordRequiresSlash(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// "set" alone should NOT be handled (multi-word command, needs slash)
-	_, handled := c.Handle("set AGENT_MODEL foo", nil)
+	_, _, handled := c.Handle("set AGENT_MODEL foo", nil)
 	if handled {
 		t.Error("'set' without slash should not be handled")
 	}
@@ -66,7 +66,7 @@ func TestCommander_Help(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/help", nil)
+	reply, _, handled := c.Handle("/help", nil)
 	if !handled {
 		t.Fatal("expected /help to be handled")
 	}
@@ -83,7 +83,7 @@ func TestCommander_Config_ShowsCLIDefault(t *testing.T) {
 	env.handlers.config.Agent.CLI = ""
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "opencode") {
 		t.Errorf("expected opencode in config when CLI is empty, got:\n%s", reply)
 	}
@@ -95,7 +95,7 @@ func TestCommander_Config_ShowsSetAPIKey(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "DEEPSEEK_API_KEY") || !strings.Contains(reply, "set") {
 		t.Errorf("expected DEEPSEEK_API_KEY: set when key is set, got:\n%s", reply)
 	}
@@ -107,7 +107,7 @@ func TestCommander_Config_OmitsUnsetAPIKey(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 	if strings.Contains(reply, "DEEPSEEK_API_KEY") {
 		t.Errorf("unset API key should be omitted, got:\n%s", reply)
 	}
@@ -118,7 +118,7 @@ func TestCommander_Config_FileStateMissing(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "missing") {
 		t.Errorf("expected agent.md missing, got:\n%s", reply)
 	}
@@ -138,7 +138,7 @@ func TestCommander_Config_FileStateExists(t *testing.T) {
 	os.WriteFile(filepath.Join(cwd, "memory", "prompt.md"), []byte("test"), 0644)
 
 	c := NewCommander(env.handlers.config, env.handlers)
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 
 	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "exists") {
 		t.Errorf("expected agent.md exists, got:\n%s", reply)
@@ -159,7 +159,7 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	env.handlers.config.Agent.Provider = ""
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/config", nil)
+	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "ready") || strings.Contains(reply, "✓") {
 		t.Errorf("expected ready ✗ when no API key, got:\n%s", reply)
 	}
@@ -172,7 +172,7 @@ func TestCommander_Set_InvalidFormat(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// "/set KEY" with no value — handled but returns usage error
-	reply, handled := c.Handle("/set ONLYKEY", nil)
+	reply, _, handled := c.Handle("/set ONLYKEY", nil)
 	if !handled {
 		t.Fatal("expected /set ONLYKEY to be handled")
 	}
@@ -186,7 +186,7 @@ func TestCommander_Set_SpaceSyntax(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set AGENT_CLI claude", nil)
+	reply, _, _ := c.Handle("/set AGENT_CLI claude", nil)
 	if reply != "ok AGENT_CLI=claude" {
 		t.Errorf("expected 'ok AGENT_CLI=claude', got: %s", reply)
 	}
@@ -197,7 +197,7 @@ func TestCommander_Set_EqualsSyntax(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set AGENT_CLI=codex", nil)
+	reply, _, _ := c.Handle("/set AGENT_CLI=codex", nil)
 	if reply != "ok AGENT_CLI=codex" {
 		t.Errorf("expected 'ok AGENT_CLI=codex', got: %s", reply)
 	}
@@ -209,7 +209,7 @@ func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	for _, key := range []string{"DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "MY_SECRET", "DB_PASSWORD"} {
-		reply, _ := c.Handle("/set " + key + " super-secret-value", nil)
+		reply, _, _ := c.Handle("/set " + key + " super-secret-value", nil)
 		if reply != "ok "+key {
 			t.Errorf("sensitive key %s: expected 'ok %s', got: %s", key, key, reply)
 		}
@@ -280,7 +280,7 @@ func TestCommander_Bootstrap_CreatesFiles(t *testing.T) {
 	env.handlers.config.Agent.Provider = "deepseek"
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/bootstrap", nil)
+	reply, _, handled := c.Handle("/bootstrap", nil)
 	if !handled {
 		t.Fatal("expected /bootstrap to be handled")
 	}
@@ -306,7 +306,7 @@ func TestCommander_Bootstrap_SkipsExisting(t *testing.T) {
 	// Create first
 	c.Handle("/bootstrap", nil)
 	// Run again without force
-	reply, _ := c.Handle("/bootstrap", nil)
+	reply, _, _ := c.Handle("/bootstrap", nil)
 
 	if !strings.Contains(reply, "skipped") || !strings.Contains(reply, "agent.md") {
 		t.Errorf("expected 'skipped agent.md', got:\n%s", reply)
@@ -325,7 +325,7 @@ func TestCommander_Bootstrap_ForceOverwrites(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	c.Handle("/bootstrap", nil)
-	reply, _ := c.Handle("/bootstrap force", nil)
+	reply, _, _ := c.Handle("/bootstrap force", nil)
 
 	if !strings.Contains(reply, "created") || !strings.Contains(reply, "agent.md") {
 		t.Errorf("expected 'created agent.md' with force, got:\n%s", reply)
@@ -339,7 +339,7 @@ func TestCommander_SetAgent_EmptyContent(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/set-agent", nil)
+	reply, _, handled := c.Handle("/set-agent", nil)
 	if !handled {
 		t.Fatal("expected /set-agent to be handled")
 	}
@@ -353,7 +353,7 @@ func TestCommander_SetAgent_WritesFile(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set-agent you are a helpful agent", nil)
+	reply, _, _ := c.Handle("/set-agent you are a helpful agent", nil)
 	if !strings.Contains(reply, "ok wrote agent.md") {
 		t.Errorf("expected 'ok wrote agent.md', got: %s", reply)
 	}
@@ -373,7 +373,7 @@ func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/set-prompt do the task step by step", nil)
+	reply, _, _ := c.Handle("/set-prompt do the task step by step", nil)
 	if !strings.Contains(reply, "ok wrote prompt.md") {
 		t.Errorf("expected 'ok wrote prompt.md', got: %s", reply)
 	}
@@ -395,7 +395,7 @@ func TestCommander_Migrate_NothingToMigrate(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/migrate", nil)
+	reply, _, handled := c.Handle("/migrate", nil)
 	if !handled {
 		t.Fatal("expected /migrate to be handled")
 	}
@@ -420,12 +420,12 @@ func TestCommander_Migrate_StartsSessionWhenFilesExist(t *testing.T) {
 	os.MkdirAll(memDir, 0755)
 	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("## User Preferences\n- prefers Go"), 0644)
 
-	reply, handled := c.Handle("/migrate", nil)
+	reply, _, handled := c.Handle("/migrate", nil)
 	if !handled {
 		t.Fatal("expected /migrate to be handled")
 	}
-	if !strings.Contains(reply, "migration started") {
-		t.Errorf("expected 'migration started', got: %s", reply)
+	if !strings.Contains(reply, "migrating") {
+		t.Errorf("expected migrating, got: %s", reply)
 	}
 	if !strings.Contains(reply, "MEMORY.md") {
 		t.Errorf("expected MEMORY.md in reply, got: %s", reply)
@@ -513,7 +513,7 @@ func newMemoryCommander(t *testing.T) (*Commander, string) {
 
 func TestCommander_Memory_NoSubcommand_ShowsStatus(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory", nil)
+	reply, _, handled := c.Handle("/memory", nil)
 	if !handled {
 		t.Fatal("expected /memory to be handled")
 	}
@@ -524,7 +524,7 @@ func TestCommander_Memory_NoSubcommand_ShowsStatus(t *testing.T) {
 
 func TestCommander_Memory_Status(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory status", nil)
+	reply, _, handled := c.Handle("/memory status", nil)
 	if !handled {
 		t.Fatal("expected /memory status to be handled")
 	}
@@ -535,7 +535,7 @@ func TestCommander_Memory_Status(t *testing.T) {
 
 func TestCommander_Memory_Git_MissingRemote(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory git", nil)
+	reply, _, handled := c.Handle("/memory git", nil)
 	if !handled {
 		t.Fatal("expected /memory git to be handled")
 	}
@@ -546,7 +546,7 @@ func TestCommander_Memory_Git_MissingRemote(t *testing.T) {
 
 func TestCommander_Memory_Git_InitialisesRepo(t *testing.T) {
 	c, memDir := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory git file:///"+t.TempDir(), nil)
+	reply, _, handled := c.Handle("/memory git file:///"+t.TempDir(), nil)
 	if !handled {
 		t.Fatal("expected /memory git to be handled")
 	}
@@ -563,7 +563,7 @@ func TestCommander_Memory_Git_SameRemote_NoOp(t *testing.T) {
 	c, _ := newMemoryCommander(t)
 	remote := "file:///" + t.TempDir()
 	c.Handle("/memory git "+remote, nil) // first call: init
-	reply, _ := c.Handle("/memory git "+remote, nil) // second call: same remote
+	reply, _, _ := c.Handle("/memory git "+remote, nil) // second call: same remote
 	if !strings.Contains(reply, "already configured") {
 		t.Errorf("expected 'already configured', got: %s", reply)
 	}
@@ -574,7 +574,7 @@ func TestCommander_Memory_Git_UpdatesRemote(t *testing.T) {
 	remote1 := "file:///" + t.TempDir()
 	remote2 := "file:///" + t.TempDir()
 	c.Handle("/memory git "+remote1, nil)
-	reply, _ := c.Handle("/memory git "+remote2, nil)
+	reply, _, _ := c.Handle("/memory git "+remote2, nil)
 	if !strings.Contains(reply, "remote updated") {
 		t.Errorf("expected 'remote updated', got: %s", reply)
 	}
@@ -582,7 +582,7 @@ func TestCommander_Memory_Git_UpdatesRemote(t *testing.T) {
 
 func TestCommander_Memory_Keygen(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory keygen", nil)
+	reply, _, handled := c.Handle("/memory keygen", nil)
 	if !handled {
 		t.Fatal("expected /memory keygen to be handled")
 	}
@@ -596,7 +596,7 @@ func TestCommander_Memory_Keygen_ExistingKey(t *testing.T) {
 	// Generate key first
 	c.Handle("/memory keygen", nil)
 	// Call again — should print existing key, not regenerate
-	reply, _ := c.Handle("/memory keygen", nil)
+	reply, _, _ := c.Handle("/memory keygen", nil)
 	if !strings.Contains(reply, "already exists") {
 		t.Errorf("expected 'already exists', got: %s", reply)
 	}
@@ -608,7 +608,7 @@ func TestCommander_Memory_Keygen_ExistingKey(t *testing.T) {
 
 func TestCommander_Memory_Pubkey_NoKey(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory pubkey", nil)
+	reply, _, handled := c.Handle("/memory pubkey", nil)
 	if !handled {
 		t.Fatal("expected /memory pubkey to be handled")
 	}
@@ -620,7 +620,7 @@ func TestCommander_Memory_Pubkey_NoKey(t *testing.T) {
 func TestCommander_Memory_Pubkey_AfterKeygen(t *testing.T) {
 	c, _ := newMemoryCommander(t)
 	c.Handle("/memory keygen", nil)
-	reply, _ := c.Handle("/memory pubkey", nil)
+	reply, _, _ := c.Handle("/memory pubkey", nil)
 	if !strings.Contains(reply, "ssh-ed25519") {
 		t.Errorf("expected public key content, got: %s", reply)
 	}
@@ -628,7 +628,7 @@ func TestCommander_Memory_Pubkey_AfterKeygen(t *testing.T) {
 
 func TestCommander_Memory_UnknownSubcommand(t *testing.T) {
 	c, _ := newMemoryCommander(t)
-	reply, handled := c.Handle("/memory bogus", nil)
+	reply, _, handled := c.Handle("/memory bogus", nil)
 	if !handled {
 		t.Fatal("expected /memory bogus to be handled")
 	}
@@ -640,7 +640,7 @@ func TestCommander_Memory_UnknownSubcommand(t *testing.T) {
 func TestCommander_Memory_Push_NotGitRepo(t *testing.T) {
 	c, _ := newMemoryCommander(t)
 	// Memory dir not initialised — push must return a clear error.
-	reply, handled := c.Handle("/memory push", nil)
+	reply, _, handled := c.Handle("/memory push", nil)
 	if !handled {
 		t.Fatal("expected /memory push to be handled")
 	}
@@ -664,7 +664,7 @@ func TestCommander_Memory_Push_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reply, _ := c.Handle("/memory push", nil)
+	reply, _, _ := c.Handle("/memory push", nil)
 	if !strings.Contains(reply, "memory pushed") {
 		t.Errorf("expected push success, got: %s", reply)
 	}
@@ -685,7 +685,7 @@ func TestCommander_Memory_Push_Idempotent(t *testing.T) {
 	c.Handle("/memory push", nil) // first push
 
 	// Second push with no changes must not return an error.
-	reply, _ := c.Handle("/memory push", nil)
+	reply, _, _ := c.Handle("/memory push", nil)
 	if strings.HasPrefix(reply, "error") {
 		t.Errorf("expected no error on idempotent push, got: %s", reply)
 	}
@@ -697,7 +697,7 @@ func TestCommander_Memory_Push_Idempotent(t *testing.T) {
 func TestCommander_Memory_Pull_NotGitRepo(t *testing.T) {
 	c, _ := newMemoryCommander(t)
 	// Memory dir not initialised — pull must return a clear error.
-	reply, handled := c.Handle("/memory pull", nil)
+	reply, _, handled := c.Handle("/memory pull", nil)
 	if !handled {
 		t.Fatal("expected /memory pull to be handled")
 	}
@@ -712,7 +712,7 @@ func TestCommander_Status_ShowsFields(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/status", nil)
+	reply, _, handled := c.Handle("/status", nil)
 	if !handled {
 		t.Fatal("expected /status to be handled")
 	}
@@ -727,7 +727,7 @@ func TestCommander_Status_IdleWhenNoSessions(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/status", nil)
+	reply, _, _ := c.Handle("/status", nil)
 	if !strings.Contains(reply, "idle") {
 		t.Errorf("expected idle status with no sessions, got:\n%s", reply)
 	}
@@ -742,7 +742,7 @@ func TestCommander_Status_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	env.handlers.config.Agent.Provider = ""
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, _ := c.Handle("/status", nil)
+	reply, _, _ := c.Handle("/status", nil)
 	if !strings.Contains(reply, "ready:") || strings.Contains(reply, "ready: ✓") {
 		t.Errorf("expected ready ✗ when no API key, got:\n%s", reply)
 	}
@@ -755,7 +755,7 @@ func TestCommander_Auth_RESTCallReturnsError(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	// send=nil simulates a REST caller with no chat channel.
-	reply, handled := c.Handle("/auth claude", nil)
+	reply, _, handled := c.Handle("/auth claude", nil)
 	if !handled {
 		t.Fatal("expected /auth to be handled")
 	}
@@ -768,7 +768,7 @@ func TestCommander_AuthCancel_NoFlow(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	reply, handled := c.Handle("/auth cancel", nil)
+	reply, _, handled := c.Handle("/auth cancel", nil)
 	if !handled {
 		t.Fatal("expected /auth cancel to be handled")
 	}
@@ -786,7 +786,7 @@ func TestCommander_Auth_OpencodeNotSupported(t *testing.T) {
 	send := func(msg string) { sent = append(sent, msg) }
 
 	// /auth with no arg falls back to configured CLI (opencode), which isn't supported.
-	reply, handled := c.Handle("/auth", send)
+	reply, _, handled := c.Handle("/auth", send)
 	if !handled {
 		t.Fatal("expected /auth to be handled")
 	}

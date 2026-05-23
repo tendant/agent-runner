@@ -47,7 +47,12 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 // positives on agent instructions that happen to start with those words.
 var bareCommands = []string{"help", "config", "status", "bootstrap"}
 
-func (c *Commander) Handle(text string, send func(string)) (string, bool) {
+// Handle parses text and executes a recognised command.
+// Returns the reply text, an optional session ID (non-empty when the command
+// started an agent session), and true when a command was handled.
+// send is an optional callback for async messages (needed by /auth); pass nil
+// when async notifications are not available (e.g. REST API callers).
+func (c *Commander) Handle(text string, send func(string)) (reply, sessionID string, handled bool) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
 	// Normalise: accept "config", "help", "bootstrap" without leading slash.
@@ -61,42 +66,45 @@ func (c *Commander) Handle(text string, send func(string)) (string, bool) {
 		}
 	}
 
+	r := func(s string) (string, string, bool) { return s, "", true }
+
 	switch {
 	case lower == "/help":
-		return helpText, true
+		return r(helpText)
 	case lower == "/config":
-		return c.handleConfig(), true
+		return r(c.handleConfig())
 	case lower == "/status":
-		return c.handleStatus(), true
+		return r(c.handleStatus())
 	case strings.HasPrefix(lower, "/set "):
-		return c.handleSet(text[5:]), true // strip "/set "
+		return r(c.handleSet(text[5:])) // strip "/set "
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
-		return c.handleBootstrap(force), true
+		return r(c.handleBootstrap(force))
 	case lower == "/migrate":
-		return c.handleMigrate(), true
+		reply, sid := c.handleMigrate()
+		return reply, sid, true
 	case lower == "/install-cli" || strings.HasPrefix(lower, "/install-cli "):
 		arg := strings.TrimSpace(text[len("/install-cli"):])
-		return c.handleInstallCLI(arg), true
+		return r(c.handleInstallCLI(arg))
 	case strings.HasPrefix(lower, cmdSetAgent+" ") || lower == cmdSetAgent:
 		content := strings.TrimSpace(text[len(cmdSetAgent):])
-		return c.handleSetFile("agent.md", content, true), true
+		return r(c.handleSetFile("agent.md", content, true))
 	case strings.HasPrefix(lower, cmdSetPrompt+" ") || lower == cmdSetPrompt:
 		content := strings.TrimSpace(text[len(cmdSetPrompt):])
-		return c.handleSetFile("prompt.md", content, false), true
+		return r(c.handleSetFile("prompt.md", content, false))
 	case lower == "/auth cancel":
-		return c.handleAuthCancel(), true
+		return r(c.handleAuthCancel())
 	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
 		arg := strings.TrimSpace(text[len("/auth"):])
-		return c.handleAuth(arg, send), true
+		return r(c.handleAuth(arg, send))
 	case lower == cmdMemory || strings.HasPrefix(lower, cmdMemory+" "):
 		arg := strings.TrimSpace(text[len(cmdMemory):])
-		return c.handleMemory(arg), true
+		return r(c.handleMemory(arg))
 	case lower == cmdRepo || strings.HasPrefix(lower, cmdRepo+" "):
 		arg := strings.TrimSpace(text[len(cmdRepo):])
-		return c.handleRepo(arg), true
+		return r(c.handleRepo(arg))
 	}
-	return "", false
+	return "", "", false
 }
 
 // handleAuth starts a CLI auth flow in a background goroutine and relays
@@ -437,7 +445,8 @@ func (c *Commander) handleBootstrap(force bool) string {
 var migrateFiles = []string{"MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"}
 
 // handleMigrate starts an agent session that migrates old memory files to the new format.
-func (c *Commander) handleMigrate() string {
+// Returns a human-readable reply and the started session ID (empty on error or nothing to migrate).
+func (c *Commander) handleMigrate() (reply, sessionID string) {
 	memDir := c.cfg.MemoryDir
 
 	var found []string
@@ -447,7 +456,7 @@ func (c *Commander) handleMigrate() string {
 		}
 	}
 	if len(found) == 0 {
-		return "nothing to migrate: no old memory files found"
+		return "nothing to migrate: no old memory files found", ""
 	}
 
 	task := migrationTask(found)
@@ -457,9 +466,9 @@ func (c *Commander) handleMigrate() string {
 	}
 	sid, err := startFn(task, "migrate")
 	if err != nil {
-		return "error starting migration: " + err.Error()
+		return "error starting migration: " + err.Error(), ""
 	}
-	return fmt.Sprintf("migration started — session %s\n\nFiles: %s", sid, strings.Join(found, ", "))
+	return fmt.Sprintf("migrating %s", strings.Join(found, ", ")), sid
 }
 
 // migrationTask builds the task message for the migration agent session.

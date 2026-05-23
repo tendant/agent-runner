@@ -25,7 +25,7 @@ type AgentStarter interface {
 // Commander handles chat configuration commands without requiring an LLM.
 // send is an optional callback for async messages (e.g. /auth URL relay).
 type Commander interface {
-	Handle(text string, send func(string)) (string, bool)
+	Handle(text string, send func(string)) (string, string, bool)
 }
 
 // Bot is a WeChat bot that bridges messages to the agent runner via the
@@ -304,7 +304,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	// Handle configuration commands before any LLM or conversation logic.
 	if b.commander != nil {
 		asyncSend := func(msg string) { b.sendText(context.Background(), userID, msg) }
-		if reply, ok := b.commander.Handle(content, asyncSend); ok {
+		if reply, _, ok := b.commander.Handle(content, asyncSend); ok {
 			b.sendText(ctx, userID, reply)
 			return
 		}
