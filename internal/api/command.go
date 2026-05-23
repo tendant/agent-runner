@@ -45,7 +45,7 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 // bareCommands are single-word commands that are safe to accept without a leading slash.
 // Multi-word commands (set, set-agent, set-prompt) require the slash to avoid false
 // positives on agent instructions that happen to start with those words.
-var bareCommands = []string{"help", "config", "status", "bootstrap"}
+var bareCommands = []string{"help", "config", "status", "sessions", "bootstrap"}
 
 // Handle parses text and executes a recognised command.
 // Returns the reply text, an optional session ID (non-empty when the command
@@ -75,6 +75,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleConfig())
 	case lower == "/status":
 		return r(c.handleStatus())
+	case lower == "/sessions":
+		return r(c.handleSessions())
 	case strings.HasPrefix(lower, "/set "):
 		return r(c.handleSet(text[5:])) // strip "/set "
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
@@ -263,6 +265,45 @@ func (c *Commander) handleStatus() string {
 		}
 	}
 
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleSessions lists all active and recent sessions with their IDs and status.
+func (c *Commander) handleSessions() string {
+	sessions := c.handlers.agentManager.ListSessions(20)
+	if len(sessions) == 0 {
+		return "no sessions"
+	}
+
+	var b strings.Builder
+	b.WriteString("**Sessions**\n\n")
+	for _, s := range sessions {
+		preview := s.Message
+		if len(preview) > 50 {
+			preview = preview[:50] + "..."
+		}
+		switch s.Status {
+		case agent.SessionStatusRunning, agent.SessionStatusStopping:
+			fmt.Fprintf(&b, "🔵 `%s` — %s [iter %d/%d] %q\n",
+				s.ID, s.Status, s.CurrentIteration, s.MaxIterations, preview)
+		case agent.SessionStatusQueued:
+			fmt.Fprintf(&b, "⏳ `%s` — queued %q\n", s.ID, preview)
+		case agent.SessionStatusCompleted:
+			ago := ""
+			if s.CompletedAt != nil {
+				ago = " " + time.Since(*s.CompletedAt).Round(time.Second).String() + " ago"
+			}
+			fmt.Fprintf(&b, "✅ `%s` — completed%s %q\n", s.ID, ago, preview)
+		case agent.SessionStatusFailed:
+			ago := ""
+			if s.CompletedAt != nil {
+				ago = " " + time.Since(*s.CompletedAt).Round(time.Second).String() + " ago"
+			}
+			fmt.Fprintf(&b, "❌ `%s` — failed%s %q\n", s.ID, ago, preview)
+		default:
+			fmt.Fprintf(&b, "   `%s` — %s %q\n", s.ID, s.Status, preview)
+		}
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -950,6 +991,7 @@ func fileState(path string) string {
 const helpText = `**Agent Runner Commands**
 
 **/status** — show runtime state (agent, queue, CLI, issues)
+**/sessions** — list all active and recent sessions with IDs
 **/config** — show current configuration and readiness
 
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
