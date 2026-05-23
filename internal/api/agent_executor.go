@@ -194,14 +194,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			liveSession.AddWarning("memory push failed: " + pushErr.Error())
 		}
 
-		// Complete bootstrap lifecycle (rename BOOTSTRAP.md → .done)
-		if snap.Status == agent.SessionStatusCompleted {
-			if err := tmpl.CompleteBootstrap(h.config.MemoryDir); err != nil {
-				slog.Warn("bootstrap completion failed", "session_id", sessionID, "error", err)
-				liveSession.AddWarning("bootstrap completion failed: " + err.Error())
-			}
-		}
-
 		// Send notification to connected chat channels
 		h.notifySessionResult(liveSession.Snapshot())
 
@@ -510,60 +502,51 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	h.agentManager.CompleteSession(sessionID)
 }
 
-// resolvePrompt builds the combined system prompt using the template system
-// (embedded defaults + optional user overrides from the memory directory).
+// resolvePrompt builds the combined system prompt using the new single-agent
+// memory architecture: system instructions → memory sections → current request.
 func (h *Handlers) resolvePrompt(message string) (string, error) {
-	runnerURL := "http://" + h.config.API.Bind
-	ctx := tmpl.NewContext(message, h.config.Agent.SharedRepos, 1, h.config.ProjectDir, runnerURL, h.config.API.APIKey)
-	memoryDir := h.config.MemoryDir
-
-	// Load prompt files directly from source (no copy into memory dir).
-	// Fall back to conventional on-disk names when env vars are not set,
-	// mirroring bootstrapPaths() so /bootstrap → run agent produces a prompt.
 	systemPromptPath, promptFilePath := h.bootstrapPaths()
-	explicitSystem := h.config.Agent.SystemPrompt != ""
-	explicitPrompt := h.config.Agent.PromptFile != ""
-	var extras []tmpl.TemplateFile
-	if tf, err := tmpl.LoadPromptFile(systemPromptPath, filepath.Base(systemPromptPath)); err != nil {
-		if explicitSystem {
-			slog.Warn("failed to load system prompt", "error", err)
+
+	// Read system instructions (agent.md); empty string if file missing — no error.
+	var systemInstructions string
+	if data, err := os.ReadFile(systemPromptPath); err == nil {
+		systemInstructions = strings.TrimSpace(string(data))
+	}
+
+	// Append prompt file (prompt.md) if non-empty.
+	if data, err := os.ReadFile(promptFilePath); err == nil {
+		if s := strings.TrimSpace(string(data)); s != "" {
+			if systemInstructions != "" {
+				systemInstructions += "\n\n" + s
+			} else {
+				systemInstructions = s
+			}
 		}
-	} else if tf != nil {
-		extras = append(extras, *tf)
-	}
-	if tf, err := tmpl.LoadPromptFile(promptFilePath, filepath.Base(promptFilePath)); err != nil {
-		if explicitPrompt {
-			slog.Warn("failed to load prompt file", "error", err)
-		}
-	} else if tf != nil {
-		extras = append(extras, *tf)
 	}
 
-	// Check for bootstrap (first_run)
-	firstRun := tmpl.IsFirstRun(memoryDir)
+	// Retrieve memory sections.
+	retrieval := tmpl.Retrieve(h.config.MemoryDir)
 
-	// Compose from embedded defaults + memory dir overrides + prompt files
-	composed, err := tmpl.ComposePrompt(memoryDir, tmpl.PhaseBoot, firstRun, ctx, extras...)
-	if err != nil {
-		return "", fmt.Errorf("template composition failed: %w", err)
+	// Build vars map.
+	runnerURL := "http://" + h.config.API.Bind
+	vars := map[string]string{
+		tmpl.VarMessage:    message,
+		tmpl.VarDate:       time.Now().Format("2006-01-02"),
+		tmpl.VarRunnerURL:  runnerURL,
+		tmpl.VarAPIKey:     h.config.API.APIKey,
+		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
+		tmpl.VarProjectDir: h.config.ProjectDir,
+		tmpl.VarIteration:  "1",
 	}
 
-	var parts []string
-	if composed != "" {
-		parts = append(parts, composed)
+	input := tmpl.PromptInput{
+		SystemInstructions: systemInstructions,
+		Retrieval:          retrieval,
+		CurrentRequest:     message,
+		Vars:               vars,
 	}
 
-	// Append memory section
-	memorySec := tmpl.ComposeMemorySection(h.config.MemoryDir, h.config.Agent.MemoryDays, h.config.Agent.MemoryCharCap)
-	if memorySec != "" {
-		parts = append(parts, memorySec)
-	}
-
-	if len(parts) == 0 {
-		return message, nil
-	}
-
-	return strings.Join(parts, "\n\n"), nil
+	return tmpl.Compile(input), nil
 }
 
 // executeIteration runs a single iteration of the agent loop.

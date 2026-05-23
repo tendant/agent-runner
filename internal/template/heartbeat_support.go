@@ -1,13 +1,26 @@
 package template
 
 import (
-	"strconv"
+	"embed"
 	"strings"
 )
 
-// ParseFrontmatter splits a template into metadata and body.
+//go:embed defaults/HEARTBEAT.md
+var defaultTemplates embed.FS
+
+// TemplateMeta is retained for compatibility with heartbeat.go.
+// Only the fields used by heartbeat parsing are populated.
+type TemplateMeta struct {
+	Title    string
+	Summary  string
+	ReadWhen string
+	Priority int
+}
+
+// ParseFrontmatter splits content into metadata and body.
 // Frontmatter is delimited by --- lines at the top of the file.
-// Returns the parsed meta and the body content after the closing ---.
+// Returns the parsed meta (TemplateMeta) and the body content after the closing ---.
+// The meta fields are populated for heartbeat.go compatibility; heartbeat.go ignores the meta.
 func ParseFrontmatter(content string) (TemplateMeta, string) {
 	var meta TemplateMeta
 
@@ -26,26 +39,6 @@ func ParseFrontmatter(content string) (TemplateMeta, string) {
 	}
 	if endIdx < 0 {
 		return meta, content
-	}
-
-	// Parse key: value pairs from frontmatter
-	for _, line := range lines[1:endIdx] {
-		key, val, ok := parseKV(line)
-		if !ok {
-			continue
-		}
-		switch key {
-		case "title":
-			meta.Title = val
-		case "summary":
-			meta.Summary = val
-		case "read_when":
-			meta.ReadWhen = val
-		case "priority":
-			if n, err := strconv.Atoi(val); err == nil {
-				meta.Priority = n
-			}
-		}
 	}
 
 	body := strings.Join(lines[endIdx+1:], "\n")

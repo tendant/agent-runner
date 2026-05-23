@@ -9,7 +9,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/runner"
-	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
@@ -46,19 +45,6 @@ func main() {
 	if cfg.Telegram.BotToken != "" {
 		slog.Info("telegram bot enabled")
 	}
-
-	// Seed embedded defaults into memory dir on first run
-	if err := tmpl.SeedDefaults(cfg.MemoryDir); err != nil {
-		slog.Warn("failed to seed defaults", "error", err)
-	}
-	// Refresh unmodified defaults to pick up new embedded versions
-	if err := tmpl.RefreshDefaults(cfg.MemoryDir); err != nil {
-		slog.Warn("failed to refresh defaults", "error", err)
-	}
-
-	// Prompt files (AGENT_SYSTEM_PROMPT, AGENT_PROMPT_FILE) are now loaded
-	// directly from source on each session via LoadPromptFile — no need to
-	// seed copies into the memory directory.
 
 	// Create and start server
 	server := api.NewServer(cfg)

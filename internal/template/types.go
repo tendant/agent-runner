@@ -1,50 +1,30 @@
 package template
 
-// TemplateMeta holds frontmatter metadata parsed from a template file.
-type TemplateMeta struct {
-	Title    string `json:"title"`
-	Summary  string `json:"summary"`
-	ReadWhen string `json:"read_when"` // always | boot | first_run | heartbeat
-	Priority int    `json:"priority"`
+import "time"
+
+// Message is a single conversation turn.
+type Message struct {
+	Role    string // "user" or "assistant"
+	Content string
+	Time    time.Time
 }
 
-// TemplateFile represents a loaded template with metadata and body content.
-type TemplateFile struct {
-	Name string       // filename without path (e.g. "SOUL.md")
-	Meta TemplateMeta // parsed frontmatter
-	Body string       // content after frontmatter
+// MemoryFile is a named memory section loaded during retrieval.
+type MemoryFile struct {
+	Name    string
+	Content string
 }
 
-// TemplateContext holds variables available for substitution in templates.
-type TemplateContext struct {
-	Message    string
-	Repos      string
-	Date       string
-	Iteration  int
-	ProjectDir string // absolute path to project root
-	RunnerURL  string // base URL of the runner API (e.g. http://localhost:8080)
-	APIKey     string // API key for authenticating with the runner
+// Retrieval holds the memory sections selected for a prompt.
+type Retrieval struct {
+	Files []MemoryFile
 }
 
-// Phase represents the current execution phase for filtering templates.
-type Phase string
-
-const (
-	PhaseBoot      Phase = "boot"
-	PhaseHeartbeat Phase = "heartbeat"
-)
-
-// Well-known template filenames and their default priorities.
-var wellKnownDefaults = map[string]struct {
-	Priority int
-	ReadWhen string
-}{
-	"IDENTITY.md":  {Priority: 10, ReadWhen: "always"},
-	"SOUL.md":      {Priority: 20, ReadWhen: "always"},
-	"AGENTS.md":    {Priority: 30, ReadWhen: "always"},
-	"USER.md":      {Priority: 40, ReadWhen: "always"},
-	"TOOLS.md":     {Priority: 50, ReadWhen: "always"},
-	"BOOT.md":      {Priority: 70, ReadWhen: "boot"},
-	"BOOTSTRAP.md": {Priority: 80, ReadWhen: "first_run"},
-	"HEARTBEAT.md": {Priority: 90, ReadWhen: "heartbeat"},
+// PromptInput is everything the compiler needs to build a prompt.
+type PromptInput struct {
+	SystemInstructions string
+	Retrieval          Retrieval
+	RecentMessages     []Message
+	CurrentRequest     string
+	Vars               map[string]string // {{KEY}} substituted in all text fields
 }

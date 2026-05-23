@@ -21,21 +21,18 @@ func makeHandlers(t *testing.T) (*Handlers, string) {
 	return &Handlers{config: cfg}, dir
 }
 
-// TestResolvePrompt_EmbeddedDefaultsAlwaysPresent verifies that the prompt is
-// non-empty even when no agent.md, prompt.md, or memory dir exists.
-func TestResolvePrompt_EmbeddedDefaultsAlwaysPresent(t *testing.T) {
+// TestResolvePrompt_NoFilesReturnsCurrentRequest verifies that when no agent.md,
+// prompt.md, or memory files exist, the prompt still contains the current request.
+func TestResolvePrompt_NoFilesReturnsCurrentRequest(t *testing.T) {
 	h, _ := makeHandlers(t)
 
 	got, err := h.resolvePrompt("do something")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got == "" {
-		t.Fatal("expected non-empty prompt from embedded defaults")
-	}
-	// Sanity-check: embedded IDENTITY.md content should appear.
-	if !strings.Contains(got, "autonomous agent") {
-		t.Errorf("expected embedded identity content in prompt, got %q", got[:min(200, len(got))])
+	// The prompt should contain the current request.
+	if !strings.Contains(got, "do something") {
+		t.Errorf("expected current request in prompt, got %q", got[:min(200, len(got))])
 	}
 }
 

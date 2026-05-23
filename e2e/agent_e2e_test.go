@@ -14,7 +14,6 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
-	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 func setupAgentE2E(t *testing.T) *e2eEnv {
@@ -388,12 +387,9 @@ echo '{"result":"Done"}'
 	os.WriteFile(mockClaude, []byte(mockScript), 0755)
 	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
-	// Create prompt template file and seed it into the memory dir
-	promptFile := filepath.Join(baseDir, "prompt.md")
-	os.WriteFile(promptFile, []byte("You are a helpful assistant.\n\nTask: {{MESSAGE}}"), 0644)
-
-	if err := tmpl.SeedPromptFile(memoryDir, promptFile, "prompt.md"); err != nil {
-		t.Fatalf("SeedPromptFile error: %v", err)
+	// Write prompt.md directly into the memory dir so resolvePrompt picks it up.
+	if err := os.WriteFile(filepath.Join(memoryDir, "prompt.md"), []byte("You are a helpful assistant.\n\nTask: {{MESSAGE}}"), 0644); err != nil {
+		t.Fatalf("write prompt.md error: %v", err)
 	}
 
 	cfg := &config.Config{
