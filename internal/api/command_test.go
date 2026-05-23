@@ -131,10 +131,11 @@ func TestCommander_Config_FileStateExists(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 
-	// Create the files where bootstrapPaths() points (./agent.md, ./prompt.md by default)
+	// Create the files where bootstrapPaths() points (memory/agent.md, memory/prompt.md)
 	cwd, _ := os.Getwd()
-	os.WriteFile(filepath.Join(cwd, "agent.md"), []byte("test"), 0644)
-	os.WriteFile(filepath.Join(cwd, "prompt.md"), []byte("test"), 0644)
+	os.MkdirAll(filepath.Join(cwd, "memory"), 0755)
+	os.WriteFile(filepath.Join(cwd, "memory", "agent.md"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(cwd, "memory", "prompt.md"), []byte("test"), 0644)
 
 	c := NewCommander(env.handlers.config, env.handlers)
 	reply, _ := c.Handle("/config", nil)
@@ -358,7 +359,7 @@ func TestCommander_SetAgent_WritesFile(t *testing.T) {
 	}
 
 	cwd, _ := os.Getwd()
-	data, err := os.ReadFile(filepath.Join(cwd, "agent.md"))
+	data, err := os.ReadFile(filepath.Join(cwd, "memory", "agent.md"))
 	if err != nil {
 		t.Fatalf("expected agent.md to be created: %v", err)
 	}
@@ -378,7 +379,7 @@ func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 	}
 
 	cwd, _ := os.Getwd()
-	data, err := os.ReadFile(filepath.Join(cwd, "prompt.md"))
+	data, err := os.ReadFile(filepath.Join(cwd, "memory", "prompt.md"))
 	if err != nil {
 		t.Fatalf("expected prompt.md to be created: %v", err)
 	}

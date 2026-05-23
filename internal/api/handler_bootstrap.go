@@ -24,6 +24,11 @@ You are an autonomous software development agent. Your working directory is ` + 
 - Prefer making progress over waiting for perfect information
 - Ask for clarification only when the task is genuinely ambiguous
 
+## Updating These Instructions
+
+This file is ` + "`memory/agent.md`" + `. The task workflow is in ` + "`memory/prompt.md`" + `.
+To update agent behaviour or the task workflow, edit those files directly.
+
 ## When Done
 
 Report what you did in 2-3 sentences. List files changed and key commands run.
@@ -37,6 +42,11 @@ const defaultPromptMD = `# Task Workflow
 4. Test if applicable
 5. Commit with a descriptive message
 6. Report what was done
+
+## Updating This Workflow
+
+This file is ` + "`memory/prompt.md`" + `. Edit it directly to change the task workflow.
+The agent identity and core principles are in ` + "`memory/agent.md`" + `.
 `
 
 // BootstrapResponse is returned by POST /bootstrap.
@@ -82,6 +92,9 @@ func createBootstrapFiles(systemPromptPath, promptFilePath string, force bool) (
 				results = append(results, bootstrapFileResult{path: f.path, created: false})
 				continue
 			}
+		}
+		if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+			return results, fmt.Errorf("failed to create dir for %s: %w", f.path, err)
 		}
 		if err := os.WriteFile(f.path, []byte(f.content), 0644); err != nil {
 			return results, fmt.Errorf("failed to write %s: %w", f.path, err)
@@ -157,34 +170,20 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 // bootstrapPaths returns the system prompt and prompt file paths from config.
-// When not explicitly configured, prefers ./memory/agent.md and ./memory/prompt.md
-// (git-tracked) over the bare ./agent.md and ./prompt.md fallbacks.
+// Defaults to memory/agent.md and memory/prompt.md so bootstrap creates and
+// reads them in the git-tracked memory directory.
 func (h *Handlers) bootstrapPaths() (systemPrompt, promptFile string) {
 	systemPrompt = h.config.Agent.SystemPrompt
 	if systemPrompt == "" {
-		memAgent := filepath.Join(h.config.MemoryDir, "agent.md")
-		if fileExists(memAgent) {
-			systemPrompt = memAgent
-		} else {
-			systemPrompt = "./agent.md"
-		}
+		systemPrompt = filepath.Join(h.config.MemoryDir, "agent.md")
 	}
 	promptFile = h.config.Agent.PromptFile
 	if promptFile == "" {
-		memPrompt := filepath.Join(h.config.MemoryDir, "prompt.md")
-		if fileExists(memPrompt) {
-			promptFile = memPrompt
-		} else {
-			promptFile = "./prompt.md"
-		}
+		promptFile = filepath.Join(h.config.MemoryDir, "prompt.md")
 	}
 	return
 }
 
-func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
-}
 
 // CLIInstalled reports whether the given CLI binary is present in PATH.
 func CLIInstalled(cli string) bool {

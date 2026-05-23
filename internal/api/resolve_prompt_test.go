@@ -17,11 +17,7 @@ func makeHandlers(t *testing.T) (*Handlers, string) {
 	cfg.MemoryDir = filepath.Join(dir, "memory")
 	cfg.Agent.SystemPrompt = ""
 	cfg.Agent.PromptFile = ""
-	// bootstrapPaths falls back to ./agent.md and ./prompt.md relative to CWD.
-	// We change CWD to dir so those fallback paths land inside the temp dir.
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { os.Chdir(orig) })
-	os.Chdir(dir)
+	os.MkdirAll(cfg.MemoryDir, 0755)
 	return &Handlers{config: cfg}, dir
 }
 
@@ -43,13 +39,13 @@ func TestResolvePrompt_EmbeddedDefaultsAlwaysPresent(t *testing.T) {
 	}
 }
 
-// TestResolvePrompt_AgentMdLoadedWithoutEnvVar verifies that ./agent.md is
+// TestResolvePrompt_AgentMdLoadedWithoutEnvVar verifies that memory/agent.md is
 // included in the prompt even when AGENT_SYSTEM_PROMPT is not set.
 func TestResolvePrompt_AgentMdLoadedWithoutEnvVar(t *testing.T) {
 	h, dir := makeHandlers(t)
 
 	agentContent := "CUSTOM AGENT INSTRUCTIONS FOR TEST"
-	if err := os.WriteFile(filepath.Join(dir, "agent.md"), []byte(agentContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "memory", "agent.md"), []byte(agentContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,13 +58,13 @@ func TestResolvePrompt_AgentMdLoadedWithoutEnvVar(t *testing.T) {
 	}
 }
 
-// TestResolvePrompt_PromptMdLoadedWithoutEnvVar verifies that ./prompt.md is
+// TestResolvePrompt_PromptMdLoadedWithoutEnvVar verifies that memory/prompt.md is
 // included in the prompt even when AGENT_PROMPT_FILE is not set.
 func TestResolvePrompt_PromptMdLoadedWithoutEnvVar(t *testing.T) {
 	h, dir := makeHandlers(t)
 
 	promptContent := "CUSTOM WORKFLOW PROMPT FOR TEST"
-	if err := os.WriteFile(filepath.Join(dir, "prompt.md"), []byte(promptContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "memory", "prompt.md"), []byte(promptContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,8 +82,8 @@ func TestResolvePrompt_PromptMdLoadedWithoutEnvVar(t *testing.T) {
 func TestResolvePrompt_BothFilesLoaded(t *testing.T) {
 	h, dir := makeHandlers(t)
 
-	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("AGENT_INSTRUCTIONS"), 0644)
-	os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("WORKFLOW_STEPS"), 0644)
+	os.WriteFile(filepath.Join(dir, "memory", "agent.md"), []byte("AGENT_INSTRUCTIONS"), 0644)
+	os.WriteFile(filepath.Join(dir, "memory", "prompt.md"), []byte("WORKFLOW_STEPS"), 0644)
 
 	got, err := h.resolvePrompt("task")
 	if err != nil {
@@ -173,21 +169,6 @@ func TestBootstrapPaths_PrefersMemoryDir(t *testing.T) {
 	}
 }
 
-// TestBootstrapPaths_FallsBackToCWD verifies that bootstrapPaths falls back to
-// CWD agent.md/prompt.md when memory dir files don't exist.
-func TestBootstrapPaths_FallsBackToCWD(t *testing.T) {
-	h, dir := makeHandlers(t)
-	// Only CWD file, no memory dir file
-	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("CWD AGENT CONTENT"), 0644)
-
-	got, err := h.resolvePrompt("task")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(got, "CWD AGENT CONTENT") {
-		t.Error("expected CWD agent.md to be used as fallback")
-	}
-}
 
 func min(a, b int) int {
 	if a < b {
