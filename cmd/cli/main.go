@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chzyer/readline"
 	"github.com/joho/godotenv"
 )
 
@@ -50,77 +49,27 @@ func checkServer(baseURL, apiKey string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// lineResult holds a single readline result.
-type lineResult struct {
-	line string
-	err  error
-}
-
-// lineStream runs readline in a background goroutine and exposes a read()
-// method that batches rapidly-arriving lines (paste detection).
-type lineStream struct {
-	ch chan lineResult
-}
-
-func newLineStream(rl *readline.Instance) *lineStream {
-	ls := &lineStream{ch: make(chan lineResult, 64)}
-	go func() {
-		for {
-			line, err := rl.Readline()
-			ls.ch <- lineResult{line, err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return ls
-}
-
-// read blocks until the user submits input, then non-blocking drains
-// any additional lines already in the channel (paste detection).
-// Pasted lines all arrive in readline's internal buffer before the first
-// Readline() call returns, so the goroutine fills the channel with the
-// entire paste before we get here.
-func (ls *lineStream) read() (string, error) {
-	r := <-ls.ch
-	if r.err != nil {
-		return "", r.err
-	}
-
-	lines := []string{r.line}
-
-	for {
-		select {
-		case r2 := <-ls.ch:
-			if r2.err != nil {
-				return strings.Join(lines, "\n"), nil
-			}
-			lines = append(lines, r2.line)
-		default:
-			return strings.Join(lines, "\n"), nil
-		}
-	}
-}
-
 func repl(baseURL, apiKey string) {
-	rl, err := readline.New("") // prompt printed manually so it never appears before output
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "readline init failed: %v\n", err)
-		return
-	}
-	defer rl.Close()
-
-	ls := newLineStream(rl)
-
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
-		line, err := ls.read()
-		if err != nil {
-			// Ctrl+D (io.EOF) or Ctrl+C (readline.ErrInterrupt) at empty prompt
-			fmt.Println()
-			return
+		var lines []string
+		for {
+			if !scanner.Scan() {
+				fmt.Println()
+				return
+			}
+			text := scanner.Text()
+			if text == "" {
+				break // blank line = send
+			}
+			lines = append(lines, text)
+			fmt.Print("  ")
 		}
-		line = strings.TrimSpace(line)
+		if len(lines) == 0 {
+			continue
+		}
+		line := strings.TrimSpace(strings.Join(lines, "\n"))
 		if line == "" {
 			continue
 		}
@@ -141,7 +90,7 @@ func repl(baseURL, apiKey string) {
 			}
 		}()
 
-		err = startAndPoll(ctx, baseURL, apiKey, line)
+		err := startAndPoll(ctx, baseURL, apiKey, line)
 		cancel()
 		signal.Stop(sigCh)
 
