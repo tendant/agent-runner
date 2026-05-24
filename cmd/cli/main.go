@@ -187,10 +187,6 @@ func collectPaste(r *bufio.Reader, line []byte, acc *[]string) []byte {
 	}
 
 	paste, _ := readUntilPasteEnd(r)
-	// Discard the \r or \n terminals append after \x1b[201~.
-	if b, err := r.ReadByte(); err == nil && b != '\r' && b != '\n' {
-		r.UnreadByte()
-	}
 
 	lines := strings.Split(strings.TrimRight(paste, "\r\n"), "\n")
 	for i, l := range lines {
