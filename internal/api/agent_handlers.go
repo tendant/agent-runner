@@ -276,8 +276,10 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 		// if an iteration is in progress, emit iteration_start
 		if snap.CurrentIteration > lastSentCount {
 			sendEvent("iteration_start", map[string]any{
-				"session_id": snap.ID,
-				"iteration":  snap.CurrentIteration,
+				"session_id":      snap.ID,
+				"iteration":       snap.CurrentIteration,
+				"completed_steps": len(snap.CompletedSteps),
+				"total_steps":     snap.PlanStepCount,
 			})
 		}
 

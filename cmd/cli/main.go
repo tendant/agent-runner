@@ -266,7 +266,16 @@ type startResponse struct {
 }
 
 type iterationStartEvent struct {
-	Iteration int `json:"iteration"`
+	Iteration      int `json:"iteration"`
+	CompletedSteps int `json:"completed_steps"`
+	TotalSteps     int `json:"total_steps"`
+}
+
+type iterationDoneEvent struct {
+	Iteration       int    `json:"iteration"`
+	Status          string `json:"status"`
+	Output          string `json:"output"`
+	DurationSeconds int    `json:"duration_seconds"`
 }
 
 type doneEvent struct {
@@ -404,10 +413,26 @@ func handleSSEEvent(eventType, data string) (done bool) {
 	case "iteration_start":
 		var e iterationStartEvent
 		if err := json.Unmarshal([]byte(data), &e); err == nil {
-			fmt.Printf("[running] iteration %d...\n", e.Iteration)
+			if e.TotalSteps > 0 {
+				fmt.Printf("[running] iteration %d... (%d/%d steps done)\n", e.Iteration, e.CompletedSteps, e.TotalSteps)
+			} else {
+				fmt.Printf("[running] iteration %d...\n", e.Iteration)
+			}
 		}
 	case "iteration_done":
-		// silent — wait for the done event to print output
+		var e iterationDoneEvent
+		if err := json.Unmarshal([]byte(data), &e); err == nil {
+			statusMark := "✓"
+			if e.Status == "error" || e.Status == "validation_failed" {
+				statusMark = "✗"
+			}
+			summary := lastLine(e.Output)
+			if summary != "" {
+				fmt.Printf("[iter %d %s %ds] %s\n", e.Iteration, statusMark, e.DurationSeconds, summary)
+			} else {
+				fmt.Printf("[iter %d %s %ds]\n", e.Iteration, statusMark, e.DurationSeconds)
+			}
+		}
 	case "done":
 		var e doneEvent
 		if err := json.Unmarshal([]byte(data), &e); err != nil {
@@ -442,4 +467,22 @@ func apiRequest(ctx context.Context, method, url, apiKey string, body io.Reader)
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// lastLine returns the last non-empty line of s, truncated to 120 chars.
+func lastLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			if len(l) > 120 {
+				l = l[:120] + "…"
+			}
+			return l
+		}
+	}
+	return ""
 }

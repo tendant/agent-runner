@@ -271,7 +271,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			liveSession.AddWarning("planner failed: " + err.Error())
 		} else {
 			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
-			liveSession.SetPlanResult(plan)
+			liveSession.SetPlanResult(plan, len(plan.Steps))
 		}
 	}
 

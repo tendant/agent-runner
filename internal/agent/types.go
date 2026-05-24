@@ -74,6 +74,7 @@ type Session struct {
 	ConsecutiveFailures  int               `json:"-"`
 	OutputFiles          []OutputFile      `json:"-"`
 	CompletedSteps       []string          `json:"-"`
+	PlanStepCount        int               `json:"-"`
 	PlanJSON             any               `json:"-"`
 	ReviewJSON           any               `json:"-"`
 
@@ -198,10 +199,12 @@ func (s *Session) GetConsecutiveFailures() int {
 }
 
 // SetPlanResult stores the planner output on the session.
-func (s *Session) SetPlanResult(plan any) {
+// stepCount is the number of steps in the plan (0 if unknown).
+func (s *Session) SetPlanResult(plan any, stepCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.PlanJSON = plan
+	s.PlanStepCount = stepCount
 }
 
 // SetReviewResult stores the reviewer output on the session.
@@ -266,6 +269,7 @@ func (s *Session) Snapshot() *Session {
 		TotalCostUSD:        s.TotalCostUSD,
 		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
 		CompletedSteps:      append([]string{}, s.CompletedSteps...),
+		PlanStepCount:       s.PlanStepCount,
 		PlanJSON:            s.PlanJSON,
 		ReviewJSON:          s.ReviewJSON,
 		LogLines:            append([]string{}, s.LogLines...),
