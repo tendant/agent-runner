@@ -56,8 +56,10 @@ func main() {
 			User:   os.Getenv("MEMORY_GIT_USER"),
 			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
 		}
-		if _, err := tmpl.PullMemory(cfg.MemoryDir, creds); err != nil {
-			slog.Warn("memory pull on startup failed (non-fatal)", "error", err)
+		if creds.Token != "" || creds.SSHKey != "" {
+			if _, err := tmpl.PullMemory(cfg.MemoryDir, creds); err != nil {
+				slog.Warn("memory pull on startup failed (non-fatal)", "error", err)
+			}
 		}
 		retrieval := tmpl.Retrieve(cfg.MemoryDir)
 		if len(retrieval.Files) > 0 {
