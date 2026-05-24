@@ -68,6 +68,17 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 
 	r := func(s string) (string, string, bool) { return s, "", true }
 
+	// "Update prompt:" / "update prompt " — write prompt and optionally start session.
+	if strings.HasPrefix(lower, "update prompt:") || strings.HasPrefix(lower, "update prompt ") ||
+		strings.HasPrefix(lower, "/update-prompt:") || strings.HasPrefix(lower, "/update-prompt ") {
+		body := strings.TrimSpace(text[strings.IndexByte(text, ':')+1:])
+		if strings.HasPrefix(lower, "/update-prompt ") {
+			body = strings.TrimSpace(text[len("/update-prompt"):])
+		}
+		reply, sid := c.handleUpdatePrompt(body)
+		return reply, sid, true
+	}
+
 	switch {
 	case lower == "/help":
 		return r(helpText)
@@ -640,6 +651,95 @@ func isTemplatePlaceholder(content string) bool {
 		strings.Contains(lower, "your preferences here") ||
 		strings.Contains(lower, "add your") ||
 		(len(content) < 60 && strings.Contains(lower, "todo"))
+}
+
+// handleUpdatePrompt parses an "Update prompt:" body that may contain
+// "System:" and "User:" sections. The System section is written to prompt.md;
+// the User section (if present) is sent as an agent task.
+//
+// Accepted formats:
+//
+//	Update prompt: <content>           — just update prompt.md
+//	Update prompt:                     — same with body below
+//	System: <system content>           — written to prompt.md
+//	User: <task>                       — started as agent session
+func (c *Commander) handleUpdatePrompt(body string) (reply, sessionID string) {
+	systemContent, userContent := parseSystemUser(body)
+
+	// Write the system / prompt content if provided.
+	if systemContent != "" {
+		_, promptPath := c.handlers.bootstrapPaths()
+		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
+			_ = os.WriteFile(promptPath, []byte(systemContent+"\n"), 0644)
+		}
+	} else if userContent == "" {
+		// No sections — treat the whole body as prompt content.
+		if body != "" {
+			_, promptPath := c.handlers.bootstrapPaths()
+			if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
+				_ = os.WriteFile(promptPath, []byte(body+"\n"), 0644)
+			}
+		}
+	}
+
+	if systemContent != "" && userContent == "" {
+		return fmt.Sprintf("ok wrote prompt.md (%d bytes)", len(systemContent)), ""
+	}
+	if systemContent == "" && userContent == "" {
+		if body == "" {
+			return "error: usage: Update prompt: <content>", ""
+		}
+		return fmt.Sprintf("ok wrote prompt.md (%d bytes)", len(body)), ""
+	}
+
+	// Start an agent session with the User section.
+	sid, err := c.agentStarter().StartAgent(userContent, "commander")
+	if err != nil {
+		return fmt.Sprintf("ok wrote prompt.md (%d bytes); error starting session: %v", len(systemContent), err), ""
+	}
+	return fmt.Sprintf("ok wrote prompt.md (%d bytes); starting session %s", len(systemContent), sid), sid
+}
+
+// parseSystemUser splits a body into System and User sections.
+// Looks for lines beginning with "System:" and "User:" (case-insensitive).
+func parseSystemUser(body string) (system, user string) {
+	body = strings.TrimSpace(body)
+	lines := strings.Split(body, "\n")
+
+	const (
+		secNone   = iota
+		secSystem
+		secUser
+	)
+	section := secNone
+	var sysBuf, userBuf strings.Builder
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		switch {
+		case lower == "system:" || strings.HasPrefix(lower, "system: "):
+			section = secSystem
+			rest := strings.TrimSpace(trimmed[len("system:"):])
+			if rest != "" {
+				sysBuf.WriteString(rest + "\n")
+			}
+		case lower == "user:" || strings.HasPrefix(lower, "user: "):
+			section = secUser
+			rest := strings.TrimSpace(trimmed[len("user:"):])
+			if rest != "" {
+				userBuf.WriteString(rest + "\n")
+			}
+		default:
+			switch section {
+			case secSystem:
+				sysBuf.WriteString(line + "\n")
+			case secUser:
+				userBuf.WriteString(line + "\n")
+			}
+		}
+	}
+	return strings.TrimSpace(sysBuf.String()), strings.TrimSpace(userBuf.String())
 }
 
 // agentStarter returns an AgentStarterAdapter for starting agent sessions.
