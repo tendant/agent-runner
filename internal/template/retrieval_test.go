@@ -122,13 +122,13 @@ func TestRetrieve_PromptMdSkipped(t *testing.T) {
 	}
 }
 
-func TestRetrieve_HeartbeatMdLoaded(t *testing.T) {
+func TestRetrieve_HeartbeatMdSkipped(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("config"), 0644)
 
 	r := Retrieve(dir)
-	if len(r.Files) != 1 {
-		t.Errorf("HEARTBEAT.md should be loaded, got %d files", len(r.Files))
+	if len(r.Files) != 0 {
+		t.Errorf("HEARTBEAT.md should be skipped, got %d files", len(r.Files))
 	}
 }
 

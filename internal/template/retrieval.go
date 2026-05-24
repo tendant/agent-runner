@@ -59,11 +59,12 @@ func Retrieve(memoryDir string) Retrieval {
 		return Retrieval{Files: files}
 	}
 
-	// Files to skip — prompt template files and date-prefixed daily logs are
-	// excluded from memory loading (they are used for other purposes).
+	// Files to skip — prompt template files, heartbeat template, and
+	// date-prefixed daily logs are excluded from memory loading.
 	skipExact := map[string]struct{}{
-		"agent.md":  {},
-		"prompt.md": {},
+		"agent.md":     {},
+		"prompt.md":    {},
+		"HEARTBEAT.md": {},
 	}
 
 	for _, entry := range entries {
