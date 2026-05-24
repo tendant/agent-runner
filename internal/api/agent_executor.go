@@ -252,6 +252,13 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
 	checkoutPath := filepath.Join(workspacePath, "workspace")
 
+	// Symlink the persistent memory directory into the workspace so the agent
+	// can read and write memory files at the familiar "memory/" path and commit
+	// directly without needing to know any absolute paths.
+	if err := os.Symlink(h.config.MemoryDir, filepath.Join(checkoutPath, "memory")); err != nil {
+		slog.Warn("could not symlink memory dir into workspace (non-fatal)", "error", err)
+	}
+
 	ctx := h.agentManager.Context()
 
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
@@ -526,14 +533,6 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 
 	// Retrieve memory sections.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
-
-	// Append memory dir note so the agent knows where to read/write memory files.
-	memNote := "Memory directory (persistent git repo — read and edit files here directly, commit as normal): " + h.config.MemoryDir
-	if systemInstructions != "" {
-		systemInstructions += "\n\n" + memNote
-	} else {
-		systemInstructions = memNote
-	}
 
 	// Build vars map.
 	runnerURL := "http://" + h.config.API.Bind
