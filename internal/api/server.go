@@ -182,6 +182,13 @@ func (s *Server) Start() error {
 			slog.Warn("failed to cleanup stale workspaces", "error", err)
 		}
 	}
+	if s.config.LogRetentionDays > 0 {
+		if err := logging.CleanupOldLogs(s.config.LogsRoot, s.config.LogRetentionDays); err != nil {
+			slog.Warn("failed to cleanup old logs", "error", err)
+		} else {
+			slog.Info("log retention applied", "max_days", s.config.LogRetentionDays)
+		}
+	}
 
 	// Setup graceful shutdown
 	done := make(chan bool, 1)

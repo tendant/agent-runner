@@ -35,16 +35,15 @@ func backoffDelay(consecutiveFails int) time.Duration {
 	return delay
 }
 
-// isPermanentError returns true for errors that cannot be resolved by retrying,
-// such as a missing CLI binary or an authentication failure.
+// isPermanentError returns true for errors that cannot be resolved by retrying.
+// Patterns must be specific enough to avoid misclassifying transient workspace
+// errors (e.g. a missing file in the repo) as permanent CLI/auth failures.
 func isPermanentError(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
 	return strings.Contains(lower, "executable file not found in $path") ||
-		strings.Contains(lower, "no such file or directory") ||
 		strings.Contains(lower, "authentication") ||
 		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "invalid api key") ||
-		strings.Contains(lower, "permission denied")
+		strings.Contains(lower, "invalid api key")
 }
 
 // maxReviewerCorrections is the maximum number of corrective iterations
@@ -394,34 +393,6 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	}
 	slog.Info("iteration loop finished", "session_id", sessionID, "stop_reason", stopReason, "iterations", iterationsRun, "elapsed_secs", int(time.Since(startTime).Seconds()))
 
-	// Collect output files from _send/ directory and persist to OutputsRoot.
-	sendDir := filepath.Join(checkoutPath, "_send")
-	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
-		slog.Warn("failed to collect _send/ files", "session_id", sessionID, "error", err)
-	} else if len(outputFiles) > 0 {
-		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
-		liveSession.SetOutputFiles(outputFiles)
-		if h.config.OutputsRoot != "" {
-			if err := persistOutputFiles(sendDir, h.config.OutputsRoot, sessionID); err != nil {
-				slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
-			}
-		}
-	}
-
-	// Collect and submit scheduled tasks from _schedule.json
-	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {
-		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
-	} else if len(schedEntries) > 0 {
-		if h.workflowClient != nil {
-			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
-			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Runner.TypePrefix); err != nil {
-				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
-			}
-		} else {
-			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
-		}
-	}
-
 	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
 	if h.config.Agent.ReviewerEnabled {
 		reviewer := subagent.NewReviewer(h.getExecutor())
@@ -494,6 +465,34 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 					plan.MarkDone(completedSteps)
 				}
 			}
+		}
+	}
+
+	// Collect output files from _send/ after all phases (including reviewer corrections).
+	sendDir := filepath.Join(checkoutPath, "_send")
+	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
+		slog.Warn("failed to collect _send/ files", "session_id", sessionID, "error", err)
+	} else if len(outputFiles) > 0 {
+		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
+		liveSession.SetOutputFiles(outputFiles)
+		if h.config.OutputsRoot != "" {
+			if err := persistOutputFiles(sendDir, h.config.OutputsRoot, sessionID); err != nil {
+				slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
+			}
+		}
+	}
+
+	// Collect and submit scheduled tasks from _schedule.json.
+	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {
+		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
+	} else if len(schedEntries) > 0 {
+		if h.workflowClient != nil {
+			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
+			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Runner.TypePrefix); err != nil {
+				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
+			}
+		} else {
+			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
 		}
 	}
 

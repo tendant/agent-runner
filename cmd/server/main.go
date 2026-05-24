@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -49,18 +48,10 @@ func main() {
 		slog.Info("telegram bot enabled")
 	}
 
-	// Pull and log memory at startup so the agent's context is up to date on reboot.
+	// Log memory contents at startup. Sessions pull from git themselves
+	// (MemoryPullOnStart=true by default), so no pull here to avoid double-pulling
+	// on the first session after reboot.
 	if cfg.MemoryDir != "" {
-		creds := tmpl.MemoryGitCreds{
-			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-			User:   os.Getenv("MEMORY_GIT_USER"),
-			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-		}
-		if creds.Token != "" || creds.SSHKey != "" {
-			if _, err := tmpl.PullMemory(cfg.MemoryDir, creds); err != nil {
-				slog.Warn("memory pull on startup failed (non-fatal)", "error", err)
-			}
-		}
 		retrieval := tmpl.Retrieve(cfg.MemoryDir)
 		if len(retrieval.Files) > 0 {
 			names := make([]string, len(retrieval.Files))

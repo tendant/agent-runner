@@ -80,6 +80,38 @@ type RunLogger struct {
 	LogsRoot string
 }
 
+// CleanupOldLogs deletes log files in logsRoot older than maxAgeDays days.
+// No-op if logsRoot is empty or does not exist.
+func CleanupOldLogs(logsRoot string, maxAgeDays int) error {
+	if logsRoot == "" || maxAgeDays <= 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(logsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read logs dir: %w", err)
+	}
+	cutoff := time.Now().AddDate(0, 0, -maxAgeDays)
+	var removed int
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			if err := os.Remove(filepath.Join(logsRoot, entry.Name())); err == nil {
+				removed++
+			}
+		}
+	}
+	return nil
+}
+
 // NewRunLogger creates a new run logger
 func NewRunLogger(logsRoot string) *RunLogger {
 	return &RunLogger{

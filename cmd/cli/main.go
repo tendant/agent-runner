@@ -400,17 +400,24 @@ func handleSSEEvent(eventType, data string) (done bool) {
 		var e struct {
 			Text string `json:"text"`
 		}
-		json.Unmarshal([]byte(data), &e)
-		fmt.Println(e.Text)
+		if err := json.Unmarshal([]byte(data), &e); err != nil {
+			fmt.Println(data) // fall back to raw data
+		} else {
+			fmt.Println(e.Text)
+		}
 	case "iteration_start":
 		var e iterationStartEvent
-		json.Unmarshal([]byte(data), &e)
-		fmt.Printf("[running] iteration %d...\n", e.Iteration)
+		if err := json.Unmarshal([]byte(data), &e); err == nil {
+			fmt.Printf("[running] iteration %d...\n", e.Iteration)
+		}
 	case "iteration_done":
 		// silent — wait for the done event to print output
 	case "done":
 		var e doneEvent
-		json.Unmarshal([]byte(data), &e)
+		if err := json.Unmarshal([]byte(data), &e); err != nil {
+			fmt.Printf("[done] %s\n", data) // fall back to raw data
+			return true
+		}
 		if e.Status == "failed" {
 			fmt.Printf("[failed] %s\n", e.Error)
 		} else {

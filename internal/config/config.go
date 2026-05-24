@@ -71,6 +71,7 @@ type Config struct {
 	// Cleanup settings
 	JobRetentionSeconds     int
 	StartupCleanupStaleJobs bool
+	LogRetentionDays        int // Delete log files older than this many days (0 = keep forever)
 }
 
 // AgentConfig contains agent mode settings
@@ -207,6 +208,7 @@ func DefaultConfig() *Config {
 		},
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
+		LogRetentionDays:        30,
 	}
 }
 
@@ -359,6 +361,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
+	cfg.LogRetentionDays = envIntOrDefault("LOG_RETENTION_DAYS", cfg.LogRetentionDays)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
