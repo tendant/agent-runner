@@ -4,11 +4,14 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/runner"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
@@ -44,6 +47,28 @@ func main() {
 	}
 	if cfg.Telegram.BotToken != "" {
 		slog.Info("telegram bot enabled")
+	}
+
+	// Pull and log memory at startup so the agent's context is up to date on reboot.
+	if cfg.MemoryDir != "" {
+		creds := tmpl.MemoryGitCreds{
+			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+			User:   os.Getenv("MEMORY_GIT_USER"),
+			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+		}
+		if _, err := tmpl.PullMemory(cfg.MemoryDir, creds); err != nil {
+			slog.Warn("memory pull on startup failed (non-fatal)", "error", err)
+		}
+		retrieval := tmpl.Retrieve(cfg.MemoryDir)
+		if len(retrieval.Files) > 0 {
+			names := make([]string, len(retrieval.Files))
+			for i, f := range retrieval.Files {
+				names[i] = f.Name
+			}
+			slog.Info("memory loaded", "files", len(retrieval.Files), "sections", strings.Join(names, ", "))
+		} else {
+			slog.Info("memory loaded", "files", 0)
+		}
 	}
 
 	// Create and start server
