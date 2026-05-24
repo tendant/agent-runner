@@ -373,10 +373,21 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		}
 
 		// Update completed steps from progress file and sync to plan
-		if completedSteps := subagent.ReadProgress(checkoutPath); len(completedSteps) > 0 {
-			liveSession.SetCompletedSteps(completedSteps)
+		progress := subagent.ReadProgress(checkoutPath)
+		if len(progress.BlockedSteps) > 0 {
+			reasons := make([]string, len(progress.BlockedSteps))
+			for j, b := range progress.BlockedSteps {
+				reasons[j] = fmt.Sprintf("step %s: %s", b.Step, b.Reason)
+			}
+			stopReason = "blocked: " + strings.Join(reasons, "; ")
+			completed = true
+			slog.Info("agent blocked on plan steps", "session_id", sessionID, "iteration", i, "reason", stopReason)
+			break
+		}
+		if len(progress.CompletedSteps) > 0 {
+			liveSession.SetCompletedSteps(progress.CompletedSteps)
 			if plan != nil {
-				plan.MarkDone(completedSteps)
+				plan.MarkDone(progress.CompletedSteps)
 				if len(plan.RemainingSteps()) == 0 {
 					stopReason = "all plan steps completed"
 					completed = true
@@ -459,10 +470,10 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			}
 
 			// Update progress after correction
-			if completedSteps := subagent.ReadProgress(checkoutPath); len(completedSteps) > 0 {
-				liveSession.SetCompletedSteps(completedSteps)
+			if p := subagent.ReadProgress(checkoutPath); len(p.CompletedSteps) > 0 {
+				liveSession.SetCompletedSteps(p.CompletedSteps)
 				if plan != nil {
-					plan.MarkDone(completedSteps)
+					plan.MarkDone(p.CompletedSteps)
 				}
 			}
 		}

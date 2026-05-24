@@ -38,7 +38,7 @@ func NewReviewer(exec executor.Executor) *Reviewer {
 // Review runs the reviewer against the workspace and returns a structured review.
 func (r *Reviewer) Review(ctx context.Context, workspacePath, message string, plan *PlanResult) (*ReviewResult, error) {
 	state := ReadWorkspaceState(ctx, workspacePath)
-	completedIDs := ReadProgress(workspacePath)
+	completedIDs := ReadProgress(workspacePath).CompletedSteps
 
 	prompt := r.buildPrompt(state, message, plan, completedIDs)
 

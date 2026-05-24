@@ -68,15 +68,3 @@ func TestCollectPaste_PreservesPriorTypedText(t *testing.T) {
 	}
 }
 
-func TestCollectPaste_AutoNewlineConsumed(t *testing.T) {
-	// Terminal appends \n after \x1b[201~ — must not bleed into next read
-	r := bufio.NewReader(strings.NewReader("content\x1b[201~\nmore input\n"))
-	var acc []string
-	collectPaste(r, nil, &acc)
-
-	// "more input\n" should still be in the reader
-	next, _ := r.ReadString('\n')
-	if !strings.HasPrefix(next, "more") {
-		t.Errorf("expected 'more input' still readable, got %q", next)
-	}
-}

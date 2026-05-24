@@ -54,7 +54,8 @@ func (pb *PromptBuilder) Build(ctx context.Context, workspacePath string, plan *
 	// Plan with checkboxes
 	if plan != nil && len(plan.Steps) > 0 {
 		// Read progress file and build set of completed step IDs
-		completedIDs := ReadProgress(workspacePath)
+		progress := ReadProgress(workspacePath)
+		completedIDs := progress.CompletedSteps
 		completedSet := make(map[string]bool, len(completedIDs))
 		for _, id := range completedIDs {
 			completedSet[id] = true
