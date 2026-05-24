@@ -128,16 +128,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
 
-		// Merge _memory/ write-back files from the agent workspace into the memory dir.
-		// [C3] Surface failures as session warnings rather than silently dropping them.
-		if liveSession.WorkspacePath != "" {
-			wsCheckout := filepath.Join(liveSession.WorkspacePath, "workspace")
-			if err := mergeAgentMemory(wsCheckout, h.config.MemoryDir); err != nil {
-				slog.Warn("failed to merge agent memory", "session_id", sessionID, "error", err)
-				liveSession.AddWarning("memory merge failed: " + err.Error())
-			}
-		}
-
 		// Write daily memory log with rich session details
 		msgPreview := message
 		if len(msgPreview) > 80 {
@@ -537,8 +527,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		tmpl.VarAPIKey:     h.config.API.APIKey,
 		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
 		tmpl.VarProjectDir: h.config.ProjectDir,
-		tmpl.VarMemoryDir:  absMemoryDir,
-		tmpl.VarIteration:  "1",
+		tmpl.VarMemoryDir: absMemoryDir,
 	}
 
 	input := tmpl.PromptInput{
@@ -795,36 +784,6 @@ func buildReviewerContext(review *subagent.ReviewResult) string {
 	}
 	sb.WriteString("Please address the issues above.\n")
 	return sb.String()
-}
-
-// mergeAgentMemory copies files from the agent's _memory/ write-back directory
-// into the runner's persistent memory dir. This lets the agent update MEMORY.md
-// and other memory files without needing direct access to the runner's file system.
-func mergeAgentMemory(checkoutPath, memoryDir string) error {
-	src := filepath.Join(checkoutPath, "_memory")
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read _memory/: %w", err)
-	}
-	if err := os.MkdirAll(memoryDir, 0755); err != nil {
-		return fmt.Errorf("create memory dir: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(memoryDir, entry.Name())
-		if err := copyFile(srcPath, dstPath); err != nil {
-			slog.Warn("failed to merge memory file", "file", entry.Name(), "error", err)
-		} else {
-			slog.Info("merged memory file from agent", "file", entry.Name())
-		}
-	}
-	return nil
 }
 
 const maxPartialOutputChars = 2000

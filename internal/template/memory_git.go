@@ -173,7 +173,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 		return err
 	}
 	if len(bytes.TrimSpace(out)) > 0 {
-		msg := "[memory] " + time.Now().Format("2006-01-02")
+		msg := "[memory] " + time.Now().Format("2006-01-02") + ": " + summariseChanges(out)
 		// Ensure a local identity exists — avoids commit failure in environments
 		// (e.g. Docker) where no global git user is configured.
 		_ = gitRunEnv(memoryDir, nil, "config", "user.email", "agent-runner@local")
@@ -433,4 +433,22 @@ func (e *gitError) Error() string {
 		return e.stderr
 	}
 	return e.err.Error()
+}
+
+// summariseChanges builds a short human-readable summary from git status --porcelain output.
+// Up to 3 filenames are listed directly; larger change sets show a count instead.
+func summariseChanges(porcelain []byte) string {
+	var names []string
+	for _, line := range bytes.Split(bytes.TrimSpace(porcelain), []byte("\n")) {
+		if len(line) > 3 {
+			names = append(names, strings.TrimSpace(string(line[3:])))
+		}
+	}
+	if len(names) == 0 {
+		return "changes"
+	}
+	if len(names) <= 3 {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%d files", len(names))
 }
