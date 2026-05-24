@@ -109,6 +109,7 @@ func repl(baseURL, apiKey string) {
 
 		// Re-enter raw mode for next input.
 		state, _ = term.MakeRaw(fd)
+		fmt.Print("\x1b[?2004h")
 	}
 }
 
@@ -178,12 +179,12 @@ func readMessage(r *bufio.Reader) (string, bool) {
 
 // collectPaste reads a bracketed paste block, appends completed lines to acc,
 // and returns the remainder as the new current line.
-// Displays "[" at start and "]" at end so the user sees clean delimiters.
+// readUntilPasteEnd echoes content as it arrives, so this function only
+// builds the message data structures.
 func collectPaste(r *bufio.Reader, line []byte, acc *[]string) []byte {
 	if len(line) > 0 {
 		*acc = append(*acc, string(line))
 	}
-	fmt.Print("[")
 
 	paste, _ := readUntilPasteEnd(r)
 	// Discard the \r or \n terminals append after \x1b[201~.
@@ -196,14 +197,10 @@ func collectPaste(r *bufio.Reader, line []byte, acc *[]string) []byte {
 		l = strings.TrimRight(l, "\r")
 		if i < len(lines)-1 {
 			*acc = append(*acc, l)
-			fmt.Printf("%s\r\n", l)
 		} else {
-			fmt.Print(l)
-			fmt.Print("]")
 			return []byte(l)
 		}
 	}
-	fmt.Print("]")
 	return nil
 }
 
@@ -225,17 +222,43 @@ func readEscSeq(r *bufio.Reader) string {
 	return string(seq)
 }
 
-// readUntilPasteEnd reads bytes until the paste-end marker \x1b[201~.
+// readUntilPasteEnd reads bytes until the paste-end marker \x1b[201~,
+// echoing printable content to the terminal as it arrives.
 func readUntilPasteEnd(r *bufio.Reader) (string, error) {
 	var buf []byte
+	prevCR := false
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
 			return string(buf), err
 		}
+		if b == '\x1b' {
+			// Peek ahead to detect the paste-end marker without consuming it.
+			peek, _ := r.Peek(5)
+			if len(peek) == 5 && bytes.Equal(peek, []byte("[201~")) {
+				r.Discard(5)
+				return string(buf), nil
+			}
+			// ESC in paste body — store but don't echo.
+			buf = append(buf, b)
+			prevCR = false
+			continue
+		}
 		buf = append(buf, b)
-		if bytes.HasSuffix(buf, []byte("\x1b[201~")) {
-			return string(buf[:len(buf)-6]), nil
+		switch {
+		case b == '\r':
+			prevCR = true
+			fmt.Print("\r\n")
+		case b == '\n':
+			if !prevCR {
+				fmt.Print("\r\n")
+			}
+			prevCR = false
+		case b >= 0x20:
+			prevCR = false
+			fmt.Printf("%c", b)
+		default:
+			prevCR = false
 		}
 	}
 }

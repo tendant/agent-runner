@@ -252,17 +252,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
 	checkoutPath := filepath.Join(workspacePath, "workspace")
 
-	// Symlink the persistent memory directory into the workspace so the agent
-	// can read and write memory files at the familiar "memory/" path and commit
-	// directly without needing to know any absolute paths.
-	// Must use an absolute target path — a relative path would create a
-	// self-referential symlink when the target name matches the link name.
-	if absMemDir, err := filepath.Abs(h.config.MemoryDir); err == nil {
-		if err := os.Symlink(absMemDir, filepath.Join(checkoutPath, "memory")); err != nil {
-			slog.Warn("could not symlink memory dir into workspace (non-fatal)", "error", err)
-		}
-	}
-
 	ctx := h.agentManager.Context()
 
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
@@ -540,6 +529,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 
 	// Build vars map.
 	runnerURL := "http://" + h.config.API.Bind
+	absMemoryDir, _ := filepath.Abs(h.config.MemoryDir)
 	vars := map[string]string{
 		tmpl.VarMessage:    message,
 		tmpl.VarDate:       time.Now().Format("2006-01-02"),
@@ -547,6 +537,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		tmpl.VarAPIKey:     h.config.API.APIKey,
 		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
 		tmpl.VarProjectDir: h.config.ProjectDir,
+		tmpl.VarMemoryDir:  absMemoryDir,
 		tmpl.VarIteration:  "1",
 	}
 

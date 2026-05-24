@@ -122,39 +122,39 @@ func TestRetrieve_PromptMdSkipped(t *testing.T) {
 	}
 }
 
-func TestRetrieve_HeartbeatMdSkipped(t *testing.T) {
+func TestRetrieve_HeartbeatMdLoaded(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("config"), 0644)
 
 	r := Retrieve(dir)
-	if len(r.Files) != 0 {
-		t.Errorf("HEARTBEAT.md should be skipped, got %d files", len(r.Files))
+	if len(r.Files) != 1 {
+		t.Errorf("HEARTBEAT.md should be loaded, got %d files", len(r.Files))
 	}
 }
 
-func TestRetrieve_MemoryMdSkipped(t *testing.T) {
+func TestRetrieve_MemoryMdLoaded(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("legacy"), 0644)
+	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("long-term memory index"), 0644)
 
 	r := Retrieve(dir)
-	if len(r.Files) != 0 {
-		t.Errorf("MEMORY.md should be skipped, got %d files", len(r.Files))
+	if len(r.Files) != 1 {
+		t.Errorf("MEMORY.md should be loaded, got %d files", len(r.Files))
 	}
 }
 
-func TestRetrieve_UppercaseFilesSkipped(t *testing.T) {
+func TestRetrieve_UppercaseFilesLoaded(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("identity"), 0644)
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("soul"), 0644)
 	os.WriteFile(filepath.Join(dir, "user_preferences.md"), []byte("prefs"), 0644)
 
 	r := Retrieve(dir)
-	// Only user_preferences.md should be included.
-	if len(r.Files) != 1 {
-		t.Fatalf("expected 1 file (user_preferences), got %d: %v", len(r.Files), r.Files)
+	// All three files should be included: well-known first, then uppercase extras.
+	if len(r.Files) != 3 {
+		t.Fatalf("expected 3 files, got %d: %v", len(r.Files), r.Files)
 	}
 	if r.Files[0].Name != "User Preferences" {
-		t.Errorf("expected User Preferences, got %q", r.Files[0].Name)
+		t.Errorf("expected User Preferences first, got %q", r.Files[0].Name)
 	}
 }
 

@@ -59,12 +59,11 @@ func Retrieve(memoryDir string) Retrieval {
 		return Retrieval{Files: files}
 	}
 
-	// Files to skip explicitly.
+	// Files to skip — prompt template files and date-prefixed daily logs are
+	// excluded from memory loading (they are used for other purposes).
 	skipExact := map[string]struct{}{
-		"agent.md":     {},
-		"prompt.md":    {},
-		"HEARTBEAT.md": {},
-		"MEMORY.md":    {},
+		"agent.md":  {},
+		"prompt.md": {},
 	}
 
 	for _, entry := range entries {
@@ -81,13 +80,8 @@ func Retrieve(memoryDir string) Retrieval {
 			continue
 		}
 
-		// Skip exact files.
+		// Skip template files.
 		if _, ok := skipExact[name]; ok {
-			continue
-		}
-
-		// Skip uppercase-leading files (legacy template system: IDENTITY.md, SOUL.md, etc.).
-		if len(name) > 0 && unicode.IsUpper(rune(name[0])) {
 			continue
 		}
 
