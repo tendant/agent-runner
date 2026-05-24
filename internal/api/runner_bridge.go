@@ -66,7 +66,7 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 	// Run executeAgent synchronously — the runner's lease extension keeps
 	// the workflow_run lease alive while this blocks.
 	startTime := time.Now()
-	h.executeAgent(session)
+	h.executeAgentWithContext(ctx, session)
 	elapsed := time.Since(startTime)
 
 	// Check final status (notification is handled by executeAgent's defer)

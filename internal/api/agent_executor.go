@@ -51,10 +51,14 @@ func isPermanentError(errMsg string) bool {
 // the reviewer feedback loop can trigger after the main iteration loop.
 const maxReviewerCorrections = 3
 
-// executeAgent runs the agent iteration loop.
-// Claude handles all git operations via the prompt — the loop just runs Claude
-// in the workspace and records results.
 func (h *Handlers) executeAgent(session *agent.Session) {
+	h.executeAgentWithContext(h.agentManager.Context(), session)
+}
+
+// executeAgentWithContext runs the agent iteration loop.
+// The CLI handles workspace changes through the prompt; the loop manages
+// planning, retries, completion criteria, and session bookkeeping.
+func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.Session) {
 	sessionID := session.ID
 	source := session.Source
 	if source == "" {
@@ -242,8 +246,6 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
 	checkoutPath := filepath.Join(workspacePath, "workspace")
 
-	ctx := h.agentManager.Context()
-
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
 	// Phase 1: Planner (optional, non-fatal). Runs regardless of CLI backend.
@@ -275,6 +277,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	promptBuilder := subagent.NewPromptBuilder(preamble)
 	iterReason := "first iteration"
 	stopReason := fmt.Sprintf("reached max iterations (%d)", maxIter)
+	completed := false
 	iterationsRun := 0
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
@@ -315,7 +318,10 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return
+				stopReason = "context cancelled"
+			}
+			if ctx.Err() != nil {
+				break
 			}
 		}
 
@@ -362,6 +368,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 
 		if taskDone {
 			stopReason = "task complete"
+			completed = true
 			slog.Info("agent signalled task complete", "session_id", sessionID, "iteration", i)
 			break
 		}
@@ -373,6 +380,7 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 				plan.MarkDone(completedSteps)
 				if len(plan.RemainingSteps()) == 0 {
 					stopReason = "all plan steps completed"
+					completed = true
 					slog.Info("all plan steps completed", "session_id", sessionID, "iteration", i)
 					break
 				}
@@ -489,7 +497,31 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 		}
 	}
 
-	h.agentManager.CompleteSession(sessionID)
+	if completed {
+		h.agentManager.CompleteSession(sessionID)
+		return
+	}
+	if liveSession.StopRequested() {
+		h.agentManager.CompleteSession(sessionID)
+		return
+	}
+	if ctx.Err() != nil {
+		h.agentManager.FailSession(sessionID, "context cancelled before completion")
+		return
+	}
+	if strings.HasPrefix(stopReason, "time limit reached") {
+		h.agentManager.FailSession(sessionID, stopReason)
+		return
+	}
+	snap := liveSession.Snapshot()
+	if len(snap.Iterations) > 0 {
+		last := snap.Iterations[len(snap.Iterations)-1]
+		if last.Status == agent.IterationStatusSuccess || last.Status == agent.IterationStatusNoChanges {
+			h.agentManager.CompleteSession(sessionID)
+			return
+		}
+	}
+	h.agentManager.FailSession(sessionID, stopReason)
 }
 
 // resolvePrompt builds the combined system prompt using the new single-agent
@@ -527,7 +559,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		tmpl.VarAPIKey:     h.config.API.APIKey,
 		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
 		tmpl.VarProjectDir: h.config.ProjectDir,
-		tmpl.VarMemoryDir: absMemoryDir,
+		tmpl.VarMemoryDir:  absMemoryDir,
 	}
 
 	input := tmpl.PromptInput{
@@ -574,11 +606,11 @@ func (h *Handlers) executeIteration(
 	iterCtx, cancel := context.WithTimeout(ctx, iterTimeout)
 	defer cancel()
 
-	// Execute Claude Code with system prompt + user message
+	// Execute the configured agent CLI with system prompt + user message.
 	execResult, _, execErr := exec.ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
-		result.Error = fmt.Sprintf("claude execution failed: %v", execErr)
+		result.Error = fmt.Sprintf("agent execution failed: %v", execErr)
 		// Preserve structured output only — raw CLI terminal output is never shown to the user.
 		if execResult != nil && execResult.Output != "" {
 			result.Output = execResult.Output
