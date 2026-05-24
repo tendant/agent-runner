@@ -67,12 +67,14 @@ func repl(baseURL, apiKey string) {
 			return
 		}
 
+		// Collect the full message. Pasted newlines (\n already in buffer)
+		// are included in the message body; only an explicit Enter pressed
+		// by the user (buffer empty after the newline) actually sends.
 		lines := []string{first}
-
-		if reader.Buffered() > 0 {
-			// Data already buffered — this was a paste. Read all buffered
-			// bytes at once (non-blocking) so a missing trailing newline
-			// on the last pasted line doesn't cause a hang.
+		for reader.Buffered() > 0 {
+			// More data is buffered — the newline was part of a paste.
+			// Drain all buffered bytes at once (non-blocking) then loop
+			// back to wait for the user's explicit Enter.
 			n := reader.Buffered()
 			peeked, _ := reader.Peek(n)
 			reader.Discard(n) //nolint:errcheck
@@ -83,23 +85,17 @@ func repl(baseURL, apiKey string) {
 					lines = append(lines, l)
 				}
 			}
-		} else {
-			// Manual entry: collect more lines until blank Enter.
-			fmt.Print("  ")
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					break
-				}
-				line = strings.TrimRight(line, "\r\n")
-				if line == "" {
-					break
-				}
-				lines = append(lines, line)
-				fmt.Print("  ")
+			// Wait for next Enter.
+			next, err := reader.ReadString('\n')
+			if err != nil {
+				goto send
+			}
+			next = strings.TrimRight(next, "\r\n")
+			if next != "" {
+				lines = append(lines, next)
 			}
 		}
-
+	send:
 		line := strings.TrimSpace(strings.Join(lines, "\n"))
 		if line == "" {
 			continue
