@@ -20,7 +20,10 @@ import (
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
-const maxConsecutiveFailures = 5
+const (
+	maxConsecutiveFailures = 5
+	maxStuckIterations     = 5 // stop if plan progress stalls for this many iterations
+)
 
 // backoffDelay returns a delay before retrying after consecutive failures.
 // 0 failures = no delay, 1 = 2s, 2 = 4s, 3 = 8s, 4 = 16s, capped at 30s.
@@ -278,6 +281,8 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	stopReason := fmt.Sprintf("reached max iterations (%d)", maxIter)
 	completed := false
 	iterationsRun := 0
+	lastProgressCount := -1 // -1 = no progress file seen yet
+	stuckCount := 0
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
@@ -394,6 +399,20 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 					slog.Info("all plan steps completed", "session_id", sessionID, "iteration", i)
 					break
 				}
+			}
+			// Stuck detection: stop if plan progress hasn't advanced for maxStuckIterations.
+			cur := len(progress.CompletedSteps)
+			if cur == lastProgressCount {
+				stuckCount++
+				if stuckCount >= maxStuckIterations {
+					stopReason = fmt.Sprintf("no plan progress for %d iterations (completed %d steps)", stuckCount, cur)
+					completed = true
+					slog.Info("stopping stuck session", "session_id", sessionID, "iteration", i, "completed_steps", cur)
+					break
+				}
+			} else {
+				stuckCount = 0
+				lastProgressCount = cur
 			}
 			iterReason = "plan steps remaining"
 		} else if result.Status == agent.IterationStatusError {

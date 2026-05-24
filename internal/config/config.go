@@ -186,7 +186,7 @@ func DefaultConfig() *Config {
 			APIKey: "",
 		},
 		Agent: AgentConfig{
-			MaxIterations:       50,
+			MaxIterations:       20,
 			MaxTotalSeconds:     3600,
 			MaxIterationSeconds: 300,
 			Author:              "claude-agent",
