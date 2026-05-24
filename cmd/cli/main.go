@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -49,21 +51,23 @@ func checkServer(baseURL, apiKey string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// pasteWindow is how long to wait for the next line before deciding input is done.
-// Lines arriving within this window are bundled as one message (paste); silence
-// beyond it means the user finished typing (or the paste is complete).
-const pasteWindow = 30 * time.Millisecond
+// inputToken is one logical unit of input from the terminal.
+// paste=true means the text came from a bracketed paste (newlines are content).
+// paste=false means the user pressed Enter (send signal).
+type inputToken struct {
+	text  string
+	paste bool
+}
 
-// stdinLines reads lines from stdin in a dedicated goroutine and sends them on
-// the returned channel. This lets the REPL use select+timeout for paste detection
-// without racing on the underlying reader.
-func stdinLines() <-chan string {
-	ch := make(chan string, 32)
+// stdinTokens reads from stdin in a dedicated goroutine, detecting bracketed
+// paste sequences (\x1b[200~ … \x1b[201~) and emitting inputTokens.
+func stdinTokens() <-chan inputToken {
+	ch := make(chan inputToken, 4)
 	go func() {
 		r := bufio.NewReader(os.Stdin)
 		for {
-			line, err := r.ReadString('\n')
-			ch <- strings.TrimRight(line, "\r\n")
+			tok, err := readToken(r)
+			ch <- tok
 			if err != nil {
 				close(ch)
 				return
@@ -73,50 +77,90 @@ func stdinLines() <-chan string {
 	return ch
 }
 
-func repl(baseURL, apiKey string) {
-	lines := stdinLines()
+// readToken returns one token: a typed line (ended by \n) or a bracketed paste
+// block (everything between \x1b[200~ and \x1b[201~).
+func readToken(r *bufio.Reader) (inputToken, error) {
+	var buf []byte
 	for {
-		fmt.Print("> ")
+		b, err := r.ReadByte()
+		if err != nil {
+			return inputToken{text: strings.TrimRight(string(buf), "\r\n")}, err
+		}
+		if b == '\n' {
+			return inputToken{text: strings.TrimRight(string(buf), "\r")}, nil
+		}
+		buf = append(buf, b)
+		if bytes.HasSuffix(buf, []byte("\x1b[200~")) {
+			prefix := strings.TrimRight(string(buf[:len(buf)-6]), "\r\n ")
+			paste, err := readUntilPasteEnd(r)
+			text := paste
+			if prefix != "" {
+				text = prefix + "\n" + paste
+			}
+			return inputToken{text: strings.TrimSpace(text), paste: true}, err
+		}
+	}
+}
 
-		// Wait for the first line (blocks until user types or pastes).
-		first, ok := <-lines
+// readUntilPasteEnd reads raw bytes until the paste-end marker \x1b[201~.
+func readUntilPasteEnd(r *bufio.Reader) (string, error) {
+	var buf []byte
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return string(buf), err
+		}
+		buf = append(buf, b)
+		if bytes.HasSuffix(buf, []byte("\x1b[201~")) {
+			return string(buf[:len(buf)-6]), nil
+		}
+	}
+}
+
+func repl(baseURL, apiKey string) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Print("\x1b[?2004h")       // enable bracketed paste mode
+		defer fmt.Print("\x1b[?2004l") // restore on exit
+	}
+
+	tokens := stdinTokens()
+	var acc []string // content accumulated since last send
+
+	for {
+		if len(acc) == 0 {
+			fmt.Print("> ")
+		}
+
+		tok, ok := <-tokens
 		if !ok {
 			fmt.Println()
 			return
 		}
-		if strings.TrimSpace(first) == "/quit" {
-			return
-		}
 
-		// Collect the full message. Lines that arrive within pasteWindow of
-		// each other are bundled together (paste). Silence beyond the window
-		// — whether after a single typed line or after the last pasted line —
-		// means input is done and we send.
-		var parts []string
-		if first != "" {
-			parts = []string{first}
-		}
-	collect:
-		for {
-			select {
-			case line, ok := <-lines:
-				if !ok {
-					break collect
-				}
-				parts = append(parts, line)
-			case <-time.After(pasteWindow):
-				break collect
+		if tok.paste {
+			// Pasted content: buffer it, wait for explicit Enter to send.
+			if tok.text != "" {
+				acc = append(acc, tok.text)
 			}
+			continue
 		}
 
-		line := strings.TrimSpace(strings.Join(parts, "\n"))
-		if line == "" {
+		// Typed Enter: append any typed text then send the accumulated message.
+		if tok.text != "" {
+			acc = append(acc, tok.text)
+		}
+		message := strings.TrimSpace(strings.Join(acc, "\n"))
+		acc = nil
+		if message == "" {
 			continue
+		}
+		if message == "/quit" {
+			return
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		// Catch Ctrl+C to stop the running session, not exit the REPL
+		// Catch Ctrl+C to stop the running session, not exit the REPL.
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, os.Interrupt)
 		go func() {
@@ -127,7 +171,7 @@ func repl(baseURL, apiKey string) {
 			}
 		}()
 
-		pollErr := startAndPoll(ctx, baseURL, apiKey, line)
+		pollErr := startAndPoll(ctx, baseURL, apiKey, message)
 		cancel()
 		signal.Stop(sigCh)
 
