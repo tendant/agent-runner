@@ -145,9 +145,19 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 		}
 	}
 
+	// Capture HEAD before pull to detect whether new commits arrived.
+	headBefore, _ := gitOutput(memoryDir, "rev-parse", "HEAD")
+
 	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD"); err != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
 		return "", fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
+	}
+
+	headAfter, _ := gitOutput(memoryDir, "rev-parse", "HEAD")
+	if string(headBefore) != string(headAfter) {
+		slog.Info("memory pulled", "remote", remote, "from", strings.TrimSpace(string(headBefore))[:8], "to", strings.TrimSpace(string(headAfter))[:8])
+	} else {
+		slog.Info("memory pulled", "remote", remote, "status", "already up to date")
 	}
 
 	return remote, nil
@@ -181,6 +191,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 		if err := gitRunEnv(memoryDir, nil, "commit", "-m", msg); err != nil {
 			return err
 		}
+		slog.Info("memory committed", "msg", msg)
 	}
 
 	// Push only when a remote is configured.
@@ -204,6 +215,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if err := pushMemory(memoryDir, env, remote, creds.Token); err != nil {
 		return fmt.Errorf("push failed: %w", err)
 	}
+	slog.Info("memory pushed", "remote", remote)
 
 	return nil
 }

@@ -548,6 +548,15 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 
 	// Retrieve memory sections.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
+	if len(retrieval.Files) > 0 {
+		names := make([]string, len(retrieval.Files))
+		for i, f := range retrieval.Files {
+			names[i] = f.Name
+		}
+		slog.Info("memory loaded", "files", len(retrieval.Files), "sections", strings.Join(names, ", "))
+	} else {
+		slog.Info("memory loaded", "files", 0)
+	}
 
 	// Build vars map.
 	runnerURL := "http://" + h.config.API.Bind
