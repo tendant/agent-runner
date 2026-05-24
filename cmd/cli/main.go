@@ -49,54 +49,67 @@ func checkServer(baseURL, apiKey string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// pasteWindow is how long to wait for the next line before deciding input is done.
+// Lines arriving within this window are bundled as one message (paste); silence
+// beyond it means the user finished typing (or the paste is complete).
+const pasteWindow = 30 * time.Millisecond
+
+// stdinLines reads lines from stdin in a dedicated goroutine and sends them on
+// the returned channel. This lets the REPL use select+timeout for paste detection
+// without racing on the underlying reader.
+func stdinLines() <-chan string {
+	ch := make(chan string, 32)
+	go func() {
+		r := bufio.NewReader(os.Stdin)
+		for {
+			line, err := r.ReadString('\n')
+			ch <- strings.TrimRight(line, "\r\n")
+			if err != nil {
+				close(ch)
+				return
+			}
+		}
+	}()
+	return ch
+}
+
 func repl(baseURL, apiKey string) {
-	reader := bufio.NewReader(os.Stdin)
+	lines := stdinLines()
 	for {
 		fmt.Print("> ")
 
-		first, err := reader.ReadString('\n')
-		if err != nil {
+		// Wait for the first line (blocks until user types or pastes).
+		first, ok := <-lines
+		if !ok {
 			fmt.Println()
 			return
-		}
-		first = strings.TrimRight(first, "\r\n")
-		if first == "" {
-			continue
 		}
 		if strings.TrimSpace(first) == "/quit" {
 			return
 		}
 
-		// Collect the full message. Pasted newlines (\n already in buffer)
-		// are included in the message body; only an explicit Enter pressed
-		// by the user (buffer empty after the newline) actually sends.
-		lines := []string{first}
-		for reader.Buffered() > 0 {
-			// More data is buffered — the newline was part of a paste.
-			// Drain all buffered bytes at once (non-blocking) then loop
-			// back to wait for the user's explicit Enter.
-			n := reader.Buffered()
-			peeked, _ := reader.Peek(n)
-			reader.Discard(n) //nolint:errcheck
-			rest := strings.TrimRight(string(peeked), "\r\n")
-			for _, l := range strings.Split(rest, "\n") {
-				l = strings.TrimRight(l, "\r")
-				if l != "" {
-					lines = append(lines, l)
+		// Collect the full message. Lines that arrive within pasteWindow of
+		// each other are bundled together (paste). Silence beyond the window
+		// — whether after a single typed line or after the last pasted line —
+		// means input is done and we send.
+		var parts []string
+		if first != "" {
+			parts = []string{first}
+		}
+	collect:
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					break collect
 				}
-			}
-			// Wait for next Enter.
-			next, err := reader.ReadString('\n')
-			if err != nil {
-				goto send
-			}
-			next = strings.TrimRight(next, "\r\n")
-			if next != "" {
-				lines = append(lines, next)
+				parts = append(parts, line)
+			case <-time.After(pasteWindow):
+				break collect
 			}
 		}
-	send:
-		line := strings.TrimSpace(strings.Join(lines, "\n"))
+
+		line := strings.TrimSpace(strings.Join(parts, "\n"))
 		if line == "" {
 			continue
 		}
