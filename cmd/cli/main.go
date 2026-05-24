@@ -208,7 +208,8 @@ func collectPaste(r *bufio.Reader, line []byte, acc *[]string) []byte {
 }
 
 // readEscSeq reads the bytes of an escape sequence after the leading \x1b.
-// Stops at the first byte in the range 0x40–0x7E (the final byte).
+// '[' is the CSI introducer and is not a final byte; all other bytes in
+// 0x40–0x7E terminate the sequence.
 func readEscSeq(r *bufio.Reader) string {
 	var seq []byte
 	for {
@@ -217,7 +218,7 @@ func readEscSeq(r *bufio.Reader) string {
 			break
 		}
 		seq = append(seq, b)
-		if b >= 0x40 && b <= 0x7E {
+		if b >= 0x40 && b <= 0x7E && b != '[' {
 			break
 		}
 	}

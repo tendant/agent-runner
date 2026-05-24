@@ -255,8 +255,12 @@ func (h *Handlers) executeAgent(session *agent.Session) {
 	// Symlink the persistent memory directory into the workspace so the agent
 	// can read and write memory files at the familiar "memory/" path and commit
 	// directly without needing to know any absolute paths.
-	if err := os.Symlink(h.config.MemoryDir, filepath.Join(checkoutPath, "memory")); err != nil {
-		slog.Warn("could not symlink memory dir into workspace (non-fatal)", "error", err)
+	// Must use an absolute target path — a relative path would create a
+	// self-referential symlink when the target name matches the link name.
+	if absMemDir, err := filepath.Abs(h.config.MemoryDir); err == nil {
+		if err := os.Symlink(absMemDir, filepath.Join(checkoutPath, "memory")); err != nil {
+			slog.Warn("could not symlink memory dir into workspace (non-fatal)", "error", err)
+		}
 	}
 
 	ctx := h.agentManager.Context()
