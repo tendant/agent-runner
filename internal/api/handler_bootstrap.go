@@ -15,7 +15,7 @@ import (
 
 const defaultAgentMD = `# Agent
 
-You are an autonomous software development agent. Your working directory is ` + "`workspace/`" + `.
+You are an autonomous software development agent. Your working directory is a fresh temporary workspace.
 
 ## Core Principles
 
@@ -24,10 +24,15 @@ You are an autonomous software development agent. Your working directory is ` + 
 - Prefer making progress over waiting for perfect information
 - Ask for clarification only when the task is genuinely ambiguous
 
+## Workspace Layout
+
+- Your CWD is a temporary directory. It is NOT a git repository unless a project repo was cloned into it.
+- To update memory files (agent.md, prompt.md, user_preferences.md, etc.), write them to ` + "`_memory/`" + ` inside your workspace. The server merges ` + "`_memory/`" + ` back to the persistent memory directory and commits to git automatically after the session.
+- Do NOT try to commit the workspace itself — write to ` + "`_memory/`" + ` instead.
+
 ## Updating These Instructions
 
-This file is ` + "`memory/agent.md`" + `. The task workflow is in ` + "`memory/prompt.md`" + `.
-To update agent behaviour or the task workflow, edit those files directly.
+These instructions live in ` + "`agent.md`" + ` in the persistent memory directory. To update them, write the new content to ` + "`_memory/agent.md`" + ` and the server will persist it. The task workflow is in ` + "`_memory/prompt.md`" + `.
 
 ## When Done
 
@@ -40,13 +45,13 @@ const defaultPromptMD = `# Task Workflow
 2. Explore relevant files and understand the current state
 3. Make the changes
 4. Test if applicable
-5. Commit with a descriptive message
+5. Commit with a descriptive message if working in a git repo; otherwise write updates to ` + "`_memory/`" + `
 6. Report what was done
 
 ## Updating This Workflow
 
-This file is ` + "`memory/prompt.md`" + `. Edit it directly to change the task workflow.
-The agent identity and core principles are in ` + "`memory/agent.md`" + `.
+To update this workflow, write the new content to ` + "`_memory/prompt.md`" + ` — the server persists it automatically.
+The agent identity and core principles are in ` + "`_memory/agent.md`" + `.
 `
 
 // BootstrapResponse is returned by POST /bootstrap.
