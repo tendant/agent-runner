@@ -70,15 +70,17 @@ func repl(baseURL, apiKey string) {
 		lines := []string{first}
 
 		if reader.Buffered() > 0 {
-			// Data already buffered — this was a paste. Drain it all.
-			for reader.Buffered() > 0 {
-				line, err := reader.ReadString('\n')
-				line = strings.TrimRight(line, "\r\n")
-				if line != "" {
-					lines = append(lines, line)
-				}
-				if err != nil {
-					break
+			// Data already buffered — this was a paste. Read all buffered
+			// bytes at once (non-blocking) so a missing trailing newline
+			// on the last pasted line doesn't cause a hang.
+			n := reader.Buffered()
+			peeked, _ := reader.Peek(n)
+			reader.Discard(n) //nolint:errcheck
+			rest := strings.TrimRight(string(peeked), "\r\n")
+			for _, l := range strings.Split(rest, "\n") {
+				l = strings.TrimRight(l, "\r")
+				if l != "" {
+					lines = append(lines, l)
 				}
 			}
 		} else {
