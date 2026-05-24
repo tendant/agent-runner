@@ -35,6 +35,8 @@ Write important information directly to memory files:
 - {{MEMORY_DIR}}/project_summary.md  — project goals, tech stack, status
 - {{MEMORY_DIR}}/decisions.md        — key decisions and rationale
 
+To update your workflow instructions for future sessions, write to {{MEMORY_DIR}}/prompt.md.
+
 Keep entries brief. Append — do not delete existing content unless correcting an error.
 
 ## When Done
