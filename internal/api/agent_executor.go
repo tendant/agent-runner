@@ -527,6 +527,14 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	// Retrieve memory sections.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
 
+	// Append memory dir note so the agent knows where to read/write memory files.
+	memNote := "Memory directory (persistent git repo — read and edit files here directly, commit as normal): " + h.config.MemoryDir
+	if systemInstructions != "" {
+		systemInstructions += "\n\n" + memNote
+	} else {
+		systemInstructions = memNote
+	}
+
 	// Build vars map.
 	runnerURL := "http://" + h.config.API.Bind
 	vars := map[string]string{
