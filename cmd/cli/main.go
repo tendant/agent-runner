@@ -51,63 +51,180 @@ func checkServer(baseURL, apiKey string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// inputToken is one logical unit of input from the terminal.
-// paste=true means the text came from a bracketed paste (newlines are content).
-// paste=false means the user pressed Enter (send signal).
-type inputToken struct {
-	text  string
-	paste bool
-}
+func repl(baseURL, apiKey string) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		replPipe(baseURL, apiKey)
+		return
+	}
 
-// stdinTokens reads from stdin in a dedicated goroutine, detecting bracketed
-// paste sequences (\x1b[200~ … \x1b[201~) and emitting inputTokens.
-func stdinTokens() <-chan inputToken {
-	ch := make(chan inputToken, 4)
-	go func() {
-		r := bufio.NewReader(os.Stdin)
-		for {
-			tok, err := readToken(r)
-			ch <- tok
-			if err != nil {
-				close(ch)
-				return
-			}
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		replPipe(baseURL, apiKey)
+		return
+	}
+	defer term.Restore(fd, state)
+	fmt.Print("\x1b[?2004h")
+	defer fmt.Print("\x1b[?2004l")
+
+	in := bufio.NewReader(os.Stdin)
+
+	for {
+		msg, ok := readMessage(in)
+		if !ok {
+			fmt.Print("\r\n")
+			return
 		}
-	}()
-	return ch
+		if msg == "" {
+			continue
+		}
+		if msg == "/quit" {
+			fmt.Print("\r\n")
+			return
+		}
+
+		// Switch to cooked mode so agent output renders normally.
+		term.Restore(fd, state)
+		fmt.Print("\r\n")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		go func() {
+			select {
+			case <-sigCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+
+		pollErr := startAndPoll(ctx, baseURL, apiKey, msg)
+		cancel()
+		signal.Stop(sigCh)
+
+		if pollErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", pollErr)
+		}
+		fmt.Println()
+
+		// Re-enter raw mode for next input.
+		state, _ = term.MakeRaw(fd)
+	}
 }
 
-// readToken returns one token: a typed line (ended by \n) or a bracketed paste
-// block (everything between \x1b[200~ and \x1b[201~).
-func readToken(r *bufio.Reader) (inputToken, error) {
-	var buf []byte
+// replPipe handles non-terminal stdin (pipes, scripts): one line = one message.
+func replPipe(baseURL, apiKey string) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		msg := strings.TrimSpace(scanner.Text())
+		if msg == "" || msg == "/quit" {
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		if err := startAndPoll(ctx, baseURL, apiKey, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
+		cancel()
+		fmt.Println()
+	}
+}
+
+// readMessage reads one message in raw mode with controlled echo.
+// Typed characters are echoed. Paste markers are replaced with [ … ].
+// Returns ("", false) on EOF or Ctrl+D.
+func readMessage(r *bufio.Reader) (string, bool) {
+	fmt.Print("> ")
+	var line []byte   // current typed line
+	var acc  []string // lines from previous paste blocks
+
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
-			return inputToken{text: strings.TrimRight(string(buf), "\r\n")}, err
+			return "", false
 		}
-		if b == '\n' {
-			return inputToken{text: strings.TrimRight(string(buf), "\r")}, nil
-		}
-		buf = append(buf, b)
-		if bytes.HasSuffix(buf, []byte("\x1b[200~")) {
-			prefix := strings.TrimRight(string(buf[:len(buf)-6]), "\r\n ")
-			paste, err := readUntilPasteEnd(r)
-			// Consume the \n that terminals auto-append after \x1b[201~.
-			// Without this it would be misread as a typed Enter and trigger a send.
-			if next, peekErr := r.ReadByte(); peekErr == nil && next != '\n' && next != '\r' {
-				r.UnreadByte()
+		switch {
+		case b == '\r': // Enter — send
+			if len(line) > 0 {
+				acc = append(acc, string(line))
 			}
-			text := paste
-			if prefix != "" {
-				text = prefix + "\n" + paste
+			return strings.TrimSpace(strings.Join(acc, "\n")), true
+
+		case b == '\x7f' || b == '\b': // Backspace
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+				fmt.Print("\b \b")
 			}
-			return inputToken{text: strings.TrimSpace(text), paste: true}, err
+
+		case b == '\x03': // Ctrl+C — clear current input
+			line = nil
+			acc = nil
+			fmt.Print("^C\r\n> ")
+
+		case b == '\x04': // Ctrl+D — quit
+			return "", false
+
+		case b == '\x1b': // Escape sequence
+			if seq := readEscSeq(r); seq == "[200~" {
+				line = collectPaste(r, line, &acc)
+			}
+			// Other sequences (arrow keys etc.) are ignored.
+
+		case b >= 0x20: // Printable character
+			line = append(line, b)
+			fmt.Printf("%c", b)
 		}
 	}
 }
 
-// readUntilPasteEnd reads raw bytes until the paste-end marker \x1b[201~.
+// collectPaste reads a bracketed paste block, appends completed lines to acc,
+// and returns the remainder as the new current line.
+// Displays "[" at start and "]" at end so the user sees clean delimiters.
+func collectPaste(r *bufio.Reader, line []byte, acc *[]string) []byte {
+	if len(line) > 0 {
+		*acc = append(*acc, string(line))
+	}
+	fmt.Print("[")
+
+	paste, _ := readUntilPasteEnd(r)
+	// Discard the \r or \n terminals append after \x1b[201~.
+	if b, err := r.ReadByte(); err == nil && b != '\r' && b != '\n' {
+		r.UnreadByte()
+	}
+
+	lines := strings.Split(strings.TrimRight(paste, "\r\n"), "\n")
+	for i, l := range lines {
+		l = strings.TrimRight(l, "\r")
+		if i < len(lines)-1 {
+			*acc = append(*acc, l)
+			fmt.Printf("%s\r\n", l)
+		} else {
+			fmt.Print(l)
+			fmt.Print("]")
+			return []byte(l)
+		}
+	}
+	fmt.Print("]")
+	return nil
+}
+
+// readEscSeq reads the bytes of an escape sequence after the leading \x1b.
+// Stops at the first byte in the range 0x40–0x7E (the final byte).
+func readEscSeq(r *bufio.Reader) string {
+	var seq []byte
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			break
+		}
+		seq = append(seq, b)
+		if b >= 0x40 && b <= 0x7E {
+			break
+		}
+	}
+	return string(seq)
+}
+
+// readUntilPasteEnd reads bytes until the paste-end marker \x1b[201~.
 func readUntilPasteEnd(r *bufio.Reader) (string, error) {
 	var buf []byte
 	for {
@@ -119,71 +236,6 @@ func readUntilPasteEnd(r *bufio.Reader) (string, error) {
 		if bytes.HasSuffix(buf, []byte("\x1b[201~")) {
 			return string(buf[:len(buf)-6]), nil
 		}
-	}
-}
-
-func repl(baseURL, apiKey string) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		fmt.Print("\x1b[?2004h")       // enable bracketed paste mode
-		defer fmt.Print("\x1b[?2004l") // restore on exit
-	}
-
-	tokens := stdinTokens()
-	var acc []string // content accumulated since last send
-
-	for {
-		if len(acc) == 0 {
-			fmt.Print("> ")
-		}
-
-		tok, ok := <-tokens
-		if !ok {
-			fmt.Println()
-			return
-		}
-
-		if tok.paste {
-			// Pasted content: buffer it, wait for explicit Enter to send.
-			if tok.text != "" {
-				acc = append(acc, tok.text)
-			}
-			continue
-		}
-
-		// Typed Enter: append any typed text then send the accumulated message.
-		if tok.text != "" {
-			acc = append(acc, tok.text)
-		}
-		message := strings.TrimSpace(strings.Join(acc, "\n"))
-		acc = nil
-		if message == "" {
-			continue
-		}
-		if message == "/quit" {
-			return
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// Catch Ctrl+C to stop the running session, not exit the REPL.
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt)
-		go func() {
-			select {
-			case <-sigCh:
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-
-		pollErr := startAndPoll(ctx, baseURL, apiKey, message)
-		cancel()
-		signal.Stop(sigCh)
-
-		if pollErr != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", pollErr)
-		}
-		fmt.Println()
 	}
 }
 
