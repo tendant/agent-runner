@@ -93,6 +93,11 @@ func readToken(r *bufio.Reader) (inputToken, error) {
 		if bytes.HasSuffix(buf, []byte("\x1b[200~")) {
 			prefix := strings.TrimRight(string(buf[:len(buf)-6]), "\r\n ")
 			paste, err := readUntilPasteEnd(r)
+			// Consume the \n that terminals auto-append after \x1b[201~.
+			// Without this it would be misread as a typed Enter and trigger a send.
+			if next, peekErr := r.ReadByte(); peekErr == nil && next != '\n' && next != '\r' {
+				r.UnreadByte()
+			}
 			text := paste
 			if prefix != "" {
 				text = prefix + "\n" + paste
