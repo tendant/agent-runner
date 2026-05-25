@@ -280,6 +280,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	iterReason := "first iteration"
 	stopReason := fmt.Sprintf("reached max iterations (%d)", maxIter)
 	completed := false
+	blockedOrStuck := false
 	iterationsRun := 0
 	lastProgressCount := -1 // -1 = no progress file seen yet
 	stuckCount := 0
@@ -385,7 +386,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 				reasons[j] = fmt.Sprintf("step %s: %s", b.Step, b.Reason)
 			}
 			stopReason = "blocked: " + strings.Join(reasons, "; ")
-			completed = true
+			blockedOrStuck = true
 			slog.Info("agent blocked on plan steps", "session_id", sessionID, "iteration", i, "reason", stopReason)
 			break
 		}
@@ -406,7 +407,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 				stuckCount++
 				if stuckCount >= maxStuckIterations {
 					stopReason = fmt.Sprintf("no plan progress for %d iterations (completed %d steps)", stuckCount, cur)
-					completed = true
+					blockedOrStuck = true
 					slog.Info("stopping stuck session", "session_id", sessionID, "iteration", i, "completed_steps", cur)
 					break
 				}
@@ -424,7 +425,9 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	slog.Info("iteration loop finished", "session_id", sessionID, "stop_reason", stopReason, "iterations", iterationsRun, "elapsed_secs", int(time.Since(startTime).Seconds()))
 
 	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
-	if h.config.Agent.ReviewerEnabled {
+	// Skip reviewer when the session stopped because the agent was blocked or stuck —
+	// reviewing incomplete work isn't useful and wastes tokens.
+	if h.config.Agent.ReviewerEnabled && !blockedOrStuck {
 		reviewer := subagent.NewReviewer(h.getExecutor())
 
 		for correction := 0; correction <= maxReviewerCorrections; correction++ {
@@ -539,6 +542,10 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		return
 	}
 	if strings.HasPrefix(stopReason, "time limit reached") {
+		h.agentManager.FailSession(sessionID, stopReason)
+		return
+	}
+	if blockedOrStuck {
 		h.agentManager.FailSession(sessionID, stopReason)
 		return
 	}

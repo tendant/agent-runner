@@ -861,3 +861,118 @@ func TestParseSystemUser_MultilineBothSections(t *testing.T) {
 		t.Errorf("expected both user lines, got %q", user)
 	}
 }
+
+// --- handleUpdatePrompt ---
+
+func TestHandleUpdatePrompt_PlainBody(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, sid, handled := c.Handle("Update prompt: follow the rules carefully", nil)
+	if !handled {
+		t.Fatal("expected Update prompt: to be handled")
+	}
+	if sid != "" {
+		t.Errorf("expected no session for plain body, got %q", sid)
+	}
+	if !strings.Contains(reply, "ok wrote prompt.md") {
+		t.Errorf("expected ok reply, got: %s", reply)
+	}
+
+	cwd, _ := os.Getwd()
+	data, err := os.ReadFile(filepath.Join(cwd, "memory", "prompt.md"))
+	if err != nil {
+		t.Fatalf("expected prompt.md to be created: %v", err)
+	}
+	if !strings.Contains(string(data), "follow the rules carefully") {
+		t.Errorf("expected body in prompt.md, got:\n%s", data)
+	}
+}
+
+func TestHandleUpdatePrompt_EmptyBody(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("Update prompt:", nil)
+	if !handled {
+		t.Fatal("expected Update prompt: to be handled")
+	}
+	if !strings.HasPrefix(reply, "error:") {
+		t.Errorf("expected error reply for empty body, got: %s", reply)
+	}
+}
+
+func TestHandleUpdatePrompt_SystemSection(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	body := "Update prompt:\nSystem: always commit at the end"
+	reply, sid, handled := c.Handle(body, nil)
+	if !handled {
+		t.Fatal("expected Update prompt: to be handled")
+	}
+	if sid != "" {
+		t.Errorf("expected no session for system-only body, got %q", sid)
+	}
+	if !strings.Contains(reply, "ok wrote prompt.md") {
+		t.Errorf("expected ok reply, got: %s", reply)
+	}
+
+	cwd, _ := os.Getwd()
+	data, err := os.ReadFile(filepath.Join(cwd, "memory", "prompt.md"))
+	if err != nil {
+		t.Fatalf("expected prompt.md to be created: %v", err)
+	}
+	if !strings.Contains(string(data), "always commit at the end") {
+		t.Errorf("expected system content in prompt.md, got:\n%s", data)
+	}
+}
+
+func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	// Disable planner so the background goroutine doesn't panic on nil plannerClient.
+	env.handlers.config.Agent.PlannerEnabled = false
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	body := "Update prompt:\nSystem: always commit at the end\nUser: fix the tests"
+	reply, sid, handled := c.Handle(body, nil)
+	if !handled {
+		t.Fatal("expected Update prompt: to be handled")
+	}
+	if sid == "" {
+		t.Error("expected a session ID when User: section is present")
+	}
+	if !strings.Contains(reply, "ok wrote prompt.md") {
+		t.Errorf("expected ok reply mentioning prompt.md, got: %s", reply)
+	}
+	if !strings.Contains(reply, sid) {
+		t.Errorf("expected reply to contain session ID %q, got: %s", sid, reply)
+	}
+
+	cwd, _ := os.Getwd()
+	data, err := os.ReadFile(filepath.Join(cwd, "memory", "prompt.md"))
+	if err != nil {
+		t.Fatalf("expected prompt.md to be created: %v", err)
+	}
+	if !strings.Contains(string(data), "always commit at the end") {
+		t.Errorf("expected system content in prompt.md, got:\n%s", data)
+	}
+}
+
+func TestHandleUpdatePrompt_SlashVariant(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("/update-prompt: keep responses brief", nil)
+	if !handled {
+		t.Fatal("expected /update-prompt: to be handled")
+	}
+	if !strings.Contains(reply, "ok wrote prompt.md") {
+		t.Errorf("expected ok reply, got: %s", reply)
+	}
+}
