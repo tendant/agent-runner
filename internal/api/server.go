@@ -289,6 +289,14 @@ func (s *Server) ensureDirectories() error {
 		}
 	}
 
+	// Write a .gitignore to runtime dirs so their contents are never tracked by a parent git repo.
+	for _, dir := range []string{s.config.TmpRoot, s.config.LogsRoot, s.config.RepoCacheRoot} {
+		gi := filepath.Join(dir, ".gitignore")
+		if _, err := os.Stat(gi); os.IsNotExist(err) {
+			_ = os.WriteFile(gi, []byte("*\n"), 0644)
+		}
+	}
+
 	return nil
 }
 

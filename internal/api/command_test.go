@@ -794,3 +794,70 @@ func TestCommander_Auth_OpencodeNotSupported(t *testing.T) {
 		t.Errorf("expected error for opencode auth, got: %s", reply)
 	}
 }
+
+// --- parseSystemUser ---
+
+func TestParseSystemUser_BothSections(t *testing.T) {
+	body := "System: be a helpful agent\nUser: do the task"
+	system, user := parseSystemUser(body)
+	if system != "be a helpful agent" {
+		t.Errorf("expected system=%q, got %q", "be a helpful agent", system)
+	}
+	if user != "do the task" {
+		t.Errorf("expected user=%q, got %q", "do the task", user)
+	}
+}
+
+func TestParseSystemUser_OnlySystem(t *testing.T) {
+	body := "System: be a helpful agent"
+	system, user := parseSystemUser(body)
+	if system != "be a helpful agent" {
+		t.Errorf("expected system=%q, got %q", "be a helpful agent", system)
+	}
+	if user != "" {
+		t.Errorf("expected user empty, got %q", user)
+	}
+}
+
+func TestParseSystemUser_OnlyUser(t *testing.T) {
+	body := "User: do the task"
+	system, user := parseSystemUser(body)
+	if system != "" {
+		t.Errorf("expected system empty, got %q", system)
+	}
+	if user != "do the task" {
+		t.Errorf("expected user=%q, got %q", "do the task", user)
+	}
+}
+
+func TestParseSystemUser_NoSections_PlainText(t *testing.T) {
+	body := "just some plain text"
+	system, user := parseSystemUser(body)
+	if system != "" {
+		t.Errorf("expected system empty for plain text, got %q", system)
+	}
+	if user != "" {
+		t.Errorf("expected user empty for plain text, got %q", user)
+	}
+}
+
+func TestParseSystemUser_EmptyBody(t *testing.T) {
+	system, user := parseSystemUser("")
+	if system != "" {
+		t.Errorf("expected system empty for empty body, got %q", system)
+	}
+	if user != "" {
+		t.Errorf("expected user empty for empty body, got %q", user)
+	}
+}
+
+func TestParseSystemUser_MultilineBothSections(t *testing.T) {
+	body := "System: first system line\nsecond system line\nUser: first user line\nsecond user line"
+	system, user := parseSystemUser(body)
+	if !strings.Contains(system, "first system line") || !strings.Contains(system, "second system line") {
+		t.Errorf("expected both system lines, got %q", system)
+	}
+	if !strings.Contains(user, "first user line") || !strings.Contains(user, "second user line") {
+		t.Errorf("expected both user lines, got %q", user)
+	}
+}

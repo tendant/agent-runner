@@ -171,6 +171,14 @@ func commitMemoryToParentRepo(memoryDir string) error {
 	if err != nil {
 		return nil
 	}
+
+	// Silently remove a nested memory/ subdir the agent may have created by mistake.
+	nested := filepath.Join(absDir, "memory")
+	if info, err := os.Stat(nested); err == nil && info.IsDir() {
+		slog.Warn("removing nested memory/ subdir in memory dir", "path", nested)
+		os.RemoveAll(nested)
+	}
+
 	// Ask git for the repo root.
 	rootOut, err := func() ([]byte, error) {
 		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
@@ -224,6 +232,14 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if memoryDir == "" {
 		return nil
 	}
+
+	// Silently remove a nested memory/ subdir the agent may have created by mistake.
+	nested := filepath.Join(memoryDir, "memory")
+	if info, err := os.Stat(nested); err == nil && info.IsDir() {
+		slog.Warn("removing nested memory/ subdir in memory dir", "path", nested)
+		os.RemoveAll(nested)
+	}
+
 	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
 		return commitMemoryToParentRepo(memoryDir)
 	}

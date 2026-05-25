@@ -98,6 +98,7 @@ type AgentConfig struct {
 	MemoryDays          int      // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart   bool     // Pull memory from git before each session
 	MemoryCharCap       int      // Max characters in composed memory section (0 = no limit)
+	EnvFile             string   // AGENT_ENV_FILE — env file to copy into every agent workspace (default: .env)
 }
 
 // TelegramConfig contains Telegram bot settings
@@ -326,6 +327,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
+	cfg.Agent.EnvFile = envOrDefault("AGENT_ENV_FILE", ".env")
 
 	cfg.Telegram.BotToken = envOrDefault("TELEGRAM_BOT_TOKEN", "")
 	cfg.Telegram.ChatID = envInt64OrDefault("TELEGRAM_CHAT_ID", 0)

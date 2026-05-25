@@ -98,9 +98,10 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // If gitHost and gitOrg are set, it configures the git remote origin for each repo.
 // gitToken is injected into HTTPS remote URLs stored in each workspace repo so the
 // agent's own git commands pick up credentials without extra configuration.
+// envFile is copied into the workspace as .env so the agent can read project credentials.
 // Returns the workspace path, a list of repos that were listed in sharedRepos but
 // missing from the cache, and any setup error.
-func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, []string, error) {
+func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken, envFile string) (string, []string, error) {
 	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
 
 	// [C1] Clean up the session directory if setup fails partway through, so
@@ -184,6 +185,14 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		// gets the cached state.
 		if err := fetchAndResetRepo(dst, repo); err != nil {
 			slog.Warn("workspace: fetch failed, using cached state", "repo", repo, "error", err)
+		}
+	}
+
+	// Copy env file into workspace so the agent can read project credentials.
+	if envFile != "" {
+		if data, err := os.ReadFile(envFile); err == nil {
+			_ = os.WriteFile(filepath.Join(agentDir, ".env"), data, 0600)
+			slog.Info("workspace: copied env file", "src", envFile)
 		}
 	}
 

@@ -28,6 +28,7 @@ You are an autonomous software development agent.
 
 Your memory directory is {{MEMORY_DIR}}. Files written there persist across sessions
 and are loaded into your context at the start of every session.
+**Important:** {{MEMORY_DIR}} is an absolute path. Write files directly into it — do NOT create a subdirectory named "memory" inside it.
 
 Write important information directly to memory files:
 
