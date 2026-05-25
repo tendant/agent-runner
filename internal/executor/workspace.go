@@ -188,11 +188,25 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 		}
 	}
 
-	// Copy env file into workspace so the agent can read project credentials.
+	// Copy env file(s) into workspace. .env.local (if present) is appended
+	// so its values override .env when the agent runs "source .env".
 	if envFile != "" {
+		var combined []byte
 		if data, err := os.ReadFile(envFile); err == nil {
-			_ = os.WriteFile(filepath.Join(agentDir, ".env"), data, 0600)
+			combined = data
+		}
+		localFile := envFile + ".local"
+		if localData, err := os.ReadFile(localFile); err == nil {
+			if len(combined) > 0 && combined[len(combined)-1] != '\n' {
+				combined = append(combined, '\n')
+			}
+			combined = append(combined, localData...)
+			slog.Info("workspace: merged env files", "base", envFile, "local", localFile)
+		} else if len(combined) > 0 {
 			slog.Info("workspace: copied env file", "src", envFile)
+		}
+		if len(combined) > 0 {
+			_ = os.WriteFile(filepath.Join(agentDir, ".env"), combined, 0600)
 		}
 	}
 
