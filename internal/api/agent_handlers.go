@@ -51,6 +51,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 				h.writeJSON(w, http.StatusAccepted, map[string]any{
 					"session_id": sessionID,
 					"status":     "queued",
+					"message":    reply,
 				})
 			} else {
 				h.writeJSON(w, http.StatusOK, map[string]any{"reply": reply})

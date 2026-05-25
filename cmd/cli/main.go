@@ -263,6 +263,7 @@ type startResponse struct {
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
 	Error     string `json:"error"`
+	Message   string `json:"message,omitempty"` // confirmation from commander (e.g. "ok wrote prompt.md")
 }
 
 type iterationStartEvent struct {
@@ -320,6 +321,9 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 		return fmt.Errorf("POST /agent returned %d: %s", resp.StatusCode, start.Error)
 	}
 
+	if start.Message != "" {
+		fmt.Println(start.Message)
+	}
 	sid := start.SessionID
 	fmt.Printf("[queued] session %s\n", sid)
 
@@ -426,7 +430,7 @@ func handleSSEEvent(eventType, data string) (done bool) {
 			if e.Status == "error" || e.Status == "validation_failed" {
 				statusMark = "✗"
 			}
-			summary := lastLine(e.Output)
+			summary := outputSummary(e.Output)
 			if summary != "" {
 				fmt.Printf("[iter %d %s %ds] %s\n", e.Iteration, statusMark, e.DurationSeconds, summary)
 			} else {
@@ -469,15 +473,29 @@ func jsonString(s string) string {
 	return string(b)
 }
 
-// lastLine returns the last non-empty line of s, truncated to 120 chars.
-func lastLine(s string) string {
+// outputSummary returns a one-line summary of agent output, truncated to 120 chars.
+// Finds the first meaningful line of the last paragraph, skipping markdown artifacts.
+func outputSummary(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
-	lines := strings.Split(s, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
+	// Walk paragraphs from the end; each is separated by a blank line.
+	paragraphs := strings.Split(s, "\n\n")
+	for i := len(paragraphs) - 1; i >= 0; i-- {
+		p := strings.TrimSpace(paragraphs[i])
+		if p == "" {
+			continue
+		}
+		for _, line := range strings.Split(p, "\n") {
+			l := strings.TrimSpace(line)
+			if l == "" {
+				continue
+			}
+			// Skip markdown artifacts: code fences, horizontal rules, pure-symbol lines.
+			if strings.HasPrefix(l, "```") || strings.Trim(l, "-=*~#`> ") == "" {
+				continue
+			}
 			if len(l) > 120 {
 				l = l[:120] + "…"
 			}

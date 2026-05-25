@@ -40,6 +40,11 @@ To update your workflow instructions for future sessions, write to {{MEMORY_DIR}
 
 Keep entries brief. Append — do not delete existing content unless correcting an error.
 
+## Credentials
+
+A .env file is available in your workspace root with project credentials (API keys, cloud config, etc.).
+Run "source .env" or "export $(grep -v '^#' .env | xargs)" to load the variables into your shell session.
+
 ## When Done
 
 Report what you did in 2-3 sentences. List files changed and key commands run.
