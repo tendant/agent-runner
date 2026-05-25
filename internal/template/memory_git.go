@@ -172,11 +172,11 @@ func commitMemoryToParentRepo(memoryDir string) error {
 		return nil
 	}
 
-	// Silently remove a nested memory/ subdir the agent may have created by mistake.
+	// Warn if a nested memory/ subdir exists — the agent shouldn't create it.
+	// Not auto-removed: the user may want to inspect or back it up manually.
 	nested := filepath.Join(absDir, "memory")
 	if info, err := os.Stat(nested); err == nil && info.IsDir() {
-		slog.Warn("removing nested memory/ subdir in memory dir", "path", nested)
-		os.RemoveAll(nested)
+		slog.Warn("nested memory/ subdir found inside memory dir — consider removing it manually", "path", nested)
 	}
 
 	// Ask git for the repo root.
@@ -233,11 +233,10 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 		return nil
 	}
 
-	// Silently remove a nested memory/ subdir the agent may have created by mistake.
-	nested := filepath.Join(memoryDir, "memory")
-	if info, err := os.Stat(nested); err == nil && info.IsDir() {
-		slog.Warn("removing nested memory/ subdir in memory dir", "path", nested)
-		os.RemoveAll(nested)
+	// Warn if a nested memory/ subdir exists — the agent shouldn't create it.
+	// Not auto-removed: the user may want to inspect or back it up manually.
+	if info, err := os.Stat(filepath.Join(memoryDir, "memory")); err == nil && info.IsDir() {
+		slog.Warn("nested memory/ subdir found inside memory dir — consider removing it manually", "path", filepath.Join(memoryDir, "memory"))
 	}
 
 	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
