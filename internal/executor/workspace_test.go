@@ -168,7 +168,7 @@ func TestPrepareAgentWorkspace_CleansUpOnError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := wm.PrepareAgentWorkspace("", sessionID, nil, "", "", "", "", "")
+	_, _, err := wm.PrepareAgentWorkspace("", sessionID, nil, "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error when stateDir cannot be created")
 	}
@@ -190,7 +190,7 @@ func TestPrepareAgentWorkspace_ReturnsMissingRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7test", []string{"present", "absent"}, "", "", "", "", "")
+	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7test", []string{"present", "absent"}, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestPrepareAgentWorkspace_EmptyMissingWhenAllPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7ok", []string{"myrepo"}, "", "", "", "", "")
+	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7ok", []string{"myrepo"}, "", "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -230,7 +230,6 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	workspacePath, missingRepos, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
-		h.config.Agent.EnvFile,
 	)
 	if err != nil {
 		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())

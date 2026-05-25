@@ -42,8 +42,9 @@ Keep entries brief. Append — do not delete existing content unless correcting 
 
 ## Credentials
 
-A .env file is available in your workspace root with project credentials (API keys, cloud config, etc.).
-Run "source .env" or "export $(grep -v '^#' .env | xargs)" to load the variables into your shell session.
+API keys and credentials (ANTHROPIC_API_KEY, OPENAI_API_KEY, AWS_*, etc.) are available directly
+as environment variables — the server loads .env and .env.local at startup and all subprocesses
+inherit them. No file loading is needed.
 
 ## When Done
 
