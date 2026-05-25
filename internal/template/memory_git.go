@@ -163,15 +163,69 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 	return remote, nil
 }
 
+// commitMemoryToParentRepo finds the git repo that contains memoryDir and
+// stages+commits files within memoryDir. Push is skipped since there is no
+// memory-specific remote. No-op if memoryDir is not inside any git repo.
+func commitMemoryToParentRepo(memoryDir string) error {
+	absDir, err := filepath.Abs(memoryDir)
+	if err != nil {
+		return nil
+	}
+	// Ask git for the repo root.
+	rootOut, err := func() ([]byte, error) {
+		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		cmd.Dir = absDir
+		return cmd.Output()
+	}()
+	if err != nil {
+		slog.Warn("memory dir is not inside a git repo, skipping commit", "dir", absDir)
+		return nil
+	}
+	repoRoot := strings.TrimSpace(string(rootOut))
+
+	// Compute path of memoryDir relative to the repo root.
+	rel, err := filepath.Rel(repoRoot, absDir)
+	if err != nil {
+		return nil
+	}
+
+	// Stage only files under memoryDir.
+	if err := gitRunEnv(repoRoot, nil, "add", rel); err != nil {
+		return err
+	}
+
+	out, err := gitOutput(repoRoot, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil
+	}
+
+	msg := "[memory] " + time.Now().Format("2006-01-02") + ": " + summariseChanges(out)
+	_ = gitRunEnv(repoRoot, nil, "config", "user.email", "agent-runner@local")
+	_ = gitRunEnv(repoRoot, nil, "config", "user.name", "agent-runner")
+	if err := gitRunEnv(repoRoot, nil, "commit", "-m", msg); err != nil {
+		return err
+	}
+	slog.Info("memory committed to parent repo", "root", repoRoot, "msg", msg)
+	return nil
+}
+
 // CommitAndPushMemory stages all changes in memoryDir, commits them, and
-// pushes to origin. No-op if memoryDir is not a git repository.
-// Push failure is logged but not returned as an error.
+// pushes to origin.
+//
+// If memoryDir has its own .git it is treated as a standalone repo (the normal
+// case when /memory git has been configured). Otherwise the function falls
+// back to the nearest parent git repo and commits only the files that live
+// under memoryDir. Push is skipped in the fallback case — there is no
+// memory-specific remote to push to.
 func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if memoryDir == "" {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
-		return nil
+		return commitMemoryToParentRepo(memoryDir)
 	}
 
 	if err := gitRunEnv(memoryDir, nil, "add", "-A"); err != nil {
