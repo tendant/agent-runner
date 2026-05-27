@@ -12,6 +12,7 @@ runs/
 logs/
 tmp/
 .claude/
+internal/api/memory/
 
 # IDE and editor files
 .idea/
