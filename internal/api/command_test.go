@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
 func withTempCWD(t *testing.T) (restore func()) {
@@ -974,5 +976,53 @@ func TestHandleUpdatePrompt_SlashVariant(t *testing.T) {
 	}
 	if !strings.Contains(reply, "ok wrote prompt.md") {
 		t.Errorf("expected ok reply, got: %s", reply)
+	}
+}
+
+func TestHandleStop_NoArg(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("/stop", nil)
+	if !handled {
+		t.Fatal("expected /stop to be handled")
+	}
+	if !strings.Contains(reply, "usage:") {
+		t.Errorf("expected usage reply, got: %s", reply)
+	}
+}
+
+func TestHandleStop_NotFound(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("/stop deadbeef", nil)
+	if !handled {
+		t.Fatal("expected /stop to be handled")
+	}
+	if !strings.Contains(reply, "no session found") {
+		t.Errorf("expected no session found reply, got: %s", reply)
+	}
+}
+
+func TestHandleStop_RunningSession(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	session, err := env.handlers.agentManager.CreateSession("test task", nil, "test", "", 5, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Manually mark as running so stop is accepted
+	session.Status = agent.SessionStatusRunning
+
+	// Use just the UUID part (strip "agent-" prefix, take first 8 chars)
+	shortID := strings.TrimPrefix(session.ID, "agent-")[:8]
+	reply, _, handled := c.Handle("/stop "+shortID, nil)
+	if !handled {
+		t.Fatal("expected /stop to be handled")
+	}
+	if !strings.Contains(reply, "stop requested") {
+		t.Errorf("expected stop requested reply, got: %s", reply)
 	}
 }

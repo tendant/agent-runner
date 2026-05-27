@@ -116,6 +116,12 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == cmdRepo || strings.HasPrefix(lower, cmdRepo+" "):
 		arg := strings.TrimSpace(text[len(cmdRepo):])
 		return r(c.handleRepo(arg))
+	case strings.HasPrefix(lower, "/stop ") || lower == "/stop":
+		arg := ""
+		if len(text) > 6 {
+			arg = strings.TrimSpace(text[6:])
+		}
+		return r(c.handleStop(arg))
 	}
 	return "", "", false
 }
@@ -316,6 +322,27 @@ func (c *Commander) handleSessions() string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleStop signals a session to stop by partial or full ID.
+func (c *Commander) handleStop(arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return "usage: /stop <session-id>"
+	}
+	sessions := c.handlers.agentManager.ListSessions(0)
+	for _, s := range sessions {
+		if s.ID == arg || strings.HasPrefix(s.ID, "agent-"+arg) || strings.HasPrefix(s.ID, arg) {
+			if s.Status != agent.SessionStatusRunning && s.Status != agent.SessionStatusQueued {
+				return fmt.Sprintf("session %s is not running (status: %s)", s.ID, s.Status)
+			}
+			if err := c.handlers.agentManager.StopSession(s.ID); err != nil {
+				return fmt.Sprintf("error stopping %s: %v", s.ID, err)
+			}
+			return fmt.Sprintf("stop requested for %s", s.ID)
+		}
+	}
+	return fmt.Sprintf("no session found matching %q", arg)
 }
 
 // handleConfig returns the current configuration state, one key=value per line.
@@ -1196,6 +1223,7 @@ const helpText = `**Agent Runner Commands**
 
 **/status** — show runtime state (agent, queue, CLI, issues)
 **/sessions** — list all active and recent sessions with IDs
+**/stop** _\<session-id\>_ — request a running or queued session to stop
 **/config** — show current configuration and readiness
 
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
