@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // OpencodeExecutor handles opencode CLI execution.
@@ -44,6 +46,16 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 
 	cmd := exec.CommandContext(ctx, "opencode", args...)
 	cmd.Dir = workspacePath
+	// Put the process in its own group so SIGKILL reaches all children.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return cmd.Process.Kill()
+	}
+	// Allow up to 10s for pipes to drain after kill before Wait() forces return.
+	cmd.WaitDelay = 10 * time.Second
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

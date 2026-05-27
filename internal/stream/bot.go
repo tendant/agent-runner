@@ -670,15 +670,38 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 
 	ctx := context.Background()
 
-	for range ticker.C {
-		session, exists := b.starter.GetAgentSession(sessionID)
-		if !exists {
-			b.emitFinal(ctx, convID, "Session not found.")
-			return
-		}
+	// Derive a deadline from the session's configured max time.
+	// Look it up on the first tick; fall back to a generous default if not found.
+	const fallbackTimeout = 2 * time.Hour
+	var deadline <-chan time.Time
 
-		if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-			b.emitFinal(ctx, convID, formatFinalResult(session))
+	for {
+		select {
+		case <-ticker.C:
+			session, exists := b.starter.GetAgentSession(sessionID)
+			if !exists {
+				b.emitFinal(ctx, convID, "Session not found.")
+				return
+			}
+
+			// Set deadline on first successful lookup.
+			if deadline == nil {
+				maxSecs := session.MaxTotalSeconds
+				if maxSecs <= 0 {
+					maxSecs = int(fallbackTimeout.Seconds())
+				}
+				t := time.NewTimer(time.Duration(maxSecs)*time.Second + 30*time.Second)
+				defer t.Stop()
+				deadline = t.C
+			}
+
+			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
+				b.emitFinal(ctx, convID, formatFinalResult(session))
+				return
+			}
+
+		case <-deadline:
+			b.emitFinal(ctx, convID, "Session timed out waiting for a response.")
 			return
 		}
 	}

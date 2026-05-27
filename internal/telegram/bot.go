@@ -294,22 +294,43 @@ func (b *Bot) pollAndReport(tgChatID int64, sessionID string) {
 
 	reported := 0 // number of iterations already reported
 
-	for range ticker.C {
-		session, exists := b.starter.GetAgentSession(sessionID)
-		if !exists {
-			b.send(tgChatID, "Session not found.")
-			return
-		}
+	const fallbackTimeout = 2 * time.Hour
+	var deadline <-chan time.Time
 
-		// Report new iterations incrementally
-		for i := reported; i < len(session.Iterations); i++ {
-			b.send(tgChatID, FormatIteration(session.Iterations[i]))
-		}
-		reported = len(session.Iterations)
+	for {
+		select {
+		case <-ticker.C:
+			session, exists := b.starter.GetAgentSession(sessionID)
+			if !exists {
+				b.send(tgChatID, "Session not found.")
+				return
+			}
 
-		// Check if session is done
-		if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-			b.send(tgChatID, FormatFinalResult(session))
+			// Set deadline on first successful lookup.
+			if deadline == nil {
+				maxSecs := session.MaxTotalSeconds
+				if maxSecs <= 0 {
+					maxSecs = int(fallbackTimeout.Seconds())
+				}
+				t := time.NewTimer(time.Duration(maxSecs)*time.Second + 30*time.Second)
+				defer t.Stop()
+				deadline = t.C
+			}
+
+			// Report new iterations incrementally
+			for i := reported; i < len(session.Iterations); i++ {
+				b.send(tgChatID, FormatIteration(session.Iterations[i]))
+			}
+			reported = len(session.Iterations)
+
+			// Check if session is done
+			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
+				b.send(tgChatID, FormatFinalResult(session))
+				return
+			}
+
+		case <-deadline:
+			b.send(tgChatID, "Session timed out waiting for a response.")
 			return
 		}
 	}

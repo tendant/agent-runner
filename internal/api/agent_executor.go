@@ -813,8 +813,12 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 		if len(errPreview) > 120 {
 			errPreview = errPreview[:120] + "..."
 		}
-		msg = fmt.Sprintf("Agent failed\n• Session: %s\n• Message: %s\n• Error: %s",
-			snap.ID, preview, errPreview)
+		if output := lastAgentOutput(snap); output != "" {
+			msg = fmt.Sprintf("%s\n\n---\nAgent failed — %s", output, errPreview)
+		} else {
+			msg = fmt.Sprintf("Agent failed\n• Session: %s\n• Message: %s\n• Error: %s",
+				snap.ID, preview, errPreview)
+		}
 	default:
 		return
 	}
