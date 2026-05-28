@@ -303,8 +303,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Author = envOrDefault("AGENT_AUTHOR", cfg.Agent.Author)
 	cfg.Agent.CommitPrefix = envOrDefault("AGENT_COMMIT_PREFIX", cfg.Agent.CommitPrefix)
 	cfg.Agent.MaxIterations = envIntOrDefault("AGENT_MAX_ITERATIONS", cfg.Agent.MaxIterations)
-	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_TIMEOUT", cfg.Agent.MaxTotalSeconds)
-	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_ITERATION_TIMEOUT", cfg.Agent.MaxIterationSeconds)
+	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
+	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	// opencode requires explicit model/provider; set defaults unless overridden below.
 	if cfg.Agent.CLI == "opencode" || cfg.Agent.CLI == "" {

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -721,15 +724,93 @@ func (b *Bot) emitFinal(ctx context.Context, convID, text string) {
 	b.emit(ctx, convID, "assistant.final", map[string]string{"content": text})
 }
 
+// emitBackoffs is the inter-attempt delay schedule for emit retries.
+// Three attempts total → two backoff waits (between 1→2 and 2→3).
+var emitBackoffs = []time.Duration{
+	250 * time.Millisecond,
+	1 * time.Second,
+	3 * time.Second,
+}
+
 func (b *Bot) emit(ctx context.Context, convID, eventType string, payload interface{}) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("stream bot: marshal error", "error", err)
 		return
 	}
-	if err := b.client.EmitEvent(ctx, convID, eventType, data); err != nil {
-		slog.Error("stream bot: emit error", "event_type", eventType, "error", err)
+
+	// Retry transient emit failures (TLS handshake timeouts, connection
+	// resets, 5xx, etc.) so a Cloudflare hiccup doesn't drop assistant.final
+	// on the floor. Permanent errors (4xx other than 429, bad payload) fail fast.
+	maxAttempts := len(emitBackoffs) + 1
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		emitErr := b.client.EmitEvent(ctx, convID, eventType, data)
+		if emitErr == nil {
+			if attempt > 1 {
+				slog.Info("stream bot: emit succeeded after retry",
+					"event_type", eventType, "attempts", attempt)
+			}
+			return
+		}
+		lastErr = emitErr
+		if !isTransientEmitError(emitErr) || attempt == maxAttempts {
+			break
+		}
+		backoff := emitBackoffs[attempt-1]
+		slog.Warn("stream bot: transient emit error, retrying",
+			"event_type", eventType, "attempt", attempt,
+			"next_backoff", backoff, "error", emitErr)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			slog.Warn("stream bot: emit cancelled during retry",
+				"event_type", eventType, "error", ctx.Err())
+			return
+		}
 	}
+	slog.Error("stream bot: emit error",
+		"event_type", eventType, "attempts", maxAttempts, "error", lastErr)
+}
+
+// isTransientEmitError reports whether an EmitEvent error is worth retrying.
+// Covers TLS handshake / i/o timeouts, connection refused / reset, brief DNS
+// failures, EOF, generic net.Error timeouts, HTTP 429, and HTTP 5xx.
+// Permanent failures (4xx other than 429, payload errors) return false.
+func isTransientEmitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, needle := range []string{
+		"TLS handshake timeout",
+		"i/o timeout",
+		"connection refused",
+		"connection reset",
+		"no such host",
+		"EOF",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	// HTTP status errors are formatted as "emit event: status N: <body>".
+	const statusPrefix = "emit event: status "
+	if idx := strings.Index(msg, statusPrefix); idx >= 0 {
+		rest := msg[idx+len(statusPrefix):]
+		if end := strings.IndexByte(rest, ':'); end > 0 {
+			if code, convErr := strconv.Atoi(rest[:end]); convErr == nil {
+				if code == 429 || (code >= 500 && code < 600) {
+					return true
+				}
+			}
+		}
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return false
 }
 
 // Formatting helpers
