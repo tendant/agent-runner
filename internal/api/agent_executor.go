@@ -787,12 +787,15 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 		return
 	}
 
-	// Skip notification if session was started from a chat channel (the user
-	// is already watching the session via polling). Only notify for sessions
-	// that completed "in the background" — i.e. runner-initiated tasks.
-	// Runner bridge handles its own notifications, so we notify here only
-	// for API-initiated sessions that the user might not be watching.
-	// For now, notify all completed/failed sessions and let the notifier dedupe.
+	// Chat-initiated sessions (stream/telegram/wechat) are already watched by a
+	// pollAndReport goroutine that delivers the result directly to the originating
+	// conversation. Sending a second notification via SendMessage causes the bot to
+	// receive its own message as user input, set pendingInput=true, and re-run the
+	// same task after the session completes.
+	switch snap.Source {
+	case "stream", "telegram", "wechat":
+		return
+	}
 
 	preview := snap.Message
 	if len(preview) > 80 {
