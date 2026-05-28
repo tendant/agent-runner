@@ -11,9 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"strconv"
+
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
+	"github.com/agent-runner/agent-runner/internal/logging"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
@@ -45,7 +48,7 @@ func NewCommander(cfg *config.Config, h *Handlers) *Commander {
 // bareCommands are single-word commands that are safe to accept without a leading slash.
 // Multi-word commands (set, set-agent, set-prompt) require the slash to avoid false
 // positives on agent instructions that happen to start with those words.
-var bareCommands = []string{"help", "config", "status", "sessions", "bootstrap"}
+var bareCommands = []string{"help", "config", "status", "sessions", "bootstrap", "logs"}
 
 // Handle parses text and executes a recognised command.
 // Returns the reply text, an optional session ID (non-empty when the command
@@ -122,6 +125,12 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 			arg = strings.TrimSpace(text[6:])
 		}
 		return r(c.handleStop(arg))
+	case strings.HasPrefix(lower, "/logs ") || lower == "/logs":
+		arg := ""
+		if len(text) > 5 {
+			arg = strings.TrimSpace(text[5:])
+		}
+		return r(c.handleLogs(arg))
 	}
 	return "", "", false
 }
@@ -320,6 +329,82 @@ func (c *Commander) handleSessions() string {
 		default:
 			fmt.Fprintf(&b, "   `%s` — %s %q\n", s.ID, s.Status, preview)
 		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleLogs shows recent agent session logs from the logs directory.
+// arg can be empty (show last 3), a number n (show last n), or a session-ID
+// prefix (show that session's log).
+func (c *Commander) handleLogs(arg string) string {
+	arg = strings.TrimSpace(arg)
+	logsRoot := c.handlers.config.LogsRoot
+	if logsRoot == "" {
+		return "error: LOGS_ROOT is not configured"
+	}
+
+	rl := logging.NewRunLogger(logsRoot)
+
+	// Determine whether arg is a count or a session-ID prefix.
+	n := 3
+	prefix := ""
+	if arg != "" {
+		if v, err := strconv.Atoi(arg); err == nil {
+			n = v
+		} else {
+			prefix = arg
+			n = 0
+		}
+	}
+
+	summaries, err := rl.ListRecentAgentLogs(n, prefix)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	if len(summaries) == 0 {
+		if prefix != "" {
+			return fmt.Sprintf("no log found matching %q", prefix)
+		}
+		return "no agent logs found"
+	}
+
+	var b strings.Builder
+	b.WriteString("**Recent Agent Logs**\n\n")
+	for _, s := range summaries {
+		preview := s.Message
+		if len(preview) > 60 {
+			preview = preview[:60] + "..."
+		}
+		sid := s.SessionID
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		icon := "✅"
+		if s.Status == "failed" {
+			icon = "❌"
+		}
+		fmt.Fprintf(&b, "%s `%s` — %s", icon, sid, s.Timestamp)
+		if s.Duration != "" {
+			fmt.Fprintf(&b, " (%s)", s.Duration)
+		}
+		b.WriteString("\n")
+		if preview != "" {
+			fmt.Fprintf(&b, "  %q\n", preview)
+		}
+		if s.Iterations != "" {
+			fmt.Fprintf(&b, "  iterations: %s\n", s.Iterations)
+		}
+		if s.Cost != "" {
+			fmt.Fprintf(&b, "  cost: %s\n", s.Cost)
+		}
+		if s.Error != "" {
+			errSnip := s.Error
+			if len(errSnip) > 80 {
+				errSnip = errSnip[:80] + "..."
+			}
+			fmt.Fprintf(&b, "  error: %s\n", errSnip)
+		}
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -1224,6 +1309,7 @@ const helpText = `**Agent Runner Commands**
 **/status** — show runtime state (agent, queue, CLI, issues)
 **/sessions** — list all active and recent sessions with IDs
 **/stop** _\<session-id\>_ — request a running or queued session to stop
+**/logs** _[n|id]_ — show last n agent logs (default 3); or /logs \<id-prefix\> for one session
 **/config** — show current configuration and readiness
 
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)

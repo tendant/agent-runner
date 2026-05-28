@@ -25,6 +25,32 @@ type Notifier interface {
 	SendNotification(ctx context.Context, message string) error
 }
 
+// MultiNotifier fans out SendNotification calls to multiple Notifier backends.
+type MultiNotifier struct {
+	notifiers []Notifier
+}
+
+// NewMultiNotifier creates a MultiNotifier from the provided (non-nil) notifiers.
+func NewMultiNotifier(notifiers ...Notifier) *MultiNotifier {
+	var ns []Notifier
+	for _, n := range notifiers {
+		if n != nil {
+			ns = append(ns, n)
+		}
+	}
+	return &MultiNotifier{notifiers: ns}
+}
+
+func (m *MultiNotifier) SendNotification(ctx context.Context, message string) error {
+	var lastErr error
+	for _, n := range m.notifiers {
+		if err := n.SendNotification(ctx, message); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
 // Handlers contains all HTTP handlers
 type Handlers struct {
 	config           *config.Config

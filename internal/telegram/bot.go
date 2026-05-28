@@ -456,7 +456,7 @@ func (b *Bot) downloadFile(ctx context.Context, fileID, filename string) (string
 	if err := os.MkdirAll(b.mediaDir, 0755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
-	savePath := filepath.Join(b.mediaDir, filename)
+	savePath := filepath.Join(b.mediaDir, filepath.Base(filename))
 	if err := os.WriteFile(savePath, data, 0644); err != nil {
 		return "", fmt.Errorf("save file: %w", err)
 	}
@@ -466,6 +466,20 @@ func (b *Bot) downloadFile(ctx context.Context, fileID, filename string) (string
 		return savePath, nil
 	}
 	return absPath, nil
+}
+
+// SendNotification implements the api.Notifier interface by sending to the
+// configured default chat ID. Returns an error if no chat ID is set or the bot
+// is not connected.
+func (b *Bot) SendNotification(_ context.Context, message string) error {
+	if b.chatID == 0 {
+		return fmt.Errorf("telegram: no default chat ID configured")
+	}
+	if b.api == nil {
+		return fmt.Errorf("telegram: bot not connected")
+	}
+	b.send(b.chatID, message)
+	return nil
 }
 
 func (b *Bot) send(chatID int64, text string) {

@@ -82,6 +82,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 	defer func() {
 		metrics.ActiveSessions.WithLabelValues(source).Dec()
+		metrics.QueueDepth.Set(float64(h.agentManager.QueueLength()))
 
 		// [L13] Take a single snapshot here; the iteration loop is done so the
 		// session won't change further. Reuse it for metrics, logging, and daily log.

@@ -78,12 +78,13 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 		return result, result.Error
 	}
 
-	output, parseErr := parseOpencodeOutput(stdout.Bytes())
+	output, cost, parseErr := parseOpencodeOutput(stdout.Bytes())
 	if parseErr != nil {
 		result.Error = parseErr
 		return result, parseErr
 	}
 	result.Output = output
+	result.CostUSD = cost
 	return result, nil
 }
 
@@ -105,11 +106,11 @@ func (e *OpencodeExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, wo
 	return result, executionLog, err
 }
 
-// parseOpencodeOutput extracts the final assistant text from opencode's NDJSON event stream.
-// opencode emits one JSON event per line; text content accumulates in message.part.updated
-// events. The last non-empty text value is the complete assistant response.
-// Returns ("", errMsg) if an error event is found with no text output.
-func parseOpencodeOutput(data []byte) (string, error) {
+// parseOpencodeOutput extracts the final assistant text and total cost from
+// opencode's NDJSON event stream. Text accumulates via message.part.updated
+// events; cost is taken from the last session.updated event.
+// Returns ("", 0, errMsg) if an error event is found with no text output.
+func parseOpencodeOutput(data []byte) (string, float64, error) {
 	type errData struct {
 		Message string `json:"message"`
 	}
@@ -121,14 +122,27 @@ func parseOpencodeOutput(data []byte) (string, error) {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
+	type sessionCost struct {
+		InputTokens  int     `json:"inputTokens"`
+		OutputTokens int     `json:"outputTokens"`
+		Cost         float64 `json:"cost"`
+	}
+	type sessionProps struct {
+		Cost sessionCost `json:"cost"`
+	}
+	type sessionUpdated struct {
+		Properties sessionProps `json:"properties"`
+	}
 	type event struct {
-		Type  string    `json:"type"`
-		Part  eventPart `json:"part"`
-		Error errInfo   `json:"error"`
+		Type    string         `json:"type"`
+		Part    eventPart      `json:"part"`
+		Error   errInfo        `json:"error"`
+		Session sessionUpdated `json:"session"`
 	}
 
 	var lastText string
 	var lastErr error
+	var totalCost float64
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -146,6 +160,10 @@ func parseOpencodeOutput(data []byte) (string, error) {
 				lastText = ev.Part.Text
 				lastErr = nil
 			}
+		case "session.updated":
+			if c := ev.Session.Properties.Cost.Cost; c > 0 {
+				totalCost = c
+			}
 		case "error":
 			msg := ev.Error.Data.Message
 			if msg == "" {
@@ -159,10 +177,10 @@ func parseOpencodeOutput(data []byte) (string, error) {
 	}
 
 	if lastText != "" {
-		return lastText, nil
+		return lastText, totalCost, nil
 	}
 	if lastErr != nil {
-		return "", lastErr
+		return "", 0, lastErr
 	}
-	return "", fmt.Errorf("opencode produced no output events (check version and auth)")
+	return "", 0, fmt.Errorf("opencode produced no output events (check version and auth)")
 }

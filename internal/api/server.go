@@ -132,10 +132,21 @@ func NewServer(cfg *config.Config) *Server {
 	agentStarter := NewAgentStarterAdapter(handlers)
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, commander)
 	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, commander)
-	if streamBot != nil {
-		handlers.SetNotifier(streamBot)
-	}
 	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, commander)
+
+	// Wire MultiNotifier: fan out background notifications to all active bots.
+	// Chat-initiated sessions (stream/telegram/wechat) skip notifySessionResult
+	// entirely; this path is only reached for API/runner-initiated sessions.
+	var notifiers []Notifier
+	if streamBot != nil {
+		notifiers = append(notifiers, streamBot)
+	}
+	if telegramBot != nil {
+		notifiers = append(notifiers, telegramBot)
+	}
+	if len(notifiers) > 0 {
+		handlers.SetNotifier(NewMultiNotifier(notifiers...))
+	}
 	if streamBot != nil {
 		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
 	}

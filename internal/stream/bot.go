@@ -677,6 +677,7 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 	// Look it up on the first tick; fall back to a generous default if not found.
 	const fallbackTimeout = 2 * time.Hour
 	var deadline <-chan time.Time
+	reported := 0 // last iteration index we emitted a thinking update for
 
 	for {
 		select {
@@ -701,6 +702,12 @@ func (b *Bot) pollAndReport(convID, sessionID string) {
 			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
 				b.emitFinal(ctx, convID, formatFinalResult(session))
 				return
+			}
+
+			// Emit a thinking update for each new completed iteration.
+			if cur := session.CurrentIteration; cur > reported {
+				reported = cur
+				b.emitThinking(ctx, convID, fmt.Sprintf("Iteration %d/%d...", cur, session.MaxIterations))
 			}
 
 		case <-deadline:

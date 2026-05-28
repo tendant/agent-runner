@@ -31,4 +31,9 @@ var (
 		Help:    "Duration of individual agent iterations in seconds by source.",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~4096s
 	}, []string{"source"})
+
+	QueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "agent_queue_depth",
+		Help: "Current number of agent sessions waiting in the queue.",
+	})
 )

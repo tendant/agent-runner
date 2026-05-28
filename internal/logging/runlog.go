@@ -1,9 +1,11 @@
 package logging
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -110,6 +112,108 @@ func CleanupOldLogs(logsRoot string, maxAgeDays int) error {
 		}
 	}
 	return nil
+}
+
+// AgentLogSummary holds key fields parsed from an agent log file.
+type AgentLogSummary struct {
+	SessionID  string
+	Status     string
+	Message    string
+	Duration   string
+	Error      string
+	Iterations string
+	Cost       string
+	Timestamp  string
+	Path       string
+}
+
+// ListRecentAgentLogs returns the n most recent agent log summaries from LogsRoot.
+// If n <= 0 all logs are returned. Prefix, when non-empty, filters logs whose
+// filename contains the given string (used for session-ID prefix lookup).
+func (l *RunLogger) ListRecentAgentLogs(n int, prefix string) ([]AgentLogSummary, error) {
+	entries, err := os.ReadDir(l.LogsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read logs dir: %w", err)
+	}
+
+	var paths []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		if !strings.Contains(e.Name(), "_agent_") {
+			continue
+		}
+		if prefix != "" && !strings.Contains(e.Name(), prefix) {
+			continue
+		}
+		paths = append(paths, filepath.Join(l.LogsRoot, e.Name()))
+	}
+
+	// Sort newest first (filename starts with timestamp, so reverse lex order).
+	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
+
+	if n > 0 && len(paths) > n {
+		paths = paths[:n]
+	}
+
+	summaries := make([]AgentLogSummary, 0, len(paths))
+	for _, p := range paths {
+		s := parseAgentLogSummary(p)
+		summaries = append(summaries, s)
+	}
+	return summaries, nil
+}
+
+// parseAgentLogSummary scans the first 30 lines of a log file to extract metadata.
+func parseAgentLogSummary(path string) AgentLogSummary {
+	s := AgentLogSummary{Path: path}
+
+	base := filepath.Base(path)
+	// filename: 2006-01-02_15-04-05_agent_<sessionID>.md
+	if parts := strings.SplitN(strings.TrimSuffix(base, ".md"), "_agent_", 2); len(parts) == 2 {
+		s.Timestamp = strings.ReplaceAll(parts[0], "_", " ")
+		s.SessionID = parts[1]
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return s
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	lines := 0
+	for scanner.Scan() && lines < 30 {
+		lines++
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "**Status:**"):
+			s.Status = strings.TrimSpace(strings.TrimPrefix(line, "**Status:**"))
+		case strings.HasPrefix(line, "**Message:**"):
+			s.Message = strings.TrimSpace(strings.TrimPrefix(line, "**Message:**"))
+		case strings.HasPrefix(line, "**Duration:**"):
+			s.Duration = strings.TrimSpace(strings.TrimPrefix(line, "**Duration:**"))
+		case strings.HasPrefix(line, "**Successful Iterations:**"):
+			s.Iterations = strings.TrimSpace(strings.TrimPrefix(line, "**Successful Iterations:**"))
+		case strings.HasPrefix(line, "**Total Cost:**"):
+			s.Cost = strings.TrimSpace(strings.TrimPrefix(line, "**Total Cost:**"))
+		case strings.HasPrefix(line, "## Error"):
+			// Read the next non-empty, non-fence line as the error summary.
+			for scanner.Scan() && lines < 35 {
+				lines++
+				errLine := strings.TrimSpace(scanner.Text())
+				if errLine != "" && errLine != "```" {
+					s.Error = errLine
+					break
+				}
+			}
+		}
+	}
+	return s
 }
 
 // NewRunLogger creates a new run logger
