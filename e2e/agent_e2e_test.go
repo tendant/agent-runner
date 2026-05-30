@@ -154,6 +154,10 @@ func stopAgent(t *testing.T, serverURL, sessionID string) (int, map[string]inter
 }
 
 func pollAgentUntilDone(t *testing.T, serverURL, sessionID string, timeout time.Duration) map[string]interface{} {
+	return pollAgentUntilDoneInterval(t, serverURL, sessionID, timeout, 300*time.Millisecond)
+}
+
+func pollAgentUntilDoneInterval(t *testing.T, serverURL, sessionID string, timeout, interval time.Duration) map[string]interface{} {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -162,7 +166,7 @@ func pollAgentUntilDone(t *testing.T, serverURL, sessionID string, timeout time.
 		if status == "completed" || status == "failed" {
 			return result
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(interval)
 	}
 	t.Fatalf("agent %s did not complete within %v", sessionID, timeout)
 	return nil

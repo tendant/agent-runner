@@ -170,7 +170,7 @@ func TestIntegration_AgentWritesFile(t *testing.T) {
 	}
 	t.Logf("session %s started with cli=%s", sessionID, cli)
 
-	result := pollAgentUntilDone(t, ts.URL, sessionID, 5*time.Minute)
+	result := pollAgentUntilDoneInterval(t, ts.URL, sessionID, 5*time.Minute, 3*time.Second)
 
 	status, _ := result["status"].(string)
 	errMsg, _ := result["error"].(string)
