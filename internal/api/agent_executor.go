@@ -657,11 +657,14 @@ func (h *Handlers) executeIteration(
 	if execErr != nil {
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("agent execution failed: %v", execErr)
-		// Preserve structured output only — raw CLI terminal output is never shown to the user.
-		if execResult != nil && execResult.Output != "" {
-			result.Output = execResult.Output
-		}
 		if execResult != nil {
+			// Prefer structured output; fall back to raw terminal output so the
+			// full CLI error appears in the audit log's details block.
+			if execResult.Output != "" {
+				result.Output = execResult.Output
+			} else if execResult.RawOutput != "" {
+				result.Output = execResult.RawOutput
+			}
 			result.CostUSD = execResult.CostUSD
 		}
 		return result
