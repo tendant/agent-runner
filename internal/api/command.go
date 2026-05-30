@@ -101,7 +101,9 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return reply, sid, true
 	case lower == "/install-cli" || strings.HasPrefix(lower, "/install-cli "):
 		arg := strings.TrimSpace(text[len("/install-cli"):])
-		return r(c.handleInstallCLI(arg))
+		force := strings.Contains(strings.ToLower(arg), "force")
+		arg = strings.TrimSpace(strings.ReplaceAll(strings.ToLower(arg), "force", ""))
+		return r(c.handleInstallCLI(arg, force))
 	case strings.HasPrefix(lower, cmdSetAgent+" ") || lower == cmdSetAgent:
 		content := strings.TrimSpace(text[len(cmdSetAgent):])
 		return r(c.handleSetFile("agent.md", content, true))
@@ -533,7 +535,8 @@ func (c *Commander) handleSet(args string) string {
 }
 
 // handleInstallCLI installs the given agent CLI (or the configured default) via npm.
-func (c *Commander) handleInstallCLI(arg string) string {
+// With force=true, reinstalls even when already present.
+func (c *Commander) handleInstallCLI(arg string, force bool) string {
 	cli := strings.TrimSpace(arg)
 	if cli == "" {
 		cli = c.cfg.Agent.CLI
@@ -541,7 +544,7 @@ func (c *Commander) handleInstallCLI(arg string) string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	if CLIInstalled(cli) {
+	if !force && CLIInstalled(cli) {
 		if v := cliVersion(cli); v != "" {
 			return fmt.Sprintf("ok %s already installed (%s)", cli, v)
 		}
@@ -1321,7 +1324,7 @@ const helpText = `**Agent Runner Commands**
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
 Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEEPSEEK\_API\_KEY \<key\>
 
-**/install-cli** _[cli]_ — install agent CLI (claude / codex / opencode)
+**/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode); add **force** to reinstall even if already present
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files
