@@ -334,6 +334,56 @@ func TestCommander_Bootstrap_ForceOverwrites(t *testing.T) {
 	}
 }
 
+// --- /install-cli ---
+
+// fakeCLIBin writes a minimal shell script to binDir that responds to --version
+// and returns the binary name so callers can verify PATH resolution.
+func fakeCLIBin(t *testing.T, name, version string) (binDir string) {
+	t.Helper()
+	binDir = t.TempDir()
+	path := filepath.Join(binDir, name)
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo " + version + "; exit 0; fi\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return binDir
+}
+
+func TestCommander_InstallCLI_AlreadyInstalled_ShowsVersion(t *testing.T) {
+	env := setupTestEnv(t)
+	binDir := fakeCLIBin(t, "opencode", "v9.9.9")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env.handlers.config.Agent.CLI = "opencode"
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("/install-cli opencode", nil)
+	if !handled {
+		t.Fatal("expected /install-cli to be handled")
+	}
+	if !strings.Contains(reply, "already installed") {
+		t.Errorf("expected 'already installed', got: %s", reply)
+	}
+	if !strings.Contains(reply, "v9.9.9") {
+		t.Errorf("expected version 'v9.9.9' in reply, got: %s", reply)
+	}
+}
+
+func TestCommander_InstallCLI_DefaultCLI_ShowsVersion(t *testing.T) {
+	env := setupTestEnv(t)
+	binDir := fakeCLIBin(t, "opencode", "v1.2.3")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env.handlers.config.Agent.CLI = ""
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	reply, _, handled := c.Handle("/install-cli", nil)
+	if !handled {
+		t.Fatal("expected /install-cli to be handled")
+	}
+	if !strings.Contains(reply, "v1.2.3") {
+		t.Errorf("expected version 'v1.2.3' in reply, got: %s", reply)
+	}
+}
+
 // --- /set-agent and /set-prompt ---
 
 func TestCommander_SetAgent_EmptyContent(t *testing.T) {
