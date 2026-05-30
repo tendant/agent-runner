@@ -69,6 +69,7 @@ type BootstrapResponse struct {
 	Warnings     []string        `json:"warnings"`
 	Ready        bool            `json:"ready"`
 	CLIInstalled bool            `json:"cli_installed"`
+	CLIVersion   string          `json:"cli_version,omitempty"`
 	CLIOutput    string          `json:"cli_output,omitempty"`
 }
 
@@ -174,6 +175,9 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 			resp.CLIInstalled = true
 		}
 	}
+	if resp.CLIInstalled {
+		resp.CLIVersion = cliVersion(cli)
+	}
 
 	resp.Warnings = bootstrapWarnings(cli, h.config.Agent.Provider)
 	resp.Ready = len(resp.Warnings) == 0 && resp.CLIInstalled
@@ -226,6 +230,21 @@ if ! command -v npm >/dev/null 2>&1; then
   fi
 fi
 `
+
+// cliVersion returns the installed version string for the given CLI binary,
+// or an empty string if it cannot be determined.
+func cliVersion(cli string) string {
+	if cli == "" {
+		cli = "opencode"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, cli, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // installCLI installs the given agent CLI backend.
 // opencode is downloaded from GitHub releases; claude and codex use npm.

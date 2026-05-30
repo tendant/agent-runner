@@ -542,6 +542,9 @@ func (c *Commander) handleInstallCLI(arg string) string {
 		cli = "opencode"
 	}
 	if CLIInstalled(cli) {
+		if v := cliVersion(cli); v != "" {
+			return fmt.Sprintf("ok %s already installed (%s)", cli, v)
+		}
 		return fmt.Sprintf("ok %s already installed", cli)
 	}
 	out, err := installCLI(cli)
@@ -551,6 +554,9 @@ func (c *Commander) handleInstallCLI(arg string) string {
 			return fmt.Sprintf("error installing %s: %v\n%s", cli, err, out)
 		}
 		return fmt.Sprintf("error installing %s: %v", cli, err)
+	}
+	if v := cliVersion(cli); v != "" {
+		return fmt.Sprintf("ok installed %s (%s)\n%s", cli, v, out)
 	}
 	return fmt.Sprintf("ok installed %s\n%s", cli, out)
 }
