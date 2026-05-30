@@ -1,3 +1,7 @@
+# Load .env if it exists (export makes vars available to child processes).
+-include .env
+export
+
 BINARY := agent-runner
 CLI_BINARY := agent-cli
 WECHAT_LOGIN_BINARY := wechat-login
@@ -6,6 +10,9 @@ CLI_CMD := ./cmd/cli
 WECHAT_LOGIN_CMD := ./cmd/wechat-login
 PREFIX := $(shell go env GOPATH)
 AGENT_CLI ?= opencode   # used by setup-cli (local install)
+INTEGRATION_CLI      ?= opencode
+INTEGRATION_MODEL    ?=
+INTEGRATION_PROVIDER ?=
 
 IMAGE                ?= agent-runner
 TAG                  ?= latest
@@ -16,7 +23,7 @@ AGENT_CLI_INSTALL_CMD ?=
 _INSTALL_CMD_ARG = $(if $(AGENT_CLI_INSTALL_CMD),--build-arg AGENT_CLI_INSTALL_CMD="$(AGENT_CLI_INSTALL_CMD)",)
 
 .DEFAULT_GOAL := help
-.PHONY: build build-cli build-wechat-login install clean test setup-cli \
+.PHONY: build build-cli build-wechat-login install clean test test-integration setup-cli \
         docker-build docker-push docker-release docker-release-multiarch release help
 
 build:
@@ -78,6 +85,12 @@ clean:
 test:
 	go test -race ./...
 
+test-integration:
+	INTEGRATION_CLI=$(INTEGRATION_CLI) \
+	INTEGRATION_MODEL=$(INTEGRATION_MODEL) \
+	INTEGRATION_PROVIDER=$(INTEGRATION_PROVIDER) \
+	go test -v -race -run Integration ./e2e/
+
 help:
 	@echo "Usage: make [target] [VAR=value ...]"
 	@echo ""
@@ -87,6 +100,10 @@ help:
 	@echo "  build-wechat-login  Build the wechat-login binary"
 	@echo "  install             Install all binaries to \$$(go env GOPATH)/bin"
 	@echo "  test                Run tests with race detector"
+	@echo "  test-integration    Run integration tests against a real CLI backend"
+	@echo "                        INTEGRATION_CLI=opencode|claude|codex (default: opencode)"
+	@echo "                        INTEGRATION_MODEL=<model>    (optional)"
+	@echo "                        INTEGRATION_PROVIDER=<prov>  (optional)"
 	@echo "  clean               Remove built binaries"
 	@echo ""
 	@echo "Agent CLI:"

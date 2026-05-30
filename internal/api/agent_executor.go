@@ -46,7 +46,12 @@ func isPermanentError(errMsg string) bool {
 	return strings.Contains(lower, "executable file not found in $path") ||
 		strings.Contains(lower, "authentication") ||
 		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "invalid api key")
+		strings.Contains(lower, "invalid api key") ||
+		strings.Contains(lower, "api key is missing") ||
+		strings.Contains(lower, "api key not found") ||
+		strings.Contains(lower, "no api key") ||
+		strings.Contains(lower, "missing api key") ||
+		strings.Contains(lower, "model not found")
 }
 
 // maxReviewerCorrections is the maximum number of corrective iterations

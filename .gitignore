@@ -23,6 +23,7 @@ internal/api/memory/
 # E2E test artifacts
 e2e/*.txt
 e2e/*.json
+e2e/*.md
 
 # Binary
 agent-runner
