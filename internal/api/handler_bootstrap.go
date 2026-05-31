@@ -247,7 +247,11 @@ func cliVersion(cli string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	// Allow AppImage binaries (e.g. opencode on Linux) to run without FUSE
+	// by extracting instead of mounting.
+	cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1")
+	out, err := cmd.Output()
 	if err != nil {
 		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err)
 		return ""
