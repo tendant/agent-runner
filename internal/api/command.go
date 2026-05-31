@@ -82,16 +82,27 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return reply, sid, true
 	}
 
-	// knownCommands is the set of all recognised slash-command names.
+	// knownCommands maps each recognised slash-command name to its usage string.
 	// Any input whose first word appears here but doesn't match a full case
-	// returns a usage hint instead of falling through to the gateway's
-	// "Unknown command" response.
-	knownCommands := []string{
-		"/help", "/config", "/status", "/sessions",
-		"/set", "/bootstrap", "/migrate", "/install-cli",
-		cmdSetAgent, cmdSetPrompt,
-		"/auth", cmdMemory, cmdRepo, "/stop", "/logs",
-		"/update-prompt",
+	// returns the specific usage hint instead of falling through to the
+	// gateway's generic "Unknown command" response.
+	knownCommands := map[string]string{
+		"/help":       "usage: /help",
+		"/config":     "usage: /config",
+		"/status":     "usage: /status",
+		"/sessions":   "usage: /sessions",
+		"/set":        "usage: /set KEY VALUE  or  /set KEY=VALUE",
+		"/bootstrap":  "usage: /bootstrap [force]",
+		"/migrate":    "usage: /migrate",
+		"/install-cli": "usage: /install-cli [claude|codex|opencode] [force]",
+		cmdSetAgent:   "usage: " + cmdSetAgent + " <content>",
+		cmdSetPrompt:  "usage: " + cmdSetPrompt + " <content>",
+		"/auth":       "usage: /auth [claude|codex] — only available via chat",
+		cmdMemory:     "usage: " + cmdMemory + " [show|clear|git <url>]",
+		cmdRepo:       "usage: " + cmdRepo + " [add|remove|list] <url>",
+		"/stop":       "usage: /stop [session-id]",
+		"/logs":       "usage: /logs [session-id-prefix]",
+		"/update-prompt": "usage: /update-prompt <content>",
 	}
 
 	switch {
@@ -148,12 +159,10 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	}
 
 	// If the first word is a known command, the user typed it with wrong
-	// arguments — return a usage hint rather than "Unknown command".
+	// arguments — return the specific usage hint rather than "Unknown command".
 	cmdWord := strings.SplitN(lower, " ", 2)[0]
-	for _, known := range knownCommands {
-		if cmdWord == known {
-			return fmt.Sprintf("error: invalid usage of %s. Type /help for available commands.", known), "", true
-		}
+	if usage, ok := knownCommands[cmdWord]; ok {
+		return "error: " + usage, "", true
 	}
 	return "", "", false
 }
