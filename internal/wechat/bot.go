@@ -22,10 +22,10 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
-// Commander handles chat configuration commands without requiring an LLM.
-// send is an optional callback for async messages (e.g. /auth URL relay).
-type Commander interface {
-	Handle(text string, send func(string)) (string, string, bool)
+// Gateway routes incoming messages through command dispatch before any
+// conversation or agent logic. It is the single entry point for all messages.
+type Gateway interface {
+	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
 }
 
 // Bot is a WeChat bot that bridges messages to the agent runner via the
@@ -34,7 +34,7 @@ type Bot struct {
 	client     *Client
 	downloader *Downloader
 	starter    AgentStarter
-	commander  Commander
+	gateway   Gateway
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -60,13 +60,13 @@ type Bot struct {
 // New creates a new WeChat bot. Always returns a non-nil bot; if no token is
 // configured the bot starts in a dormant state and becomes active after
 // Reload is called with a valid token.
-func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
+func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, gateway Gateway) *Bot {
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	return &Bot{
 		client:        NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
 		downloader:    NewDownloader(cfg.CDNBaseURL, mediaDir),
 		starter:       starter,
-		commander:     commander,
+		gateway:      gateway,
 		convManager:   convMgr,
 		analyzer:      analyzer,
 		ctxTokens:     make(map[string]string),
@@ -301,26 +301,20 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	userID := msg.FromUserID
 	chatID := userID // use WeChat user ID as conversation key
 
-	// Handle configuration commands before any LLM or conversation logic.
-	if b.commander != nil {
-		asyncSend := func(msg string) { b.sendText(context.Background(), userID, msg) }
-		if reply, _, ok := b.commander.Handle(content, asyncSend); ok {
-			b.sendText(ctx, userID, reply)
-			return
-		}
-	}
-
-	// Handle /cancel command
-	if strings.EqualFold(strings.TrimSpace(content), "/cancel") {
-		b.convManager.Complete(chatID)
-		b.sendText(ctx, userID, "Conversation cancelled. Send a new message to start over.")
-		return
-	}
-
-	// Handle /wechat-login command — runs the QR login flow inline.
+	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if strings.EqualFold(strings.TrimSpace(content), "/wechat-login") {
 		b.handleLogin(userID)
 		return
+	}
+
+	// Route all other messages through the unified gateway.
+	if b.gateway != nil {
+		asyncSend := func(msg string) { b.sendText(context.Background(), userID, msg) }
+		reset := func() { b.convManager.Complete(chatID) }
+		if reply, _, ok := b.gateway.Handle(content, asyncSend, reset); ok {
+			b.sendText(ctx, userID, reply)
+			return
+		}
 	}
 
 	conv := b.convManager.GetOrCreate(chatID)

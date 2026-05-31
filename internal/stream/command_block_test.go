@@ -27,18 +27,27 @@ func (s *trackingStarter) GetAgentSession(id string) (*agent.Session, bool) {
 	return &agent.Session{ID: id, Status: agent.SessionStatusCompleted}, true
 }
 
-// fakeCommander handles "/set X Y" and returns unhandled for everything else.
-type fakeCommander struct{}
+// fakeGateway handles "/set X Y", blocks other slash commands, and passes
+// regular messages through — matching the behaviour of api.MessageGateway.
+type fakeGateway struct{}
 
-func (fakeCommander) Handle(text string, _ func(string)) (string, string, bool) {
-	if strings.HasPrefix(strings.ToLower(text), "/set ") {
+func (fakeGateway) Handle(text string, _ func(string), reset func()) (string, string, bool) {
+	if strings.ToLower(strings.TrimSpace(text)) == "/cancel" {
+		if reset != nil { reset() }
+		return "Conversation cancelled. Send a new message to start over.", "", true
+	}
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(lower, "/set ") {
 		return "ok KEY=VALUE", "", true
+	}
+	if strings.HasPrefix(lower, "/") {
+		return "Unknown command. Type /help for available commands.", "", true
 	}
 	return "", "", false
 }
 
 // newTestBot creates a Bot wired to a throwaway HTTP server for emits.
-func newTestBot(t *testing.T, starter AgentStarter, commander Commander) *Bot {
+func newTestBot(t *testing.T, starter AgentStarter, gw Gateway) *Bot {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -53,12 +62,12 @@ func newTestBot(t *testing.T, starter AgentStarter, commander Commander) *Bot {
 	convMgr := conversation.NewManager("")
 	t.Cleanup(convMgr.Stop)
 
-	return New(cfg, "", starter, convMgr, nil, commander)
+	return New(cfg, "", starter, convMgr, nil, gw)
 }
 
 func TestStreamBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(context.Background(), "conv-1", "/set AGENT_MODEL gpt-4o")
 
@@ -69,7 +78,7 @@ func TestStreamBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 
 func TestStreamBot_UnknownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(context.Background(), "conv-1", "/unknown-command")
 
@@ -97,7 +106,7 @@ func TestStreamBot_UnknownCommand_ReturnsHelpHint(t *testing.T) {
 	convMgr := conversation.NewManager("")
 	defer convMgr.Stop()
 
-	bot := New(cfg, "", &trackingStarter{}, convMgr, nil, fakeCommander{})
+	bot := New(cfg, "", &trackingStarter{}, convMgr, nil, fakeGateway{})
 	bot.handleMessage(context.Background(), "conv-1", "/oops")
 
 	if !strings.Contains(replied, "Unknown command") {
@@ -108,7 +117,7 @@ func TestStreamBot_UnknownCommand_ReturnsHelpHint(t *testing.T) {
 func TestStreamBot_RegularMessage_StartsAgent(t *testing.T) {
 	starter := &trackingStarter{}
 	// No analyzer → direct execution mode.
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(context.Background(), "conv-1", "please write hello.txt")
 

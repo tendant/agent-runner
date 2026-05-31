@@ -25,10 +25,10 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
-// Commander handles chat configuration commands without requiring an LLM.
-// send is an optional callback for async messages (e.g. /auth URL relay).
-type Commander interface {
-	Handle(text string, send func(string)) (string, string, bool)
+// Gateway routes incoming messages through command dispatch before any
+// conversation or agent logic. It is the single entry point for all messages.
+type Gateway interface {
+	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
 }
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
@@ -37,7 +37,7 @@ type Bot struct {
 	chatID    int64
 	mediaDir  string // directory for downloaded media files
 	starter   AgentStarter
-	commander Commander
+	gateway Gateway
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -50,7 +50,7 @@ type Bot struct {
 // New creates a new Telegram bot. Returns nil if the token is empty.
 // tmpRoot is the base directory for downloaded media files.
 // The actual API connection is deferred to Start().
-func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string, commander Commander) *Bot {
+func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string, gateway Gateway) *Bot {
 	if cfg.BotToken == "" {
 		return nil
 	}
@@ -60,7 +60,7 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 		chatID:      cfg.ChatID,
 		mediaDir:    filepath.Join(tmpRoot, "telegram-media"),
 		starter:     starter,
-		commander:   commander,
+		gateway:     gateway,
 		convManager: convMgr,
 		analyzer:    analyzer,
 	}
@@ -133,31 +133,19 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Handle /cancel command — reset conversation
-	if msg.IsCommand() && msg.Command() == "cancel" {
-		b.convManager.Complete(chatID)
-		b.send(tgChatID, "Conversation cancelled. Send a new message to start over.")
-		return
-	}
-
 	content := b.extractContent(msg)
 	if content == "" {
 		return
 	}
 
-	// Handle configuration commands before any LLM or conversation logic.
-	// Any /command that the commander doesn't recognise is still rejected here —
-	// slash-prefixed messages must never fall through to the agent.
-	if b.commander != nil {
+	// Route through the unified gateway: /cancel, commands, slash-block.
+	if b.gateway != nil {
 		asyncSend := func(msg string) { b.send(tgChatID, msg) }
-		if reply, _, ok := b.commander.Handle(content, asyncSend); ok {
+		reset := func() { b.convManager.Complete(chatID) }
+		if reply, _, ok := b.gateway.Handle(content, asyncSend, reset); ok {
 			b.send(tgChatID, reply)
 			return
 		}
-	}
-	if strings.HasPrefix(content, "/") {
-		b.send(tgChatID, "Unknown command. Type /help for available commands.")
-		return
 	}
 
 	// Get or create conversation

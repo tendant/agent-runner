@@ -128,11 +128,12 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 	commander := NewCommander(cfg, handlers)
-	handlers.SetCommander(commander)
+	handlers.SetCommander(commander) // also builds handlers.gateway
+	gateway := handlers.Gateway()
 	agentStarter := NewAgentStarterAdapter(handlers)
-	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, commander)
-	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, commander)
-	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, commander)
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, gateway)
+	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, gateway)
+	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, gateway)
 
 	// Wire MultiNotifier: fan out background notifications to all active bots.
 	// Chat-initiated sessions (stream/telegram/wechat) skip notifySessionResult

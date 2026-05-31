@@ -26,22 +26,31 @@ func (s *trackingStarter) GetAgentSession(id string) (*agent.Session, bool) {
 	return &agent.Session{ID: id, Status: agent.SessionStatusCompleted}, true
 }
 
-// fakeCommander handles "/set X Y" and returns unhandled for everything else.
-type fakeCommander struct{}
+// fakeGateway handles "/set X Y", blocks other slash commands, and passes
+// regular messages through — matching the behaviour of api.MessageGateway.
+type fakeGateway struct{}
 
-func (fakeCommander) Handle(text string, _ func(string)) (string, string, bool) {
-	if strings.HasPrefix(strings.ToLower(text), "/set ") {
+func (fakeGateway) Handle(text string, _ func(string), reset func()) (string, string, bool) {
+	if strings.ToLower(strings.TrimSpace(text)) == "/cancel" {
+		if reset != nil { reset() }
+		return "Conversation cancelled. Send a new message to start over.", "", true
+	}
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(lower, "/set ") {
 		return "ok KEY=VALUE", "", true
+	}
+	if strings.HasPrefix(lower, "/") {
+		return "Unknown command. Type /help for available commands.", "", true
 	}
 	return "", "", false
 }
 
-func newTestBot(t *testing.T, starter AgentStarter, commander Commander) *Bot {
+func newTestBot(t *testing.T, starter AgentStarter, gw Gateway) *Bot {
 	t.Helper()
 	convMgr := conversation.NewManager("")
 	t.Cleanup(convMgr.Stop)
 	// api is nil — send() is nil-safe so no panics during tests.
-	return New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, convMgr, nil, t.TempDir(), commander)
+	return New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, convMgr, nil, t.TempDir(), gw)
 }
 
 func tgMsg(chatID int64, text string) *tgbotapi.Message {
@@ -53,7 +62,7 @@ func tgMsg(chatID int64, text string) *tgbotapi.Message {
 
 func TestTelegramBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(tgMsg(42, "/set AGENT_MODEL gpt-4o"))
 
@@ -64,7 +73,7 @@ func TestTelegramBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 
 func TestTelegramBot_UnknownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(tgMsg(42, "/unknown-command"))
 
@@ -76,7 +85,7 @@ func TestTelegramBot_UnknownCommand_DoesNotStartAgent(t *testing.T) {
 func TestTelegramBot_RegularMessage_StartsAgent(t *testing.T) {
 	starter := &trackingStarter{}
 	// No analyzer → direct execution mode.
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	bot.handleMessage(tgMsg(42, "please write hello.txt"))
 
@@ -87,7 +96,7 @@ func TestTelegramBot_RegularMessage_StartsAgent(t *testing.T) {
 
 func TestTelegramBot_UnauthorizedChat_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
-	bot := newTestBot(t, starter, fakeCommander{})
+	bot := newTestBot(t, starter, fakeGateway{})
 
 	// Send from a different chat ID than configured (42).
 	bot.handleMessage(tgMsg(99, "do something"))

@@ -28,17 +28,17 @@ type AgentStarter interface {
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 
-// Commander handles chat configuration commands without requiring an LLM.
-// send is an optional callback for async messages (e.g. /auth URL relay).
-type Commander interface {
-	Handle(text string, send func(string)) (string, string, bool)
+// Gateway routes incoming messages through command dispatch before any
+// conversation or agent logic. It is the single entry point for all messages.
+type Gateway interface {
+	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
 }
 
 // Bot bridges agent-stream conversations to the agent runner.
 type Bot struct {
 	client         *Client
 	starter        AgentStarter
-	commander      Commander
+	gateway        Gateway
 	convManager    *conversation.Manager
 	analyzer       *conversation.Analyzer
 	convIDs        []string
@@ -62,7 +62,7 @@ func (b *Bot) SetWeChatReloader(fn func(token, baseURL string), baseURL string) 
 }
 
 // New creates a new stream bot. Returns nil if ServerURL or BotToken is empty.
-func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, commander Commander) *Bot {
+func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, gateway Gateway) *Bot {
 	if cfg.ServerURL == "" || cfg.BotToken == "" {
 		return nil
 	}
@@ -70,7 +70,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 	return &Bot{
 		client:       NewClient(cfg.ServerURL, cfg.BotToken),
 		starter:      starter,
-		commander:    commander,
+		gateway:      gateway,
 		convManager:  convMgr,
 		analyzer:     analyzer,
 		convIDs:      cfg.ConversationIDs,
@@ -449,34 +449,20 @@ func isImageContent(contentType string) bool {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
-	// Handle configuration commands before any LLM or conversation logic.
-	// Any /command that the commander doesn't recognise is still rejected here —
-	// slash-prefixed messages must never fall through to the agent.
-	if b.commander != nil {
-		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
-		if reply, _, ok := b.commander.Handle(text, asyncSend); ok {
-			b.emitFinal(ctx, convID, reply)
-			return
-		}
-	}
-
-	// Handle /cancel command
-	if text == "/cancel" {
-		b.convManager.Complete(convID)
-		b.emitFinal(ctx, convID, "Conversation cancelled. Send a new message to start over.")
-		return
-	}
-
-	// Handle /wechat-login: run the iLink QR login flow and hot-reload the WeChat bot.
+	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if text == "/wechat-login" {
 		b.handleWeChatLogin(ctx, convID)
 		return
 	}
 
-	// Block any remaining slash commands from reaching the agent.
-	if strings.HasPrefix(text, "/") {
-		b.emitFinal(ctx, convID, "Unknown command. Type /help for available commands.")
-		return
+	// Route all other messages through the unified gateway.
+	if b.gateway != nil {
+		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
+		reset := func() { b.convManager.Complete(convID) }
+		if reply, _, ok := b.gateway.Handle(text, asyncSend, reset); ok {
+			b.emitFinal(ctx, convID, reply)
+			return
+		}
 	}
 
 	conv := b.convManager.GetOrCreate(convID)

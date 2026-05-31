@@ -67,6 +67,7 @@ type Handlers struct {
 	workflowClient   WorkflowScheduler
 	runnerDB         RunnerDB // set when runner is enabled, for debug queries
 	commander        *Commander
+	gateway          *MessageGateway
 }
 
 // NewHandlers creates a new handlers instance
@@ -118,9 +119,15 @@ func (h *Handlers) SetRunnerDB(db RunnerDB) {
 	h.runnerDB = db
 }
 
-// SetCommander wires the commander for use in HTTP handlers.
+// SetCommander wires the commander and builds the shared message gateway.
 func (h *Handlers) SetCommander(c *Commander) {
 	h.commander = c
+	h.gateway = NewMessageGateway(c)
+}
+
+// Gateway returns the shared message gateway for use by bot channels.
+func (h *Handlers) Gateway() *MessageGateway {
+	return h.gateway
 }
 
 // getExecutor returns the current executor, safe for concurrent use.
