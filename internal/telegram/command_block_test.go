@@ -60,6 +60,22 @@ func tgMsg(chatID int64, text string) *tgbotapi.Message {
 	}
 }
 
+// tgCmd builds a Telegram command message (with bot_command entity so
+// IsCommand() returns true and Command() returns the bare command name).
+func tgCmd(chatID int64, cmd, botName string) *tgbotapi.Message {
+	full := "/" + cmd
+	if botName != "" {
+		full = "/" + cmd + "@" + botName
+	}
+	return &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: chatID},
+		Text: full,
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: len(full)},
+		},
+	}
+}
+
 func TestTelegramBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
 	bot := newTestBot(t, starter, fakeGateway{})
@@ -91,6 +107,28 @@ func TestTelegramBot_RegularMessage_StartsAgent(t *testing.T) {
 
 	if !starter.called.Load() {
 		t.Error("StartAgent should be called for a regular (non-command) message")
+	}
+}
+
+func TestTelegramBot_GroupCancelWithBotSuffix_ResetsConversation(t *testing.T) {
+	starter := &trackingStarter{}
+	convMgr := conversation.NewManager("")
+	t.Cleanup(convMgr.Stop)
+	bot := New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, convMgr, nil, t.TempDir(), fakeGateway{})
+
+	// Seed a conversation so we can verify it gets reset.
+	conv := convMgr.GetOrCreate("42")
+	conv.AddMessage("user", "do something")
+
+	// Group-chat style: Telegram delivers "/cancel@AgentRunnerBot".
+	bot.handleMessage(tgCmd(42, "cancel", "AgentRunnerBot"))
+
+	if starter.called.Load() {
+		t.Error("StartAgent should not be called for /cancel")
+	}
+	// Conversation should be completed (reset).
+	if convMgr.GetOrCreate("42").GetState() != conversation.StateGathering {
+		t.Error("expected conversation to be reset after /cancel@BotName")
 	}
 }
 

@@ -344,9 +344,17 @@ func (b *Bot) extractContent(msg *tgbotapi.Message) string {
 	var parts []string
 
 	// Plain text or caption attached to a media message.
+	// For bot commands, normalize "/cmd@BotName args" → "/cmd args" so the
+	// gateway receives clean text regardless of whether we're in a group chat.
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
+	}
+	if msg.IsCommand() {
+		text = "/" + msg.Command()
+		if args := msg.CommandArguments(); args != "" {
+			text += " " + args
+		}
 	}
 	if text != "" {
 		parts = append(parts, text)
