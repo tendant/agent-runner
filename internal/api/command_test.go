@@ -183,17 +183,28 @@ func TestCommander_Set_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestCommander_Set_BareCommand_ShowsUsage(t *testing.T) {
+func TestCommander_KnownCommand_WrongFormat_ShowsUsageNotUnknown(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
-	// "/set" with no args must be handled (not fall through to "Unknown command")
-	reply, _, handled := c.Handle("/set", nil)
-	if !handled {
-		t.Fatal("expected bare /set to be handled by the commander")
+	cases := []struct {
+		input string
+	}{
+		{"/set"},           // bare — was the original bug
+		{"/update-prompt"}, // bare — pre-switch check requires args
 	}
-	if !strings.Contains(reply, "usage") {
-		t.Errorf("expected usage hint for bare /set, got: %s", reply)
+	for _, tc := range cases {
+		reply, _, handled := c.Handle(tc.input, nil)
+		if !handled {
+			t.Errorf("%q: expected to be handled by the commander, not fall through", tc.input)
+			continue
+		}
+		if !strings.HasPrefix(reply, "error:") {
+			t.Errorf("%q: expected error/usage reply, got: %s", tc.input, reply)
+		}
+		if strings.Contains(reply, "Unknown command") {
+			t.Errorf("%q: must not say 'Unknown command' for a known command with wrong format, got: %s", tc.input, reply)
+		}
 	}
 }
 

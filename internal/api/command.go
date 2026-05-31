@@ -82,6 +82,18 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return reply, sid, true
 	}
 
+	// knownCommands is the set of all recognised slash-command names.
+	// Any input whose first word appears here but doesn't match a full case
+	// returns a usage hint instead of falling through to the gateway's
+	// "Unknown command" response.
+	knownCommands := []string{
+		"/help", "/config", "/status", "/sessions",
+		"/set", "/bootstrap", "/migrate", "/install-cli",
+		cmdSetAgent, cmdSetPrompt,
+		"/auth", cmdMemory, cmdRepo, "/stop", "/logs",
+		"/update-prompt",
+	}
+
 	switch {
 	case lower == "/help":
 		return r(helpText)
@@ -133,6 +145,15 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 			arg = strings.TrimSpace(text[5:])
 		}
 		return r(c.handleLogs(arg))
+	}
+
+	// If the first word is a known command, the user typed it with wrong
+	// arguments — return a usage hint rather than "Unknown command".
+	cmdWord := strings.SplitN(lower, " ", 2)[0]
+	for _, known := range knownCommands {
+		if cmdWord == known {
+			return fmt.Sprintf("error: invalid usage of %s. Type /help for available commands.", known), "", true
+		}
 	}
 	return "", "", false
 }
