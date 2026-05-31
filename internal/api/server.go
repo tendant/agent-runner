@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -216,12 +215,11 @@ func (s *Server) Start() error {
 		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 		slog.Info("server shutting down — Ctrl-C again to force quit")
 
-		// Also force-exit after a timeout in case nothing sends a second signal.
+		// Force-exit after 5 seconds regardless — don't wait for stuck goroutines.
 		go func() {
 			select {
 			case <-done:
-				// clean shutdown completed in time
-			case <-time.After(15 * time.Second):
+			case <-time.After(5 * time.Second):
 				slog.Warn("shutdown timed out, forcing exit")
 				os.Exit(1)
 			}
@@ -236,8 +234,9 @@ func (s *Server) Start() error {
 			s.runner.Stop()
 		}
 
-		// Stop bots in parallel — a hung SSE/poll loop in one must not delay others.
-		var wg sync.WaitGroup
+		// Stop bots in parallel with a 3-second cap — a hung SSE/poll loop
+		// must not block the whole shutdown past the 5-second force-exit above.
+		var botWg sync.WaitGroup
 		for _, fn := range []func(){
 			func() {
 				if s.wechatBot != nil {
@@ -256,20 +255,26 @@ func (s *Server) Start() error {
 			},
 			s.convManager.Stop,
 		} {
-			wg.Add(1)
+			botWg.Add(1)
 			go func(f func()) {
-				defer wg.Done()
+				defer botWg.Done()
 				f()
 			}(fn)
 		}
-		wg.Wait()
+		botDone := make(chan struct{})
+		go func() { botWg.Wait(); close(botDone) }()
+		select {
+		case <-botDone:
+		case <-time.After(3 * time.Second):
+			slog.Warn("bot shutdown timed out, proceeding")
+		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
 		s.httpServer.SetKeepAlivesEnabled(false)
 		if err := s.httpServer.Shutdown(ctx); err != nil {
-			log.Fatalf("Could not gracefully shutdown the server: %v", err)
+			slog.Warn("http server shutdown error", "error", err)
 		}
 		close(done)
 	}()
