@@ -177,7 +177,7 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if resp.CLIInstalled {
-		resp.CLIVersion = cliVersion(cli)
+		resp.CLIVersion, _ = cliVersion(cli)
 	}
 
 	resp.Warnings = BootstrapWarnings(cli, h.config.Agent.Provider)
@@ -234,7 +234,7 @@ fi
 
 // cliVersion returns the installed version string for the given CLI binary,
 // or an empty string if it cannot be determined.
-func cliVersion(cli string) string {
+func cliVersion(cli string) (string, error) {
 	if cli == "" {
 		cli = "opencode"
 	}
@@ -243,22 +243,23 @@ func cliVersion(cli string) string {
 	path, err := exec.LookPath(cli)
 	if err != nil {
 		slog.Warn("cliVersion: binary not found", "cli", cli, "error", err)
-		return ""
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	// Allow AppImage binaries (e.g. opencode on Linux) to run without FUSE
-	// by extracting instead of mounting.
-	cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1")
+	// by extracting instead of mounting, and disable the Electron sandbox that
+	// requires a setuid chrome-sandbox binary.
+	cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1", "ELECTRON_DISABLE_SANDBOX=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err, "stderr", strings.TrimSpace(stderr.String()))
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
 }
 
 // installCLI installs the given agent CLI backend.
