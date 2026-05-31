@@ -449,29 +449,34 @@ func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conve
 		defer b.wg.Done()
 		b.pollAndReport(userID, sessionID)
 
-		if session, ok := b.starter.GetAgentSession(sessionID); ok {
+		session, sessionOk := b.starter.GetAgentSession(sessionID)
+		if sessionOk {
 			for _, iter := range session.Iterations {
 				if iter.Output != "" {
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
-			if len(session.OutputFiles) > 0 {
-				b.sendOutputFiles(context.Background(), userID, session.OutputFiles)
-			}
+		}
+		hasPending := conv.ClearPendingInput()
+
+		// Clear StateExecuting before slow post-processing so new messages
+		// are accepted immediately instead of being queued.
+		if !hasPending {
+			b.convManager.Complete(chatID)
 		}
 
+		if sessionOk && len(session.OutputFiles) > 0 {
+			b.sendOutputFiles(context.Background(), userID, session.OutputFiles)
+		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
 			b.summarizeConversation(conv)
 		}
 
-		if conv.ClearPendingInput() {
+		if hasPending {
 			conv.SetState(conversation.StateGathering)
 			b.sendText(context.Background(), userID, "Processing queued messages...")
 			b.handleAnalysis(userID, chatID, conv)
-			return
 		}
-
-		b.convManager.Complete(chatID)
 	}()
 }
 

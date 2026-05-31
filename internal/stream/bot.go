@@ -531,38 +531,43 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 		defer b.wg.Done()
 		b.pollAndReport(convID, sessionID)
 
-		// Upload output files and send as message with attachments
-		if session, ok := b.starter.GetAgentSession(sessionID); ok {
-			// Add agent output to conversation history for future context
+		// Agent result has been sent to the user. Collect session data and
+		// check for pending messages before touching the conversation state.
+		session, sessionOk := b.starter.GetAgentSession(sessionID)
+		if sessionOk {
 			for _, iter := range session.Iterations {
 				if iter.Output != "" {
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
+		}
+		hasPending := conv.ClearPendingInput()
 
-			// Upload _send/ files
-			if len(session.OutputFiles) > 0 {
-				b.uploadOutputFiles(goroutineCtx, convID, session)
-			}
+		// Clear StateExecuting NOW — before slow post-processing — so new
+		// messages from the user are accepted immediately rather than queued.
+		// If there was pending input we'll process it after post-processing.
+		if !hasPending {
+			b.convManager.Complete(convID)
 		}
 
-		// Summarize conversation if it's getting long
+		// Post-processing (file uploads, summarisation) runs after state is
+		// cleared so it never blocks incoming messages.
+		if sessionOk && len(session.OutputFiles) > 0 {
+			b.uploadOutputFiles(goroutineCtx, convID, session)
+		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
 			b.summarizeConversation(conv)
 		}
 
-		// If user sent messages during execution, process them now
-		if conv.ClearPendingInput() {
+		// Process messages that arrived during execution.
+		if hasPending {
 			conv.SetState(conversation.StateGathering)
 			if b.analyzer == nil {
 				b.handleConfirmation(goroutineCtx, convID, conv)
 			} else {
 				b.handleAnalysis(goroutineCtx, convID, conv)
 			}
-			return
 		}
-
-		b.convManager.Complete(convID)
 	}()
 }
 

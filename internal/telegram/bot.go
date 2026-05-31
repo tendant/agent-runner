@@ -220,32 +220,34 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 		defer b.wg.Done()
 		b.pollAndReport(tgChatID, sessionID)
 
-		// Add agent output to conversation history and upload output files
-		if session, ok := b.starter.GetAgentSession(sessionID); ok {
+		session, sessionOk := b.starter.GetAgentSession(sessionID)
+		if sessionOk {
 			for _, iter := range session.Iterations {
 				if iter.Output != "" {
 					conv.AddMessage("assistant", iter.Output)
 				}
 			}
-			if len(session.OutputFiles) > 0 {
-				b.uploadOutputFiles(tgChatID, session)
-			}
+		}
+		hasPending := conv.ClearPendingInput()
+
+		// Clear StateExecuting before slow post-processing so new messages
+		// are accepted immediately instead of being queued.
+		if !hasPending {
+			b.convManager.Complete(chatID)
 		}
 
-		// Summarize conversation if it's getting long
+		if sessionOk && len(session.OutputFiles) > 0 {
+			b.uploadOutputFiles(tgChatID, session)
+		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
 			b.summarizeConversation(conv)
 		}
 
-		// If user sent messages during execution, process them now
-		if conv.ClearPendingInput() {
+		if hasPending {
 			conv.SetState(conversation.StateGathering)
 			b.send(tgChatID, "Processing queued messages...")
 			b.handleAnalysis(tgChatID, chatID, conv)
-			return
 		}
-
-		b.convManager.Complete(chatID)
 	}()
 }
 
