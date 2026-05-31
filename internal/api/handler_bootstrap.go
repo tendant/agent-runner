@@ -256,8 +256,24 @@ func cliVersion(cli string) (string, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err, "stderr", strings.TrimSpace(stderr.String()))
-		return "", err
+		stderrStr := strings.TrimSpace(stderr.String())
+		// Electron apps (e.g. opencode) require a display even for --version.
+		// If we're on a headless server, retry under xvfb-run if available.
+		if strings.Contains(stderrStr, "DISPLAY") || strings.Contains(stderrStr, "X server") {
+			if xvfb, xerr := exec.LookPath("xvfb-run"); xerr == nil {
+				xvfbCmd := exec.CommandContext(ctx, xvfb, "-a", path, "--version")
+				xvfbCmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1", "ELECTRON_DISABLE_SANDBOX=1")
+				if xout, xerr := xvfbCmd.Output(); xerr == nil {
+					return strings.TrimSpace(string(xout)), nil
+				}
+			}
+		}
+		msg := stderrStr
+		if msg == "" {
+			msg = err.Error()
+		}
+		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err, "stderr", msg)
+		return "", fmt.Errorf("%s", msg)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

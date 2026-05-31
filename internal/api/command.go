@@ -476,7 +476,7 @@ func (c *Commander) handleConfig() string {
 
 	b.WriteString("**Configuration**\n\n")
 	if v, err := cliVersion(cli); err != nil {
-		fmt.Fprintf(&b, "**cli:** %s (installed, version check failed — see server logs)\n", cli)
+		fmt.Fprintf(&b, "**cli:** %s (installed, version check failed: %s)\n", cli, err)
 	} else if v != "" {
 		fmt.Fprintf(&b, "**cli:** %s %s (installed)\n", cli, v)
 	} else if CLIInstalled(cli) {
@@ -584,7 +584,7 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 	}
 	if !force && CLIInstalled(cli) {
 		if v, err := cliVersion(cli); err != nil {
-			return fmt.Sprintf("ok %s already installed (version check failed — see server logs)", cli)
+			return fmt.Sprintf("ok %s already installed (version check failed: %s)", cli, err)
 		} else if v != "" {
 			return fmt.Sprintf("ok %s already installed (%s)", cli, v)
 		}
@@ -599,7 +599,7 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 		return fmt.Sprintf("error installing %s: %v", cli, err)
 	}
 	if v, err := cliVersion(cli); err != nil {
-		return fmt.Sprintf("ok installed %s (version check failed — see server logs)\n%s", cli, out)
+		return fmt.Sprintf("ok installed %s (version check failed: %s)\n%s", cli, err, out)
 	} else if v != "" {
 		return fmt.Sprintf("ok installed %s (%s)\n%s", cli, v, out)
 	}
