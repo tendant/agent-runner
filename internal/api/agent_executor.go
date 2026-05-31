@@ -211,7 +211,9 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 		// Cleanup workspace after cache-back and logging are done
 		if liveSession.WorkspacePath != "" {
-			h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath) //nolint:errcheck
+			if err := h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath); err != nil {
+				slog.Warn("failed to cleanup workspace", "path", liveSession.WorkspacePath, "error", err)
+			}
 		}
 	}()
 

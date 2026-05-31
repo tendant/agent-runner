@@ -133,8 +133,8 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Force bool `json:"force"`
 	}
-	// ignore decode errors — body is optional
-	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
+	// body is optional — missing or malformed JSON just leaves Force=false
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	systemPromptPath, promptFilePath := h.bootstrapPaths()
 

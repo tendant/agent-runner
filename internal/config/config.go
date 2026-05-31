@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -256,7 +257,9 @@ func LoadFromEnv() (*Config, error) {
 	}
 	for k, v := range merged {
 		if os.Getenv(k) == "" {
-			os.Setenv(k, v) //nolint:errcheck
+			if err := os.Setenv(k, v); err != nil {
+				slog.Warn("config: failed to set env var from .env", "key", k, "error", err)
+			}
 		}
 	}
 
@@ -288,7 +291,9 @@ func LoadFromEnv() (*Config, error) {
 	// Propagate GIT_SSH_KEY into GIT_SSH_COMMAND so all git subprocesses
 	// (including the agent CLI) inherit it without extra wiring.
 	if cfg.GitSSHKey != "" && os.Getenv("GIT_SSH_COMMAND") == "" {
-		os.Setenv("GIT_SSH_COMMAND", "ssh -i "+cfg.GitSSHKey+" -o StrictHostKeyChecking=no") //nolint:errcheck
+		if err := os.Setenv("GIT_SSH_COMMAND", "ssh -i "+cfg.GitSSHKey+" -o StrictHostKeyChecking=no"); err != nil {
+			slog.Warn("config: failed to set GIT_SSH_COMMAND", "error", err)
+		}
 	}
 
 	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)

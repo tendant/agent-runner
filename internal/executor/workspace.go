@@ -108,7 +108,9 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 	var setupDone bool
 	defer func() {
 		if !setupDone {
-			os.RemoveAll(workspacePath) //nolint:errcheck
+			if err := os.RemoveAll(workspacePath); err != nil {
+				slog.Warn("workspace: failed to clean up partial setup", "path", workspacePath, "error", err)
+			}
 		}
 	}()
 
@@ -232,19 +234,27 @@ func cacheRepoAtomic(src, dst string) error {
 	old := dst + ".old"
 
 	// Clean up any leftovers from a previous failed run.
-	os.RemoveAll(tmp) //nolint:errcheck
-	os.RemoveAll(old) //nolint:errcheck
+	if err := os.RemoveAll(tmp); err != nil {
+		slog.Warn("workspace: failed to remove leftover tmp dir", "path", tmp, "error", err)
+	}
+	if err := os.RemoveAll(old); err != nil {
+		slog.Warn("workspace: failed to remove leftover old dir", "path", old, "error", err)
+	}
 
 	// Step 1: copy into temp location — original dst is safe if this fails.
 	if err := copyDir(src, tmp); err != nil {
-		os.RemoveAll(tmp) //nolint:errcheck
+		if rerr := os.RemoveAll(tmp); rerr != nil {
+			slog.Warn("workspace: failed to remove tmp dir after copy failure", "path", tmp, "error", rerr)
+		}
 		return fmt.Errorf("copy to temp: %w", err)
 	}
 
 	// Step 2: move old cache out of the way (no-op if dst doesn't exist yet).
 	if _, err := os.Stat(dst); err == nil {
 		if err := os.Rename(dst, old); err != nil {
-			os.RemoveAll(tmp) //nolint:errcheck
+			if rerr := os.RemoveAll(tmp); rerr != nil {
+				slog.Warn("workspace: failed to remove tmp dir after rename failure", "path", tmp, "error", rerr)
+			}
 			return fmt.Errorf("rename old cache aside: %w", err)
 		}
 	}
@@ -259,7 +269,9 @@ func cacheRepoAtomic(src, dst string) error {
 				return fmt.Errorf("rename new cache into place: %w; restore of old cache also failed: %v (manual fix: rename %s to %s)", err, restoreErr, old, dst)
 			}
 		}
-		os.RemoveAll(tmp) //nolint:errcheck
+		if rerr := os.RemoveAll(tmp); rerr != nil {
+			slog.Warn("workspace: failed to remove tmp dir after rename failure", "path", tmp, "error", rerr)
+		}
 		return fmt.Errorf("rename new cache into place: %w", err)
 	}
 

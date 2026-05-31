@@ -227,7 +227,9 @@ func (c *Commander) startAuthFlow(cli string, send func(string)) (string, error)
 	}
 	go func() {
 		defer c.releaseAuthCancel()
-		runCLIAuthFlowCtx(ctx, cli, send) //nolint:errcheck
+		if err := runCLIAuthFlowCtx(ctx, cli, send); err != nil && ctx.Err() == nil {
+			send("auth failed: " + err.Error())
+		}
 	}()
 	return "Starting " + cli + " auth — open the URL when it appears... (/auth cancel to stop)", nil
 }
@@ -545,7 +547,9 @@ func (c *Commander) handleSet(args string) string {
 	if err := config.SetEnvLocal(key, val); err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}
-	os.Setenv(key, val) //nolint:errcheck
+	if err := os.Setenv(key, val); err != nil {
+		slog.Warn("set: failed to apply env var to process", "key", key, "error", err)
+	}
 
 	// Update live config + executor for agent-level settings.
 	switch key {
@@ -1030,7 +1034,9 @@ func (c *Commander) handleMemoryKeygen() string {
 	if err := config.SetEnvLocal("MEMORY_GIT_SSH_KEY", keyPath); err != nil {
 		return fmt.Sprintf("error: failed to save MEMORY_GIT_SSH_KEY: %v", err)
 	}
-	os.Setenv("MEMORY_GIT_SSH_KEY", keyPath) //nolint:errcheck
+	if err := os.Setenv("MEMORY_GIT_SSH_KEY", keyPath); err != nil {
+		slog.Warn("ssh-keygen: failed to apply MEMORY_GIT_SSH_KEY to process", "error", err)
+	}
 
 	return fmt.Sprintf("generated SSH key: %s\nMEMORY_GIT_SSH_KEY saved.\n\nAdd this public key to GitHub/GitLab → Deploy Keys:\n\n%s", keyPath, strings.TrimSpace(string(pub)))
 }
@@ -1160,7 +1166,9 @@ func (c *Commander) handleRepoAdd(url string) string {
 		shared = append(shared, name)
 		newVal := strings.Join(shared, ",")
 		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
-			os.Setenv("AGENT_SHARED_REPOS", newVal) //nolint:errcheck
+			if err := os.Setenv("AGENT_SHARED_REPOS", newVal); err != nil {
+				slog.Warn("repo: failed to apply AGENT_SHARED_REPOS to process", "error", err)
+			}
 			c.cfg.Agent.SharedRepos = shared
 			sharedNote = "; added to AGENT_SHARED_REPOS"
 		}
@@ -1258,7 +1266,9 @@ func (c *Commander) handleRepoRemove(name string) string {
 	if len(filtered) < len(shared) {
 		newVal := strings.Join(filtered, ",")
 		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
-			os.Setenv("AGENT_SHARED_REPOS", newVal) //nolint:errcheck
+			if err := os.Setenv("AGENT_SHARED_REPOS", newVal); err != nil {
+				slog.Warn("repo: failed to apply AGENT_SHARED_REPOS to process", "error", err)
+			}
 			c.cfg.Agent.SharedRepos = filtered
 			sharedNote = "; removed from AGENT_SHARED_REPOS"
 		}
