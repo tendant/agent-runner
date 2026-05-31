@@ -210,18 +210,19 @@ func (s *Server) Start() error {
 
 	go func() {
 		<-quit
-		slog.Info("server shutting down")
+		// Restore default signal behaviour immediately so a second Ctrl-C kills
+		// the process via the OS default handler, bypassing Go's scheduler
+		// entirely. This works even if a goroutine is stuck in a blocking call.
+		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+		slog.Info("server shutting down — Ctrl-C again to force quit")
 
-		// Force exit if graceful shutdown takes too long or a second signal arrives.
+		// Also force-exit after a timeout in case nothing sends a second signal.
 		go func() {
 			select {
 			case <-done:
 				// clean shutdown completed in time
 			case <-time.After(15 * time.Second):
 				slog.Warn("shutdown timed out, forcing exit")
-				os.Exit(1)
-			case <-quit:
-				slog.Warn("second signal received, forcing exit")
 				os.Exit(1)
 			}
 		}()
