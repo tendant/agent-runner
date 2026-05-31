@@ -283,7 +283,7 @@ func (c *Commander) handleStatus() string {
 	}
 
 	// Issues
-	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("**ready:** ✓")
 	} else {
@@ -486,7 +486,7 @@ func (c *Commander) handleConfig() string {
 	fmt.Fprintf(&b, "**prompt.md:** %s\n", fileState(promptPath))
 
 	// Ready = no credential warnings.
-	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("**ready:** ✓")
 	} else {
@@ -605,7 +605,7 @@ func (c *Commander) handleBootstrap(force bool) string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	warnings := bootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("ready=true")
 	} else {

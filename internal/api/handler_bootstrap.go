@@ -20,7 +20,7 @@ You are an autonomous software development agent.
 ## Core Principles
 
 - Complete tasks thoroughly before reporting done
-- Commit all changes with descriptive commit messages
+- Commit all changes with descriptive commit messages and push to origin
 - Prefer making progress over waiting for perfect information
 - Ask for clarification only when the task is genuinely ambiguous
 
@@ -179,7 +179,7 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 		resp.CLIVersion = cliVersion(cli)
 	}
 
-	resp.Warnings = bootstrapWarnings(cli, h.config.Agent.Provider)
+	resp.Warnings = BootstrapWarnings(cli, h.config.Agent.Provider)
 	resp.Ready = len(resp.Warnings) == 0 && resp.CLIInstalled
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -307,8 +307,8 @@ func cliInstallHint(cli string) string {
 	}
 }
 
-// bootstrapWarnings returns human-readable warnings for missing credentials.
-func bootstrapWarnings(cli, provider string) []string {
+// BootstrapWarnings returns human-readable warnings for missing credentials.
+func BootstrapWarnings(cli, provider string) []string {
 	var w []string
 	p := strings.ToLower(provider)
 

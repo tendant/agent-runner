@@ -146,12 +146,18 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Handle configuration commands before any LLM or conversation logic.
+	// Any /command that the commander doesn't recognise is still rejected here —
+	// slash-prefixed messages must never fall through to the agent.
 	if b.commander != nil {
 		asyncSend := func(msg string) { b.send(tgChatID, msg) }
 		if reply, _, ok := b.commander.Handle(content, asyncSend); ok {
 			b.send(tgChatID, reply)
 			return
 		}
+	}
+	if strings.HasPrefix(content, "/") {
+		b.send(tgChatID, "Unknown command. Type /help for available commands.")
+		return
 	}
 
 	// Get or create conversation
@@ -179,6 +185,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			return
 		}
 		// Not a clear yes/no — treat as continued conversation
+	}
+
+	// If no analyzer is configured, execute directly.
+	if b.analyzer == nil {
+		b.handleConfirmation(tgChatID, chatID, conv)
+		return
 	}
 
 	// Analyze conversation via Claude (slow — acknowledge first)
@@ -483,6 +495,9 @@ func (b *Bot) SendNotification(_ context.Context, message string) error {
 }
 
 func (b *Bot) send(chatID int64, text string) {
+	if b.api == nil {
+		return
+	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	if _, err := b.api.Send(msg); err != nil {

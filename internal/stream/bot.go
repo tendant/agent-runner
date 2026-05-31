@@ -450,6 +450,8 @@ func isImageContent(contentType string) bool {
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle configuration commands before any LLM or conversation logic.
+	// Any /command that the commander doesn't recognise is still rejected here —
+	// slash-prefixed messages must never fall through to the agent.
 	if b.commander != nil {
 		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
 		if reply, _, ok := b.commander.Handle(text, asyncSend); ok {
@@ -468,6 +470,12 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	// Handle /wechat-login: run the iLink QR login flow and hot-reload the WeChat bot.
 	if text == "/wechat-login" {
 		b.handleWeChatLogin(ctx, convID)
+		return
+	}
+
+	// Block any remaining slash commands from reaching the agent.
+	if strings.HasPrefix(text, "/") {
+		b.emitFinal(ctx, convID, "Unknown command. Type /help for available commands.")
 		return
 	}
 

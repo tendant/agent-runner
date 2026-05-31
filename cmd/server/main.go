@@ -39,7 +39,10 @@ func main() {
 		slog.Info("API key authentication enabled")
 	}
 	if cfg.Agent.Model != "" {
-		slog.Info("agent configured", "model", cfg.Agent.Model)
+		slog.Info("agent configured", "cli", cfg.Agent.CLI, "model", cfg.Agent.Model)
+	}
+	for _, w := range api.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
+		slog.Warn("startup warning", "msg", w)
 	}
 	if cfg.Agent.PromptFile != "" {
 		slog.Info("agent prompt file", "path", cfg.Agent.PromptFile)
