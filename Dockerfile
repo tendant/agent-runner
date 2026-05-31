@@ -4,8 +4,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /agent-runner ./cmd/server && \
-    CGO_ENABLED=0 go build -o /agent-cli    ./cmd/cli
+RUN BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) && \
+    CGO_ENABLED=0 go build -ldflags "-X main.buildTime=${BUILD_TIME}" -o /agent-runner ./cmd/server && \
+    CGO_ENABLED=0 go build -o /agent-cli ./cmd/cli
 
 # Stage 2: runtime — node:alpine provides npm for agent CLI installation
 FROM node:22-alpine

@@ -14,11 +14,16 @@ import (
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
+// Build-time variables — set via -ldflags "-X main.buildTime=..."
+var buildTime = "unknown"
+
 func main() {
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	slog.Info("agent-runner starting", "built", buildTime)
 
 	// Log configuration summary
 	slog.Info("configuration loaded",

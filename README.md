@@ -32,7 +32,7 @@ Make sure `~/bin` (or wherever opencode is installed) is on your `$PATH`.
 ## Quick Start
 
 ```bash
-go build -o agent-runner ./cmd/server
+go build -ldflags "-X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o agent-runner ./cmd/server
 cp .env.example .env   # set at minimum an API key (see below)
 ./agent-runner
 ```
