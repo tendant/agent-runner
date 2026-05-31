@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -203,7 +204,7 @@ func (s *Server) Start() error {
 	}
 
 	// Setup graceful shutdown
-	done := make(chan bool, 1)
+	done := make(chan struct{})
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
@@ -211,28 +212,58 @@ func (s *Server) Start() error {
 		<-quit
 		slog.Info("server shutting down")
 
-		// Cancel agent/job contexts first so running sessions stop promptly
+		// Force exit if graceful shutdown takes too long or a second signal arrives.
+		go func() {
+			select {
+			case <-done:
+				// clean shutdown completed in time
+			case <-time.After(15 * time.Second):
+				slog.Warn("shutdown timed out, forcing exit")
+				os.Exit(1)
+			case <-quit:
+				slog.Warn("second signal received, forcing exit")
+				os.Exit(1)
+			}
+		}()
+
+		// Cancel agent/job contexts first so running sessions stop promptly.
 		s.agentManager.Stop()
 		s.jobManager.Stop()
 
-		// Stop runner (it may be executing a task)
+		// Stop runner (it may be executing a task).
 		if s.runner != nil {
 			s.runner.Stop()
 		}
 
-		// Stop bots
-		if s.wechatBot != nil {
-			s.wechatBot.Stop()
+		// Stop bots in parallel — a hung SSE/poll loop in one must not delay others.
+		var wg sync.WaitGroup
+		for _, fn := range []func(){
+			func() {
+				if s.wechatBot != nil {
+					s.wechatBot.Stop()
+				}
+			},
+			func() {
+				if s.streamBot != nil {
+					s.streamBot.Stop()
+				}
+			},
+			func() {
+				if s.telegramBot != nil {
+					s.telegramBot.Stop()
+				}
+			},
+			s.convManager.Stop,
+		} {
+			wg.Add(1)
+			go func(f func()) {
+				defer wg.Done()
+				f()
+			}(fn)
 		}
-		if s.streamBot != nil {
-			s.streamBot.Stop()
-		}
-		if s.telegramBot != nil {
-			s.telegramBot.Stop()
-		}
-		s.convManager.Stop()
+		wg.Wait()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		s.httpServer.SetKeepAlivesEnabled(false)
@@ -240,13 +271,6 @@ func (s *Server) Start() error {
 			log.Fatalf("Could not gracefully shutdown the server: %v", err)
 		}
 		close(done)
-	}()
-
-	// Force exit on second signal
-	go func() {
-		<-quit
-		slog.Warn("forced shutdown")
-		os.Exit(1)
 	}()
 
 	// Bind the port first so we know the server is ready before starting
