@@ -257,10 +257,11 @@ func cliVersion(cli string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		stderrStr := strings.TrimSpace(stderr.String())
-		// Electron apps (e.g. opencode) require a display even for --version.
-		// On headless servers try two fallbacks in order:
-		//  1. xvfb-run (virtual display) if installed
-		//  2. AppImage extraction — read version from embedded package.json
+		// --version can fail for several reasons on Linux (no display, missing
+		// shared libs, no FUSE). Try fallbacks before giving up:
+		//  1. xvfb-run — if it's a display error and xvfb is installed
+		//  2. AppImage extraction — read X-AppImage-Version from .desktop file;
+		//     works without FUSE, a display, or any system libraries
 		if strings.Contains(stderrStr, "DISPLAY") || strings.Contains(stderrStr, "X server") {
 			if xvfb, xerr := exec.LookPath("xvfb-run"); xerr == nil {
 				xvfbCmd := exec.CommandContext(ctx, xvfb, "-a", path, "--version")
@@ -269,9 +270,9 @@ func cliVersion(cli string) (string, error) {
 					return strings.TrimSpace(string(xout)), nil
 				}
 			}
-			if v := appImageVersion(path); v != "" {
-				return v, nil
-			}
+		}
+		if v := appImageVersion(path); v != "" {
+			return v, nil
 		}
 		msg := stderrStr
 		if msg == "" {
@@ -283,8 +284,8 @@ func cliVersion(cli string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// appImageVersion extracts an AppImage to a temp directory and reads the
-// version from resources/app/package.json. Used as a fallback on headless
+// appImageVersion extracts an AppImage and reads the version from the embedded
+// .desktop file (X-AppImage-Version field). Used as a fallback on headless
 // Linux servers where the Electron binary can't open a display for --version.
 func appImageVersion(path string) string {
 	dir, err := os.MkdirTemp("", "appimage-version-*")
@@ -296,38 +297,38 @@ func appImageVersion(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// --appimage-extract extracts the embedded squashfs without needing FUSE or
-	// a display. Do NOT set APPIMAGE_EXTRACT_AND_RUN=1 here — it conflicts with
-	// --appimage-extract by telling the runtime to extract-and-run instead of
-	// just extract, which causes the Electron binary to launch and fail again.
-	// Try extracting only package.json first (faster); fall back to full extract.
-	extracted := false
-	for _, args := range [][]string{
-		{"--appimage-extract", "resources/app/package.json"},
-		{"--appimage-extract"},
-	} {
-		cmd := exec.CommandContext(ctx, path, args...)
-		cmd.Dir = dir
-		if cmd.Run() == nil {
-			extracted = true
-			break
-		}
-	}
-	if !extracted {
+	// --appimage-extract extracts the embedded squashfs without needing FUSE,
+	// a display, or any system libraries. Do NOT set APPIMAGE_EXTRACT_AND_RUN=1
+	// here — that flag causes the runtime to extract-and-run instead of just
+	// extracting, which launches the binary and fails on headless servers.
+	// Use full extraction only: filtered extraction (--appimage-extract *.desktop)
+	// can be misinterpreted by some AppImage runtimes and cause the binary to run.
+	cmd := exec.CommandContext(ctx, path, "--appimage-extract")
+	cmd.Dir = dir
+	if cmd.Run() != nil {
 		return ""
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "squashfs-root", "resources", "app", "package.json"))
+	// Every AppImage .desktop file contains X-AppImage-Version=<version>.
+	entries, err := os.ReadDir(filepath.Join(dir, "squashfs-root"))
 	if err != nil {
 		return ""
 	}
-	var pkg struct {
-		Version string `json:"version"`
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".desktop") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "squashfs-root", e.Name()))
+		if err != nil {
+			continue
+		}
+		for line := range strings.SplitSeq(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, "X-AppImage-Version="); ok {
+				return strings.TrimSpace(v)
+			}
+		}
 	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return ""
-	}
-	return pkg.Version
+	return ""
 }
 
 // installCLI installs the given agent CLI backend.
