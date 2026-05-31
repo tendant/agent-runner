@@ -296,7 +296,11 @@ func appImageVersion(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Extract only the package.json we need; fall back to full extraction.
+	// --appimage-extract extracts the embedded squashfs without needing FUSE or
+	// a display. Do NOT set APPIMAGE_EXTRACT_AND_RUN=1 here — it conflicts with
+	// --appimage-extract by telling the runtime to extract-and-run instead of
+	// just extract, which causes the Electron binary to launch and fail again.
+	// Try extracting only package.json first (faster); fall back to full extract.
 	extracted := false
 	for _, args := range [][]string{
 		{"--appimage-extract", "resources/app/package.json"},
@@ -304,7 +308,6 @@ func appImageVersion(path string) string {
 	} {
 		cmd := exec.CommandContext(ctx, path, args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1", "ELECTRON_DISABLE_SANDBOX=1")
 		if cmd.Run() == nil {
 			extracted = true
 			break
