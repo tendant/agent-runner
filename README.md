@@ -11,6 +11,24 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
 - Git configured with credentials for your remote
 
+### opencode on Linux (Ubuntu/Debian)
+
+opencode is distributed as an [AppImage](https://appimage.org/) on Linux. Because it is built on Electron, it requires a display even for basic operations. On a headless server, install `xvfb` so agent-runner can run version checks (and opencode itself) without a physical display:
+
+```bash
+sudo apt install xvfb
+```
+
+Install opencode via the bot with `/install-cli opencode`, or manually:
+
+```bash
+curl -fsSL https://opencode.ai/install | sh
+# or download the AppImage from https://github.com/sst/opencode/releases
+# and place it at ~/bin/opencode (chmod +x)
+```
+
+Make sure `~/bin` (or wherever opencode is installed) is on your `$PATH`.
+
 ## Quick Start
 
 ```bash
