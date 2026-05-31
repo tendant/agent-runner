@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -241,12 +242,14 @@ func cliVersion(cli string) string {
 	// that CLIInstalled() found, regardless of PATH ordering.
 	path, err := exec.LookPath(cli)
 	if err != nil {
+		slog.Warn("cliVersion: binary not found", "cli", cli, "error", err)
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
+		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err)
 		return ""
 	}
 	return strings.TrimSpace(string(out))
