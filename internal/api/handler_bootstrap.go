@@ -237,9 +237,15 @@ func cliVersion(cli string) string {
 	if cli == "" {
 		cli = "opencode"
 	}
+	// Resolve to the full path so the version call uses the same binary
+	// that CLIInstalled() found, regardless of PATH ordering.
+	path, err := exec.LookPath(cli)
+	if err != nil {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, cli, "--version").Output()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return ""
 	}
