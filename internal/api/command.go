@@ -475,7 +475,13 @@ func (c *Commander) handleConfig() string {
 	}
 
 	b.WriteString("**Configuration**\n\n")
-	fmt.Fprintf(&b, "**cli:** %s (%s)\n", cli, map[bool]string{true: "installed", false: "not installed"}[CLIInstalled(cli)])
+	if v := cliVersion(cli); v != "" {
+		fmt.Fprintf(&b, "**cli:** %s %s (installed)\n", cli, v)
+	} else if CLIInstalled(cli) {
+		fmt.Fprintf(&b, "**cli:** %s (installed)\n", cli)
+	} else {
+		fmt.Fprintf(&b, "**cli:** %s (not installed — /install-cli)\n", cli)
+	}
 
 	if c.cfg.Agent.Provider != "" {
 		fmt.Fprintf(&b, "**provider:** %s\n", c.cfg.Agent.Provider)
