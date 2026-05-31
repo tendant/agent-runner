@@ -251,9 +251,11 @@ func cliVersion(cli string) string {
 	// Allow AppImage binaries (e.g. opencode on Linux) to run without FUSE
 	// by extracting instead of mounting.
 	cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err)
+		slog.Warn("cliVersion: --version failed", "cli", cli, "path", path, "error", err, "stderr", strings.TrimSpace(stderr.String()))
 		return ""
 	}
 	return strings.TrimSpace(string(out))
