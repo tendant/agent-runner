@@ -1122,16 +1122,22 @@ func (c *Commander) handleRepoAdd(url string) string {
 
 	// Strip token: set remote back to clean URL.
 	setURL := exec.Command("git", "-C", cachePath, "remote", "set-url", "origin", url)
+	var setURLStderr strings.Builder
+	setURL.Stderr = &setURLStderr
 	if err := setURL.Run(); err != nil {
 		// Non-fatal — repo is cloned; just warn.
-		return fmt.Sprintf("added %s (warning: could not strip token from remote: %v)", name, err)
+		return fmt.Sprintf("added %s (warning: could not strip token from remote: %v: %s)", name, err, strings.TrimSpace(setURLStderr.String()))
 	}
 
 	// Configure credential helper so future git ops pick up GIT_TOKEN from env.
 	if token != "" {
 		credCmd := exec.Command("git", "-C", cachePath, "config", "credential.helper",
 			`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
-		credCmd.Run() //nolint:errcheck
+		var credStderr strings.Builder
+		credCmd.Stderr = &credStderr
+		if err := credCmd.Run(); err != nil {
+			slog.Warn("repo: failed to configure credential helper", "path", cachePath, "error", err, "stderr", strings.TrimSpace(credStderr.String()))
+		}
 	}
 
 	// Auto-append to AGENT_SHARED_REPOS so the repo is available to agents.
@@ -1289,8 +1295,13 @@ func (c *Commander) handleRepoUpdate(name string) string {
 	if token := os.Getenv("GIT_TOKEN"); token != "" {
 		credCheck := exec.Command("git", "-C", p, "config", "--local", "credential.helper")
 		if out, _ := credCheck.Output(); len(strings.TrimSpace(string(out))) == 0 {
-			exec.Command("git", "-C", p, "config", "credential.helper", //nolint:errcheck
-				`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`).Run()
+			credCmd := exec.Command("git", "-C", p, "config", "credential.helper",
+				`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
+			var credStderr strings.Builder
+			credCmd.Stderr = &credStderr
+			if err := credCmd.Run(); err != nil {
+				slog.Warn("sync: failed to configure credential helper", "path", p, "error", err, "stderr", strings.TrimSpace(credStderr.String()))
+			}
 		}
 	}
 

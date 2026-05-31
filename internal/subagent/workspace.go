@@ -3,6 +3,7 @@ package subagent
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,9 +65,11 @@ func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceStat
 func gitCmd(ctx context.Context, dir string, args ...string) string {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		slog.Debug("subagent: git command failed", "args", args, "dir", dir, "error", err, "stderr", strings.TrimSpace(stderr.String()))
 		return ""
 	}
 	return strings.TrimSpace(stdout.String())

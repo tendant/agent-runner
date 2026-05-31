@@ -343,7 +343,7 @@ func configureCredHelper(repoPath string) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		slog.Warn("workspace: failed to configure credential helper",
-			"path", repoPath, "error", strings.TrimSpace(stderr.String()))
+			"path", repoPath, "error", err, "stderr", strings.TrimSpace(stderr.String()))
 	}
 }
 
@@ -363,8 +363,10 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 		slog.Info("workspace: updating git remote", "repo", repoName, "old", currentURL, "new", expectedURL)
 		setURL := exec.Command("git", "remote", "set-url", "origin", expectedURL)
 		setURL.Dir = repoPath
+		var setURLStderr strings.Builder
+		setURL.Stderr = &setURLStderr
 		if err := setURL.Run(); err != nil {
-			slog.Warn("workspace: failed to update git remote", "repo", repoName, "error", err)
+			slog.Warn("workspace: failed to update git remote", "repo", repoName, "error", err, "stderr", strings.TrimSpace(setURLStderr.String()))
 		}
 		return
 	}
@@ -373,8 +375,10 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 	slog.Info("workspace: adding git remote", "repo", repoName, "url", expectedURL)
 	addRemote := exec.Command("git", "remote", "add", "origin", expectedURL)
 	addRemote.Dir = repoPath
+	var addRemoteStderr strings.Builder
+	addRemote.Stderr = &addRemoteStderr
 	if err := addRemote.Run(); err != nil {
-		slog.Warn("workspace: failed to add git remote", "repo", repoName, "error", err)
+		slog.Warn("workspace: failed to add git remote", "repo", repoName, "error", err, "stderr", strings.TrimSpace(addRemoteStderr.String()))
 	}
 }
 

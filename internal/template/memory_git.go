@@ -180,13 +180,13 @@ func commitMemoryToParentRepo(memoryDir string) error {
 	}
 
 	// Ask git for the repo root.
-	rootOut, err := func() ([]byte, error) {
-		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		cmd.Dir = absDir
-		return cmd.Output()
-	}()
+	revParseCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	revParseCmd.Dir = absDir
+	var revParseStderr strings.Builder
+	revParseCmd.Stderr = &revParseStderr
+	rootOut, err := revParseCmd.Output()
 	if err != nil {
-		slog.Warn("memory dir is not inside a git repo, skipping commit", "dir", absDir)
+		slog.Warn("memory dir is not inside a git repo, skipping commit", "dir", absDir, "error", err, "stderr", strings.TrimSpace(revParseStderr.String()))
 		return nil
 	}
 	repoRoot := strings.TrimSpace(string(rootOut))
