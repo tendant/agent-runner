@@ -258,7 +258,9 @@ func cliVersion(cli string) (string, error) {
 	if err != nil {
 		stderrStr := strings.TrimSpace(stderr.String())
 		// Electron apps (e.g. opencode) require a display even for --version.
-		// If we're on a headless server, retry under xvfb-run if available.
+		// On headless servers try two fallbacks in order:
+		//  1. xvfb-run (virtual display) if installed
+		//  2. AppImage extraction — read version from embedded package.json
 		if strings.Contains(stderrStr, "DISPLAY") || strings.Contains(stderrStr, "X server") {
 			if xvfb, xerr := exec.LookPath("xvfb-run"); xerr == nil {
 				xvfbCmd := exec.CommandContext(ctx, xvfb, "-a", path, "--version")
@@ -266,6 +268,9 @@ func cliVersion(cli string) (string, error) {
 				if xout, xerr := xvfbCmd.Output(); xerr == nil {
 					return strings.TrimSpace(string(xout)), nil
 				}
+			}
+			if v := appImageVersion(path); v != "" {
+				return v, nil
 			}
 		}
 		msg := stderrStr
@@ -276,6 +281,50 @@ func cliVersion(cli string) (string, error) {
 		return "", fmt.Errorf("%s", msg)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// appImageVersion extracts an AppImage to a temp directory and reads the
+// version from resources/app/package.json. Used as a fallback on headless
+// Linux servers where the Electron binary can't open a display for --version.
+func appImageVersion(path string) string {
+	dir, err := os.MkdirTemp("", "appimage-version-*")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Extract only the package.json we need; fall back to full extraction.
+	extracted := false
+	for _, args := range [][]string{
+		{"--appimage-extract", "resources/app/package.json"},
+		{"--appimage-extract"},
+	} {
+		cmd := exec.CommandContext(ctx, path, args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "APPIMAGE_EXTRACT_AND_RUN=1", "ELECTRON_DISABLE_SANDBOX=1")
+		if cmd.Run() == nil {
+			extracted = true
+			break
+		}
+	}
+	if !extracted {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "squashfs-root", "resources", "app", "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	return pkg.Version
 }
 
 // installCLI installs the given agent CLI backend.
