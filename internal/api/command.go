@@ -91,8 +91,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleStatus())
 	case lower == "/sessions":
 		return r(c.handleSessions())
-	case strings.HasPrefix(lower, "/set "):
-		return r(c.handleSet(text[5:])) // strip "/set "
+	case strings.HasPrefix(lower, "/set ") || lower == "/set":
+		return r(c.handleSet(strings.TrimSpace(text[4:]))) // strip "/set"
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
 		return r(c.handleBootstrap(force))

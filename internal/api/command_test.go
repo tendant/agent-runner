@@ -183,6 +183,20 @@ func TestCommander_Set_InvalidFormat(t *testing.T) {
 	}
 }
 
+func TestCommander_Set_BareCommand_ShowsUsage(t *testing.T) {
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	// "/set" with no args must be handled (not fall through to "Unknown command")
+	reply, _, handled := c.Handle("/set", nil)
+	if !handled {
+		t.Fatal("expected bare /set to be handled by the commander")
+	}
+	if !strings.Contains(reply, "usage") {
+		t.Errorf("expected usage hint for bare /set, got: %s", reply)
+	}
+}
+
 func TestCommander_Set_SpaceSyntax(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
