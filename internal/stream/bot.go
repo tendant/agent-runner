@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -324,9 +327,10 @@ func sortBySeq(events []Event) {
 
 // messagePayload is the shape of a message.created event payload.
 type messagePayload struct {
-	UserID  string   `json:"user_id"`
-	Content string   `json:"content"`
-	FileIDs []string `json:"file_ids,omitempty"`
+	UserID   string            `json:"user_id"`
+	Content  string            `json:"content"`
+	FileIDs  []string          `json:"file_ids,omitempty"`
+	FileURLs map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
 }
 
 func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event) {
@@ -346,7 +350,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 
 	// Download and inline any attached files
 	if len(msg.FileIDs) > 0 {
-		fileContent := b.resolveFiles(ctx, msg.FileIDs)
+		fileContent := b.resolveFiles(ctx, msg.FileIDs, msg.FileURLs)
 		if fileContent != "" {
 			if text != "" {
 				text = text + "\n\n" + fileContent
@@ -368,11 +372,23 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 
 // resolveFiles downloads files and returns their content formatted for the message.
 // Text files are inlined; binary files are saved to a temp directory and referenced by path.
-func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
+// Uses presigned URLs if available, otherwise falls back to authenticated download.
+func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string, fileURLs map[string]string) string {
 	var parts []string
 
 	for _, fileID := range fileIDs {
-		file, err := b.client.DownloadFile(ctx, fileID)
+		var file *DownloadedFile
+		var err error
+
+		// Use presigned URL if available, otherwise fall back to authenticated download
+		if downloadURL, ok := fileURLs[fileID]; ok {
+			slog.Info("stream bot: downloading file from presigned URL", "file_id", fileID)
+			file, err = b.downloadFileFromURL(ctx, downloadURL)
+		} else {
+			slog.Info("stream bot: downloading file via authenticated endpoint", "file_id", fileID)
+			file, err = b.client.DownloadFile(ctx, fileID)
+		}
+
 		if err != nil {
 			slog.Error("stream bot: failed to download file", "file_id", fileID, "error", err)
 			continue
@@ -398,6 +414,47 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string) string {
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// downloadFileFromURL downloads a file from a presigned URL (no authentication needed).
+func (b *Bot) downloadFileFromURL(ctx context.Context, presignedURL string) (*DownloadedFile, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, presignedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := b.client.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download file: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Limit download to 10MB
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read file body: %w", err)
+	}
+
+	// Extract filename from Content-Disposition header or use file ID
+	filename := "file"
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if _, params, err := mime.ParseMediaType(cd); err == nil {
+			if fn := params["filename"]; fn != "" {
+				filename = fn
+			}
+		}
+	}
+
+	return &DownloadedFile{
+		Filename:    filename,
+		ContentType: resp.Header.Get("Content-Type"),
+		Data:        data,
+	}, nil
 }
 
 // saveFile writes a downloaded file to uploadsDir (persistent) and returns the path.
