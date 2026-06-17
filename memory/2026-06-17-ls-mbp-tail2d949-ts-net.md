@@ -4,3 +4,5 @@
 **Task:** test no deepseek key
 **[08:12]** completed — 1 iterations, $0.0000
 **Task:** test with openai api key
+**[08:16]** completed — 1 iterations, $0.0000
+**Task:** gateway test
