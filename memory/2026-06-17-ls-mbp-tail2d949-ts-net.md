@@ -6,3 +6,5 @@
 **Task:** test with openai api key
 **[08:16]** completed — 1 iterations, $0.0000
 **Task:** gateway test
+**[08:20]** completed — 1 iterations, $0.0000
+**Task:** test agent gateway usage tracking
