@@ -129,6 +129,7 @@ func NewServer(cfg *config.Config) *Server {
 			slog.Warn("analyzer: could not read system prompt for context", "path", cfg.Agent.SystemPrompt, "error", err)
 		}
 	}
+	handlers.SetAnalyzer(analyzer)
 	commander := NewCommander(cfg, handlers)
 	handlers.SetCommander(commander) // also builds handlers.gateway
 	gateway := handlers.Gateway()

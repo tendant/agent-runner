@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/agent-runner/agent-runner/internal/conversation"
 )
 
 // AgentRequest represents the POST /agent request body
@@ -55,6 +57,22 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 			} else {
 				h.writeJSON(w, http.StatusOK, map[string]any{"reply": reply})
 			}
+			return
+		}
+	}
+
+	// Route conversational messages (greetings, thanks, capability questions)
+	// away from the agent instead of burning a full session on them — the
+	// same ask/plan/execute routing the Telegram/Stream/WeChat bots already
+	// do before calling StartAgent. Analyzer.Analyze degrades to "execute" on
+	// any LLM/parse failure, and a real timeout is treated as "execute" too,
+	// so this never blocks a request — it can only skip a session that would
+	// otherwise have started.
+	if h.analyzer != nil {
+		conv := &conversation.Conversation{}
+		conv.AddMessage("user", req.Message)
+		if result, err := h.analyzer.Analyze(r.Context(), conv); err == nil && result.Action != "execute" {
+			h.writeJSON(w, http.StatusOK, map[string]any{"reply": result.Message})
 			return
 		}
 	}

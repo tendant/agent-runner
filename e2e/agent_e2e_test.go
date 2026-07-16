@@ -373,7 +373,11 @@ func TestE2E_AgentWithPlanner(t *testing.T) {
 	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
 	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
-	// Mock claude that returns plan JSON on invocation 1, normal execution afterwards
+	// Mock claude that returns plan JSON on invocation 2, normal execution afterwards.
+	// Invocation 1 is POST /agent's analyzer routing call (ask/plan/execute) —
+	// it falls back to this same mock CLI since no Analyzer credentials are
+	// configured, and its non-JSON-router output is harmlessly treated as
+	// "execute" by Analyze's parse-failure fallback.
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
@@ -383,11 +387,11 @@ count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
 echo "$next" > "$COUNTER_FILE"
 
-if [ "$next" -eq 1 ]; then
-    # First invocation is the planner — return plan JSON
+if [ "$next" -eq 2 ]; then
+    # Second invocation is the planner — return plan JSON
     echo '{"result":"{\"summary\":\"Test plan\",\"steps\":[{\"id\":\"1\",\"description\":\"Create file\",\"done\":false},{\"id\":\"2\",\"description\":\"Add content\",\"done\":false}],\"approach\":\"Direct implementation\"}"}'
 else
-    # Subsequent invocations are iteration work
+    # Analyzer call and subsequent invocations are iteration work
     echo "content for iteration $next" > "work_${next}.txt"
     echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
 fi
@@ -487,8 +491,10 @@ func TestE2E_AgentWithPlannerProgress(t *testing.T) {
 	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Mock claude:
-	// Invocation 1 (planner): returns plan with 3 steps
-	// Invocation 2+: writes _progress.json with cumulative step IDs and creates work files
+	// Invocation 1 is POST /agent's analyzer routing call (falls back to this
+	// same mock CLI, running in /tmp — see TestE2E_AgentWithPlanner for why).
+	// Invocation 2 (planner): returns plan with 3 steps
+	// Invocation 3+: writes _progress.json with cumulative step IDs and creates work files
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
@@ -498,14 +504,14 @@ count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
 echo "$next" > "$COUNTER_FILE"
 
-if [ "$next" -eq 1 ]; then
+if [ "$next" -eq 2 ]; then
     # Planner: return plan with 3 steps
     echo '{"result":"{\"summary\":\"Build feature\",\"steps\":[{\"id\":\"1\",\"description\":\"Create module\",\"done\":false},{\"id\":\"2\",\"description\":\"Add tests\",\"done\":false},{\"id\":\"3\",\"description\":\"Update docs\",\"done\":false}],\"approach\":\"Incremental\"}"}'
-elif [ "$next" -eq 2 ]; then
+elif [ "$next" -eq 3 ]; then
     echo '{"completed_steps":["1"]}' > _progress.json
     echo "module code" > module.txt
     echo '{"result":"Done step 1"}'
-elif [ "$next" -eq 3 ]; then
+elif [ "$next" -eq 4 ]; then
     echo '{"completed_steps":["1","2"]}' > _progress.json
     echo "test code" > tests.txt
     echo '{"result":"Done step 2"}'

@@ -13,6 +13,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
@@ -59,7 +60,8 @@ type Handlers struct {
 	gitOps           *git.Operations
 	execMu           sync.RWMutex
 	executor         executor.Executor
-	plannerClient    llm.Client // direct LLM API for fast planning (tier 2)
+	plannerClient    llm.Client             // direct LLM API for fast planning (tier 2)
+	analyzer         *conversation.Analyzer // intent router for POST /agent (ask/plan/execute); nil = always execute
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
@@ -101,6 +103,13 @@ func (h *Handlers) SetNotifier(n Notifier) {
 // SetPlannerClient sets the direct LLM client used for fast planning (tier 2).
 func (h *Handlers) SetPlannerClient(c llm.Client) {
 	h.plannerClient = c
+}
+
+// SetAnalyzer sets the conversation analyzer used to route POST /agent
+// messages (ask/plan/execute) before starting a session — the same analyzer
+// already used by the Telegram/Stream/WeChat bots.
+func (h *Handlers) SetAnalyzer(a *conversation.Analyzer) {
+	h.analyzer = a
 }
 
 // SetWorkflowClient sets the workflow scheduler used for agent-created schedules.
