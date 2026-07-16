@@ -59,6 +59,58 @@ func TestLoad_OpenCodeModelDefaults(t *testing.T) {
 	}
 }
 
+// TestLoad_ReasoningModelFallsBackToModel covers the claude/codex case: a
+// single CLI invocation drives both real task iterations and the
+// analyzer/planner fallback (internal/api/server.go's shared `exec`), so if
+// only AGENT_MODEL is set, AGENT_REASONING_MODEL should pick it up rather
+// than silently defaulting to the CLI's own built-in model.
+func TestLoad_ReasoningModelFallsBackToModel(t *testing.T) {
+	t.Setenv("AGENT_CLI", "codex")
+	t.Setenv("AGENT_MODEL", "gpt-5.5")
+	t.Setenv("AGENT_REASONING_MODEL", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.ReasoningModel != "gpt-5.5" {
+		t.Errorf("expected Agent.ReasoningModel to fall back to gpt-5.5, got %q", cfg.Agent.ReasoningModel)
+	}
+}
+
+// TestLoad_ReasoningModelExplicitNotClobbered confirms the fallback only
+// fills in an unset AGENT_REASONING_MODEL — an explicit value always wins.
+func TestLoad_ReasoningModelExplicitNotClobbered(t *testing.T) {
+	t.Setenv("AGENT_CLI", "codex")
+	t.Setenv("AGENT_MODEL", "gpt-5.5")
+	t.Setenv("AGENT_REASONING_MODEL", "gpt-6")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.ReasoningModel != "gpt-6" {
+		t.Errorf("expected explicit Agent.ReasoningModel gpt-6 to be preserved, got %q", cfg.Agent.ReasoningModel)
+	}
+}
+
+// TestLoad_OpencodeReasoningModelDefaultNotClobbered confirms opencode's own
+// paired fast/reasoning model defaults aren't overridden by the
+// claude/codex fallback — opencode intentionally uses two different models.
+func TestLoad_OpencodeReasoningModelDefaultNotClobbered(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("AGENT_MODEL", "custom-fast-model")
+	t.Setenv("AGENT_REASONING_MODEL", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.ReasoningModel != "deepseek-v4-pro" {
+		t.Errorf("expected opencode's own ReasoningModel default deepseek-v4-pro to survive, got %q", cfg.Agent.ReasoningModel)
+	}
+}
+
 func TestValidate_EmptyRepoCacheRoot(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RepoCacheRoot = ""

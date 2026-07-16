@@ -325,6 +325,17 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
 	cfg.Agent.ReasoningModel = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.ReasoningModel)
+	// ReasoningModel drives the actual CLI invocation (both real task
+	// iterations and the analyzer/planner fallback when no fast-LLM API
+	// credentials are configured — see internal/api/server.go's shared
+	// `exec` instance). If it's still unset, fall back to AGENT_MODEL rather
+	// than the CLI's own built-in default — someone who only set AGENT_MODEL
+	// almost certainly wants that model used everywhere, not just on the
+	// fast-path tier-2 client. opencode is unaffected: its defaults above
+	// already set both fields to a distinct, intentional pair.
+	if cfg.Agent.ReasoningModel == "" && cfg.Agent.Model != "" {
+		cfg.Agent.ReasoningModel = cfg.Agent.Model
+	}
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.SkillsDir = os.Getenv("AGENT_SKILLS_DIR")

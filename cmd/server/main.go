@@ -43,8 +43,12 @@ func main() {
 	if cfg.API.APIKey != "" {
 		slog.Info("API key authentication enabled")
 	}
-	if cfg.Agent.Model != "" {
-		slog.Info("agent configured", "cli", cfg.Agent.CLI, "model", cfg.Agent.Model)
+	if cfg.Agent.Model != "" || cfg.Agent.ReasoningModel != "" {
+		// reasoning_model is what actually reaches the CLI invocation for both
+		// real task iterations and the analyzer/planner fallback — logged
+		// explicitly since it silently defaulted to the CLI's own built-in
+		// model (not "model") whenever it wasn't set.
+		slog.Info("agent configured", "cli", cfg.Agent.CLI, "model", cfg.Agent.Model, "reasoning_model", cfg.Agent.ReasoningModel)
 	}
 	for _, w := range api.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
 		slog.Warn("startup warning", "msg", w)
