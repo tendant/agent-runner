@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,19 +16,19 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
-	// Import metrics package to register prometheus collectors.
-	_ "github.com/agent-runner/agent-runner/internal/metrics"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
-	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
+	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	// Import metrics package to register prometheus collectors.
+	_ "github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/runner"
 	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/wechat"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server represents the HTTP API server
@@ -88,6 +89,7 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Apply middleware
 	var handler http.Handler = mux
+	handler = recoverMiddleware(handler)
 	handler = loggingMiddleware(handler)
 	if cfg.API.APIKey != "" {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
@@ -345,6 +347,27 @@ func (s *Server) ensureDirectories() error {
 	return nil
 }
 
+// recoverMiddleware catches panics in request handlers. Without it, Go's
+// net/http server recovers a handler panic by silently closing the
+// connection — the client sees a bare EOF with no HTTP response, and
+// nothing is logged (loggingMiddleware's log line runs after next.ServeHTTP
+// returns, which a panic prevents). This writes a 500 and logs the panic
+// with a stack trace instead, so failures are diagnosable and clients get a
+// real response.
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("http handler panic",
+					"method", r.Method, "path", r.URL.Path,
+					"panic", rec, "stack", string(debug.Stack()))
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
 // loggingMiddleware logs all requests
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -419,4 +442,3 @@ func (s *Server) Handlers() *Handlers {
 func (s *Server) SetRunner(r *runner.HybridRunner) {
 	s.runner = r
 }
-
