@@ -163,7 +163,7 @@ func NewServer(cfg *config.Config) *Server {
 			Addr:         cfg.API.Bind,
 			Handler:      handler,
 			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			WriteTimeout: writeTimeout(cfg),
 			IdleTimeout:  60 * time.Second,
 		},
 		handlers:     handlers,
@@ -345,6 +345,33 @@ func (s *Server) ensureDirectories() error {
 	}
 
 	return nil
+}
+
+// minWriteTimeout is the floor for writeTimeout regardless of analyzer
+// config, covering gateway dispatch, JSON encoding, and network jitter for
+// requests that never touch the analyzer.
+const minWriteTimeout = 60 * time.Second
+
+// writeTimeoutMargin is added on top of the analyzer's own per-call timeout
+// so a request that runs the full analyzer timeout still has room to write
+// its response before the server's deadline hits.
+const writeTimeoutMargin = 30 * time.Second
+
+// writeTimeout computes http.Server.WriteTimeout so it comfortably exceeds
+// the analyzer's own per-call timeout (ANALYZER_TIMEOUT_SECONDS, default
+// 30s — explicitly meant to go higher for slow local models). POST /agent
+// can block synchronously on an analyzer call before writing any response;
+// if WriteTimeout is shorter than that call can legitimately take, the
+// response is silently dropped once the deadline passes — no panic, no
+// server-side log line, the client just sees a bare EOF. Long-running agent
+// work (the actual iteration loop) runs in a background goroutine after an
+// immediate 202, so it never hits this deadline.
+func writeTimeout(cfg *config.Config) time.Duration {
+	d := time.Duration(cfg.Analyzer.TimeoutSeconds)*time.Second + writeTimeoutMargin
+	if d < minWriteTimeout {
+		return minWriteTimeout
+	}
+	return d
 }
 
 // recoverMiddleware catches panics in request handlers. Without it, Go's

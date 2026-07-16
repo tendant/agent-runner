@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/agent-runner/agent-runner/internal/config"
 )
 
 // TestRecoverMiddleware_CatchesPanic verifies a panicking handler is turned
@@ -48,5 +51,35 @@ func TestRecoverMiddleware_PassesThroughNormalRequests(t *testing.T) {
 
 	if resp.StatusCode != http.StatusTeapot {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusTeapot)
+	}
+}
+
+// TestWriteTimeout_ExceedsAnalyzerTimeout confirms the server's WriteTimeout
+// always leaves room above the analyzer's own per-call timeout — the bug
+// this guards against: an analyzer call running longer than WriteTimeout
+// gets its response silently dropped (bare EOF client-side, no server log).
+func TestWriteTimeout_ExceedsAnalyzerTimeout(t *testing.T) {
+	cases := []struct {
+		name             string
+		analyzerTimeout  int
+		wantWriteTimeout time.Duration
+	}{
+		{"default 30s analyzer timeout", 30, 60 * time.Second},
+		{"zero analyzer timeout uses floor", 0, 60 * time.Second},
+		{"slow local model 90s analyzer timeout", 90, 120 * time.Second},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Analyzer: config.AnalyzerConfig{TimeoutSeconds: tc.analyzerTimeout}}
+			got := writeTimeout(cfg)
+			if got != tc.wantWriteTimeout {
+				t.Errorf("writeTimeout() = %v, want %v", got, tc.wantWriteTimeout)
+			}
+			analyzerTimeout := time.Duration(tc.analyzerTimeout) * time.Second
+			if got <= analyzerTimeout {
+				t.Errorf("writeTimeout() = %v must exceed analyzer timeout %v", got, analyzerTimeout)
+			}
+		})
 	}
 }
