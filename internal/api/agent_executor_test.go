@@ -417,3 +417,113 @@ func TestPanicRecovery_MarksSessionFailed(t *testing.T) {
 // Ensure panicExecutor satisfies the interface at compile time.
 var _ executor.Executor = panicExecutor{}
 var _ = fmt.Sprintf // suppress unused import
+
+// --- determineFinalStatus ---
+
+func TestDetermineFinalStatus(t *testing.T) {
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tests := []struct {
+		name           string
+		completed      bool
+		blockedOrStuck bool
+		stopReason     string
+		ctx            context.Context
+		requestStop    bool
+		iterations     []agent.IterationResult
+		wantStatus     agent.SessionStatus
+		wantErrPrefix  string
+	}{
+		{
+			name:       "completed takes priority over everything else",
+			completed:  true,
+			stopReason: "irrelevant",
+			ctx:        context.Background(),
+			wantStatus: agent.SessionStatusCompleted,
+		},
+		{
+			name:        "stop requested completes the session",
+			requestStop: true,
+			stopReason:  "irrelevant",
+			ctx:         context.Background(),
+			wantStatus:  agent.SessionStatusCompleted,
+		},
+		{
+			name:          "cancelled context fails the session",
+			ctx:           cancelledCtx,
+			wantStatus:    agent.SessionStatusFailed,
+			wantErrPrefix: "context cancelled before completion",
+		},
+		{
+			name:          "time limit prefix fails the session",
+			stopReason:    "time limit reached (300s)",
+			ctx:           context.Background(),
+			wantStatus:    agent.SessionStatusFailed,
+			wantErrPrefix: "time limit reached (300s)",
+		},
+		{
+			name:           "blocked or stuck fails the session",
+			blockedOrStuck: true,
+			stopReason:     "blocked: step 1: missing input",
+			ctx:            context.Background(),
+			wantStatus:     agent.SessionStatusFailed,
+			wantErrPrefix:  "blocked: step 1: missing input",
+		},
+		{
+			name:       "last iteration success completes the session",
+			stopReason: "reached max iterations (1)",
+			ctx:        context.Background(),
+			iterations: []agent.IterationResult{{Iteration: 1, Status: agent.IterationStatusSuccess}},
+			wantStatus: agent.SessionStatusCompleted,
+		},
+		{
+			name:       "last iteration no-changes completes the session",
+			stopReason: "reached max iterations (1)",
+			ctx:        context.Background(),
+			iterations: []agent.IterationResult{{Iteration: 1, Status: agent.IterationStatusNoChanges}},
+			wantStatus: agent.SessionStatusCompleted,
+		},
+		{
+			name:          "last iteration error falls through to fail",
+			stopReason:    "reached max iterations (1)",
+			ctx:           context.Background(),
+			iterations:    []agent.IterationResult{{Iteration: 1, Status: agent.IterationStatusError, Error: "boom"}},
+			wantStatus:    agent.SessionStatusFailed,
+			wantErrPrefix: "reached max iterations (1)",
+		},
+		{
+			name:          "no iterations at all falls through to fail",
+			stopReason:    "reached max iterations (1)",
+			ctx:           context.Background(),
+			wantStatus:    agent.SessionStatusFailed,
+			wantErrPrefix: "reached max iterations (1)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			session, err := env.handlers.agentManager.CreateSession("do something", nil, "test", "", 1, 10)
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if tt.requestStop {
+				session.RequestStop()
+			}
+			for _, iter := range tt.iterations {
+				session.AddIteration(iter)
+			}
+
+			env.handlers.determineFinalStatus(tt.ctx, session.ID, session, tt.completed, tt.blockedOrStuck, tt.stopReason)
+
+			snap := session.Snapshot()
+			if snap.Status != tt.wantStatus {
+				t.Errorf("status = %s, want %s (error: %q)", snap.Status, tt.wantStatus, snap.Error)
+			}
+			if tt.wantErrPrefix != "" && !strings.HasPrefix(snap.Error, tt.wantErrPrefix) {
+				t.Errorf("error = %q, want prefix %q", snap.Error, tt.wantErrPrefix)
+			}
+		})
+	}
+}

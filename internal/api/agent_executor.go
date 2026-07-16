@@ -322,13 +322,41 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		return
 	}
 
+	checkoutPath, aborted := h.prepareWorkspace(sessionID, liveSession)
+	if aborted {
+		return
+	}
+	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
+
+	plan, plannerText, aborted := h.runPlanner(ctx, sessionID, liveSession, checkoutPath, preamble, message)
+	plannerPromptText = plannerText
+	if aborted {
+		return
+	}
+
+	promptBuilder, stopReason, completed, blockedOrStuck, aborted := h.runIterationLoop(
+		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan)
+	if aborted {
+		return
+	}
+
+	h.runReviewerPhase(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck)
+	h.finalizeAgentOutputs(ctx, sessionID, liveSession, checkoutPath)
+	h.determineFinalStatus(ctx, sessionID, liveSession, completed, blockedOrStuck, stopReason)
+}
+
+// prepareWorkspace sets up the agent's workspace (cloning/copying shared
+// repos) and returns the checkout path the CLI will run in. On failure it
+// calls h.failSession and returns aborted=true; the caller should return
+// immediately.
+func (h *Handlers) prepareWorkspace(sessionID string, liveSession *agent.Session) (checkoutPath string, aborted bool) {
 	workspacePath, missingRepos, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
 	)
 	if err != nil {
 		h.failSession(sessionID, "Failed to prepare workspace: "+err.Error())
-		return
+		return "", true
 	}
 	// [M7] Surface missing shared repos as session warnings so the user knows
 	// the agent ran with an incomplete workspace.
@@ -341,41 +369,56 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 	// before cache-back can copy from it.
 
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
-	checkoutPath := filepath.Join(workspacePath, "workspace")
+	checkoutPath = filepath.Join(workspacePath, "workspace")
+	return checkoutPath, false
+}
 
-	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
-
-	// Phase 1: Planner (optional, non-fatal). Runs regardless of CLI backend.
-	var plan *subagent.PlanResult
-	if h.config.Agent.PlannerEnabled {
-		slog.Info("running planner", "session_id", sessionID)
-		planner := subagent.NewPlanner(h.plannerClient, preamble)
-		plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
-		plannerPromptText = planner.BuildPrompt(plannerState, message)
-		slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
-		plan, err = planner.Plan(ctx, checkoutPath, message)
-		if err != nil {
-			if isPermanentError(err.Error()) {
-				slog.Error("aborting: permanent planner error", "session_id", sessionID, "error", err)
-				h.failSession(sessionID, err.Error())
-				return
-			}
-			// [M8] Non-permanent planner failure: fall through to the executor without
-			// a plan, and record a warning so the user knows planning was skipped.
-			slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
-			liveSession.AddWarning("planner failed: " + err.Error())
-		} else {
-			slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
-			liveSession.SetPlanResult(plan, len(plan.Steps))
-		}
+// runPlanner runs Phase 1: the optional planner sub-agent (non-fatal on a
+// transient failure). Returns the plan (nil if disabled, or if planning
+// failed non-fatally) and the prompt text used, recorded in the audit log
+// regardless of outcome. On a permanent planner error it calls
+// h.failSession and returns aborted=true.
+func (h *Handlers) runPlanner(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath, preamble, message string) (plan *subagent.PlanResult, plannerPromptText string, aborted bool) {
+	if !h.config.Agent.PlannerEnabled {
+		return nil, "", false
 	}
+	slog.Info("running planner", "session_id", sessionID)
+	planner := subagent.NewPlanner(h.plannerClient, preamble)
+	plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
+	plannerPromptText = planner.BuildPrompt(plannerState, message)
+	slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
+	plan, err := planner.Plan(ctx, checkoutPath, message)
+	if err != nil {
+		if isPermanentError(err.Error()) {
+			slog.Error("aborting: permanent planner error", "session_id", sessionID, "error", err)
+			h.failSession(sessionID, err.Error())
+			return nil, plannerPromptText, true
+		}
+		// [M8] Non-permanent planner failure: fall through to the executor without
+		// a plan, and record a warning so the user knows planning was skipped.
+		slog.Warn("planner failed — falling through to executor", "session_id", sessionID, "error", err)
+		liveSession.AddWarning("planner failed: " + err.Error())
+		return nil, plannerPromptText, false
+	}
+	slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
+	liveSession.SetPlanResult(plan, len(plan.Steps))
+	return plan, plannerPromptText, false
+}
 
-	// Phase 2: Iteration loop with dynamic prompts
-	promptBuilder := subagent.NewPromptBuilder(preamble)
+// runIterationLoop runs Phase 2: the main iteration loop with dynamic
+// prompts. Returns the promptBuilder (reused as-is by the reviewer phase —
+// not rebuilt), why iteration stopped, whether the task completed, whether
+// the session is blocked/stuck, and whether the session should abort
+// entirely. On a consecutive-failure or permanent-iteration-error abort it
+// calls h.failSession and returns aborted=true.
+func (h *Handlers) runIterationLoop(
+	ctx context.Context, sessionID, source string, liveSession *agent.Session,
+	checkoutPath, preamble, message string, maxIter, maxSeconds int, startTime, deadline time.Time,
+	plan *subagent.PlanResult,
+) (promptBuilder *subagent.PromptBuilder, stopReason string, completed, blockedOrStuck, aborted bool) {
+	promptBuilder = subagent.NewPromptBuilder(preamble)
 	iterReason := "first iteration"
-	stopReason := fmt.Sprintf("reached max iterations (%d)", maxIter)
-	completed := false
-	blockedOrStuck := false
+	stopReason = fmt.Sprintf("reached max iterations (%d)", maxIter)
 	iterationsRun := 0
 	lastProgressCount := -1 // -1 = no progress file seen yet
 	stuckCount := 0
@@ -409,7 +452,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			}
 			slog.Error("aborting session", "session_id", sessionID, "reason", failMsg)
 			h.failSession(sessionID, failMsg)
-			return
+			return promptBuilder, stopReason, completed, blockedOrStuck, true
 		}
 
 		// Exponential backoff on consecutive failures
@@ -457,7 +500,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
 			h.failSession(sessionID, result.Error)
-			return
+			return promptBuilder, stopReason, completed, blockedOrStuck, true
 		}
 
 		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
@@ -518,84 +561,100 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		}
 	}
 	slog.Info("iteration loop finished", "session_id", sessionID, "stop_reason", stopReason, "iterations", iterationsRun, "elapsed_secs", int(time.Since(startTime).Seconds()))
+	return promptBuilder, stopReason, completed, blockedOrStuck, false
+}
 
-	// Phase 3: Reviewer with feedback loop (optional, non-fatal)
-	// Skip reviewer when the session stopped because the agent was blocked or stuck —
-	// reviewing incomplete work isn't useful and wastes tokens.
-	if h.config.Agent.ReviewerEnabled && !blockedOrStuck {
-		reviewer := subagent.NewReviewer(h.getExecutor())
+// runReviewerPhase runs Phase 3: the optional reviewer sub-agent with a
+// corrective-iteration feedback loop. Reviewing is skipped entirely when
+// the session stopped because the agent was blocked or stuck — reviewing
+// incomplete work isn't useful and wastes tokens. Never aborts the
+// session — a failed review just stops this loop and falls through.
+func (h *Handlers) runReviewerPhase(
+	ctx context.Context, sessionID, source string, liveSession *agent.Session,
+	checkoutPath, message string, deadline time.Time,
+	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, blockedOrStuck bool,
+) {
+	if !h.config.Agent.ReviewerEnabled || blockedOrStuck {
+		return
+	}
+	reviewer := subagent.NewReviewer(h.getExecutor())
 
-		for correction := 0; correction <= maxReviewerCorrections; correction++ {
-			if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
-				break
-			}
+	for correction := 0; correction <= maxReviewerCorrections; correction++ {
+		if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
+			break
+		}
 
-			slog.Info("running reviewer", "session_id", sessionID, "pass", correction)
-			review, reviewErr := reviewer.Review(ctx, checkoutPath, message, plan)
-			if reviewErr != nil {
-				slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
-				break
-			}
+		slog.Info("running reviewer", "session_id", sessionID, "pass", correction)
+		review, reviewErr := reviewer.Review(ctx, checkoutPath, message, plan)
+		if reviewErr != nil {
+			slog.Warn("reviewer failed (non-fatal)", "session_id", sessionID, "error", reviewErr)
+			break
+		}
 
-			slog.Info("reviewer completed", "session_id", sessionID,
-				"score", review.Score, "complete", review.Complete,
-				"issues", len(review.Issues), "pass", correction)
-			liveSession.SetReviewResult(review)
+		slog.Info("reviewer completed", "session_id", sessionID,
+			"score", review.Score, "complete", review.Complete,
+			"issues", len(review.Issues), "pass", correction)
+		liveSession.SetReviewResult(review)
 
-			// If complete or no issues, we're done
-			if review.Complete || len(review.Issues) == 0 {
-				break
-			}
+		// If complete or no issues, we're done
+		if review.Complete || len(review.Issues) == 0 {
+			break
+		}
 
-			// Don't run corrective iterations on the last pass
-			if correction >= maxReviewerCorrections {
-				slog.Info("reviewer correction limit reached", "session_id", sessionID)
-				break
-			}
+		// Don't run corrective iterations on the last pass
+		if correction >= maxReviewerCorrections {
+			slog.Info("reviewer correction limit reached", "session_id", sessionID)
+			break
+		}
 
-			// Run a corrective iteration with reviewer feedback as context
-			correctionContext := buildReviewerContext(review)
-			iterNum := liveSession.Snapshot().CurrentIteration + 1
+		// Run a corrective iteration with reviewer feedback as context
+		correctionContext := buildReviewerContext(review)
+		iterNum := liveSession.Snapshot().CurrentIteration + 1
 
-			var systemPrompt string
-			if h.config.Agent.PlannerEnabled {
-				systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, iterNum, message, correctionContext)
-			} else {
-				systemPrompt = promptBuilder.BuildStatic(message, correctionContext)
-			}
+		var systemPrompt string
+		if h.config.Agent.PlannerEnabled {
+			systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, iterNum, message, correctionContext)
+		} else {
+			systemPrompt = promptBuilder.BuildStatic(message, correctionContext)
+		}
 
-			slog.Info("running corrective iteration", "session_id", sessionID,
-				"iteration", iterNum, "issues", len(review.Issues))
+		slog.Info("running corrective iteration", "session_id", sessionID,
+			"iteration", iterNum, "issues", len(review.Issues))
 
-			result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.getExecutor())
-			result.Prompt = systemPrompt
-			result.Retry = true
-			liveSession.AddIteration(result)
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.getExecutor())
+		result.Prompt = systemPrompt
+		result.Retry = true
+		liveSession.AddIteration(result)
 
-			metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
-			metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
-			if result.CostUSD > 0 {
-				metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
-			}
+		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
+		metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
+		if result.CostUSD > 0 {
+			metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
+		}
 
-			// [M9] Stop corrective iterations if the workspace is broken — further
-			// corrections will fail for the same reason.
-			if result.Status == agent.IterationStatusError {
-				slog.Warn("corrective iteration failed, stopping reviewer loop",
-					"session_id", sessionID, "iteration", iterNum, "error", result.Error)
-				break
-			}
+		// [M9] Stop corrective iterations if the workspace is broken — further
+		// corrections will fail for the same reason.
+		if result.Status == agent.IterationStatusError {
+			slog.Warn("corrective iteration failed, stopping reviewer loop",
+				"session_id", sessionID, "iteration", iterNum, "error", result.Error)
+			break
+		}
 
-			// Update progress after correction
-			if p := subagent.ReadProgress(checkoutPath); len(p.CompletedSteps) > 0 {
-				liveSession.SetCompletedSteps(p.CompletedSteps)
-				if plan != nil {
-					plan.MarkDone(p.CompletedSteps)
-				}
+		// Update progress after correction
+		if p := subagent.ReadProgress(checkoutPath); len(p.CompletedSteps) > 0 {
+			liveSession.SetCompletedSteps(p.CompletedSteps)
+			if plan != nil {
+				plan.MarkDone(p.CompletedSteps)
 			}
 		}
 	}
+}
 
+// finalizeAgentOutputs runs post-loop bookkeeping: pushing any unpushed
+// commits, collecting _send/ output files, and submitting any scheduled
+// tasks from _schedule.json. Non-fatal — failures are recorded as session
+// warnings or logged, never abort the session.
+func (h *Handlers) finalizeAgentOutputs(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath string) {
 	// If the agent committed but didn't push, try to push now and warn on failure.
 	if pushWarn := pushUnpushedCommits(ctx, checkoutPath, h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds); pushWarn != "" {
 		slog.Warn("unpushed commits after agent completed", "session_id", sessionID, "warning", pushWarn)
@@ -629,7 +688,11 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
 		}
 	}
+}
 
+// determineFinalStatus makes the terminal CompleteSession/failSession call
+// for the session based on how the iteration loop ended.
+func (h *Handlers) determineFinalStatus(ctx context.Context, sessionID string, liveSession *agent.Session, completed, blockedOrStuck bool, stopReason string) {
 	if completed {
 		h.agentManager.CompleteSession(sessionID)
 		return
