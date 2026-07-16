@@ -19,39 +19,16 @@ import (
 func setupAgentE2E(t *testing.T) *e2eEnv {
 	t.Helper()
 	baseDir := t.TempDir()
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
 
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
+	bareRepo, _ := newGitOrigin(t, baseDir, repoCacheDir, "# Test Project\n", "Initial commit")
 
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
-
-	// 1. Create bare repo
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	// 2. Clone, initial commit, push
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test Project\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial commit")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
-
-	// 3. Create mock claude that tracks invocation count via a counter file.
+	// Mock claude that tracks invocation count via a counter file.
 	// Odd invocations (1, 3, 5) write a file; even invocations (2, 4) produce no changes.
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := fmt.Sprintf(`#!/bin/bash
+	writeMockClaude(t, mockBinDir, fmt.Sprintf(`#!/bin/bash
 COUNTER_FILE="%s"
 count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
@@ -63,53 +40,24 @@ if [ $((next %% 2)) -eq 1 ]; then
 fi
 
 echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
-`, counterFile)
+`, counterFile))
 
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-
-	// 4. Prepend mock dir to PATH
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
-
-	// 5. Config with agent settings
-	cfg := &config.Config{
-		RepoCacheRoot:             repoCacheDir,
-		LogsRoot:                 logsDir,
-		TmpRoot:                  tmpDir,
-		AllowedProjects:          []string{},
-		MaxRuntimeSeconds:        60,
-		MaxConcurrentJobs:        5,
-		GitPushRetries:           1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       5,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md"},
-			Author:              "test-agent",
-			CommitPrefix:        "[agent]",
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.MaxIterations = 5
+	cfg.Agent.Paths = []string{"*.txt", "*.md"}
+	cfg.Agent.Author = "test-agent"
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
 
 	return &e2eEnv{
-		server:      ts,
-		bareRepo:    bareRepo,
+		server:       ts,
+		bareRepo:     bareRepo,
 		repoCacheDir: repoCacheDir,
-		logsDir:     logsDir,
-		tmpDir:      tmpDir,
-		mockBinDir:  mockBinDir,
+		logsDir:      logsDir,
+		tmpDir:       tmpDir,
+		mockBinDir:   mockBinDir,
 	}
 }
 
@@ -241,69 +189,21 @@ func TestE2E_AgentGracefulStop(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
-
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
+	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Slow mock claude
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := `#!/bin/bash
+	writeMockClaude(t, mockBinDir, `#!/bin/bash
 sleep 1
 count=$(ls -1 iteration_*.txt 2>/dev/null | wc -l | tr -d ' ')
 next=$((count + 1))
 echo "content" > "iteration_${next}.txt"
 echo '{"result":"Done"}'
-`
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+`)
 
-	cfg := &config.Config{
-		RepoCacheRoot:    repoCacheDir,
-		LogsRoot:        logsDir,
-		TmpRoot:         tmpDir,
-		AllowedProjects: []string{},
-		MaxRuntimeSeconds: 60,
-		MaxConcurrentJobs: 5,
-		GitPushRetries:    1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       50,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md"},
-			Author:              "claude-agent",
-			CommitPrefix:        "[agent]",
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.Paths = []string{"*.txt", "*.md"}
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
@@ -353,78 +253,32 @@ func TestE2E_AgentWithPromptTemplate(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
 	memoryDir := filepath.Join(baseDir, "memory")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
 	os.MkdirAll(memoryDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
 
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Capture file records system prompt args for verification
 	captureFile := filepath.Join(baseDir, "captured-args.txt")
 
 	// Mock claude that captures --system-prompt and creates a file
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := fmt.Sprintf(`#!/bin/bash
+	writeMockClaude(t, mockBinDir, fmt.Sprintf(`#!/bin/bash
 echo "$@" >> %s
 echo "content" > "output.txt"
 echo '{"result":"Done"}'
-`, captureFile)
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+`, captureFile))
 
 	// Write prompt.md directly into the memory dir so resolvePrompt picks it up.
 	if err := os.WriteFile(filepath.Join(memoryDir, "prompt.md"), []byte("You are a helpful assistant.\n\nTask: {{MESSAGE}}"), 0644); err != nil {
 		t.Fatalf("write prompt.md error: %v", err)
 	}
 
-	cfg := &config.Config{
-		RepoCacheRoot:                repoCacheDir,
-		LogsRoot:                 logsDir,
-		TmpRoot:                  tmpDir,
-		MemoryDir:                memoryDir,
-		AllowedProjects:          []string{},
-		MaxRuntimeSeconds:        60,
-		MaxConcurrentJobs:        5,
-		GitPushRetries:           1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       1,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md"},
-			Author:              "claude-agent",
-			CommitPrefix:        "[agent]",
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MemoryDir = memoryDir
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.MaxIterations = 1
+	cfg.Agent.Paths = []string{"*.txt", "*.md"}
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
@@ -465,35 +319,23 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
+	repoCacheDir, logsDir, _, mockBinDir := newE2EDirs(t, baseDir)
 
 	// Use a separate temp dir for workspaces so background goroutines
 	// from executeAgent don't race with t.TempDir() cleanup.
-	tmpDir, err := os.MkdirTemp("", "agent-e2e-noproject-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
+	tmpDir := newManagedTempDir(t, "agent-e2e-noproject-*")
 
 	// The server now preflights the CLI backend binary before accepting a
 	// session — provide a no-op mock so this test (which is about project
 	// resolution, not CLI behavior) doesn't depend on a real CLI being
 	// installed on the host.
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	os.WriteFile(mockClaude, []byte("#!/bin/bash\necho '{\"result\":\"Done\"}'\n"), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+	writeMockClaude(t, mockBinDir, "#!/bin/bash\necho '{\"result\":\"Done\"}'\n")
 
 	cfg := &config.Config{
-		RepoCacheRoot:    repoCacheDir,
-		LogsRoot:        logsDir,
-		TmpRoot:         tmpDir,
-		AllowedProjects: []string{},
+		RepoCacheRoot:     repoCacheDir,
+		LogsRoot:          logsDir,
+		TmpRoot:           tmpDir,
+		AllowedProjects:   []string{},
 		MaxRuntimeSeconds: 60,
 		MaxConcurrentJobs: 5,
 		Agent: config.AgentConfig{
@@ -528,35 +370,14 @@ func TestE2E_AgentWithPlanner(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
-
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
+	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Mock claude that returns plan JSON on invocation 1, normal execution afterwards
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := fmt.Sprintf(`#!/bin/bash
+	writeMockClaude(t, mockBinDir, fmt.Sprintf(`#!/bin/bash
 COUNTER_FILE="%s"
 count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
@@ -570,40 +391,14 @@ else
     echo "content for iteration $next" > "work_${next}.txt"
     echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
 fi
-`, counterFile)
+`, counterFile))
 
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
-
-	cfg := &config.Config{
-		RepoCacheRoot:             repoCacheDir,
-		LogsRoot:                 logsDir,
-		TmpRoot:                  tmpDir,
-		AllowedProjects:          []string{},
-		MaxRuntimeSeconds:        60,
-		MaxConcurrentJobs:        5,
-		GitPushRetries:           1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       3,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md"},
-			Author:              "test-agent",
-			CommitPrefix:        "[agent]",
-			PlannerEnabled:      true,
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.MaxIterations = 3
+	cfg.Agent.Paths = []string{"*.txt", "*.md"}
+	cfg.Agent.Author = "test-agent"
+	cfg.Agent.PlannerEnabled = true
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
@@ -688,28 +483,8 @@ func TestE2E_AgentWithPlannerProgress(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
-
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
+	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Mock claude:
 	// Invocation 1 (planner): returns plan with 3 steps
@@ -717,8 +492,7 @@ func TestE2E_AgentWithPlannerProgress(t *testing.T) {
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := fmt.Sprintf(`#!/bin/bash
+	writeMockClaude(t, mockBinDir, fmt.Sprintf(`#!/bin/bash
 COUNTER_FILE="%s"
 count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
@@ -740,40 +514,14 @@ else
     echo "docs" > docs.txt
     echo '{"result":"Done step 3"}'
 fi
-`, counterFile)
+`, counterFile))
 
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
-
-	cfg := &config.Config{
-		RepoCacheRoot:                repoCacheDir,
-		LogsRoot:                 logsDir,
-		TmpRoot:                  tmpDir,
-		AllowedProjects:          []string{},
-		MaxRuntimeSeconds:        60,
-		MaxConcurrentJobs:        5,
-		GitPushRetries:           1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       3,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md", "*.json"},
-			Author:              "test-agent",
-			CommitPrefix:        "[agent]",
-			PlannerEnabled:      true,
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.MaxIterations = 3
+	cfg.Agent.Paths = []string{"*.txt", "*.md", "*.json"}
+	cfg.Agent.Author = "test-agent"
+	cfg.Agent.PlannerEnabled = true
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
@@ -841,35 +589,14 @@ func TestE2E_AgentQueueing(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-
-	bareRepo := filepath.Join(baseDir, "origin.git")
-	repoCacheDir := filepath.Join(baseDir, "repo-cache")
-	logsDir := filepath.Join(baseDir, "logs")
-	tmpDir := filepath.Join(baseDir, "tmp")
-	mockBinDir := filepath.Join(baseDir, "mock-bin")
-
-	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
-	os.MkdirAll(tmpDir, 0755)
-	os.MkdirAll(mockBinDir, 0755)
-
-	runCmd(t, "", "git", "init", "--bare", bareRepo)
-
-	projectPath := filepath.Join(repoCacheDir, "test-project")
-	runCmd(t, "", "git", "clone", bareRepo, projectPath)
-	runCmd(t, projectPath, "git", "config", "user.email", "test@test.com")
-	runCmd(t, projectPath, "git", "config", "user.name", "Test")
-	os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("# Test\n"), 0644)
-	runCmd(t, projectPath, "git", "add", "-A")
-	runCmd(t, projectPath, "git", "commit", "-m", "Initial")
-	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	repoCacheDir, logsDir, tmpDir, mockBinDir := newE2EDirs(t, baseDir)
+	newGitOrigin(t, baseDir, repoCacheDir, "", "")
 
 	// Slow mock claude — sleeps 2s per iteration so the first agent holds the queue
 	counterFile := filepath.Join(baseDir, "counter")
 	os.WriteFile(counterFile, []byte("0"), 0644)
 
-	mockClaude := filepath.Join(mockBinDir, "claude")
-	mockScript := fmt.Sprintf(`#!/bin/bash
+	writeMockClaude(t, mockBinDir, fmt.Sprintf(`#!/bin/bash
 COUNTER_FILE="%s"
 count=$(cat "$COUNTER_FILE")
 next=$((count + 1))
@@ -877,38 +604,13 @@ echo "$next" > "$COUNTER_FILE"
 sleep 2
 echo "content for $next" > "output_${next}.txt"
 echo '{"result":"Done"}'
-`, counterFile)
-	os.WriteFile(mockClaude, []byte(mockScript), 0755)
-	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
+`, counterFile))
 
-	cfg := &config.Config{
-		RepoCacheRoot:    repoCacheDir,
-		LogsRoot:        logsDir,
-		TmpRoot:         tmpDir,
-		AllowedProjects: []string{},
-		MaxRuntimeSeconds: 60,
-		MaxConcurrentJobs: 5,
-		GitPushRetries:    1,
-		GitPushRetryDelaySeconds: 0,
-		Validation: config.ValidationConfig{
-			BlockBinaryFiles: false,
-			BlockedPaths:     []string{},
-		},
-		API: config.APIConfig{
-			Bind:   "127.0.0.1:0",
-			APIKey: "",
-		},
-		Agent: config.AgentConfig{
-			MaxIterations:       3,
-			MaxTotalSeconds:     60,
-			MaxIterationSeconds: 30,
-			Paths:               []string{"*.txt", "*.md"},
-			Author:              "test-agent",
-			CommitPrefix:        "[agent]",
-		},
-		JobRetentionSeconds:     3600,
-		StartupCleanupStaleJobs: false,
-	}
+	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
+	cfg.MaxRuntimeSeconds = 60
+	cfg.Agent.MaxIterations = 3
+	cfg.Agent.Paths = []string{"*.txt", "*.md"}
+	cfg.Agent.Author = "test-agent"
 
 	srv := api.NewServer(cfg)
 	ts := httptest.NewServer(srv.Handler())
