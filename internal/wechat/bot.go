@@ -465,7 +465,7 @@ func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conve
 			b.sendOutputFiles(context.Background(), userID, session.OutputFiles)
 		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
-			b.summarizeConversation(conv)
+			botcommon.SummarizeConversation(b.analyzer, conv, "wechat")
 		}
 
 		if hasPending {
@@ -590,29 +590,6 @@ func (b *Bot) sendOutputFiles(ctx context.Context, userID string, files []agent.
 func isImageContentType(ct string) bool {
 	return ct == "image/jpeg" || ct == "image/png" || ct == "image/gif" ||
 		ct == "image/webp" || ct == "image/bmp" || ct == "image/tiff"
-}
-
-// summarizeConversation compacts old messages into a summary.
-func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	msgs := conv.GetMessages()
-	keepRecent := len(msgs) / 2
-	if keepRecent < 4 {
-		keepRecent = 4
-	}
-	toSummarize := msgs[:len(msgs)-keepRecent]
-	if len(toSummarize) == 0 {
-		return
-	}
-	summary, err := b.analyzer.Summarize(ctx, toSummarize)
-	if err != nil {
-		slog.Warn("wechat: conversation summarization failed", "error", err)
-		return
-	}
-	conv.CompactWithSummary(summary, keepRecent)
-	slog.Info("wechat: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
 }
 
 // extractContent assembles the full content of an inbound message. Text items

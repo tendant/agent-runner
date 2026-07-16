@@ -609,7 +609,7 @@ func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conve
 			b.uploadOutputFiles(goroutineCtx, convID, session)
 		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
-			b.summarizeConversation(conv)
+			botcommon.SummarizeConversation(b.analyzer, conv, "stream bot")
 		}
 
 		// Process messages that arrived during execution.
@@ -658,30 +658,6 @@ func (b *Bot) handleAnalysis(ctx context.Context, convID string, conv *conversat
 		conv.AddMessage("assistant", result.Message)
 		b.emitFinal(ctx, convID, result.Message)
 	}
-}
-
-// summarizeConversation compacts old messages into a summary.
-func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	msgs := conv.GetMessages()
-	keepRecent := len(msgs) / 2
-	if keepRecent < 4 {
-		keepRecent = 4
-	}
-	toSummarize := msgs[:len(msgs)-keepRecent]
-	if len(toSummarize) == 0 {
-		return
-	}
-
-	summary, err := b.analyzer.Summarize(ctx, toSummarize)
-	if err != nil {
-		slog.Warn("stream bot: conversation summarization failed", "error", err)
-		return
-	}
-	conv.CompactWithSummary(summary, keepRecent)
-	slog.Info("stream bot: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
 }
 
 // uploadOutputFiles uploads output files from the agent session and sends them

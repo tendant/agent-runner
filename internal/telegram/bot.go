@@ -236,7 +236,7 @@ func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversati
 			b.uploadOutputFiles(tgChatID, session)
 		}
 		if b.analyzer != nil && conv.NeedsCompaction() {
-			b.summarizeConversation(conv)
+			botcommon.SummarizeConversation(b.analyzer, conv, "telegram")
 		}
 
 		if hasPending {
@@ -487,32 +487,6 @@ func (b *Bot) uploadOutputFiles(chatID int64, session *agent.Session) {
 			slog.Info("telegram: sent file", "file", f.Name)
 		}
 	}
-}
-
-
-// summarizeConversation compacts old messages into a summary.
-func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	msgs := conv.GetMessages()
-	// Summarize the older half, keep the recent half
-	keepRecent := len(msgs) / 2
-	if keepRecent < 4 {
-		keepRecent = 4
-	}
-	toSummarize := msgs[:len(msgs)-keepRecent]
-	if len(toSummarize) == 0 {
-		return
-	}
-
-	summary, err := b.analyzer.Summarize(ctx, toSummarize)
-	if err != nil {
-		slog.Warn("telegram: conversation summarization failed", "error", err)
-		return
-	}
-	conv.CompactWithSummary(summary, keepRecent)
-	slog.Info("telegram: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
 }
 
 // FormatIteration formats a single iteration result for Telegram. Commit
