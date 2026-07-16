@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/wechat"
@@ -26,16 +27,11 @@ import (
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
-type AgentStarter interface {
-	StartAgent(message, source string) (sessionID string, err error)
-	GetAgentSession(sessionID string) (*agent.Session, bool)
-}
+type AgentStarter = botcommon.AgentStarter
 
 // Gateway routes incoming messages through command dispatch before any
 // conversation or agent logic. It is the single entry point for all messages.
-type Gateway interface {
-	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
-}
+type Gateway = botcommon.Gateway
 
 // Bot bridges agent-stream conversations to the agent runner.
 type Bot struct {
@@ -533,11 +529,11 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	}
 
 	if state == conversation.StateConfirming {
-		if isConfirmation(text) {
+		if botcommon.IsConfirmation(text) {
 			b.handleConfirmation(ctx, convID, conv)
 			return
 		}
-		if isDenial(text) {
+		if botcommon.IsDenial(text) {
 			conv.SetState(conversation.StateGathering)
 			resp := "OK, what would you like to change?"
 			conv.AddMessage("assistant", resp)
@@ -723,54 +719,32 @@ func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *age
 	}
 }
 
+// streamReporter adapts botcommon.PollAndReport's callbacks to stream SSE
+// events. Stream reports progress via a synthetic "thinking" event per
+// started iteration rather than per-completed-iteration text, so
+// OnIterationComplete is unused. ctx is a background context, matching this
+// poll loop's previous behavior of not tying its sends to any parent
+// request's cancellation.
+type streamReporter struct {
+	bot    *Bot
+	ctx    context.Context
+	convID string
+}
+
+func (r *streamReporter) OnIterationComplete(iter agent.IterationResult) {}
+func (r *streamReporter) OnIterationStart(current, max int) {
+	r.bot.emitThinking(r.ctx, r.convID, fmt.Sprintf("Iteration %d/%d...", current, max))
+}
+func (r *streamReporter) OnFinal(session *agent.Session) {
+	r.bot.emitFinal(r.ctx, r.convID, formatFinalResult(session))
+}
+func (r *streamReporter) OnNotFound() { r.bot.emitFinal(r.ctx, r.convID, "Session not found.") }
+func (r *streamReporter) OnTimeout() {
+	r.bot.emitFinal(r.ctx, r.convID, "Session timed out waiting for a response.")
+}
+
 func (b *Bot) pollAndReport(convID, sessionID string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	ctx := context.Background()
-
-	// Derive a deadline from the session's configured max time.
-	// Look it up on the first tick; fall back to a generous default if not found.
-	const fallbackTimeout = 2 * time.Hour
-	var deadline <-chan time.Time
-	reported := 0 // last iteration index we emitted a thinking update for
-
-	for {
-		select {
-		case <-ticker.C:
-			session, exists := b.starter.GetAgentSession(sessionID)
-			if !exists {
-				b.emitFinal(ctx, convID, "Session not found.")
-				return
-			}
-
-			// Set deadline on first successful lookup.
-			if deadline == nil {
-				maxSecs := session.MaxTotalSeconds
-				if maxSecs <= 0 {
-					maxSecs = int(fallbackTimeout.Seconds())
-				}
-				t := time.NewTimer(time.Duration(maxSecs)*time.Second + 30*time.Second)
-				defer t.Stop()
-				deadline = t.C
-			}
-
-			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-				b.emitFinal(ctx, convID, formatFinalResult(session))
-				return
-			}
-
-			// Emit a thinking update for each new completed iteration.
-			if cur := session.CurrentIteration; cur > reported {
-				reported = cur
-				b.emitThinking(ctx, convID, fmt.Sprintf("Iteration %d/%d...", cur, session.MaxIterations))
-			}
-
-		case <-deadline:
-			b.emitFinal(ctx, convID, "Session timed out waiting for a response.")
-			return
-		}
-	}
+	botcommon.PollAndReport(b.starter, sessionID, &streamReporter{bot: b, ctx: context.Background(), convID: convID})
 }
 
 // Event emission helpers
@@ -878,6 +852,12 @@ func isTransientEmitError(err error) bool {
 
 // Formatting helpers
 
+// maxLastOutputChars caps the last-iteration output preview prepended to the
+// final result — stream's only channel for iteration content, since it
+// reports progress via synthetic "thinking" events rather than per-iteration
+// text (see pollAndReport / streamReporter).
+const maxLastOutputChars = 4000
+
 func formatFinalResult(session *agent.Session) string {
 	var sb strings.Builder
 
@@ -885,46 +865,17 @@ func formatFinalResult(session *agent.Session) string {
 	if len(session.Iterations) > 0 {
 		lastOutput := session.Iterations[len(session.Iterations)-1].Output
 		if lastOutput != "" {
-			if len(lastOutput) > 4000 {
-				lastOutput = lastOutput[:4000] + "\n... (truncated)"
+			if len(lastOutput) > maxLastOutputChars {
+				lastOutput = lastOutput[:maxLastOutputChars] + "\n... (truncated)"
 			}
 			sb.WriteString(lastOutput)
 			sb.WriteString("\n\n---\n")
 		}
 	}
 
-	if session.Status == agent.SessionStatusCompleted {
-		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
-	} else {
-		fmt.Fprintf(&sb, "Session failed")
-		if session.Error != "" {
-			fmt.Fprintf(&sb, " — %s", session.Error)
-		}
-	}
-	if len(session.Warnings) > 0 {
-		fmt.Fprintf(&sb, "\n\n⚠ %s", strings.Join(session.Warnings, "; "))
-	}
+	sb.WriteString(botcommon.FormatStatusLine(session))
+	sb.WriteString(botcommon.FormatWarningsSuffix(session))
 	return sb.String()
-}
-
-// Helpers
-
-func isConfirmation(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "yes", "y", "ok", "sure", "proceed", "go", "do it", "confirm", "yep", "yeah":
-		return true
-	}
-	return false
-}
-
-func isDenial(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "no", "n", "nope", "cancel", "stop", "nah", "nevermind", "never mind":
-		return true
-	}
-	return false
 }
 
 // handleWeChatLogin runs the iLink QR login flow in a background goroutine and

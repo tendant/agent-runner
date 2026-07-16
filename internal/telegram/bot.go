@@ -14,22 +14,18 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
-type AgentStarter interface {
-	StartAgent(message, source string) (sessionID string, err error)
-	GetAgentSession(sessionID string) (*agent.Session, bool)
-}
+type AgentStarter = botcommon.AgentStarter
 
 // Gateway routes incoming messages through command dispatch before any
 // conversation or agent logic. It is the single entry point for all messages.
-type Gateway interface {
-	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
-}
+type Gateway = botcommon.Gateway
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
@@ -290,52 +286,28 @@ func (b *Bot) handleAnalysis(tgChatID int64, chatID string, conv *conversation.C
 	}
 }
 
+// telegramReporter adapts botcommon.PollAndReport's callbacks to Telegram
+// message sends. Telegram reports progress per completed iteration, so
+// OnIterationStart is unused.
+type telegramReporter struct {
+	bot    *Bot
+	chatID int64
+}
+
+func (r *telegramReporter) OnIterationComplete(iter agent.IterationResult) {
+	r.bot.send(r.chatID, FormatIteration(iter))
+}
+func (r *telegramReporter) OnIterationStart(current, max int) {}
+func (r *telegramReporter) OnFinal(session *agent.Session) {
+	r.bot.send(r.chatID, FormatFinalResult(session))
+}
+func (r *telegramReporter) OnNotFound() { r.bot.send(r.chatID, "Session not found.") }
+func (r *telegramReporter) OnTimeout() {
+	r.bot.send(r.chatID, "Session timed out waiting for a response.")
+}
+
 func (b *Bot) pollAndReport(tgChatID int64, sessionID string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	reported := 0 // number of iterations already reported
-
-	const fallbackTimeout = 2 * time.Hour
-	var deadline <-chan time.Time
-
-	for {
-		select {
-		case <-ticker.C:
-			session, exists := b.starter.GetAgentSession(sessionID)
-			if !exists {
-				b.send(tgChatID, "Session not found.")
-				return
-			}
-
-			// Set deadline on first successful lookup.
-			if deadline == nil {
-				maxSecs := session.MaxTotalSeconds
-				if maxSecs <= 0 {
-					maxSecs = int(fallbackTimeout.Seconds())
-				}
-				t := time.NewTimer(time.Duration(maxSecs)*time.Second + 30*time.Second)
-				defer t.Stop()
-				deadline = t.C
-			}
-
-			// Report new iterations incrementally
-			for i := reported; i < len(session.Iterations); i++ {
-				b.send(tgChatID, FormatIteration(session.Iterations[i]))
-			}
-			reported = len(session.Iterations)
-
-			// Check if session is done
-			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-				b.send(tgChatID, FormatFinalResult(session))
-				return
-			}
-
-		case <-deadline:
-			b.send(tgChatID, "Session timed out waiting for a response.")
-			return
-		}
-	}
+	botcommon.PollAndReport(b.starter, sessionID, &telegramReporter{bot: b, chatID: tgChatID})
 }
 
 // extractContent assembles a text representation of a Telegram message.
@@ -543,71 +515,29 @@ func (b *Bot) summarizeConversation(conv *conversation.Conversation) {
 	slog.Info("telegram: conversation compacted", "summary_len", len(summary), "kept_recent", keepRecent)
 }
 
-// FormatIteration formats a single iteration result for Telegram.
+// FormatIteration formats a single iteration result for Telegram. Commit
+// hashes are wrapped in Markdown backticks since telegram sends with
+// ParseMode = tgbotapi.ModeMarkdown.
 func FormatIteration(iter agent.IterationResult) string {
-	var sb strings.Builder
-	switch iter.Status {
-	case agent.IterationStatusSuccess:
-		fmt.Fprintf(&sb, "Iteration %d: completed", iter.Iteration)
-		if iter.Commit != "" {
-			fmt.Fprintf(&sb, " (commit `%s`)", iter.Commit)
-		}
-	case agent.IterationStatusNoChanges:
-		fmt.Fprintf(&sb, "Iteration %d: no changes", iter.Iteration)
-	case agent.IterationStatusValidation:
-		fmt.Fprintf(&sb, "Iteration %d: validation failed — %s", iter.Iteration, iter.Error)
-	case agent.IterationStatusError:
-		fmt.Fprintf(&sb, "Iteration %d: error — %s", iter.Iteration, iter.Error)
-	default:
-		fmt.Fprintf(&sb, "Iteration %d: %s", iter.Iteration, iter.Status)
-	}
-	if iter.Output != "" {
-		// Truncate long output for Telegram (4096 char limit)
-		output := iter.Output
-		if len(output) > 3000 {
-			output = output[:3000] + "\n... (truncated)"
-		}
-		fmt.Fprintf(&sb, "\n\n%s", output)
-	}
-	return sb.String()
+	return botcommon.FormatIterationCore(iter, true)
 }
 
 // FormatFinalResult formats the final session summary for Telegram.
 func FormatFinalResult(session *agent.Session) string {
-	var sb strings.Builder
-	if session.Status == agent.SessionStatusCompleted {
-		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
-	} else {
-		fmt.Fprintf(&sb, "Session failed")
-		if session.Error != "" {
-			fmt.Fprintf(&sb, " — %s", session.Error)
-		}
-	}
+	sb := botcommon.FormatStatusLine(session)
 	if len(session.OutputFiles) > 0 {
-		fmt.Fprintf(&sb, "\n\n%d file(s) attached", len(session.OutputFiles))
+		sb += fmt.Sprintf("\n\n%d file(s) attached", len(session.OutputFiles))
 	}
-	if len(session.Warnings) > 0 {
-		fmt.Fprintf(&sb, "\n\n⚠ %s", strings.Join(session.Warnings, "; "))
-	}
-	return sb.String()
+	sb += botcommon.FormatWarningsSuffix(session)
+	return sb
 }
 
 // isConfirmation checks if the message is a positive confirmation.
 func isConfirmation(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "yes", "y", "ok", "sure", "proceed", "go", "do it", "confirm", "yep", "yeah":
-		return true
-	}
-	return false
+	return botcommon.IsConfirmation(text)
 }
 
 // isDenial checks if the message is a negative response.
 func isDenial(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "no", "n", "nope", "cancel", "stop", "nah", "nevermind", "never mind":
-		return true
-	}
-	return false
+	return botcommon.IsDenial(text)
 }

@@ -12,21 +12,17 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
-type AgentStarter interface {
-	StartAgent(message, source string) (sessionID string, err error)
-	GetAgentSession(sessionID string) (*agent.Session, bool)
-}
+type AgentStarter = botcommon.AgentStarter
 
 // Gateway routes incoming messages through command dispatch before any
 // conversation or agent logic. It is the single entry point for all messages.
-type Gateway interface {
-	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
-}
+type Gateway = botcommon.Gateway
 
 // Bot is a WeChat bot that bridges messages to the agent runner via the
 // Tencent iLink API.
@@ -329,11 +325,11 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	}
 
 	if state == conversation.StateConfirming {
-		if isConfirmation(content) {
+		if botcommon.IsConfirmation(content) {
 			b.handleConfirmation(userID, chatID, conv)
 			return
 		}
-		if isDenial(content) {
+		if botcommon.IsDenial(content) {
 			conv.SetState(conversation.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
 			b.sendText(ctx, userID, "OK, what would you like to change?")
@@ -517,31 +513,34 @@ func (b *Bot) handleAnalysis(userID, chatID string, conv *conversation.Conversat
 	}
 }
 
+// wechatReporter adapts botcommon.PollAndReport's callbacks to WeChat
+// message sends. WeChat reports progress per completed iteration, so
+// OnIterationStart is unused. Every send uses a fresh context.Background(),
+// matching this poll loop's previous behavior (WeChat's context-token
+// routing doesn't carry across a parent request's cancellation).
+type wechatReporter struct {
+	bot    *Bot
+	userID string
+}
+
+func (r *wechatReporter) OnIterationComplete(iter agent.IterationResult) {
+	r.bot.sendText(context.Background(), r.userID, formatIteration(iter))
+}
+func (r *wechatReporter) OnIterationStart(current, max int) {}
+func (r *wechatReporter) OnFinal(session *agent.Session) {
+	r.bot.sendText(context.Background(), r.userID, formatFinalResult(session))
+}
+func (r *wechatReporter) OnNotFound() {
+	r.bot.sendText(context.Background(), r.userID, "Session not found.")
+}
+func (r *wechatReporter) OnTimeout() {
+	r.bot.sendText(context.Background(), r.userID, "Session timed out waiting for a response.")
+}
+
 // pollAndReport polls the agent session every 5 seconds and sends incremental
 // iteration updates to the user.
 func (b *Bot) pollAndReport(userID, sessionID string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	reported := 0
-
-	for range ticker.C {
-		session, exists := b.starter.GetAgentSession(sessionID)
-		if !exists {
-			b.sendText(context.Background(), userID, "Session not found.")
-			return
-		}
-
-		for i := reported; i < len(session.Iterations); i++ {
-			b.sendText(context.Background(), userID, formatIteration(session.Iterations[i]))
-		}
-		reported = len(session.Iterations)
-
-		if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
-			b.sendText(context.Background(), userID, formatFinalResult(session))
-			return
-		}
-	}
+	botcommon.PollAndReport(b.starter, sessionID, &wechatReporter{bot: b, userID: userID})
 }
 
 // sendText sends a plain-text message to a WeChat user.
@@ -708,66 +707,17 @@ func (b *Bot) extractContent(ctx context.Context, msg WeixinMessage) string {
 	return strings.Join(parts, "\n")
 }
 
+// formatIteration formats a single iteration result. Unlike telegram, WeChat
+// has no Markdown rendering, so the commit hash isn't backtick-wrapped.
 func formatIteration(iter agent.IterationResult) string {
-	var sb strings.Builder
-	switch iter.Status {
-	case agent.IterationStatusSuccess:
-		fmt.Fprintf(&sb, "Iteration %d: completed", iter.Iteration)
-		if iter.Commit != "" {
-			fmt.Fprintf(&sb, " (commit %s)", iter.Commit)
-		}
-	case agent.IterationStatusNoChanges:
-		fmt.Fprintf(&sb, "Iteration %d: no changes", iter.Iteration)
-	case agent.IterationStatusValidation:
-		fmt.Fprintf(&sb, "Iteration %d: validation failed — %s", iter.Iteration, iter.Error)
-	case agent.IterationStatusError:
-		fmt.Fprintf(&sb, "Iteration %d: error — %s", iter.Iteration, iter.Error)
-	default:
-		fmt.Fprintf(&sb, "Iteration %d: %s", iter.Iteration, iter.Status)
-	}
-	if iter.Output != "" {
-		output := iter.Output
-		if len(output) > 3000 {
-			output = output[:3000] + "\n... (truncated)"
-		}
-		fmt.Fprintf(&sb, "\n\n%s", output)
-	}
-	return sb.String()
+	return botcommon.FormatIterationCore(iter, false)
 }
 
 func formatFinalResult(session *agent.Session) string {
-	var sb strings.Builder
-	if session.Status == agent.SessionStatusCompleted {
-		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
-	} else {
-		fmt.Fprintf(&sb, "Session failed")
-		if session.Error != "" {
-			fmt.Fprintf(&sb, " — %s", session.Error)
-		}
-	}
+	sb := botcommon.FormatStatusLine(session)
 	if len(session.OutputFiles) > 0 {
-		fmt.Fprintf(&sb, "\n\n%d file(s) sent", len(session.OutputFiles))
+		sb += fmt.Sprintf("\n\n%d file(s) sent", len(session.OutputFiles))
 	}
-	if len(session.Warnings) > 0 {
-		fmt.Fprintf(&sb, "\n\n⚠ %s", strings.Join(session.Warnings, "; "))
-	}
-	return sb.String()
-}
-
-func isConfirmation(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "yes", "y", "ok", "sure", "proceed", "go", "do it", "confirm", "yep", "yeah":
-		return true
-	}
-	return false
-}
-
-func isDenial(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	switch lower {
-	case "no", "n", "nope", "cancel", "stop", "nah", "nevermind", "never mind":
-		return true
-	}
-	return false
+	sb += botcommon.FormatWarningsSuffix(session)
+	return sb
 }
