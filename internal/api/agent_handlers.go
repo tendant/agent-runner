@@ -59,6 +59,13 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fail fast on a missing CLI binary rather than queueing a session that
+	// can only fail after workspace setup and retries.
+	if err := PreflightAgentConfig(h.config.Agent.CLI); err != nil {
+		h.writeError(w, http.StatusPreconditionFailed, err.Error())
+		return
+	}
+
 	paths := h.config.Agent.Paths
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
@@ -76,6 +83,14 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	session.Source = "api"
 
+	// Missing credentials aren't fatal (some setups authenticate outside an
+	// API key env var), but surface them immediately as a session warning
+	// instead of letting the caller wait for an opaque failure deep in the run.
+	warnings := BootstrapWarnings(resolveCLI(h.config.Agent.CLI), h.config.Agent.Provider)
+	for _, w := range warnings {
+		session.AddWarning(w)
+	}
+
 	// Capture for response before goroutine
 	sessionID := session.ID
 
@@ -91,10 +106,14 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, http.StatusAccepted, map[string]any{
+	resp := map[string]any{
 		"session_id": sessionID,
 		"status":     "queued",
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
 // HandleGetAgent handles GET /agent/{id} — poll agent session status

@@ -1013,6 +1013,11 @@ func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
 	env := setupTestEnv(t)
 	// Disable planner so the background goroutine doesn't panic on nil plannerClient.
 	env.handlers.config.Agent.PlannerEnabled = false
+	// StartAgent now preflights the CLI backend binary — fake an installed
+	// "claude" so the session-start path isn't rejected.
+	binDir := fakeCLIBin(t, "claude", "v1.0.0")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env.handlers.config.Agent.CLI = "claude"
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	body := "Update prompt:\nSystem: always commit at the end\nUser: fix the tests"
@@ -1022,6 +1027,12 @@ func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
 	}
 	if sid == "" {
 		t.Error("expected a session ID when User: section is present")
+	} else {
+		// Request stop immediately — the dispatch loop runs sessions
+		// asynchronously, and this test only cares that one was started, not
+		// that it runs to completion against a fake CLI in a temp workspace
+		// that's about to be torn down.
+		env.handlers.agentManager.StopSession(sid)
 	}
 	if !strings.Contains(reply, "ok wrote prompt.md") {
 		t.Errorf("expected ok reply mentioning prompt.md, got: %s", reply)

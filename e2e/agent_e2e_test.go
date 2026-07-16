@@ -467,6 +467,7 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	baseDir := t.TempDir()
 	repoCacheDir := filepath.Join(baseDir, "repo-cache")
 	logsDir := filepath.Join(baseDir, "logs")
+	mockBinDir := filepath.Join(baseDir, "mock-bin")
 
 	// Use a separate temp dir for workspaces so background goroutines
 	// from executeAgent don't race with t.TempDir() cleanup.
@@ -478,6 +479,15 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 
 	os.MkdirAll(repoCacheDir, 0755)
 	os.MkdirAll(logsDir, 0755)
+	os.MkdirAll(mockBinDir, 0755)
+
+	// The server now preflights the CLI backend binary before accepting a
+	// session — provide a no-op mock so this test (which is about project
+	// resolution, not CLI behavior) doesn't depend on a real CLI being
+	// installed on the host.
+	mockClaude := filepath.Join(mockBinDir, "claude")
+	os.WriteFile(mockClaude, []byte("#!/bin/bash\necho '{\"result\":\"Done\"}'\n"), 0755)
+	os.Setenv("PATH", mockBinDir+":"+os.Getenv("PATH"))
 
 	cfg := &config.Config{
 		RepoCacheRoot:    repoCacheDir,

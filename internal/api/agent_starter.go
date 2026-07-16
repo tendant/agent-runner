@@ -26,6 +26,12 @@ func NewAgentStarterAdapter(h *Handlers) *AgentStarterAdapter {
 func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error) {
 	h := a.handlers
 
+	// Fail fast on a missing CLI binary rather than burning workspace setup,
+	// planning, and iteration retries on a session that can't run at all.
+	if err := PreflightAgentConfig(h.config.Agent.CLI); err != nil {
+		return "", err
+	}
+
 	paths := h.config.Agent.Paths
 	author := h.config.Agent.Author
 	commitPrefix := h.config.Agent.CommitPrefix
@@ -40,6 +46,13 @@ func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error)
 		return "", err
 	}
 	session.Source = source
+
+	// Missing credentials aren't fatal (some setups authenticate outside an
+	// API key env var), but surface them immediately as a session warning
+	// instead of letting the user wait for an opaque failure deep in the run.
+	for _, w := range BootstrapWarnings(resolveCLI(h.config.Agent.CLI), h.config.Agent.Provider) {
+		session.AddWarning(w)
+	}
 
 	sessionID := session.ID
 	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {

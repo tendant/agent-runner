@@ -49,11 +49,20 @@ func isPermanentError(errMsg string) bool {
 		strings.Contains(lower, "authentication") ||
 		strings.Contains(lower, "unauthorized") ||
 		strings.Contains(lower, "invalid api key") ||
+		strings.Contains(lower, "invalid_api_key") ||
+		strings.Contains(lower, "incorrect api key") ||
+		strings.Contains(lower, "api key not valid") ||
 		strings.Contains(lower, "api key is missing") ||
 		strings.Contains(lower, "api key not found") ||
 		strings.Contains(lower, "no api key") ||
 		strings.Contains(lower, "missing api key") ||
-		strings.Contains(lower, "model not found")
+		strings.Contains(lower, "model not found") ||
+		strings.Contains(lower, "model_not_found") ||
+		strings.Contains(lower, "insufficient_quota") ||
+		strings.Contains(lower, "exceeded your current quota") ||
+		strings.Contains(lower, "credit balance is too low") ||
+		strings.Contains(lower, "permission_error") ||
+		strings.Contains(lower, "check version and auth")
 }
 
 // maxReviewerCorrections is the maximum number of corrective iterations

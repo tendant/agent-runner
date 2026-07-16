@@ -420,6 +420,34 @@ func BootstrapWarnings(cli, provider string) []string {
 	return w
 }
 
+// resolveCLI mirrors executor.NewExecutor's own default resolution: anything
+// other than "codex"/"opencode" (including "") runs the claude backend. Kept
+// in sync with that switch so preflight checks reflect what will actually run.
+func resolveCLI(cli string) string {
+	if cli == "codex" || cli == "opencode" {
+		return cli
+	}
+	return "claude"
+}
+
+// PreflightAgentConfig verifies the configured agent CLI backend binary is
+// installed before a session starts. Returns nil when the binary is present;
+// otherwise a clear, actionable error. Call this before creating a session so
+// a missing binary fails immediately instead of after workspace setup,
+// planning, and iteration retries have already run.
+//
+// Missing credentials are intentionally NOT checked here — they're surfaced
+// as non-fatal session warnings (see BootstrapWarnings) because some setups
+// (local proxies, OAuth device flows, custom auth) don't rely on an API key
+// env var, and a mis-detected key would otherwise block a working setup.
+func PreflightAgentConfig(cli string) error {
+	effectiveCLI := resolveCLI(cli)
+	if !CLIInstalled(effectiveCLI) {
+		return fmt.Errorf("%s CLI is not installed — install it (%s) or run POST /bootstrap to auto-install", effectiveCLI, cliInstallHint(effectiveCLI))
+	}
+	return nil
+}
+
 // codexHasOAuthCredentials returns true if codex has OAuth credentials from
 // a previous `codex login --device-auth` run (stored in ~/.codex/auth.json).
 func codexHasOAuthCredentials() bool {
