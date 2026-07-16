@@ -115,6 +115,7 @@ type StreamConfig struct {
 	BotToken        string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
 	ConversationIDs []string      // STREAM_CONVERSATION_IDS
 	PollInterval    time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
+	StateDir        string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
 }
 
 // WeChatConfig contains WeChat bot settings (iLink API).
@@ -347,6 +348,7 @@ func LoadFromEnv() (*Config, error) {
 			cfg.Stream.PollInterval = d
 		}
 	}
+	cfg.Stream.StateDir = envOrDefault("STREAM_STATE_DIR", cfg.TmpRoot)
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")

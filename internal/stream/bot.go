@@ -42,13 +42,14 @@ type Bot struct {
 	analyzer       *conversation.Analyzer
 	convIDs        []string
 	botUserID      string
-	uploadsDir     string        // persistent directory for user-uploaded files
-	pollInterval   time.Duration // >0 = poll mode; 0 = SSE mode
-	wechatReloader  func(token, baseURL string) // called after a successful /wechat-login
-	wechatBaseURL   string                     // iLink API base URL for the login flow
-	wechatLoginMu   sync.Mutex                 // prevents concurrent /wechat-login flows
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	uploadsDir     string                      // persistent directory for user-uploaded files
+	pollInterval   time.Duration               // >0 = poll mode; 0 = SSE mode
+	stateDir       string                      // persistent directory for the per-conversation event-seq cursor
+	wechatReloader func(token, baseURL string) // called after a successful /wechat-login
+	wechatBaseURL  string                      // iLink API base URL for the login flow
+	wechatLoginMu  sync.Mutex                  // prevents concurrent /wechat-login flows
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
 }
 
 // SetWeChatReloader registers a callback that is invoked with the new token and
@@ -76,6 +77,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		uploadsDir:   uploadsDir,
 		botUserID:    extractBotUserID(cfg.BotToken),
 		pollInterval: cfg.PollInterval,
+		stateDir:     cfg.StateDir,
 	}
 }
 
@@ -126,9 +128,18 @@ func (b *Bot) Stop() {
 // listenConversation receives events for a single conversation.
 // Uses polling (GET /events?after_seq=N) when b.pollInterval > 0, otherwise SSE.
 func (b *Bot) listenConversation(ctx context.Context, convID string) {
-	// Catch up: find the latest existing seq so we only process new messages.
-	afterSeq := b.catchUpSeq(ctx, convID)
-	slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
+	// Resume from the last persisted cursor if we have one, instead of
+	// re-downloading the whole conversation history on every restart. Only
+	// fall back to the full catch-up scan when there's genuinely no saved
+	// cursor yet (first run, or the state dir was cleared).
+	afterSeq, ok := b.loadCursor(convID)
+	if ok {
+		slog.Info("stream bot resumed from saved cursor", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
+	} else {
+		afterSeq = b.catchUpSeq(ctx, convID)
+		slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
+		b.saveCursor(convID, afterSeq)
+	}
 
 	if b.pollInterval > 0 {
 		b.listenPoll(ctx, convID, afterSeq)
@@ -174,6 +185,7 @@ func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
 				b.handleMessageEvent(ctx, convID, event)
 			}
 			afterSeq = event.Seq // advance only after successful handling
+			b.saveCursor(convID, afterSeq)
 		}
 	}
 }
@@ -216,6 +228,7 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 				b.handleMessageEvent(ctx, convID, event)
 			}
 			afterSeq = event.Seq // advance only after successful handling
+			b.saveCursor(convID, afterSeq)
 		}
 
 		delay := 2 * time.Second
@@ -308,6 +321,53 @@ func (b *Bot) catchUpViaSSE(ctx context.Context, convID string) int64 {
 		case <-capCtx.Done():
 			return maxSeq
 		}
+	}
+}
+
+// cursorPath returns the persisted event-seq cursor file path for a conversation.
+func (b *Bot) cursorPath(convID string) string {
+	// Sanitise convID: keep alphanumeric, dash, underscore; replace rest with _.
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, convID)
+	return filepath.Join(b.stateDir, "stream-cursor-"+safe+".txt")
+}
+
+// loadCursor restores the last-persisted event-seq cursor for a conversation.
+// ok is false if no cursor has been saved yet (first run) or stateDir is
+// unset — callers should fall back to the full catch-up scan in that case.
+func (b *Bot) loadCursor(convID string) (seq int64, ok bool) {
+	if b.stateDir == "" {
+		return 0, false
+	}
+	data, err := os.ReadFile(b.cursorPath(convID))
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// saveCursor persists the event-seq cursor for a conversation so the bot can
+// resume without a full catch-up scan on the next restart. Best-effort —
+// failures are logged, not fatal, since the worst case is falling back to
+// catchUpSeq next time.
+func (b *Bot) saveCursor(convID string, seq int64) {
+	if b.stateDir == "" {
+		return
+	}
+	if err := os.MkdirAll(b.stateDir, 0755); err != nil {
+		slog.Warn("stream bot: failed to create state dir", "dir", b.stateDir, "error", err)
+		return
+	}
+	if err := os.WriteFile(b.cursorPath(convID), []byte(strconv.FormatInt(seq, 10)), 0600); err != nil {
+		slog.Warn("stream bot: failed to persist cursor", "conversation_id", convID, "error", err)
 	}
 }
 
