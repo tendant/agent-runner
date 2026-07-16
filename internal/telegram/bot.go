@@ -586,6 +586,9 @@ func FormatFinalResult(session *agent.Session) string {
 	if len(session.OutputFiles) > 0 {
 		fmt.Fprintf(&sb, "\n\n%d file(s) attached", len(session.OutputFiles))
 	}
+	if len(session.Warnings) > 0 {
+		fmt.Fprintf(&sb, "\n\n⚠ %s", strings.Join(session.Warnings, "; "))
+	}
 	return sb.String()
 }
 

@@ -40,29 +40,97 @@ func backoffDelay(consecutiveFails int) time.Duration {
 	return delay
 }
 
+// errorGuidance maps a family of raw error signatures to a short, actionable
+// description. Every entry here is also treated as permanent (see
+// isPermanentError) — if the coding agent hits one of these, retrying will
+// not help without a config change. Patterns must be specific enough to
+// avoid misclassifying transient workspace errors (e.g. a missing file in
+// the repo) as permanent CLI/auth failures.
+type errorGuidance struct {
+	match []string // substrings checked against the lowercased raw error
+	title string   // short, human description of what's wrong
+	hint  string   // one-line suggested fix
+}
+
+var errorGuidanceTable = []errorGuidance{
+	{
+		match: []string{"executable file not found in $path"},
+		title: "the coding agent CLI is not installed",
+		hint:  "run POST /bootstrap or /install-cli to install it",
+	},
+	{
+		match: []string{"invalid api key", "invalid_api_key", "incorrect api key", "api key not valid"},
+		title: "the configured API key is invalid",
+		hint:  "check it with /status, then fix with /set <PROVIDER>_API_KEY <key>",
+	},
+	{
+		match: []string{"api key is missing", "api key not found", "no api key", "missing api key"},
+		title: "no API key is configured",
+		hint:  "set one with /set <PROVIDER>_API_KEY <key>",
+	},
+	{
+		match: []string{"check version and auth"},
+		title: "the coding agent CLI produced no output (likely unauthenticated)",
+		hint:  "run /auth or set the provider's API key, then retry",
+	},
+	{
+		match: []string{"authentication", "unauthorized", "permission_error"},
+		title: "authentication with the LLM provider failed",
+		hint:  "check credentials with /status, or re-run /auth",
+	},
+	{
+		match: []string{"insufficient_quota", "exceeded your current quota", "credit balance is too low"},
+		title: "the LLM provider account is out of quota or credit",
+		hint:  "check usage/billing on the provider's dashboard",
+	},
+	{
+		match: []string{"model not found", "model_not_found"},
+		title: "the configured model does not exist or isn't accessible",
+		hint:  "check AGENT_MODEL / AGENT_REASONING_MODEL with /config",
+	},
+}
+
+// matchGuidance returns the first errorGuidance whose pattern appears in the
+// lowercased error message, or nil when nothing matches.
+func matchGuidance(lower string) *errorGuidance {
+	for i := range errorGuidanceTable {
+		g := &errorGuidanceTable[i]
+		for _, m := range g.match {
+			if strings.Contains(lower, m) {
+				return g
+			}
+		}
+	}
+	return nil
+}
+
 // isPermanentError returns true for errors that cannot be resolved by retrying.
-// Patterns must be specific enough to avoid misclassifying transient workspace
-// errors (e.g. a missing file in the repo) as permanent CLI/auth failures.
 func isPermanentError(errMsg string) bool {
-	lower := strings.ToLower(errMsg)
-	return strings.Contains(lower, "executable file not found in $path") ||
-		strings.Contains(lower, "authentication") ||
-		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "invalid api key") ||
-		strings.Contains(lower, "invalid_api_key") ||
-		strings.Contains(lower, "incorrect api key") ||
-		strings.Contains(lower, "api key not valid") ||
-		strings.Contains(lower, "api key is missing") ||
-		strings.Contains(lower, "api key not found") ||
-		strings.Contains(lower, "no api key") ||
-		strings.Contains(lower, "missing api key") ||
-		strings.Contains(lower, "model not found") ||
-		strings.Contains(lower, "model_not_found") ||
-		strings.Contains(lower, "insufficient_quota") ||
-		strings.Contains(lower, "exceeded your current quota") ||
-		strings.Contains(lower, "credit balance is too low") ||
-		strings.Contains(lower, "permission_error") ||
-		strings.Contains(lower, "check version and auth")
+	return matchGuidance(strings.ToLower(errMsg)) != nil
+}
+
+// friendlyError rewrites a raw executor/LLM error into a short, actionable
+// message for end users, keeping the raw text underneath for debugging.
+// Errors that don't match a known misconfiguration pattern pass through
+// unchanged — most other failures (workspace errors, transient network
+// blips) are already reasonably readable on their own.
+func friendlyError(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	if g := matchGuidance(strings.ToLower(raw)); g != nil {
+		return fmt.Sprintf("%s — %s\n\nDetails: %s", g.title, g.hint, raw)
+	}
+	return raw
+}
+
+// failSession fails a session via friendlyError, so every FailSession call
+// site in this package gets the same plain-language rewrite for known
+// misconfiguration signatures without having to remember to apply it
+// individually. Safe to call with any message — text that doesn't match a
+// known pattern passes through unchanged.
+func (h *Handlers) failSession(sessionID, rawErr string) {
+	h.agentManager.FailSession(sessionID, friendlyError(rawErr))
 }
 
 // maxReviewerCorrections is the maximum number of corrective iterations
@@ -81,7 +149,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic in agent executor: %v", r)
 			slog.Error("agent goroutine panicked", "session_id", session.ID, "panic", r)
-			h.agentManager.FailSession(session.ID, msg)
+			h.failSession(session.ID, msg)
 		}
 	}()
 
@@ -250,7 +318,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
-		h.agentManager.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
+		h.failSession(sessionID, "Failed to resolve prompt: "+err.Error())
 		return
 	}
 
@@ -259,7 +327,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
 	)
 	if err != nil {
-		h.agentManager.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
+		h.failSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return
 	}
 	// [M7] Surface missing shared repos as session warnings so the user knows
@@ -289,7 +357,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		if err != nil {
 			if isPermanentError(err.Error()) {
 				slog.Error("aborting: permanent planner error", "session_id", sessionID, "error", err)
-				h.agentManager.FailSession(sessionID, err.Error())
+				h.failSession(sessionID, err.Error())
 				return
 			}
 			// [M8] Non-permanent planner failure: fall through to the executor without
@@ -340,7 +408,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 				failMsg += ": " + lastErr
 			}
 			slog.Error("aborting session", "session_id", sessionID, "reason", failMsg)
-			h.agentManager.FailSession(sessionID, failMsg)
+			h.failSession(sessionID, failMsg)
 			return
 		}
 
@@ -388,7 +456,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
-			h.agentManager.FailSession(sessionID, result.Error)
+			h.failSession(sessionID, result.Error)
 			return
 		}
 
@@ -571,15 +639,15 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		return
 	}
 	if ctx.Err() != nil {
-		h.agentManager.FailSession(sessionID, "context cancelled before completion")
+		h.failSession(sessionID, "context cancelled before completion")
 		return
 	}
 	if strings.HasPrefix(stopReason, "time limit reached") {
-		h.agentManager.FailSession(sessionID, stopReason)
+		h.failSession(sessionID, stopReason)
 		return
 	}
 	if blockedOrStuck {
-		h.agentManager.FailSession(sessionID, stopReason)
+		h.failSession(sessionID, stopReason)
 		return
 	}
 	snap := liveSession.Snapshot()
@@ -590,7 +658,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			return
 		}
 	}
-	h.agentManager.FailSession(sessionID, stopReason)
+	h.failSession(sessionID, stopReason)
 }
 
 // resolvePrompt builds the combined system prompt using the new single-agent

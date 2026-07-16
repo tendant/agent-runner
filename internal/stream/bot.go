@@ -901,6 +901,9 @@ func formatFinalResult(session *agent.Session) string {
 			fmt.Fprintf(&sb, " — %s", session.Error)
 		}
 	}
+	if len(session.Warnings) > 0 {
+		fmt.Fprintf(&sb, "\n\n⚠ %s", strings.Join(session.Warnings, "; "))
+	}
 	return sb.String()
 }
 
