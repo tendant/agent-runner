@@ -29,18 +29,24 @@ func setupTestEnv(t *testing.T) *testEnv {
 	dir := t.TempDir()
 
 	repoCacheDir := filepath.Join(dir, "repo-cache")
-	logsDir := filepath.Join(dir, "logs")
 
-	// Use a separate temp dir for workspaces so background goroutines
-	// from executeJob don't race with t.TempDir() cleanup.
+	// Use separate temp dirs for workspaces and logs so background goroutines
+	// from executeJob/executeAgent — which keep writing (audit log, memory
+	// push retries) after a test returns or calls StopSession — don't race
+	// with t.TempDir()'s automatic RemoveAll.
 	tmpDir, err := os.MkdirTemp("", "agent-runner-test-tmp-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(tmpDir) })
 
+	logsDir, err := os.MkdirTemp("", "agent-runner-test-logs-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(logsDir) })
+
 	os.MkdirAll(repoCacheDir, 0755)
-	os.MkdirAll(logsDir, 0755)
 
 	cfg := config.DefaultConfig()
 	cfg.RepoCacheRoot = repoCacheDir

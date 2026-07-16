@@ -413,7 +413,17 @@ func TestE2E_ProjectLocking(t *testing.T) {
 		t.Skip("skipping E2E test in short mode")
 	}
 
-	baseDir := t.TempDir()
+	// This test only waits 100ms for the job to start (see below) and never
+	// waits for the mock CLI's 5s sleep to finish before returning, so the
+	// job's background goroutine is still writing into this tree well after
+	// the test function returns. Use a separately-cleaned temp dir instead
+	// of t.TempDir() so its automatic RemoveAll doesn't race that goroutine
+	// (same pattern used by TestE2E_AgentNoProjectNoDefault).
+	baseDir, err := os.MkdirTemp("", "agent-e2e-projectlocking-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(baseDir) })
 
 	bareRepo := filepath.Join(baseDir, "origin.git")
 	repoCacheDir := filepath.Join(baseDir, "repo-cache")
