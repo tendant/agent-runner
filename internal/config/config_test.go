@@ -111,6 +111,30 @@ func TestLoad_OpencodeReasoningModelDefaultNotClobbered(t *testing.T) {
 	}
 }
 
+func TestLoad_StreamMaxCatchUpBacklogDefault(t *testing.T) {
+	t.Setenv("STREAM_MAX_CATCHUP_BACKLOG", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Stream.MaxCatchUpBacklog != 100 {
+		t.Errorf("expected default Stream.MaxCatchUpBacklog 100, got %d", cfg.Stream.MaxCatchUpBacklog)
+	}
+}
+
+func TestLoad_StreamMaxCatchUpBacklogOverride(t *testing.T) {
+	t.Setenv("STREAM_MAX_CATCHUP_BACKLOG", "50")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Stream.MaxCatchUpBacklog != 50 {
+		t.Errorf("expected Stream.MaxCatchUpBacklog 50, got %d", cfg.Stream.MaxCatchUpBacklog)
+	}
+}
+
 func TestValidate_EmptyRepoCacheRoot(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RepoCacheRoot = ""

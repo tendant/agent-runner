@@ -35,21 +35,22 @@ type Gateway = botcommon.Gateway
 
 // Bot bridges agent-stream conversations to the agent runner.
 type Bot struct {
-	client         *Client
-	starter        AgentStarter
-	gateway        Gateway
-	convManager    *conversation.Manager
-	analyzer       *conversation.Analyzer
-	convIDs        []string
-	botUserID      string
-	uploadsDir     string                      // persistent directory for user-uploaded files
-	pollInterval   time.Duration               // >0 = poll mode; 0 = SSE mode
-	stateDir       string                      // persistent directory for the per-conversation event-seq cursor
-	wechatReloader func(token, baseURL string) // called after a successful /wechat-login
-	wechatBaseURL  string                      // iLink API base URL for the login flow
-	wechatLoginMu  sync.Mutex                  // prevents concurrent /wechat-login flows
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
+	client            *Client
+	starter           AgentStarter
+	gateway           Gateway
+	convManager       *conversation.Manager
+	analyzer          *conversation.Analyzer
+	convIDs           []string
+	botUserID         string
+	uploadsDir        string                      // persistent directory for user-uploaded files
+	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
+	stateDir          string                      // persistent directory for the per-conversation event-seq cursor
+	maxCatchUpBacklog int                         // cap on messages reacted to after a reconnect gap; 0 = use default
+	wechatReloader    func(token, baseURL string) // called after a successful /wechat-login
+	wechatBaseURL     string                      // iLink API base URL for the login flow
+	wechatLoginMu     sync.Mutex                  // prevents concurrent /wechat-login flows
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
 }
 
 // SetWeChatReloader registers a callback that is invoked with the new token and
@@ -67,17 +68,23 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		return nil
 	}
 
+	maxCatchUpBacklog := cfg.MaxCatchUpBacklog
+	if maxCatchUpBacklog <= 0 {
+		maxCatchUpBacklog = defaultMaxCatchUpBacklog
+	}
+
 	return &Bot{
-		client:       NewClient(cfg.ServerURL, cfg.BotToken),
-		starter:      starter,
-		gateway:      gateway,
-		convManager:  convMgr,
-		analyzer:     analyzer,
-		convIDs:      cfg.ConversationIDs,
-		uploadsDir:   uploadsDir,
-		botUserID:    extractBotUserID(cfg.BotToken),
-		pollInterval: cfg.PollInterval,
-		stateDir:     cfg.StateDir,
+		client:            NewClient(cfg.ServerURL, cfg.BotToken),
+		starter:           starter,
+		gateway:           gateway,
+		convManager:       convMgr,
+		analyzer:          analyzer,
+		convIDs:           cfg.ConversationIDs,
+		uploadsDir:        uploadsDir,
+		botUserID:         extractBotUserID(cfg.BotToken),
+		pollInterval:      cfg.PollInterval,
+		stateDir:          cfg.StateDir,
+		maxCatchUpBacklog: maxCatchUpBacklog,
 	}
 }
 
@@ -177,16 +184,7 @@ func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
 		}
 
 		sortBySeq(events)
-		for _, event := range events {
-			if event.Seq <= afterSeq {
-				continue // already processed
-			}
-			if event.Type == "message.created" {
-				b.handleMessageEvent(ctx, convID, event)
-			}
-			afterSeq = event.Seq // advance only after successful handling
-			b.saveCursor(convID, afterSeq)
-		}
+		afterSeq = b.processEventBatch(ctx, convID, events, afterSeq)
 	}
 }
 
@@ -219,17 +217,7 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 		slog.Info("stream bot: SSE connected", "conversation_id", convID, "after_seq", afterSeq)
 
 		var received int
-		for event := range events {
-			received++
-			if event.Seq <= afterSeq {
-				continue // already processed (shouldn't happen, but guard it)
-			}
-			if event.Type == "message.created" {
-				b.handleMessageEvent(ctx, convID, event)
-			}
-			afterSeq = event.Seq // advance only after successful handling
-			b.saveCursor(convID, afterSeq)
-		}
+		afterSeq, received = b.consumeSSEStream(ctx, convID, events, afterSeq)
 
 		delay := 2 * time.Second
 		if received == 0 {
@@ -242,6 +230,118 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// defaultMaxCatchUpBacklog is the fallback for maxCatchUpBacklog when no
+// STREAM_MAX_CATCHUP_BACKLOG is configured.
+const defaultMaxCatchUpBacklog = 100
+
+// backlogIdleWindow is how long to wait, after the SSE stream (re)connects,
+// for the initial replay burst to go quiet before switching to normal
+// per-event live handling. The agent-stream server replays the entire
+// history after afterSeq on every connect with no way to ask for less, so
+// this idle-based heuristic is how the client tells "replayed backlog" apart
+// from "live events" on the same channel.
+const backlogIdleWindow = 500 * time.Millisecond
+
+// consumeSSEStream buffers the initial replay burst on a freshly (re)opened
+// SSE connection, caps how many of it are actually reacted to (via
+// processEventBatch), then processes subsequent live events one at a time as
+// they arrive. Returns the advanced cursor and the total number of events
+// received (used by the caller to size the reconnect delay).
+func (b *Bot) consumeSSEStream(ctx context.Context, convID string, events <-chan Event, afterSeq int64) (newAfterSeq int64, received int) {
+	newAfterSeq = afterSeq
+
+	var burst []Event
+	idle := time.NewTimer(backlogIdleWindow)
+	defer idle.Stop()
+
+burstLoop:
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+				return newAfterSeq, received
+			}
+			received++
+			burst = append(burst, event)
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(backlogIdleWindow)
+		case <-idle.C:
+			break burstLoop
+		case <-ctx.Done():
+			newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+			return newAfterSeq, received
+		}
+	}
+
+	newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+
+	for event := range events {
+		received++
+		if event.Seq <= newAfterSeq {
+			continue // already processed (shouldn't happen, but guard it)
+		}
+		if event.Type == "message.created" {
+			b.handleMessageEvent(ctx, convID, event)
+		}
+		newAfterSeq = event.Seq // advance only after successful handling
+		b.saveCursor(convID, newAfterSeq)
+	}
+
+	return newAfterSeq, received
+}
+
+// processEventBatch processes a batch of events (already or about-to-be
+// sorted ascending by seq), skipping all but the most recent
+// maxCatchUpBacklog "message.created" events so the bot doesn't try to react
+// to a large pile of messages that piled up while it was disconnected. The
+// cursor still advances past skipped events so they aren't replayed on the
+// next reconnect. Returns the advanced cursor.
+func (b *Bot) processEventBatch(ctx context.Context, convID string, events []Event, afterSeq int64) int64 {
+	if len(events) == 0 {
+		return afterSeq
+	}
+	sortBySeq(events)
+
+	total := 0
+	for _, e := range events {
+		if e.Seq > afterSeq && e.Type == "message.created" {
+			total++
+		}
+	}
+	skipTarget := 0
+	if total > b.maxCatchUpBacklog {
+		skipTarget = total - b.maxCatchUpBacklog
+	}
+
+	skipped, seen := 0, 0
+	for _, event := range events {
+		if event.Seq <= afterSeq {
+			continue // already processed
+		}
+		if event.Type == "message.created" {
+			if seen < skipTarget {
+				skipped++
+			} else {
+				b.handleMessageEvent(ctx, convID, event)
+			}
+			seen++
+		}
+		afterSeq = event.Seq // advance only after successful handling
+		b.saveCursor(convID, afterSeq)
+	}
+	if skipped > 0 {
+		slog.Warn("stream bot: skipped stale backlog messages after reconnect gap",
+			"conversation_id", convID, "skipped", skipped, "processed", total-skipped)
+	}
+	return afterSeq
 }
 
 // catchUpSeq returns the highest seq currently in the conversation so the bot

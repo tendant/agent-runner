@@ -22,13 +22,13 @@ func defaultDataDir() string {
 // Config represents the application configuration
 type Config struct {
 	// Directory paths
-	ProjectDir   string // Resolved CWD at startup — the project root
+	ProjectDir    string // Resolved CWD at startup — the project root
 	RepoCacheRoot string
 	LogsRoot      string
 	TmpRoot       string
 	OutputsRoot   string // persistent storage for _send/ files across sessions
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
-	MemoryDir string // Convention: ./memory (seeded defaults + daily logs + curated memory)
+	MemoryDir     string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 
 	// Project allowlist
 	AllowedProjects []string
@@ -111,11 +111,12 @@ type TelegramConfig struct {
 
 // StreamConfig contains agent-stream bot settings
 type StreamConfig struct {
-	ServerURL       string        // STREAM_SERVER_URL
-	BotToken        string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
-	ConversationIDs []string      // STREAM_CONVERSATION_IDS
-	PollInterval    time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
-	StateDir        string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
+	ServerURL         string        // STREAM_SERVER_URL
+	BotToken          string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
+	ConversationIDs   []string      // STREAM_CONVERSATION_IDS
+	PollInterval      time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
+	StateDir          string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
+	MaxCatchUpBacklog int           // STREAM_MAX_CATCHUP_BACKLOG — cap on messages reacted to after a reconnect gap; older ones in the burst are skipped, not replayed (default: 100)
 }
 
 // WeChatConfig contains WeChat bot settings (iLink API).
@@ -164,12 +165,12 @@ type APIConfig struct {
 func DefaultConfig() *Config {
 	data := defaultDataDir()
 	return &Config{
-		RepoCacheRoot:           filepath.Join(data, "repo-cache"),
-		LogsRoot:                filepath.Join(data, "logs"),
-		TmpRoot:                 filepath.Join(data, "tmp"),
-		OutputsRoot:             filepath.Join(data, "outputs"),
-		UploadsRoot:             filepath.Join(data, "uploads"),
-		MemoryDir:               filepath.Join(data, "memory"),
+		RepoCacheRoot:            filepath.Join(data, "repo-cache"),
+		LogsRoot:                 filepath.Join(data, "logs"),
+		TmpRoot:                  filepath.Join(data, "tmp"),
+		OutputsRoot:              filepath.Join(data, "outputs"),
+		UploadsRoot:              filepath.Join(data, "uploads"),
+		MemoryDir:                filepath.Join(data, "memory"),
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
 		MaxConcurrentJobs:        5,
@@ -360,6 +361,7 @@ func LoadFromEnv() (*Config, error) {
 		}
 	}
 	cfg.Stream.StateDir = envOrDefault("STREAM_STATE_DIR", cfg.TmpRoot)
+	cfg.Stream.MaxCatchUpBacklog = envIntOrDefault("STREAM_MAX_CATCHUP_BACKLOG", 100)
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
