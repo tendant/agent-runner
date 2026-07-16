@@ -275,6 +275,105 @@ func TestBootstrapWarnings_OpencodeWithProviderKey(t *testing.T) {
 	}
 }
 
+// --- errorGuidanceTable / isPermanentError / friendlyError ---
+
+// TestErrorGuidanceTable_EachEntryIsPermanentAndFriendly walks every
+// registered guidance entry and checks both derived behaviors together:
+// isPermanentError must classify it as permanent, and friendlyError must
+// rewrite it with that entry's title and hint. Table-driven over
+// errorGuidanceTable itself so a new entry is covered automatically without
+// a matching test having to be added by hand.
+func TestErrorGuidanceTable_EachEntryIsPermanentAndFriendly(t *testing.T) {
+	for _, g := range errorGuidanceTable {
+		for _, m := range g.match {
+			t.Run(m, func(t *testing.T) {
+				raw := "some prefix: " + m + " some suffix"
+
+				if !isPermanentError(raw) {
+					t.Errorf("isPermanentError(%q) = false, want true", raw)
+				}
+
+				got := friendlyError(raw)
+				if !strings.Contains(got, g.title) {
+					t.Errorf("friendlyError(%q) = %q, want it to contain title %q", raw, got, g.title)
+				}
+				if !strings.Contains(got, g.hint) {
+					t.Errorf("friendlyError(%q) = %q, want it to contain hint %q", raw, got, g.hint)
+				}
+				if !strings.Contains(got, raw) {
+					t.Errorf("friendlyError(%q) = %q, want the raw error preserved for debugging", raw, got)
+				}
+			})
+		}
+	}
+}
+
+// TestErrorGuidanceTable_MatchIsCaseInsensitive confirms matching is done
+// against the lowercased error, since real stderr/HTTP-body text varies in
+// case (e.g. Go's "executable file not found in $PATH" vs a JSON field like
+// "invalid_api_key").
+func TestErrorGuidanceTable_MatchIsCaseInsensitive(t *testing.T) {
+	if !isPermanentError(`EXEC: "claude": Executable File Not Found In $PATH`) {
+		t.Error("expected case-insensitive match for executable-not-found")
+	}
+	if !isPermanentError(`{"error":{"code":"INVALID_API_KEY"}}`) {
+		t.Error("expected case-insensitive match for invalid_api_key")
+	}
+}
+
+func TestIsPermanentError_TransientErrorsPassThrough(t *testing.T) {
+	transient := []string{
+		"",
+		"connection reset by peer",
+		"TIMEOUT: execution exceeded timeout",
+		"workspace error: missing file foo.py",
+		"context cancelled",
+	}
+	for _, errMsg := range transient {
+		if isPermanentError(errMsg) {
+			t.Errorf("isPermanentError(%q) = true, want false (should retry)", errMsg)
+		}
+	}
+}
+
+func TestFriendlyError_EmptyPassesThrough(t *testing.T) {
+	if got := friendlyError(""); got != "" {
+		t.Errorf("friendlyError(\"\") = %q, want \"\"", got)
+	}
+}
+
+func TestFriendlyError_UnmatchedErrorPassesThroughUnchanged(t *testing.T) {
+	raw := "workspace error: missing file foo.py"
+	if got := friendlyError(raw); got != raw {
+		t.Errorf("friendlyError(%q) = %q, want unchanged", raw, got)
+	}
+}
+
+// TestFailSession_AppliesFriendlyError verifies the h.failSession choke
+// point actually applies friendlyError before the message reaches the
+// session, since every FailSession call site in this package now goes
+// through it rather than calling h.agentManager.FailSession directly.
+func TestFailSession_AppliesFriendlyError(t *testing.T) {
+	env := setupTestEnv(t)
+	session, err := env.handlers.agentManager.CreateSession("do something", nil, "test", "", 1, 10)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	env.handlers.failSession(session.ID, `CLAUDE_ERROR: exec: "claude": executable file not found in $PATH - `)
+
+	snap := session.Snapshot()
+	if snap.Status != agent.SessionStatusFailed {
+		t.Fatalf("expected session status=failed, got %s", snap.Status)
+	}
+	if !strings.Contains(snap.Error, "the coding agent CLI is not installed") {
+		t.Errorf("expected friendly title in session error, got: %s", snap.Error)
+	}
+	if !strings.Contains(snap.Error, "executable file not found in $PATH") {
+		t.Errorf("expected raw detail preserved in session error, got: %s", snap.Error)
+	}
+}
+
 // --- Panic recovery ---
 
 // panicExecutor implements executor.Executor and panics on every call.
