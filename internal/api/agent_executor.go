@@ -698,7 +698,7 @@ func (h *Handlers) determineFinalStatus(ctx context.Context, sessionID string, l
 		return
 	}
 	if liveSession.StopRequested() {
-		h.agentManager.CompleteSession(sessionID)
+		h.agentManager.MarkSessionStopped(sessionID, "stopped by user")
 		return
 	}
 	if ctx.Err() != nil {
@@ -989,6 +989,9 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 			msg = fmt.Sprintf("Agent failed\n• Session: %s\n• Message: %s\n• Error: %s",
 				snap.ID, preview, errPreview)
 		}
+	case agent.SessionStatusStopped:
+		msg = fmt.Sprintf("Agent stopped\n• Session: %s\n• Message: %s\n• Iterations: %d\n• Duration: %ds",
+			snap.ID, preview, snap.SuccessfulIterations, snap.ElapsedSeconds)
 	default:
 		return
 	}

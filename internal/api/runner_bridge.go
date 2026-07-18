@@ -82,6 +82,15 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 		return &agentTaskError{msg: snap.Error}
 	}
 
+	if snap != nil && snap.Status == agent.SessionStatusStopped {
+		reason := snap.Error
+		if reason == "" {
+			reason = "stopped by user"
+		}
+		slog.Warn("runner bridge: session stopped", "session_id", sessionID, "reason", reason)
+		return &agentTaskError{msg: reason}
+	}
+
 	return nil
 }
 

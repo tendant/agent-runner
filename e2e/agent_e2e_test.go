@@ -111,7 +111,7 @@ func pollAgentUntilDoneInterval(t *testing.T, serverURL, sessionID string, timeo
 	for time.Now().Before(deadline) {
 		_, result := getAgent(t, serverURL, sessionID)
 		status, _ := result["status"].(string)
-		if status == "completed" || status == "failed" {
+		if status == "completed" || status == "failed" || status == "stopped" {
 			return result
 		}
 		time.Sleep(interval)
@@ -233,8 +233,8 @@ echo '{"result":"Done"}'
 	result := pollAgentUntilDone(t, ts.URL, sessionID, 30*time.Second)
 
 	status, _ := result["status"].(string)
-	if status != "completed" {
-		t.Fatalf("expected completed after stop, got %s", status)
+	if status != "stopped" {
+		t.Fatalf("expected stopped after stop, got %s", status)
 	}
 
 	// Should have fewer than 50 iterations (stopped early)

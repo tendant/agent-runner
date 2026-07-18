@@ -51,9 +51,15 @@ func IsDenial(text string) bool {
 // the status line and the warnings line.
 func FormatStatusLine(session *agent.Session) string {
 	var sb strings.Builder
-	if session.Status == agent.SessionStatusCompleted {
+	switch session.Status {
+	case agent.SessionStatusCompleted:
 		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
-	} else {
+	case agent.SessionStatusStopped:
+		fmt.Fprintf(&sb, "Session stopped — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
+		if session.Error != "" {
+			fmt.Fprintf(&sb, " (%s)", session.Error)
+		}
+	default:
 		fmt.Fprintf(&sb, "Session failed")
 		if session.Error != "" {
 			fmt.Fprintf(&sb, " — %s", session.Error)

@@ -283,9 +283,16 @@ func (c *Commander) handleStatus() string {
 		if len(preview) > 50 {
 			preview = preview[:50] + "..."
 		}
-		if last.Status == agent.SessionStatusCompleted {
+		switch last.Status {
+		case agent.SessionStatusCompleted:
 			fmt.Fprintf(&b, "**last:** completed ✓ %s ago — %q\n", ago, preview)
-		} else {
+		case agent.SessionStatusStopped:
+			reason := last.Error
+			if reason == "" {
+				reason = "stopped by user"
+			}
+			fmt.Fprintf(&b, "**last:** stopped ⏹ %s ago — %s\n", ago, reason)
+		default:
 			errMsg := last.Error
 			if len(errMsg) > 60 {
 				errMsg = errMsg[:60] + "..."
@@ -360,6 +367,12 @@ func (c *Commander) handleSessions() string {
 				ago = " " + time.Since(*s.CompletedAt).Round(time.Second).String() + " ago"
 			}
 			fmt.Fprintf(&b, "❌ `%s` — failed%s %q\n", s.ID, ago, preview)
+		case agent.SessionStatusStopped:
+			ago := ""
+			if s.CompletedAt != nil {
+				ago = " " + time.Since(*s.CompletedAt).Round(time.Second).String() + " ago"
+			}
+			fmt.Fprintf(&b, "⏹️ `%s` — stopped%s %q\n", s.ID, ago, preview)
 		default:
 			fmt.Fprintf(&b, "   `%s` — %s %q\n", s.ID, s.Status, preview)
 		}
@@ -414,8 +427,11 @@ func (c *Commander) handleLogs(arg string) string {
 			sid = sid[:8]
 		}
 		icon := "✅"
-		if s.Status == "failed" {
+		switch s.Status {
+		case "failed":
 			icon = "❌"
+		case "stopped":
+			icon = "⏹️"
 		}
 		fmt.Fprintf(&b, "%s `%s` — %s", icon, sid, s.Timestamp)
 		if s.Duration != "" {

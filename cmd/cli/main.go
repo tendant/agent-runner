@@ -443,9 +443,16 @@ func handleSSEEvent(eventType, data string) (done bool) {
 			fmt.Printf("[done] %s\n", data) // fall back to raw data
 			return true
 		}
-		if e.Status == "failed" {
+		switch e.Status {
+		case "failed":
 			fmt.Printf("[failed] %s\n", e.Error)
-		} else {
+		case "stopped":
+			reason := e.Error
+			if reason == "" {
+				reason = "stopped by user"
+			}
+			fmt.Printf("[stopped] %s\n", reason)
+		default:
 			fmt.Printf("[completed] %d iterations, %.0fs\n", e.SuccessfulIterations, e.ElapsedSeconds)
 		}
 		if e.Output != "" {

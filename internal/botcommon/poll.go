@@ -88,7 +88,7 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter) {
 				r.OnIterationStart(cur, session.MaxIterations)
 			}
 
-			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed {
+			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed || session.Status == agent.SessionStatusStopped {
 				r.OnFinal(session)
 				return
 			}

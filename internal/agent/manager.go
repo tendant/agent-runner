@@ -160,7 +160,7 @@ func (m *Manager) LastCompletedSession() *Session {
 		status := s.Status
 		completedAt := s.CompletedAt
 		s.mu.RUnlock()
-		if (status == SessionStatusCompleted || status == SessionStatusFailed) && completedAt != nil {
+		if (status == SessionStatusCompleted || status == SessionStatusFailed || status == SessionStatusStopped) && completedAt != nil {
 			if last == nil {
 				last = s
 				continue
@@ -188,7 +188,7 @@ func (m *Manager) ListActiveSessions() []*Session {
 		s.mu.RLock()
 		status := s.Status
 		s.mu.RUnlock()
-		if status != SessionStatusCompleted && status != SessionStatusFailed {
+		if status != SessionStatusCompleted && status != SessionStatusFailed && status != SessionStatusStopped {
 			active = append(active, s.Snapshot())
 		}
 	}
@@ -270,6 +270,20 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 	}
 
 	session.Fail(errMsg)
+}
+
+// MarkSessionStopped marks a session as stopped at the user's request —
+// a distinct terminal state from completed/failed (see Session.Stop).
+func (m *Manager) MarkSessionStopped(sessionID, reason string) {
+	m.mu.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	session.Stop(reason)
 }
 
 // GetSessionDirect returns the live session pointer (for the executor loop to mutate)

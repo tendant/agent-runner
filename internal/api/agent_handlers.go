@@ -320,7 +320,7 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		if snap.Status == "completed" || snap.Status == "failed" {
+		if snap.Status == "completed" || snap.Status == "failed" || snap.Status == "stopped" {
 			output := ""
 			for i := len(snap.Iterations) - 1; i >= 0; i-- {
 				if snap.Iterations[i].Output != "" {

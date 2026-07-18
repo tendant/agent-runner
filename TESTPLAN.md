@@ -260,8 +260,8 @@ add error handling to src/handler.go
 ```
 # While agent is running, send Ctrl+C in agent-cli
     → [stopping] sending stop signal...
-    → [failed] stopped by user
-/status → last: failed ✗ Xs ago — stopped by user
+    → [stopped] stopped by user
+/status → last: stopped ⏹ Xs ago — stopped by user
 ```
 
 ### 6.5 Queue behaviour

@@ -14,6 +14,7 @@ const (
 	SessionStatusStopping  SessionStatus = "stopping"
 	SessionStatusCompleted SessionStatus = "completed"
 	SessionStatusFailed    SessionStatus = "failed"
+	SessionStatusStopped   SessionStatus = "stopped"
 )
 
 // IterationStatus represents the outcome of a single iteration
@@ -172,6 +173,20 @@ func (s *Session) Fail(err string) {
 	s.CompletedAt = &now
 	s.Status = SessionStatusFailed
 	s.Error = err
+	s.ElapsedSeconds = int(now.Sub(s.StartedAt).Seconds())
+	s.mu.Unlock()
+	s.notifyUpdate()
+}
+
+// Stop marks the session as stopped at the user's request. Distinct from
+// Fail: the session did not err, it was deliberately cut short, so it's
+// reported as neither a success nor a failure.
+func (s *Session) Stop(reason string) {
+	s.mu.Lock()
+	now := time.Now()
+	s.CompletedAt = &now
+	s.Status = SessionStatusStopped
+	s.Error = reason
 	s.ElapsedSeconds = int(now.Sub(s.StartedAt).Seconds())
 	s.mu.Unlock()
 	s.notifyUpdate()
