@@ -76,7 +76,7 @@ Flow:
 5. **Phase 3: Reviewer** (optional) — sub-agent evaluates completeness and quality
 6. **Cleanup** — cache workspaces back, sync workspace files, write audit log, delete workspace
 
-Session states: `running → stopping → completed/failed`
+Session states: `queued → running → stopping → completed/failed/stopped` (`stopped` is distinct from `failed` — set when the session ends via a user-requested `/agent/{id}/stop` rather than an error)
 
 ---
 
