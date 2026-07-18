@@ -252,3 +252,43 @@ func TestPushMemory_SurfacesBothErrors_WhenRebaseAbortFails(t *testing.T) {
 		t.Errorf("expected manual recovery hint in error, got: %q", msg)
 	}
 }
+
+// pushMemory against a freshly `git init`-ed repo with zero commits (e.g.
+// `/memory git <url>` run before /bootstrap or any agent session has written
+// anything) used to fall through to the rebase/abort path and surface a
+// confusing compound git error. It must instead fail fast with a clear
+// "nothing to commit yet" message.
+func TestPushMemory_NoCommitsYet_ReturnsClearError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	remoteDir := t.TempDir()
+
+	if err := exec.Command("git", "init", "--bare", remoteDir).Run(); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	gitCmds := [][]string{
+		{"init"},
+		{"remote", "add", "origin", remoteDir},
+	}
+	for _, args := range gitCmds {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+
+	err := pushMemory(dir, nil, remoteDir, "")
+	if err == nil {
+		t.Fatal("expected error from pushMemory against a repo with no commits")
+	}
+	if !strings.Contains(err.Error(), "no commits yet") {
+		t.Errorf("expected a clear 'no commits yet' error, got: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "rebase") {
+		t.Errorf("should fail fast before reaching the rebase fallback, got: %q", err.Error())
+	}
+}

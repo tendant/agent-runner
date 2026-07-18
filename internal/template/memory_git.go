@@ -295,6 +295,10 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 // (non-fast-forward), it pulls with rebase and retries once.
 // Authentication is handled by the credential helper configured in the repo.
 func pushMemory(memoryDir string, env []string, remote, token string) error {
+	if _, err := gitOutput(memoryDir, "rev-parse", "HEAD"); err != nil {
+		return fmt.Errorf("no commits yet in %s — nothing to push (memory dir is empty; run /bootstrap or an agent session first)", memoryDir)
+	}
+
 	doPush := func() error {
 		return gitRunEnv(memoryDir, env, "push", "origin", "HEAD")
 	}
