@@ -101,6 +101,18 @@ func (p *Planner) BuildPrompt(state WorkspaceState, message string) string {
 		sb.WriteString("\n\n")
 	}
 
+	if len(state.Skills) > 0 {
+		sb.WriteString("Available skills (reference by name in plan steps where relevant):\n")
+		for _, s := range state.Skills {
+			if s.Description != "" {
+				fmt.Fprintf(&sb, "- %s: %s\n", s.Name, s.Description)
+			} else {
+				fmt.Fprintf(&sb, "- %s\n", s.Name)
+			}
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("User request: ")
 	sb.WriteString(message)
 	sb.WriteString("\n")

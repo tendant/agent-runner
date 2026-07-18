@@ -175,7 +175,7 @@ Long-polling Telegram bot with incremental progress reporting.
 
 ### Planner (Phase 1)
 
-Runs before the iteration loop. Analyzes workspace state (file tree, git log, TODO.md) and produces a structured plan with steps. The plan is injected into iteration prompts.
+Runs before the iteration loop. Analyzes workspace state (file tree, git log, TODO.md, available skills under `.claude/skills/`/`.agents/skills/`) and produces a structured plan with steps. The plan is injected into iteration prompts.
 
 ### Prompt Builder (Phase 2)
 

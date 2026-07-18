@@ -113,6 +113,77 @@ func TestReadWorkspaceState_SkipsDotAndUnderscoreDirs(t *testing.T) {
 	}
 }
 
+func TestReadWorkspaceState_ReadsSkillsFromClaudeDir(t *testing.T) {
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
+
+	skillDir := filepath.Join(workspaceDir, ".claude", "skills", "my-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(
+		"---\nname: my-skill\ndescription: does a useful thing\n---\n\nBody content.\n",
+	), 0644)
+
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
+
+	if len(state.Skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d: %v", len(state.Skills), state.Skills)
+	}
+	if state.Skills[0].Name != "my-skill" || state.Skills[0].Description != "does a useful thing" {
+		t.Errorf("unexpected skill: %+v", state.Skills[0])
+	}
+}
+
+func TestReadWorkspaceState_FallsBackToAgentsDir(t *testing.T) {
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
+
+	skillDir := filepath.Join(workspaceDir, ".agents", "skills", "codex-only-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(
+		"---\nname: codex-only-skill\ndescription: for codex\n---\n",
+	), 0644)
+
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
+
+	if len(state.Skills) != 1 || state.Skills[0].Name != "codex-only-skill" {
+		t.Errorf("expected fallback to .agents/skills, got %v", state.Skills)
+	}
+}
+
+func TestReadWorkspaceState_SkillNameFallsBackToDirName(t *testing.T) {
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
+
+	skillDir := filepath.Join(workspaceDir, ".claude", "skills", "unnamed-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("no frontmatter here\n"), 0644)
+
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
+
+	if len(state.Skills) != 1 || state.Skills[0].Name != "unnamed-skill" {
+		t.Errorf("expected dir-name fallback 'unnamed-skill', got %v", state.Skills)
+	}
+	if state.Skills[0].Description != "" {
+		t.Errorf("expected empty description, got %q", state.Skills[0].Description)
+	}
+}
+
+func TestReadWorkspaceState_NoSkillsDir(t *testing.T) {
+	sessionDir := t.TempDir()
+	workspaceDir := filepath.Join(sessionDir, "workspace")
+	os.MkdirAll(workspaceDir, 0755)
+	os.MkdirAll(filepath.Join(sessionDir, "state"), 0755)
+
+	state := ReadWorkspaceState(context.Background(), workspaceDir)
+
+	if len(state.Skills) != 0 {
+		t.Errorf("expected no skills, got %v", state.Skills)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

@@ -51,8 +51,16 @@ type ReviewResult struct {
 
 // WorkspaceState captures a snapshot of filesystem and git state in the workspace.
 type WorkspaceState struct {
-	TodoContent   string   `json:"todo_content,omitempty"`
-	RecentCommits []string `json:"recent_commits,omitempty"`
-	RepoNames     []string `json:"repo_names,omitempty"`
-	GitDiffStat   string   `json:"git_diff_stat,omitempty"`
+	TodoContent   string         `json:"todo_content,omitempty"`
+	RecentCommits []string       `json:"recent_commits,omitempty"`
+	RepoNames     []string       `json:"repo_names,omitempty"`
+	GitDiffStat   string         `json:"git_diff_stat,omitempty"`
+	Skills        []SkillSummary `json:"skills,omitempty"`
+}
+
+// SkillSummary is a name+description pair extracted from a skill's SKILL.md
+// frontmatter, for injection into the planner's prompt.
+type SkillSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
