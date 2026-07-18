@@ -95,3 +95,16 @@ Issues identified from a full architectural review. Addressed in priority order.
 - **Problem:** `snap0` (metrics), `snap` (audit log), `snap2` (daily log) are taken at slightly different moments. Minor inconsistency in reported counts.
 - **Fix:** Take a single snapshot at the start of the defer and reuse it throughout. The session is no longer mutated by the time the defer runs.
 - **Status:** [x] done
+
+---
+
+## Found via live TESTPLAN.md validation (2026-07-17)
+
+Found by actually running the built binary end-to-end against local bare git
+remotes (not just unit tests) while manually walking TESTPLAN.md §2/§5.
+
+### [C14] `DATA_DIR` silently ignored for state dirs unless it's a real OS env var
+- **Files:** `internal/config/config.go` — `LoadFromEnv()`, `DefaultConfig()`
+- **Problem:** Two compounding issues. (1) `DefaultConfig()` recomputed its own `defaultDataDir()` (hardcoded `"."`) independently of the `dataDir` resolved in `LoadFromEnv()`, so `RepoCacheRoot`/`LogsRoot`/`TmpRoot`/`MemoryDir`/etc. never actually moved with `DATA_DIR` — only `.env.local`'s path did. (2) Even after fixing that, `dataDir` was resolved from `os.Getenv("DATA_DIR")` *before* `.env` was read, so `DATA_DIR` set inside `.env` (as the README and `.env.example` both document as valid) was read too late to have any effect — it only worked when exported as a real OS env var (e.g. Docker's `-e DATA_DIR=/data`). Masked in the shipped Docker image because `WORKDIR /data` happens to equal the documented `DATA_DIR=/data`.
+- **Fix:** `DefaultConfig()` now delegates to `defaultConfigForDataDir(data string)`; `LoadFromEnv()` reads `.env`/`.env.<instance>` first, resolves `dataDir` from OS env then the merged `.env` map then the default, and passes that resolved `dataDir` into `defaultConfigForDataDir`.
+- **Status:** [x] done — regression test `TestLoadFromEnv_DataDirFromEnvFile_RelocatesStateDirs` in `internal/config/config_test.go`.

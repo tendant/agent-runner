@@ -163,7 +163,14 @@ type APIConfig struct {
 
 // DefaultConfig returns a configuration with default values
 func DefaultConfig() *Config {
-	data := defaultDataDir()
+	return defaultConfigForDataDir(defaultDataDir())
+}
+
+// defaultConfigForDataDir builds the default config with all data-directory
+// fields (RepoCacheRoot, LogsRoot, etc.) rooted under data. LoadFromEnv calls
+// this with the resolved DATA_DIR so an explicit DATA_DIR actually relocates
+// state instead of only affecting where .env.local is read from.
+func defaultConfigForDataDir(data string) *Config {
 	return &Config{
 		RepoCacheRoot:            filepath.Join(data, "repo-cache"),
 		LogsRoot:                 filepath.Join(data, "logs"),
@@ -231,9 +238,24 @@ func LoadFromEnv() (*Config, error) {
 	// Determine instance name. Drives the default data dir and instance env file.
 	instance := os.Getenv("INSTANCE")
 
-	// Determine data dir: explicit DATA_DIR wins, then instance-scoped default,
-	// then global default.
+	// Read files lowest-priority first; each layer overwrites keys from the one below.
+	// Priority: .env < .env.<instance> < DATA_DIR/.env.local < OS env
+	merged, _ := godotenv.Read(".env")
+	if instance != "" {
+		inst, _ := godotenv.Read(".env." + instance)
+		for k, v := range inst {
+			merged[k] = v
+		}
+	}
+
+	// Determine data dir: explicit DATA_DIR wins (checking real OS env first,
+	// then .env/.env.<instance> — must happen after those are read, since DATA_DIR
+	// itself is commonly set inside .env rather than exported), then instance-scoped
+	// default, then global default.
 	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = merged["DATA_DIR"]
+	}
 	if dataDir == "" {
 		base := defaultDataDir()
 		if instance != "" {
@@ -246,15 +268,6 @@ func LoadFromEnv() (*Config, error) {
 	// Wire SetEnvLocal to write to the data dir's .env.local.
 	envLocalPath = filepath.Join(dataDir, ".env.local")
 
-	// Read files lowest-priority first; each layer overwrites keys from the one below.
-	// Priority: .env < .env.<instance> < DATA_DIR/.env.local < OS env
-	merged, _ := godotenv.Read(".env")
-	if instance != "" {
-		inst, _ := godotenv.Read(".env." + instance)
-		for k, v := range inst {
-			merged[k] = v
-		}
-	}
 	local, _ := godotenv.Read(envLocalPath)
 	for k, v := range local {
 		merged[k] = v
@@ -267,7 +280,7 @@ func LoadFromEnv() (*Config, error) {
 		}
 	}
 
-	cfg := DefaultConfig()
+	cfg := defaultConfigForDataDir(dataDir)
 
 	// Capture CWD as the project directory — must happen before any chdir
 	cwd, err := os.Getwd()

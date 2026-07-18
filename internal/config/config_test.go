@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -273,6 +274,44 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	}
 	if cfg.API.Bind != "127.0.0.1:8080" {
 		t.Errorf("expected default Bind, got %s", cfg.API.Bind)
+	}
+}
+
+// TestLoadFromEnv_DataDirFromEnvFile_RelocatesStateDirs guards against a bug
+// where DATA_DIR set inside .env (rather than exported as a real OS env var)
+// was read too late to affect RepoCacheRoot/LogsRoot/TmpRoot/MemoryDir — those
+// silently stayed relative to CWD while only .env.local honored DATA_DIR.
+func TestLoadFromEnv_DataDirFromEnvFile_RelocatesStateDirs(t *testing.T) {
+	for _, key := range []string{
+		"DATA_DIR", "REPO_CACHE_ROOT", "LOGS_ROOT", "TMP_ROOT",
+		"OUTPUTS_ROOT", "UPLOADS_ROOT", "MEMORY_DIR", "INSTANCE",
+	} {
+		t.Setenv(key, "")
+	}
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("DATA_DIR="+dataDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	t.Chdir(dir)
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.RepoCacheRoot != filepath.Join(dataDir, "repo-cache") {
+		t.Errorf("expected RepoCacheRoot under %s, got %s", dataDir, cfg.RepoCacheRoot)
+	}
+	if cfg.LogsRoot != filepath.Join(dataDir, "logs") {
+		t.Errorf("expected LogsRoot under %s, got %s", dataDir, cfg.LogsRoot)
+	}
+	if cfg.TmpRoot != filepath.Join(dataDir, "tmp") {
+		t.Errorf("expected TmpRoot under %s, got %s", dataDir, cfg.TmpRoot)
+	}
+	if cfg.MemoryDir != filepath.Join(dataDir, "memory") {
+		t.Errorf("expected MemoryDir under %s, got %s", dataDir, cfg.MemoryDir)
 	}
 }
 
