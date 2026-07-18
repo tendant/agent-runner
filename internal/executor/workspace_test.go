@@ -2,7 +2,9 @@ package executor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -295,5 +297,58 @@ func TestCopyFile_ResolvesSymlinkContent(t *testing.T) {
 	}
 	if string(data) != "real content" {
 		t.Errorf("expected %q, got %q", "real content", string(data))
+	}
+}
+
+// ConfigureCredHelper must win over an inherited credential.helper from a
+// config level outside the repo's own --local config (e.g. a system-level
+// macOS osxkeychain entry with a stale credential for the same host cached
+// by an unrelated project). A naive `git config credential.helper <value>`
+// only appends to the local file — it does not suppress that inherited
+// entry, and git's credential resolution stops at the first helper that
+// returns a full username+password, so the stale one silently wins.
+func TestConfigureCredHelper_OverridesInheritedHelper(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	// Simulate a system/global-level credential.helper with a decoy
+	// credential for the same host, via GIT_CONFIG_GLOBAL (redirects where
+	// git reads "global" config from — read before local, exactly like a
+	// real system-level entry would be).
+	fakeGlobalConfig := filepath.Join(t.TempDir(), "gitconfig-global")
+	// Write via `git config -f` (not a raw ini string) so the shell
+	// expression's semicolons and braces are escaped/quoted exactly as git
+	// itself would — a hand-written unquoted value would have its `;`
+	// parsed as a config-file comment, truncating it into a broken (and
+	// therefore non-competing) helper, which would make this test pass
+	// vacuously regardless of whether the fix works.
+	decoyHelper := `!f() { echo username=decoy-user; echo password=decoy-pass; }; f`
+	if err := exec.Command("git", "config", "-f", fakeGlobalConfig, "credential.helper", decoyHelper).Run(); err != nil {
+		t.Fatalf("seed fake global config: %v", err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", fakeGlobalConfig)
+
+	ConfigureCredHelper(repoDir)
+
+	cmd := exec.Command("git", "-C", repoDir, "credential", "fill")
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=example.com\npath=owner/repo.git\n\n")
+	cmd.Env = append(os.Environ(), "GIT_TOKEN=real-token-value")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git credential fill: %v", err)
+	}
+
+	got := string(out)
+	if strings.Contains(got, "decoy") {
+		t.Errorf("inherited (global) credential.helper won over the one ConfigureCredHelper set:\n%s", got)
+	}
+	if !strings.Contains(got, "username=oauth2") || !strings.Contains(got, "password=real-token-value") {
+		t.Errorf("expected our helper's username=oauth2/password=real-token-value, got:\n%s", got)
 	}
 }

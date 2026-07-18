@@ -1159,13 +1159,7 @@ func (c *Commander) handleRepoAdd(url string) string {
 
 	// Configure credential helper so future git ops pick up GIT_TOKEN from env.
 	if token != "" {
-		credCmd := exec.Command("git", "-C", cachePath, "config", "credential.helper",
-			`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
-		var credStderr strings.Builder
-		credCmd.Stderr = &credStderr
-		if err := credCmd.Run(); err != nil {
-			slog.Warn("repo: failed to configure credential helper", "path", cachePath, "error", err, "stderr", strings.TrimSpace(credStderr.String()))
-		}
+		executor.ConfigureCredHelper(cachePath)
 	}
 
 	// Auto-append to AGENT_SHARED_REPOS so the repo is available to agents.
@@ -1323,18 +1317,12 @@ func (c *Commander) handleRepoUpdate(name string) string {
 	}
 
 	// Ensure credential helper is configured for repos not added via /repo add.
-	// Use --local so we only check the repo's own config, not the global one.
+	// Always reconfigure (idempotent) rather than checking for a prior value —
+	// a system/global credential.helper for the same host (e.g. macOS
+	// osxkeychain) can satisfy a naive "is something already set" check while
+	// actually being a stale credential for an unrelated project.
 	if token := os.Getenv("GIT_TOKEN"); token != "" {
-		credCheck := exec.Command("git", "-C", p, "config", "--local", "credential.helper")
-		if out, _ := credCheck.Output(); len(strings.TrimSpace(string(out))) == 0 {
-			credCmd := exec.Command("git", "-C", p, "config", "credential.helper",
-				`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
-			var credStderr strings.Builder
-			credCmd.Stderr = &credStderr
-			if err := credCmd.Run(); err != nil {
-				slog.Warn("sync: failed to configure credential helper", "path", p, "error", err, "stderr", strings.TrimSpace(credStderr.String()))
-			}
-		}
+		executor.ConfigureCredHelper(p)
 	}
 
 	if err := run("fetch", "origin"); err != nil {

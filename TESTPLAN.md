@@ -346,3 +346,4 @@ agent-cli
 | Two agents queue | Second waits; `/status` shows `queued: 1` |
 | Network down during push | Push fails with descriptive error, no crash |
 | Empty `REPO_CACHE_ROOT` dir | `/repo list` → `no repos in cache` |
+| Machine has an unrelated cached credential (e.g. macOS Keychain) for the same git host | `/memory push`/`/repo update` still authenticate as the configured `MEMORY_GIT_TOKEN`/`GIT_TOKEN` identity, not the stale cached one (see FIXES.md [C17]) |

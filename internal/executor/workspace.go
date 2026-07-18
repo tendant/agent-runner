@@ -176,7 +176,7 @@ func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string
 			cleanURL := fmt.Sprintf("https://%s/%s/%s.git", gitHost, gitOrg, repo)
 			configureGitRemote(dst, repo, cleanURL)
 			if gitToken != "" {
-				configureCredHelper(dst)
+				ConfigureCredHelper(dst)
 			}
 		}
 
@@ -344,18 +344,39 @@ func fetchAndResetRepo(repoPath, repoName string) error {
 	return nil
 }
 
-// configureCredHelper sets a git credential helper on the repo that reads
+// ConfigureCredHelper sets a git credential helper on the repo that reads
 // GIT_TOKEN from the subprocess environment at auth time. The token is never
 // written to disk — only the shell expression that reads it is stored.
-func configureCredHelper(repoPath string) {
-	cmd := exec.Command("git", "config", "credential.helper",
-		`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`)
-	cmd.Dir = repoPath
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		slog.Warn("workspace: failed to configure credential helper",
-			"path", repoPath, "error", err, "stderr", strings.TrimSpace(stderr.String()))
+//
+// Appending a local credential.helper doesn't suppress a system or global
+// one (e.g. macOS osxkeychain, on by default on many machines) that already
+// has a cached credential for the same host — git tries helpers in file
+// order (system, global, local) and stops at the first full username+
+// password match, so a stale cached credential for an unrelated project on
+// the same host can silently win over GIT_TOKEN. Writing an empty
+// credential.helper value first resets that accumulated chain (a
+// git-documented idiom) so only the helper set here applies to this repo.
+func ConfigureCredHelper(repoPath string) {
+	runGitConfig := func(args ...string) error {
+		cmd := exec.Command("git", append([]string{"config"}, args...)...)
+		cmd.Dir = repoPath
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	}
+
+	// Ignore the error: exits non-zero when there's no prior value to unset.
+	_ = runGitConfig("--local", "--unset-all", "credential.helper")
+	if err := runGitConfig("--local", "--add", "credential.helper", ""); err != nil {
+		slog.Warn("workspace: failed to reset credential helper chain", "path", repoPath, "error", err)
+		return
+	}
+	if err := runGitConfig("--local", "--add", "credential.helper",
+		`!f() { echo username=oauth2; echo "password=$GIT_TOKEN"; }; f`); err != nil {
+		slog.Warn("workspace: failed to configure credential helper", "path", repoPath, "error", err)
 	}
 }
 

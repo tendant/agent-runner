@@ -32,12 +32,29 @@ type InitMemoryGitResult struct {
 // config. The helper echoes username and reads MEMORY_GIT_TOKEN from the
 // process environment at runtime, so the token itself is never stored.
 // user is baked into the script; re-call when MEMORY_GIT_USER changes.
+//
+// A plain `git config --local credential.helper <helper>` only appends —
+// it does not suppress a system or global credential.helper (e.g. macOS
+// osxkeychain, which many machines have on by default) that already holds a
+// cached credential for the same host. Git tries helpers in file order
+// (system, global, local) and stops at the first one that returns a full
+// username+password, so a stale cached credential for an unrelated project
+// on the same host can silently win over the token configured here — with
+// no error, just a wrong-identity auth failure (or worse, a wrong-identity
+// success). Writing an empty credential.helper value before the real one
+// resets that accumulated chain (a git-documented idiom), so only the
+// helper set here is used for this repo.
 func configureCredHelper(memoryDir, user string) error {
 	if user == "" {
 		user = "oauth2"
 	}
+	// Ignore the error: exits non-zero when there's no prior value to unset.
+	_ = gitRunEnv(memoryDir, nil, "config", "--local", "--unset-all", "credential.helper")
+	if err := gitRunEnv(memoryDir, nil, "config", "--local", "--add", "credential.helper", ""); err != nil {
+		return err
+	}
 	helper := fmt.Sprintf(`!f() { echo username=%s; echo "password=$MEMORY_GIT_TOKEN"; }; f`, user)
-	return gitRunEnv(memoryDir, nil, "config", "--local", "credential.helper", helper)
+	return gitRunEnv(memoryDir, nil, "config", "--local", "--add", "credential.helper", helper)
 }
 
 // InitMemoryGit initialises memoryDir as a git repository backed by remote.
