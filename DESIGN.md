@@ -80,23 +80,35 @@ Session states: `queued → running → stopping → completed/failed/stopped` (
 
 ---
 
-## Template-Based Prompt System
+## Memory & Prompt Composition
 
-Agent mode composes the system prompt from a template pipeline:
+Every session's prompt is composed from markdown files in the memory dir
+(`MEMORY_DIR`, default `DATA_DIR/memory`), in this order (`resolvePrompt`,
+internal/api/agent_executor.go; `Compile`, internal/template/compiler.go):
 
-1. **Embedded defaults** (`internal/template/defaults/*.md`) — Well-known templates (IDENTITY, SOUL, AGENTS, USER, TOOLS, BOOT, HEARTBEAT) with assigned priorities and read phases.
+1. **`agent.md`** — system instructions (identity, rules). Path overridable via `AGENT_SYSTEM_PROMPT`.
+2. **`prompt.md`** — workflow overlay, appended when present. Overridable via `AGENT_PROMPT_FILE`.
+3. **Well-known memory files**, each as a `## <Name>` section, in fixed order:
+   `user_preferences.md`, `project_summary.md`, `decisions.md`, `workflows.md`, `lessons.md`.
+4. **Other lowercase `.md` files** in the memory dir (excluding the above, `HEARTBEAT.md`, and date-prefixed daily logs).
+5. **`## Recent Sessions`** — the last `AGENT_MEMORY_DAYS` days of daily logs, newest first.
+6. **`## Current Request`** — the task message.
 
-2. **User overrides** (memory directory) — Any `.md` file in the memory dir is loaded and merged by filename. Files without frontmatter get `priority: 100` and `read_when: always`.
+Template variables (`{{MESSAGE}}`, `{{DATE}}`, `{{REPOS}}`, `{{RUNNER_URL}}`, `{{API_KEY}}`, `{{PROJECT_DIR}}`, `{{MEMORY_DIR}}`) are substituted in all sections except Recent Sessions (log text may contain literal braces).
 
-3. **Legacy prompt files** — `AGENT_SYSTEM_PROMPT` and `AGENT_PROMPT_FILE` are seeded into the memory directory at startup as `system-prompt.md` and `prompt.md` respectively, so they flow through the same pipeline.
+### Memory budget
 
-Template variables are substituted in all templates:
-- `{{MESSAGE}}` — the user's task message
-- `{{REPOS}}` — comma-separated list of shared repos
-- `{{DATE}}` — current date
-- `{{ITERATION}}` — current iteration number
+`AGENT_MEMORY_CHAR_CAP` (default 12000, 0 = unlimited) bounds the memory content injected per prompt — files on disk are never modified. Recent Sessions gets up to a quarter of the cap (whole days dropped oldest-first); the remainder goes to memory files via `ApplyBudget` (internal/template/budget.go): oversized misc files are truncated to a third of the cap with a marker pointing at the full file, then misc files are dropped last-loaded-first, then well-known files are truncated in reverse priority (user_preferences survives longest). Every trim logs a `memory budget` warning.
 
-The composed prompt is passed as the system prompt to Claude Code CLI. If no templates produce output, the user message is used directly.
+### Learning loop
+
+After every session (in order, inside the executor's completion defer):
+
+1. **Daily log append** — status, iterations, cost, task preview, reviewer score/issues, changed files, error → `memory/YYYY-MM-DD-<host>.md`. Append-only audit trail; folded back into prompts via Recent Sessions.
+2. **Curation** (opt-in: `AGENT_MEMORY_CURATION_ENABLED`, default false) — a cheap LLM call (uses the `ANALYZER_*` config) distills the session outcome into at most 2 durable lessons appended to `lessons.md`, and compacts allowlisted memory files that exceed their per-file budget. Safety rails (internal/curator): may only write `lessons.md` and rewrite the well-known files; rewrites only when over budget and only if strictly smaller; never touches `agent.md`, `prompt.md`, or daily logs; all failures are non-fatal (`AGENT_MEMORY_CURATION_TIMEOUT_SECONDS`, default 60, bounds the call).
+3. **Git push** — `CommitAndPushMemory` (3 retries) persists everything above in one commit; git history is the undo mechanism for curation.
+
+The agent also self-edits memory directly during sessions — the default `agent.md` instructs it to write preferences/decisions/summaries to the well-known files and workflow changes to `prompt.md`. Sessions are strictly serialized (one at a time), so memory writes never race.
 
 ---
 

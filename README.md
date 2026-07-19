@@ -104,6 +104,10 @@ Key variables:
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
 | `STREAM_SERVER_URL` | | Agent Stream server URL |
 
+### Memory & learning loop
+
+The agent evolves across sessions through markdown files in `MEMORY_DIR` (git-synced, human-editable). Each prompt is composed from `agent.md` + `prompt.md` + curated memory files (`user_preferences.md`, `decisions.md`, `lessons.md`, ...) + a **Recent Sessions** digest of the last `AGENT_MEMORY_DAYS` days of session logs, all bounded by `AGENT_MEMORY_CHAR_CAP`. The agent writes to its own memory files during sessions; after each session the runner appends an outcome log (including reviewer findings), and — with `AGENT_MEMORY_CURATION_ENABLED=true` — a cheap LLM pass distills durable lessons into `lessons.md` and compacts files that outgrow their budget. See DESIGN.md ("Memory & Prompt Composition") for the full pipeline and safety rails.
+
 ## Connecting to Agent Stream
 
 [Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. It lets you send messages, receive streaming responses, and get file attachments back from the agent.
