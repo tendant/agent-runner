@@ -35,14 +35,14 @@ Make sure `~/bin` (or wherever opencode is installed) is on your `$PATH`.
 go build -ldflags "-X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o agent-runner ./cmd/server
 cp .env.example .env   # set at minimum an API key (see below)
 ./agent-runner
+curl -X POST http://localhost:8080/bootstrap   # installs the CLI if missing, seeds default prompts, reports readiness
 ```
 
 **Minimum config — opencode + DeepSeek** (default, recommended):
 ```bash
 DEEPSEEK_API_KEY=sk-...
-AGENT_MODEL=deepseek-v4-flash
-AGENT_REASONING_MODEL=deepseek-v4-pro
 ```
+(opencode is the default `AGENT_CLI`, and already defaults to `deepseek-v4-flash`/`deepseek-v4-pro` — only set `AGENT_MODEL`/`AGENT_REASONING_MODEL` if you want different models.)
 
 **Minimum config — Claude Code** (if already installed and `claude login` done):
 ```bash
@@ -68,8 +68,6 @@ docker run -d \
   -v agent-data:/data \
   -e DATA_DIR=/data \
   -e DEEPSEEK_API_KEY=sk-... \
-  -e AGENT_MODEL=deepseek-v4-flash \
-  -e AGENT_REASONING_MODEL=deepseek-v4-pro \
   -p 8080:8080 \
   agent-runner
 ```
