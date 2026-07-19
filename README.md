@@ -82,7 +82,7 @@ Pass additional env vars (or bind-mount a `.env` file) for full configuration â€
 
 ## Configuration
 
-All configuration is via environment variables (or `.env` file). See `.env.example` for the full list.
+All configuration is via environment variables (or `.env` file). `.env.example` is the full reference (grouped by category, with every var's default); the table below covers the ones most people touch first.
 
 Key variables:
 
@@ -90,6 +90,8 @@ Key variables:
 |----------|---------|-------------|
 | `API_BIND` | `127.0.0.1:8080` | API listen address |
 | `API_KEY` | | Authentication key (optional) |
+| `DATA_DIR` | CWD | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
+| `INSTANCE` | | Instance name â€” loads `.env.<instance>`, scopes the default `DATA_DIR` |
 | `AGENT_CLI` | `opencode` | Agent CLI backend (`opencode`, `claude`, or `codex`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
 | `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
@@ -97,6 +99,8 @@ Key variables:
 | `AGENT_SKILLS_DIR` | | Directory of agent skills pre-populated in every workspace |
 | `AGENT_PLANNER_ENABLED` | `true` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
+| `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
+| `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
 | `STREAM_SERVER_URL` | | Agent Stream server URL |
 
