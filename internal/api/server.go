@@ -106,6 +106,19 @@ func NewServer(cfg *config.Config) *Server {
 	}, exec)
 	handlers.SetPlannerClient(plannerClient)
 
+	// Post-session memory curation uses the analyzer's cheap-model config.
+	if cfg.Agent.MemoryCurationEnabled {
+		curatorClient := llm.NewClient(llm.Config{
+			Provider:  cfg.Analyzer.Provider,
+			Model:     cfg.Analyzer.Model,
+			APIKey:    cfg.Analyzer.APIKey,
+			BaseURL:   cfg.Analyzer.BaseURL,
+			MaxTokens: 4096,
+		}, exec)
+		handlers.SetCuratorClient(curatorClient)
+		slog.Info("memory curation enabled", "timeout_seconds", cfg.Agent.MemoryCurationTimeoutSeconds)
+	}
+
 	// Create conversation components for Telegram bot
 	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	llmClient := llm.NewClient(llm.Config{

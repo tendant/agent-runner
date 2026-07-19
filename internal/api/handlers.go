@@ -61,6 +61,7 @@ type Handlers struct {
 	execMu           sync.RWMutex
 	executor         executor.Executor
 	plannerClient    llm.Client             // direct LLM API for fast planning (tier 2)
+	curatorClient    llm.Client             // cheap LLM for post-session memory curation; nil = curation disabled
 	analyzer         *conversation.Analyzer // intent router for POST /agent (ask/plan/execute); nil = always execute
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
@@ -103,6 +104,11 @@ func (h *Handlers) SetNotifier(n Notifier) {
 // SetPlannerClient sets the direct LLM client used for fast planning (tier 2).
 func (h *Handlers) SetPlannerClient(c llm.Client) {
 	h.plannerClient = c
+}
+
+// SetCuratorClient sets the LLM client for post-session memory curation.
+func (h *Handlers) SetCuratorClient(c llm.Client) {
+	h.curatorClient = c
 }
 
 // SetAnalyzer sets the conversation analyzer used to route POST /agent

@@ -36,6 +36,7 @@ Write important information directly to memory files:
 - {{MEMORY_DIR}}/user_preferences.md — user name, role, preferences
 - {{MEMORY_DIR}}/project_summary.md  — project goals, tech stack, status
 - {{MEMORY_DIR}}/decisions.md        — key decisions and rationale
+- {{MEMORY_DIR}}/lessons.md          — curated automatically after each session; you may append but should not rewrite it
 
 To update your workflow instructions for future sessions, write to {{MEMORY_DIR}}/prompt.md.
 

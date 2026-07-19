@@ -18,6 +18,7 @@ var wellKnownFiles = []struct {
 	{"project_summary.md", "Project Summary"},
 	{"decisions.md", "Decisions"},
 	{"workflows.md", "Workflows"},
+	{"lessons.md", "Lessons"},
 }
 
 // datePrefix matches YYYY-MM-DD at the start of a filename stem.

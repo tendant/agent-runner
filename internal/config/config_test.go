@@ -397,6 +397,35 @@ func TestLoadFromEnv_BoolParsing(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnv_MemoryCurationDefaults(t *testing.T) {
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.MemoryCurationEnabled {
+		t.Error("expected curation disabled by default")
+	}
+	if cfg.Agent.MemoryCurationTimeoutSeconds != 60 {
+		t.Errorf("expected default curation timeout 60, got %d", cfg.Agent.MemoryCurationTimeoutSeconds)
+	}
+}
+
+func TestLoadFromEnv_MemoryCurationOverrides(t *testing.T) {
+	t.Setenv("AGENT_MEMORY_CURATION_ENABLED", "true")
+	t.Setenv("AGENT_MEMORY_CURATION_TIMEOUT_SECONDS", "120")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Agent.MemoryCurationEnabled {
+		t.Error("expected curation enabled")
+	}
+	if cfg.Agent.MemoryCurationTimeoutSeconds != 120 {
+		t.Errorf("expected curation timeout 120, got %d", cfg.Agent.MemoryCurationTimeoutSeconds)
+	}
+}
+
 func TestLoadFromEnv_TelegramConfig(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF")
 	t.Setenv("TELEGRAM_CHAT_ID", "-1001234567890")

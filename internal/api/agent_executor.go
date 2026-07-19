@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/curator"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/logging"
@@ -246,6 +247,17 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
 			time.Now().Format("15:04"), snap.Status, snap.SuccessfulIterations, snap.TotalCostUSD))
 		logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
+		if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
+			reviewLine := fmt.Sprintf("**Review:** score %d/10", rr.Score)
+			if len(rr.Issues) > 0 {
+				issues := strings.Join(rr.Issues, "; ")
+				if len(issues) > 200 {
+					issues = issues[:200] + "..."
+				}
+				reviewLine += " — issues: " + issues
+			}
+			logLines = append(logLines, reviewLine)
+		}
 		if len(changedFiles) > 0 {
 			logLines = append(logLines, fmt.Sprintf("**Files:** %s", strings.Join(changedFiles, ", ")))
 		}
@@ -260,6 +272,37 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 			liveSession.AddWarning("daily log failed: " + err.Error())
+		}
+
+		// Post-session memory curation — before the push below so its output
+		// rides the same commit. Fresh context: the session ctx may already be
+		// canceled (stop/shutdown). Non-fatal; skipped for user-stopped
+		// sessions (nothing durable to learn from an aborted run).
+		if h.config.Agent.MemoryCurationEnabled && h.curatorClient != nil && snap.Status != agent.SessionStatusStopped {
+			curIn := curator.Input{
+				TaskPreview:  msgPreview,
+				Status:       string(snap.Status),
+				Error:        snap.Error,
+				ChangedFiles: changedFiles,
+			}
+			if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
+				curIn.HasReview = true
+				curIn.ReviewScore = rr.Score
+				curIn.ReviewIssues = rr.Issues
+				curIn.ReviewSuggestions = rr.Suggestions
+			}
+			cur := curator.New(h.curatorClient, curator.Config{
+				MemoryDir: h.config.MemoryDir,
+				CharCap:   h.config.Agent.MemoryCharCap,
+				Timeout:   time.Duration(h.config.Agent.MemoryCurationTimeoutSeconds) * time.Second,
+			})
+			if curSummary, err := cur.Curate(context.Background(), curIn); err != nil {
+				slog.Warn("memory curation failed (non-fatal)", "session_id", sessionID, "error", err)
+				liveSession.AddWarning("memory curation failed: " + err.Error())
+			} else if curSummary.LessonAppended || len(curSummary.FilesCompacted) > 0 {
+				slog.Info("memory curated", "session_id", sessionID,
+					"lesson_appended", curSummary.LessonAppended, "compacted", strings.Join(curSummary.FilesCompacted, ", "))
+			}
 		}
 
 		// [H5] Retry memory push up to 3 times to survive transient network errors.
