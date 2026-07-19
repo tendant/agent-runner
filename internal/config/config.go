@@ -313,6 +313,23 @@ func LoadFromEnv() (*Config, error) {
 		}
 	}
 
+	// MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY are separate credentials for the
+	// memory repo (it may live on a different host than project repos), but
+	// most setups use the same git host for both — fall back to GIT_TOKEN/
+	// GIT_SSH_KEY so a single-host setup doesn't need to configure git
+	// credentials twice. Set MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY explicitly
+	// to use different credentials for the memory repo.
+	if os.Getenv("MEMORY_GIT_TOKEN") == "" && cfg.GitToken != "" {
+		if err := os.Setenv("MEMORY_GIT_TOKEN", cfg.GitToken); err != nil {
+			slog.Warn("config: failed to set MEMORY_GIT_TOKEN", "error", err)
+		}
+	}
+	if os.Getenv("MEMORY_GIT_SSH_KEY") == "" && cfg.GitSSHKey != "" {
+		if err := os.Setenv("MEMORY_GIT_SSH_KEY", cfg.GitSSHKey); err != nil {
+			slog.Warn("config: failed to set MEMORY_GIT_SSH_KEY", "error", err)
+		}
+	}
+
 	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)
 	cfg.Validation.BlockedPaths = envSliceOrDefault("VALIDATION_BLOCKED_PATHS", cfg.Validation.BlockedPaths)
 
