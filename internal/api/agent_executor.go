@@ -263,11 +263,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		}
 
 		// [H5] Retry memory push up to 3 times to survive transient network errors.
-		memoryCreds := tmpl.MemoryGitCreds{
-			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-			User:   os.Getenv("MEMORY_GIT_USER"),
-			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-		}
+		memoryCreds := tmpl.MemoryGitCredsFromEnv()
 		var pushErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			if attempt > 0 {
@@ -296,11 +292,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 	// Auto-pull memory from git before resolving prompt (optional)
 	if h.config.Agent.MemoryPullOnStart {
-		creds := tmpl.MemoryGitCreds{
-			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-			User:   os.Getenv("MEMORY_GIT_USER"),
-			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-		}
+		creds := tmpl.MemoryGitCredsFromEnv()
 		if _, err := tmpl.PullMemory(h.config.MemoryDir, creds); err != nil {
 			slog.Warn("auto-pull memory failed (non-fatal)", "session_id", sessionID, "error", err)
 		} else {

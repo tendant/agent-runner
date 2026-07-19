@@ -20,6 +20,17 @@ type MemoryGitCreds struct {
 	SSHKey string // MEMORY_GIT_SSH_KEY — path to private key; sets GIT_SSH_COMMAND
 }
 
+// MemoryGitCredsFromEnv reads MemoryGitCreds from the process environment.
+// config.LoadFromEnv seeds MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY from
+// GIT_TOKEN/GIT_SSH_KEY when unset, so this reflects that fallback too.
+func MemoryGitCredsFromEnv() MemoryGitCreds {
+	return MemoryGitCreds{
+		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
+		User:   os.Getenv("MEMORY_GIT_USER"),
+		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
+	}
+}
+
 // InitMemoryGitResult describes what InitMemoryGit did.
 type InitMemoryGitResult struct {
 	Initialised   bool   // git init was run (new repo)

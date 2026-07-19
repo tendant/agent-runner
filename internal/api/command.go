@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -694,11 +695,7 @@ func (c *Commander) handleMigrate() (reply, sessionID string) {
 
 	// Pull memory from git first so old files are present before scanning.
 	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
-		creds := tmpl.MemoryGitCreds{
-			User:   os.Getenv("MEMORY_GIT_USER"),
-			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-		}
+		creds := tmpl.MemoryGitCredsFromEnv()
 		if _, err := tmpl.PullMemory(memDir, creds); err != nil {
 			slog.Warn("memory pull before migrate failed (non-fatal)", "error", err)
 		}
@@ -763,11 +760,7 @@ func (c *Commander) handleMigrate() (reply, sessionID string) {
 
 	// Push migrated files to git if configured.
 	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
-		creds := tmpl.MemoryGitCreds{
-			User:   os.Getenv("MEMORY_GIT_USER"),
-			Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-			SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-		}
+		creds := tmpl.MemoryGitCredsFromEnv()
 		if err := tmpl.CommitAndPushMemory(memDir, creds); err != nil {
 			errs = append(errs, "git push: "+err.Error())
 		}
@@ -953,11 +946,7 @@ func (c *Commander) handleMemory(arg string) string {
 
 // handleMemoryPull fetches from origin and rebases local commits on top.
 func (c *Commander) handleMemoryPull() string {
-	creds := tmpl.MemoryGitCreds{
-		User:   os.Getenv("MEMORY_GIT_USER"),
-		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-	}
+	creds := tmpl.MemoryGitCredsFromEnv()
 	remote, err := tmpl.PullMemory(c.cfg.MemoryDir, creds)
 	if err != nil {
 		return "error: " + err.Error()
@@ -970,11 +959,7 @@ func (c *Commander) handleMemoryPush() string {
 	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); os.IsNotExist(err) {
 		return "error: memory dir is not a git repo — run /memory git <remote-url> first"
 	}
-	creds := tmpl.MemoryGitCreds{
-		User:   os.Getenv("MEMORY_GIT_USER"),
-		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-	}
+	creds := tmpl.MemoryGitCredsFromEnv()
 	if err := tmpl.CommitAndPushMemory(c.cfg.MemoryDir, creds); err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}
@@ -993,11 +978,7 @@ func (c *Commander) handleMemoryGit(remote string) string {
 	if remote == "" {
 		return "error: usage: /memory git <remote-url>"
 	}
-	creds := tmpl.MemoryGitCreds{
-		User:   os.Getenv("MEMORY_GIT_USER"),
-		Token:  os.Getenv("MEMORY_GIT_TOKEN"),
-		SSHKey: os.Getenv("MEMORY_GIT_SSH_KEY"),
-	}
+	creds := tmpl.MemoryGitCredsFromEnv()
 	res, err := tmpl.InitMemoryGit(c.cfg.MemoryDir, remote, creds)
 	if err != nil {
 		return "error: " + err.Error()
@@ -1164,15 +1145,8 @@ func (c *Commander) handleRepoAdd(url string) string {
 
 	// Auto-append to AGENT_SHARED_REPOS so the repo is available to agents.
 	shared := c.cfg.Agent.SharedRepos
-	alreadyShared := false
-	for _, r := range shared {
-		if r == name {
-			alreadyShared = true
-			break
-		}
-	}
 	sharedNote := ""
-	if !alreadyShared {
+	if !slices.Contains(shared, name) {
 		shared = append(shared, name)
 		newVal := strings.Join(shared, ",")
 		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {

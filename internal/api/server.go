@@ -100,8 +100,8 @@ func NewServer(cfg *config.Config) *Server {
 	plannerClient := llm.NewClient(llm.Config{
 		Provider:  cfg.Agent.Provider,
 		Model:     cfg.Agent.Model,
-		APIKey:    cfg.Agent.APIKey,
-		BaseURL:   cfg.Agent.BaseURL,
+		APIKey:    cfg.Agent.PlannerAPIKey,
+		BaseURL:   cfg.Agent.PlannerBaseURL,
 		MaxTokens: 4096,
 	}, exec)
 	handlers.SetPlannerClient(plannerClient)

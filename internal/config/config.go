@@ -3,8 +3,10 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -93,8 +95,8 @@ type AgentConfig struct {
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
-	APIKey              string   // Optional: API key for the planner LLM (PLANNER_API_KEY)
-	BaseURL             string   // Optional: base URL override for the planner LLM (PLANNER_BASE_URL)
+	PlannerAPIKey       string   // Optional: API key for the planner LLM (PLANNER_API_KEY)
+	PlannerBaseURL      string   // Optional: base URL override for the planner LLM (PLANNER_BASE_URL)
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
@@ -243,9 +245,7 @@ func LoadFromEnv() (*Config, error) {
 	merged, _ := godotenv.Read(".env")
 	if instance != "" {
 		inst, _ := godotenv.Read(".env." + instance)
-		for k, v := range inst {
-			merged[k] = v
-		}
+		maps.Copy(merged, inst)
 	}
 
 	// Determine data dir: explicit DATA_DIR wins (checking real OS env first,
@@ -269,9 +269,7 @@ func LoadFromEnv() (*Config, error) {
 	envLocalPath = filepath.Join(dataDir, ".env.local")
 
 	local, _ := godotenv.Read(envLocalPath)
-	for k, v := range local {
-		merged[k] = v
-	}
+	maps.Copy(merged, local)
 	for k, v := range merged {
 		if os.Getenv(k) == "" {
 			if err := os.Setenv(k, v); err != nil {
@@ -369,9 +367,9 @@ func LoadFromEnv() (*Config, error) {
 	}
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
-	cfg.Agent.SkillsDir = os.Getenv("AGENT_SKILLS_DIR")
-	cfg.Agent.APIKey = envOrDefault("PLANNER_API_KEY", cfg.Agent.APIKey)
-	cfg.Agent.BaseURL = envOrDefault("PLANNER_BASE_URL", cfg.Agent.BaseURL)
+	cfg.Agent.SkillsDir = envOrDefault("AGENT_SKILLS_DIR", cfg.Agent.SkillsDir)
+	cfg.Agent.PlannerAPIKey = envOrDefault("PLANNER_API_KEY", cfg.Agent.PlannerAPIKey)
+	cfg.Agent.PlannerBaseURL = envOrDefault("PLANNER_BASE_URL", cfg.Agent.PlannerBaseURL)
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
@@ -452,12 +450,7 @@ func (c *Config) IsProjectAllowed(project string) bool {
 	if len(c.AllowedProjects) == 0 {
 		return true // No allowlist means all projects are allowed
 	}
-	for _, p := range c.AllowedProjects {
-		if p == project {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AllowedProjects, project)
 }
 
 func envOrDefault(key, fallback string) string {
