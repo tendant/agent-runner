@@ -378,7 +378,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
-	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "")
+	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c")
 	cfg.WeChat.StateDir = envOrDefault("WECHAT_STATE_DIR", cfg.TmpRoot)
 
 	cfg.Analyzer.Provider = envOrDefault("ANALYZER_PROVIDER", "")
