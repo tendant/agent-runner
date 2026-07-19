@@ -299,8 +299,8 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			if curSummary, err := cur.Curate(context.Background(), curIn); err != nil {
 				slog.Warn("memory curation failed (non-fatal)", "session_id", sessionID, "error", err)
 				liveSession.AddWarning("memory curation failed: " + err.Error())
-			} else if curSummary.LessonAppended || len(curSummary.FilesCompacted) > 0 {
-				slog.Info("memory curated", "session_id", sessionID,
+			} else {
+				slog.Info("memory curation completed", "session_id", sessionID,
 					"lesson_appended", curSummary.LessonAppended, "compacted", strings.Join(curSummary.FilesCompacted, ", "))
 			}
 		}
