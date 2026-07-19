@@ -738,9 +738,22 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		}
 	}
 
+	// Recent session history gets up to a quarter of the memory budget;
+	// curated memory files get the rest (plus whatever history didn't use).
+	memCap := h.config.Agent.MemoryCharCap
+	sessionBudget := 0
+	if memCap > 0 {
+		sessionBudget = memCap / 4
+	}
+	recentSessions := tmpl.RecentSessions(h.config.MemoryDir, h.config.Agent.MemoryDays, sessionBudget)
+	fileBudget := memCap
+	if memCap > 0 {
+		fileBudget = memCap - len(recentSessions)
+	}
+
 	// Retrieve memory sections, trimmed to the configured budget.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
-	retrieval, budgetWarnings := tmpl.ApplyBudget(retrieval, h.config.Agent.MemoryCharCap)
+	retrieval, budgetWarnings := tmpl.ApplyBudget(retrieval, fileBudget)
 	for _, w := range budgetWarnings {
 		slog.Warn("memory budget", "action", w)
 	}
@@ -770,6 +783,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 	input := tmpl.PromptInput{
 		SystemInstructions: systemInstructions,
 		Retrieval:          retrieval,
+		RecentSessions:     recentSessions,
 		CurrentRequest:     message,
 		Vars:               vars,
 	}

@@ -26,7 +26,8 @@ type Retrieval struct {
 type PromptInput struct {
 	SystemInstructions string
 	Retrieval          Retrieval
+	RecentSessions     string // pre-formatted daily-log digest (see RecentSessions); no var substitution
 	RecentMessages     []Message
 	CurrentRequest     string
-	Vars               map[string]string // {{KEY}} substituted in all text fields
+	Vars               map[string]string // {{KEY}} substituted in all text fields except RecentSessions
 }

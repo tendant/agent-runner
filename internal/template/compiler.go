@@ -18,6 +18,12 @@ func Compile(input PromptInput) string {
 		parts = append(parts, "## "+f.Name+"\n\n"+substituteVars(f.Content, input.Vars))
 	}
 
+	// Recent Sessions carries raw daily-log text (may contain literal {{...}}
+	// from task messages) — no var substitution.
+	if s := strings.TrimSpace(input.RecentSessions); s != "" {
+		parts = append(parts, "## Recent Sessions\n\n"+s)
+	}
+
 	if len(input.RecentMessages) > 0 {
 		parts = append(parts, "## Recent Conversation\n\n"+formatMessages(input.RecentMessages))
 	}
