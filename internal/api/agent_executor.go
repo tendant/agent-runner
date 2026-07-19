@@ -738,8 +738,12 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 		}
 	}
 
-	// Retrieve memory sections.
+	// Retrieve memory sections, trimmed to the configured budget.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
+	retrieval, budgetWarnings := tmpl.ApplyBudget(retrieval, h.config.Agent.MemoryCharCap)
+	for _, w := range budgetWarnings {
+		slog.Warn("memory budget", "action", w)
+	}
 	if len(retrieval.Files) > 0 {
 		names := make([]string, len(retrieval.Files))
 		for i, f := range retrieval.Files {

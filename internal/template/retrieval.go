@@ -50,7 +50,7 @@ func Retrieve(memoryDir string) Retrieval {
 		if content == "" {
 			continue
 		}
-		files = append(files, MemoryFile{Name: wk.displayName, Content: content})
+		files = append(files, MemoryFile{Name: wk.displayName, Filename: wk.filename, Content: content, WellKnown: true})
 	}
 
 	// 2. Scan for extra lowercase .md files.
@@ -102,7 +102,7 @@ func Retrieve(memoryDir string) Retrieval {
 		}
 
 		displayName := deriveDisplayName(stem)
-		files = append(files, MemoryFile{Name: displayName, Content: content})
+		files = append(files, MemoryFile{Name: displayName, Filename: name, Content: content})
 	}
 
 	return Retrieval{Files: files}
