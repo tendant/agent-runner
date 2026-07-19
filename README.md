@@ -93,6 +93,8 @@ Key variables:
 | `DATA_DIR` | CWD | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
 | `INSTANCE` | | Instance name — loads `.env.<instance>`, scopes the default `DATA_DIR` |
 | `AGENT_CLI` | `opencode` | Agent CLI backend (`opencode`, `claude`, or `codex`) |
+| `AGENT_MODEL` | `deepseek/deepseek-v4-flash` | Fast-tier model as `provider/model`; also feeds the analyzer/planner/curator |
+| `AGENT_REASONING_MODEL` | `deepseek/deepseek-v4-pro` | Model for real task iterations (defaults to `AGENT_MODEL`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
 | `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
 | `AGENT_SHARED_REPOS` | | Comma-separated repos pre-populated in every workspace |

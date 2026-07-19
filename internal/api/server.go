@@ -95,24 +95,25 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
-	// Level 2: direct LLM client for fast planning/response — uses AGENT_MODEL/AGENT_PROVIDER.
-	// Falls back to ExecutorClient when no API credentials are configured.
+	// The shared fast-LLM slot backs the planner (level 2 planning/response),
+	// the conversation analyzer, and the memory curator. All three fall back
+	// to ExecutorClient when no API credentials are configured.
+	fastProvider, fastModel, fastKey, fastBaseURL := cfg.FastLLM()
 	plannerClient := llm.NewClient(llm.Config{
-		Provider:  cfg.Agent.Provider,
-		Model:     cfg.Agent.Model,
-		APIKey:    cfg.Agent.PlannerAPIKey,
-		BaseURL:   cfg.Agent.PlannerBaseURL,
+		Provider:  fastProvider,
+		Model:     fastModel,
+		APIKey:    fastKey,
+		BaseURL:   fastBaseURL,
 		MaxTokens: 4096,
 	}, exec)
 	handlers.SetPlannerClient(plannerClient)
 
-	// Post-session memory curation uses the analyzer's cheap-model config.
 	if cfg.Agent.MemoryCurationEnabled {
 		curatorClient := llm.NewClient(llm.Config{
-			Provider:  cfg.Analyzer.Provider,
-			Model:     cfg.Analyzer.Model,
-			APIKey:    cfg.Analyzer.APIKey,
-			BaseURL:   cfg.Analyzer.BaseURL,
+			Provider:  fastProvider,
+			Model:     fastModel,
+			APIKey:    fastKey,
+			BaseURL:   fastBaseURL,
 			MaxTokens: 4096,
 		}, exec)
 		handlers.SetCuratorClient(curatorClient)
@@ -122,10 +123,10 @@ func NewServer(cfg *config.Config) *Server {
 	// Create conversation components for Telegram bot
 	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	llmClient := llm.NewClient(llm.Config{
-		Provider: cfg.Analyzer.Provider,
-		Model:    cfg.Analyzer.Model,
-		APIKey:   cfg.Analyzer.APIKey,
-		BaseURL:  cfg.Analyzer.BaseURL,
+		Provider: fastProvider,
+		Model:    fastModel,
+		APIKey:   fastKey,
+		BaseURL:  fastBaseURL,
 	}, exec)
 	analyzer := conversation.NewAnalyzer(llmClient)
 	if cfg.Analyzer.TimeoutSeconds > 0 {

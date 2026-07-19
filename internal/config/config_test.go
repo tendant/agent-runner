@@ -397,6 +397,71 @@ func TestLoadFromEnv_BoolParsing(t *testing.T) {
 	}
 }
 
+func TestLoad_CombinedProviderModel(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("AGENT_MODEL", "myprovider/model-name")
+	t.Setenv("AGENT_PROVIDER", "")
+	t.Setenv("AGENT_REASONING_MODEL", "openrouter/deepseek/deepseek-r1")
+	t.Setenv("AGENT_REASONING_PROVIDER", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.Provider != "myprovider" || cfg.Agent.Model != "model-name" {
+		t.Errorf("expected myprovider/model-name split, got %s / %s", cfg.Agent.Provider, cfg.Agent.Model)
+	}
+	// Multi-slash: first segment is the provider, rest stays as the model.
+	if cfg.Agent.ReasoningProvider != "openrouter" || cfg.Agent.ReasoningModel != "deepseek/deepseek-r1" {
+		t.Errorf("expected openrouter / deepseek/deepseek-r1, got %s / %s", cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel)
+	}
+}
+
+func TestLoad_ExplicitProviderDisablesSplit(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("AGENT_PROVIDER", "openrouter")
+	t.Setenv("AGENT_MODEL", "deepseek/deepseek-chat")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.Provider != "openrouter" || cfg.Agent.Model != "deepseek/deepseek-chat" {
+		t.Errorf("explicit provider must suppress splitting, got %s / %s", cfg.Agent.Provider, cfg.Agent.Model)
+	}
+}
+
+func TestFastLLM_DefaultsToAgentFastTier(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	provider, model, _, _ := cfg.FastLLM()
+	if provider != "deepseek" || model != "deepseek-v4-flash" {
+		t.Errorf("expected agent fast tier deepseek/deepseek-v4-flash, got %s / %s", provider, model)
+	}
+}
+
+func TestFastLLM_AnalyzerOverridesAndLegacyPlannerKey(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("ANALYZER_MODEL", "anthropic/claude-haiku-4-5-20251001")
+	t.Setenv("PLANNER_API_KEY", "legacy-key")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	provider, model, apiKey, _ := cfg.FastLLM()
+	if provider != "anthropic" || model != "claude-haiku-4-5-20251001" {
+		t.Errorf("expected analyzer pair (combined form) to win, got %s / %s", provider, model)
+	}
+	if apiKey != "legacy-key" {
+		t.Errorf("expected PLANNER_API_KEY fallback, got %q", apiKey)
+	}
+}
+
 func TestLoadFromEnv_MemoryCurationDefaults(t *testing.T) {
 	cfg, err := LoadFromEnv()
 	if err != nil {

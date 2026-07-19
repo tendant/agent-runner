@@ -364,6 +364,21 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
 	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
 	cfg.Agent.ReasoningModel = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.ReasoningModel)
+	// Combined "provider/model" form: when a model env var contains a slash
+	// and its provider var is not explicitly set, the first segment is the
+	// provider. This is the preferred way to pick a model — the separate
+	// *_PROVIDER vars remain supported for explicit control (and for models
+	// whose names themselves contain slashes under a separately-set provider).
+	if os.Getenv("AGENT_PROVIDER") == "" {
+		if p, m, ok := splitProviderModel(os.Getenv("AGENT_MODEL")); ok {
+			cfg.Agent.Provider, cfg.Agent.Model = p, m
+		}
+	}
+	if os.Getenv("AGENT_REASONING_PROVIDER") == "" {
+		if p, m, ok := splitProviderModel(os.Getenv("AGENT_REASONING_MODEL")); ok {
+			cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel = p, m
+		}
+	}
 	// ReasoningModel drives the actual CLI invocation (both real task
 	// iterations and the analyzer/planner fallback when no fast-LLM API
 	// credentials are configured — see internal/api/server.go's shared
@@ -410,6 +425,11 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.Analyzer.Provider = envOrDefault("ANALYZER_PROVIDER", "")
 	cfg.Analyzer.Model = envOrDefault("ANALYZER_MODEL", "")
+	if cfg.Analyzer.Provider == "" {
+		if p, m, ok := splitProviderModel(cfg.Analyzer.Model); ok {
+			cfg.Analyzer.Provider, cfg.Analyzer.Model = p, m
+		}
+	}
 	cfg.Analyzer.APIKey = envOrDefault("ANALYZER_API_KEY", "")
 	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
 	cfg.Analyzer.TimeoutSeconds = envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30)
@@ -455,6 +475,42 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("api.bind is required")
 	}
 	return nil
+}
+
+// splitProviderModel splits a combined "provider/model" string on the first
+// slash. ok is false when s contains no slash (a bare model name). Models
+// whose names themselves contain slashes work by prefixing the provider:
+// "openrouter/deepseek/deepseek-chat" → ("openrouter", "deepseek/deepseek-chat").
+func splitProviderModel(s string) (provider, model string, ok bool) {
+	i := strings.Index(s, "/")
+	if i <= 0 || i == len(s)-1 {
+		return "", "", false
+	}
+	return s[:i], s[i+1:], true
+}
+
+// FastLLM resolves the shared fast-LLM slot used by the planner, the
+// conversation analyzer, and the memory curator. Precedence: an explicit
+// ANALYZER_PROVIDER/ANALYZER_MODEL pair wins; otherwise the agent's fast
+// tier (AGENT_PROVIDER/AGENT_MODEL) is used, so all three consumers follow
+// the model the user already picked. ANALYZER_API_KEY/ANALYZER_BASE_URL
+// override credentials, with PLANNER_API_KEY/PLANNER_BASE_URL honored as
+// legacy fallbacks; when empty, llm.NewClient auto-detects from the
+// provider's own env key and finally falls back to the executor CLI.
+func (c *Config) FastLLM() (provider, model, apiKey, baseURL string) {
+	provider, model = c.Analyzer.Provider, c.Analyzer.Model
+	if provider == "" && model == "" {
+		provider, model = c.Agent.Provider, c.Agent.Model
+	}
+	apiKey = c.Analyzer.APIKey
+	if apiKey == "" {
+		apiKey = c.Agent.PlannerAPIKey
+	}
+	baseURL = c.Analyzer.BaseURL
+	if baseURL == "" {
+		baseURL = c.Agent.PlannerBaseURL
+	}
+	return provider, model, apiKey, baseURL
 }
 
 // IsProjectAllowed checks if a project is in the allowlist
