@@ -7,6 +7,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/runner"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
 // RunnerBridge adapts the runner.AgentExecutor interface to the existing
@@ -57,9 +58,7 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.Agen
 
 	sessionID := session.ID
 	msgPreview := payload.Message
-	if len(msgPreview) > 80 {
-		msgPreview = msgPreview[:80] + "..."
-	}
+	msgPreview = textutil.Truncate(msgPreview, 80)
 	slog.Info("runner bridge: executing agent task",
 		"session_id", sessionID, "message", msgPreview, "max_iterations", maxIter, "max_seconds", maxSeconds)
 

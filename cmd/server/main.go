@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -20,7 +20,8 @@ var buildTime = "unknown"
 func main() {
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	slog.Info("agent-runner starting", "built", buildTime)
@@ -85,7 +86,8 @@ func main() {
 			"db", cfg.Runner.DatabaseURL, "prefix", cfg.Runner.TypePrefix,
 			"lease_seconds", cfg.Runner.LeaseDuration, "poll_cap_seconds", cfg.Runner.PollCap)
 		if cfg.Runner.DatabaseURL == "" {
-			log.Fatalf("SCHEDULER_DATABASE_URL is required when SCHEDULER_ENABLED=true")
+			slog.Error("SCHEDULER_DATABASE_URL is required when SCHEDULER_ENABLED=true")
+			os.Exit(1)
 		}
 
 		bridge := api.NewRunnerBridge(server.Handlers())
@@ -100,7 +102,8 @@ func main() {
 			MemoryDir:         cfg.MemoryDir,
 		}, bridge)
 		if err != nil {
-			log.Fatalf("Failed to create scheduler: %v", err)
+			slog.Error("failed to create scheduler", "error", err)
+			os.Exit(1)
 		}
 		server.SetRunner(r)
 
@@ -121,6 +124,7 @@ func main() {
 	}
 
 	if err := server.Start(); err != nil {
-		log.Fatalf("Server error: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 	}
 }

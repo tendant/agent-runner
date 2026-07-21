@@ -8,8 +8,7 @@ import (
 
 // HeartbeatConfig holds configuration parsed from HEARTBEAT.md frontmatter.
 type HeartbeatConfig struct {
-	IntervalSeconds int    // interval_seconds from frontmatter (default: 300)
-	Prompt          string // body content of HEARTBEAT.md
+	IntervalSeconds int // interval_seconds from frontmatter (default: 300)
 }
 
 // ParseHeartbeatConfig extracts heartbeat configuration from a HEARTBEAT.md
@@ -32,10 +31,7 @@ func ParseHeartbeatConfig(memoryDir string) HeartbeatConfig {
 		return cfg
 	}
 
-	_, body := ParseFrontmatter(content)
-	cfg.Prompt = strings.TrimSpace(body)
 	cfg.IntervalSeconds = parseIntervalFromContent(content)
-
 	return cfg
 }
 

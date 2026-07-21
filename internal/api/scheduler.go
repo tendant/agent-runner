@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -199,27 +199,27 @@ const scheduleFileName = "_schedule.json"
 // collectScheduleEntries reads _schedule.json from the workspace directory.
 func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
 	path := filepath.Join(workspacePath, scheduleFileName)
-	log.Printf("scheduler: reading %s", path)
+	slog.Debug("scheduler: reading schedule file", "path", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("scheduler: no %s found at %s", scheduleFileName, path)
+			slog.Debug("scheduler: no schedule file", "path", path)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read %s: %w", scheduleFileName, err)
 	}
 
-	log.Printf("scheduler: found %s (%d bytes)", scheduleFileName, len(data))
+	slog.Info("scheduler: found schedule file", "file", scheduleFileName, "bytes", len(data))
 
 	var entries []ScheduleEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", scheduleFileName, err)
 	}
 
-	log.Printf("scheduler: parsed %d entries from %s", len(entries), scheduleFileName)
+	slog.Info("scheduler: parsed schedule entries", "count", len(entries))
 	for i, e := range entries {
-		log.Printf("scheduler: entry %d: message=%q cron=%q run_after=%q run_in_seconds=%d idempotency_key=%q",
-			i, e.Message, e.Cron, e.RunAfter, e.RunInSeconds, e.IdempotencyKey)
+		slog.Debug("scheduler: schedule entry", "index", i, "message", e.Message,
+			"cron", e.Cron, "run_after", e.RunAfter, "run_in_seconds", e.RunInSeconds, "idempotency_key", e.IdempotencyKey)
 	}
 
 	return entries, nil
@@ -228,11 +228,11 @@ func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
 // submitScheduleEntries submits each entry via simple-workflow client.
 func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, entries []ScheduleEntry, typePrefix string) error {
 	workflowType := typePrefix + "task.v1"
-	log.Printf("scheduler: submitting %d entries with workflow_type=%s", len(entries), workflowType)
+	slog.Info("scheduler: submitting entries", "count", len(entries), "workflow_type", workflowType)
 
 	for i, entry := range entries {
 		if entry.Message == "" {
-			log.Printf("scheduler: skipping entry %d: empty message", i)
+			slog.Warn("scheduler: skipping entry with empty message", "index", i)
 			continue
 		}
 
@@ -245,66 +245,66 @@ func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, e
 			if tz == "" {
 				tz = "UTC"
 			}
-			log.Printf("scheduler: creating cron schedule entry %d: cron=%q tz=%s message=%q", i, entry.Cron, tz, entry.Message)
+			slog.Info("scheduler: creating cron schedule", "index", i, "cron", entry.Cron, "tz", tz, "message", entry.Message)
 			schedID, err := client.Schedule(workflowType, payload).
 				Cron(entry.Cron).
 				InTimezone(tz).
 				Create(ctx)
 			if err != nil {
-				log.Printf("scheduler: failed to create cron schedule for entry %d: %v", i, err)
+				slog.Warn("scheduler: failed to create cron schedule", "index", i, "error", err)
 				continue
 			}
-			log.Printf("scheduler: created cron schedule %s (cron=%s tz=%s) for: %s", schedID, entry.Cron, tz, entry.Message)
+			slog.Info("scheduler: created cron schedule", "schedule_id", schedID, "cron", entry.Cron, "tz", tz, "message", entry.Message)
 
 		case entry.RunAfter != "":
 			// Absolute time one-shot
 			t, err := time.Parse(time.RFC3339, entry.RunAfter)
 			if err != nil {
-				log.Printf("scheduler: invalid run_after for entry %d: %v", i, err)
+				slog.Warn("scheduler: invalid run_after", "index", i, "error", err)
 				continue
 			}
-			log.Printf("scheduler: submitting run_after entry %d: at=%s (in %s) message=%q idem_key=%q",
-				i, entry.RunAfter, time.Until(t).Round(time.Second), entry.Message, entry.IdempotencyKey)
+			slog.Info("scheduler: submitting run_after entry", "index", i, "at", entry.RunAfter,
+				"in", time.Until(t).Round(time.Second).String(), "message", entry.Message, "idempotency_key", entry.IdempotencyKey)
 			builder := client.Submit(workflowType, payload).RunAfter(t)
 			if entry.IdempotencyKey != "" {
 				builder = builder.WithIdempotency(entry.IdempotencyKey)
 			}
 			runID, err := builder.Execute(ctx)
 			if err != nil {
-				log.Printf("scheduler: failed to submit run_after entry %d: %v", i, err)
+				slog.Warn("scheduler: failed to submit run_after entry", "index", i, "error", err)
 				continue
 			}
 			if runID == "" {
-				log.Printf("scheduler: run_after entry %d: skipped (idempotency conflict, already exists)", i)
+				slog.Info("scheduler: run_after entry skipped (idempotency conflict)", "index", i)
 			} else {
-				log.Printf("scheduler: submitted run_after task %s (at=%s) for: %s", runID, entry.RunAfter, entry.Message)
+				slog.Info("scheduler: submitted run_after task", "run_id", runID, "at", entry.RunAfter, "message", entry.Message)
 			}
 
 		case entry.RunInSeconds > 0:
 			// Relative delay one-shot
 			runAt := time.Now().Add(time.Duration(entry.RunInSeconds) * time.Second)
-			log.Printf("scheduler: submitting delayed entry %d: in=%ds (at ~%s) message=%q idem_key=%q",
-				i, entry.RunInSeconds, runAt.Format(time.RFC3339), entry.Message, entry.IdempotencyKey)
+			slog.Info("scheduler: submitting delayed entry", "index", i, "in_seconds", entry.RunInSeconds,
+				"at", runAt.Format(time.RFC3339), "message", entry.Message, "idempotency_key", entry.IdempotencyKey)
 			builder := client.Submit(workflowType, payload).RunIn(time.Duration(entry.RunInSeconds) * time.Second)
 			if entry.IdempotencyKey != "" {
 				builder = builder.WithIdempotency(entry.IdempotencyKey)
 			}
 			runID, err := builder.Execute(ctx)
 			if err != nil {
-				log.Printf("scheduler: failed to submit run_in_seconds entry %d: %v", i, err)
+				slog.Warn("scheduler: failed to submit delayed entry", "index", i, "error", err)
 				continue
 			}
 			if runID == "" {
-				log.Printf("scheduler: delayed entry %d: skipped (idempotency conflict, already exists)", i)
+				slog.Info("scheduler: delayed entry skipped (idempotency conflict)", "index", i)
 			} else {
-				log.Printf("scheduler: submitted delayed task %s (in=%ds) for: %s", runID, entry.RunInSeconds, entry.Message)
+				slog.Info("scheduler: submitted delayed task", "run_id", runID, "in_seconds", entry.RunInSeconds, "message", entry.Message)
 			}
 
 		default:
-			log.Printf("scheduler: skipping entry %d: no scheduling mode set (need run_after, run_in_seconds, or cron)", i)
+			slog.Warn("scheduler: skipping entry with no scheduling mode (need run_after, run_in_seconds, or cron)", "index", i)
 		}
 	}
 
-	log.Printf("scheduler: finished submitting %d entries", len(entries))
+	slog.Info("scheduler: finished submitting entries", "count", len(entries))
 	return nil
 }

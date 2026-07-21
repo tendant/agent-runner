@@ -3,7 +3,6 @@ package template
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -12,17 +11,12 @@ func TestParseHeartbeatConfig_Defaults(t *testing.T) {
 	if cfg.IntervalSeconds != 300 {
 		t.Errorf("interval = %d, want 300", cfg.IntervalSeconds)
 	}
-	if cfg.Prompt == "" {
-		t.Error("should have default prompt from embedded template")
-	}
 }
 
 func TestParseHeartbeatConfig_UserOverride(t *testing.T) {
 	dir := t.TempDir()
 	content := `---
 title: Custom Heartbeat
-read_when: heartbeat
-priority: 90
 interval_seconds: 120
 ---
 
@@ -32,9 +26,6 @@ Give a short status update.`
 	cfg := ParseHeartbeatConfig(dir)
 	if cfg.IntervalSeconds != 120 {
 		t.Errorf("interval = %d, want 120", cfg.IntervalSeconds)
-	}
-	if !strings.Contains(cfg.Prompt, "short status update") {
-		t.Errorf("prompt = %q", cfg.Prompt)
 	}
 }
 

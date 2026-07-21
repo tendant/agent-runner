@@ -1,14 +1,5 @@
 package template
 
-import "time"
-
-// Message is a single conversation turn.
-type Message struct {
-	Role    string // "user" or "assistant"
-	Content string
-	Time    time.Time
-}
-
 // MemoryFile is a named memory section loaded during retrieval.
 type MemoryFile struct {
 	Name      string
@@ -27,7 +18,6 @@ type PromptInput struct {
 	SystemInstructions string
 	Retrieval          Retrieval
 	RecentSessions     string // pre-formatted daily-log digest (see RecentSessions); no var substitution
-	RecentMessages     []Message
 	CurrentRequest     string
 	Vars               map[string]string // {{KEY}} substituted in all text fields except RecentSessions
 }

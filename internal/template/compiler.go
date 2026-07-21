@@ -24,21 +24,9 @@ func Compile(input PromptInput) string {
 		parts = append(parts, "## Recent Sessions\n\n"+s)
 	}
 
-	if len(input.RecentMessages) > 0 {
-		parts = append(parts, "## Recent Conversation\n\n"+formatMessages(input.RecentMessages))
-	}
-
 	if req := substituteVars(input.CurrentRequest, input.Vars); req != "" {
 		parts = append(parts, "## Current Request\n\n"+req)
 	}
 
 	return strings.Join(parts, "\n\n")
-}
-
-func formatMessages(msgs []Message) string {
-	var lines []string
-	for _, m := range msgs {
-		lines = append(lines, strings.ToUpper(m.Role)+": "+m.Content)
-	}
-	return strings.Join(lines, "\n")
 }

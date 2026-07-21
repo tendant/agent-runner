@@ -21,6 +21,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
 const (
@@ -230,9 +231,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 		// Write daily memory log with rich session details
 		msgPreview := message
-		if len(msgPreview) > 80 {
-			msgPreview = msgPreview[:80] + "..."
-		}
+		msgPreview = textutil.Truncate(msgPreview, 80)
 		var changedFiles []string
 		seen := make(map[string]bool)
 		for _, iter := range snap.Iterations {
@@ -251,9 +250,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 			reviewLine := fmt.Sprintf("**Review:** score %d/10", rr.Score)
 			if len(rr.Issues) > 0 {
 				issues := strings.Join(rr.Issues, "; ")
-				if len(issues) > 200 {
-					issues = issues[:200] + "..."
-				}
+				issues = textutil.Truncate(issues, 200)
 				reviewLine += " — issues: " + issues
 			}
 			logLines = append(logLines, reviewLine)
@@ -263,9 +260,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		}
 		if snap.Error != "" {
 			errPreview := snap.Error
-			if len(errPreview) > 120 {
-				errPreview = errPreview[:120] + "..."
-			}
+			errPreview = textutil.Truncate(errPreview, 120)
 			logLines = append(logLines, fmt.Sprintf("**Error:** %s", errPreview))
 		}
 		dailyEntry := strings.Join(logLines, "\n")
@@ -1018,9 +1013,7 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 	}
 
 	preview := snap.Message
-	if len(preview) > 80 {
-		preview = preview[:80] + "..."
-	}
+	preview = textutil.Truncate(preview, 80)
 
 	var msg string
 	switch snap.Status {
@@ -1033,9 +1026,7 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 		}
 	case agent.SessionStatusFailed:
 		errPreview := snap.Error
-		if len(errPreview) > 120 {
-			errPreview = errPreview[:120] + "..."
-		}
+		errPreview = textutil.Truncate(errPreview, 120)
 		if output := lastAgentOutput(snap); output != "" {
 			msg = fmt.Sprintf("%s\n\n---\nAgent failed — %s", output, errPreview)
 		} else {

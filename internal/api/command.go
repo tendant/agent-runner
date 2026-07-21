@@ -19,6 +19,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
 const (
@@ -94,7 +95,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		"/sessions":      "usage: /sessions",
 		"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
 		"/bootstrap":     "usage: /bootstrap [force]",
-		"/migrate":       "usage: /migrate",
 		"/install-cli":   "usage: /install-cli [claude|codex|opencode] [force]",
 		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
@@ -120,9 +120,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
 		return r(c.handleBootstrap(force))
-	case lower == "/migrate":
-		reply, sid := c.handleMigrate()
-		return reply, sid, true
 	case lower == "/install-cli" || strings.HasPrefix(lower, "/install-cli "):
 		arg := strings.TrimSpace(text[len("/install-cli"):])
 		force := strings.Contains(strings.ToLower(arg), "force")
@@ -268,9 +265,7 @@ func (c *Commander) handleStatus() string {
 	} else {
 		for _, s := range running {
 			preview := s.Message
-			if len(preview) > 60 {
-				preview = preview[:60] + "..."
-			}
+			preview = textutil.Truncate(preview, 60)
 			fmt.Fprintf(&b, "**agent:** %s — %q [iter %d/%d]\n",
 				s.Status, preview, s.CurrentIteration, s.MaxIterations)
 		}
@@ -281,9 +276,7 @@ func (c *Commander) handleStatus() string {
 	if last := c.handlers.agentManager.LastCompletedSession(); last != nil {
 		ago := time.Since(*last.CompletedAt).Round(time.Second)
 		preview := last.Message
-		if len(preview) > 50 {
-			preview = preview[:50] + "..."
-		}
+		preview = textutil.Truncate(preview, 50)
 		switch last.Status {
 		case agent.SessionStatusCompleted:
 			fmt.Fprintf(&b, "**last:** completed ✓ %s ago — %q\n", ago, preview)
@@ -295,9 +288,7 @@ func (c *Commander) handleStatus() string {
 			fmt.Fprintf(&b, "**last:** stopped ⏹ %s ago — %s\n", ago, reason)
 		default:
 			errMsg := last.Error
-			if len(errMsg) > 60 {
-				errMsg = errMsg[:60] + "..."
-			}
+			errMsg = textutil.Truncate(errMsg, 60)
 			fmt.Fprintf(&b, "**last:** failed ✗ %s ago — %s\n", ago, errMsg)
 		}
 	}
@@ -347,9 +338,7 @@ func (c *Commander) handleSessions() string {
 	b.WriteString("**Sessions**\n\n")
 	for _, s := range sessions {
 		preview := s.Message
-		if len(preview) > 50 {
-			preview = preview[:50] + "..."
-		}
+		preview = textutil.Truncate(preview, 50)
 		switch s.Status {
 		case agent.SessionStatusRunning, agent.SessionStatusStopping:
 			fmt.Fprintf(&b, "🔵 `%s` — %s [iter %d/%d] %q\n",
@@ -420,9 +409,7 @@ func (c *Commander) handleLogs(arg string) string {
 	b.WriteString("**Recent Agent Logs**\n\n")
 	for _, s := range summaries {
 		preview := s.Message
-		if len(preview) > 60 {
-			preview = preview[:60] + "..."
-		}
+		preview = textutil.Truncate(preview, 60)
 		sid := s.SessionID
 		if len(sid) > 8 {
 			sid = sid[:8]
@@ -450,9 +437,7 @@ func (c *Commander) handleLogs(arg string) string {
 		}
 		if s.Error != "" {
 			errSnip := s.Error
-			if len(errSnip) > 80 {
-				errSnip = errSnip[:80] + "..."
-			}
+			errSnip = textutil.Truncate(errSnip, 80)
 			fmt.Fprintf(&b, "  error: %s\n", errSnip)
 		}
 		b.WriteString("\n")
@@ -675,158 +660,6 @@ func (c *Commander) handleBootstrap(force bool) string {
 		b.WriteString("ready=false")
 	}
 	return b.String()
-}
-
-// migrateFiles are old template-system files that should be migrated to the new format.
-var migrateFiles = []string{"MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"}
-
-// memorySectionTargets maps MEMORY.md section headers to target filenames.
-var memorySectionTargets = map[string]string{
-	"User Preferences":   "user_preferences.md",
-	"Project Context":    "project_summary.md",
-	"Lessons Learned":    "decisions.md",
-	"Recurring Patterns": "workflows.md",
-}
-
-// handleMigrate migrates old memory files to the new per-topic format in Go.
-// Returns a human-readable reply and an empty session ID (runs synchronously).
-func (c *Commander) handleMigrate() (reply, sessionID string) {
-	memDir := c.cfg.MemoryDir
-
-	// Pull memory from git first so old files are present before scanning.
-	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
-		creds := tmpl.MemoryGitCredsFromEnv()
-		if _, err := tmpl.PullMemory(memDir, creds); err != nil {
-			slog.Warn("memory pull before migrate failed (non-fatal)", "error", err)
-		}
-	}
-
-	var migrated []string
-	var errs []string
-
-	// MEMORY.md → split by ## section headers
-	if data, err := os.ReadFile(filepath.Join(memDir, "MEMORY.md")); err == nil {
-		sections := splitMemorySections(string(data))
-		wrote := false
-		for header, content := range sections {
-			target, ok := memorySectionTargets[header]
-			if !ok || strings.TrimSpace(content) == "" {
-				continue
-			}
-			if err := appendToMemoryFile(memDir, target, content); err != nil {
-				errs = append(errs, "MEMORY.md/"+header+": "+err.Error())
-			} else {
-				wrote = true
-			}
-		}
-		if wrote {
-			os.Rename(filepath.Join(memDir, "MEMORY.md"), filepath.Join(memDir, "MEMORY.md.migrated"))
-			migrated = append(migrated, "MEMORY.md")
-		}
-	}
-
-	// USER.md → user_preferences.md
-	if data, err := os.ReadFile(filepath.Join(memDir, "USER.md")); err == nil {
-		if content := strings.TrimSpace(string(data)); content != "" && !isTemplatePlaceholder(content) {
-			if err := appendToMemoryFile(memDir, "user_preferences.md", content); err != nil {
-				errs = append(errs, "USER.md: "+err.Error())
-			} else {
-				os.Rename(filepath.Join(memDir, "USER.md"), filepath.Join(memDir, "USER.md.migrated"))
-				migrated = append(migrated, "USER.md")
-			}
-		}
-	}
-
-	// IDENTITY.md + SOUL.md → agent.md (only if agent.md already exists)
-	agentMDPath := filepath.Join(memDir, "agent.md")
-	if _, err := os.Stat(agentMDPath); err == nil {
-		for _, name := range []string{"IDENTITY.md", "SOUL.md"} {
-			if data, err := os.ReadFile(filepath.Join(memDir, name)); err == nil {
-				if content := strings.TrimSpace(string(data)); content != "" && !isTemplatePlaceholder(content) {
-					if err := appendToMemoryFile(memDir, "agent.md", content); err != nil {
-						errs = append(errs, name+": "+err.Error())
-					} else {
-						os.Rename(filepath.Join(memDir, name), filepath.Join(memDir, name+".migrated"))
-						migrated = append(migrated, name)
-					}
-				}
-			}
-		}
-	}
-
-	if len(migrated) == 0 && len(errs) == 0 {
-		return "nothing to migrate: no old memory files found", ""
-	}
-
-	// Push migrated files to git if configured.
-	if _, err := os.Stat(filepath.Join(memDir, ".git")); err == nil {
-		creds := tmpl.MemoryGitCredsFromEnv()
-		if err := tmpl.CommitAndPushMemory(memDir, creds); err != nil {
-			errs = append(errs, "git push: "+err.Error())
-		}
-	}
-
-	var b strings.Builder
-	if len(migrated) > 0 {
-		b.WriteString("migrated: " + strings.Join(migrated, ", "))
-	}
-	if len(errs) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\nerrors: ")
-		} else {
-			b.WriteString("errors: ")
-		}
-		b.WriteString(strings.Join(errs, "; "))
-	}
-	return b.String(), ""
-}
-
-// splitMemorySections parses MEMORY.md content into a map of section header → body text.
-func splitMemorySections(content string) map[string]string {
-	sections := map[string]string{}
-	var currentHeader string
-	var currentLines []string
-
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "## ") {
-			if currentHeader != "" {
-				sections[currentHeader] = strings.TrimSpace(strings.Join(currentLines, "\n"))
-			}
-			currentHeader = strings.TrimSpace(line[3:])
-			currentLines = nil
-		} else {
-			currentLines = append(currentLines, line)
-		}
-	}
-	if currentHeader != "" {
-		sections[currentHeader] = strings.TrimSpace(strings.Join(currentLines, "\n"))
-	}
-	return sections
-}
-
-// appendToMemoryFile appends content to a file in memDir, creating it if needed.
-func appendToMemoryFile(memDir, name, content string) error {
-	path := filepath.Join(memDir, name)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	// Add a separator if the file already has content.
-	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
-		f.WriteString("\n\n")
-	}
-	_, err = f.WriteString(content + "\n")
-	return err
-}
-
-// isTemplatePlaceholder returns true if the content looks like an unfilled template stub.
-func isTemplatePlaceholder(content string) bool {
-	lower := strings.ToLower(content)
-	return strings.Contains(lower, "<!-- fill in") ||
-		strings.Contains(lower, "your preferences here") ||
-		strings.Contains(lower, "add your") ||
-		(len(content) < 60 && strings.Contains(lower, "todo"))
 }
 
 // handleUpdatePrompt parses an "Update prompt:" body that may contain
@@ -1369,7 +1202,6 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files
-**/migrate** — start an agent session to migrate old memory files (MEMORY.md, USER.md, etc.) to the new format
 
 **/auth** _[cli]_ — start OAuth login flow via chat (claude or codex)
 **/auth cancel** — stop an in-progress auth flow

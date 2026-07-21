@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
@@ -242,9 +243,7 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 	}
 
 	msgPreview := payload.Message
-	if len(msgPreview) > 100 {
-		msgPreview = msgPreview[:100] + "..."
-	}
+	msgPreview = textutil.Truncate(msgPreview, 100)
 	slog.Info("runner task payload",
 		"task_id", run.ID, "message", msgPreview, "author", payload.Author,
 		"max_iterations", payload.MaxIterations, "max_seconds", payload.MaxTotalSeconds)

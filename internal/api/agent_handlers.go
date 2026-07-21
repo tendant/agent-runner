@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
 // AgentRequest represents the POST /agent request body
@@ -113,9 +114,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := session.ID
 
 	preview := req.Message
-	if len(preview) > 80 {
-		preview = preview[:80] + "..."
-	}
+	preview = textutil.Truncate(preview, 80)
 	slog.Info("agent session started", "session_id", sessionID, "message_len", len(req.Message), "message", preview)
 
 	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {

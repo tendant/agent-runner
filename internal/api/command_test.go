@@ -467,51 +467,6 @@ func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 
 // --- /migrate ---
 
-func TestCommander_Migrate_NothingToMigrate(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
-
-	reply, _, handled := c.Handle("/migrate", nil)
-	if !handled {
-		t.Fatal("expected /migrate to be handled")
-	}
-	if !strings.Contains(reply, "nothing to migrate") {
-		t.Errorf("expected 'nothing to migrate', got: %s", reply)
-	}
-}
-
-func TestCommander_Migrate_MigratesMemoryMD(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
-
-	memDir := env.handlers.config.MemoryDir
-	os.MkdirAll(memDir, 0755)
-	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("## User Preferences\n- prefers Go\n\n## Project Context\nsome project info"), 0644)
-
-	reply, _, handled := c.Handle("/migrate", nil)
-	if !handled {
-		t.Fatal("expected /migrate to be handled")
-	}
-	if !strings.Contains(reply, "MEMORY.md") {
-		t.Errorf("expected MEMORY.md in reply, got: %s", reply)
-	}
-	// Source file renamed to .migrated
-	if _, err := os.Stat(filepath.Join(memDir, "MEMORY.md.migrated")); err != nil {
-		t.Error("expected MEMORY.md to be renamed to MEMORY.md.migrated")
-	}
-	// Target files created
-	prefs, _ := os.ReadFile(filepath.Join(memDir, "user_preferences.md"))
-	if !strings.Contains(string(prefs), "prefers Go") {
-		t.Errorf("expected user_preferences.md to contain migrated content, got: %s", prefs)
-	}
-	summary, _ := os.ReadFile(filepath.Join(memDir, "project_summary.md"))
-	if !strings.Contains(string(summary), "some project info") {
-		t.Errorf("expected project_summary.md to contain migrated content, got: %s", summary)
-	}
-}
-
 // --- parseSetArgs ---
 
 func TestParseSetArgs_SpaceSyntax(t *testing.T) {

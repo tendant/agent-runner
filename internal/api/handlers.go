@@ -19,6 +19,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
 // Notifier can send messages to configured chat channels.
@@ -488,11 +489,7 @@ func (h *Handlers) generateCommitMessage(changedFiles []string, instruction stri
 		summary = fmt.Sprintf("%s and %d more files", strings.Join(changedFiles[:2], ", "), len(changedFiles)-2)
 	}
 
-	// Truncate instruction if too long
-	inst := instruction
-	if len(inst) > 100 {
-		inst = inst[:97] + "..."
-	}
+	inst := textutil.Truncate(instruction, 97)
 
 	return fmt.Sprintf("%s (%s)\n\nInstruction: %s", summarizeAction(instruction), summary, inst)
 }

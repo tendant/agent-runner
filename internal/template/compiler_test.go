@@ -3,7 +3,6 @@ package template
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestCompile_EmptyInput(t *testing.T) {
@@ -85,26 +84,7 @@ func TestCompile_EmptyMemoryFilesSkipped(t *testing.T) {
 	}
 }
 
-func TestCompile_RecentMessagesFormatted(t *testing.T) {
-	input := PromptInput{
-		RecentMessages: []Message{
-			{Role: "user", Content: "hello"},
-			{Role: "assistant", Content: "hi there"},
-		},
-	}
-	result := Compile(input)
-	if !strings.Contains(result, "## Recent Conversation") {
-		t.Error("should have Recent Conversation header")
-	}
-	if !strings.Contains(result, "USER: hello") {
-		t.Error("user message should be formatted as 'USER: ...'")
-	}
-	if !strings.Contains(result, "ASSISTANT: hi there") {
-		t.Error("assistant message should be formatted as 'ASSISTANT: ...'")
-	}
-}
-
-func TestCompile_NoRecentMessages_OmitsSection(t *testing.T) {
+func TestCompile_NoConversation_OmitsSection(t *testing.T) {
 	input := PromptInput{
 		SystemInstructions: "instructions",
 		CurrentRequest:     "request",
@@ -167,18 +147,5 @@ func TestCompile_SectionsSeparatedByDoubleNewline(t *testing.T) {
 	result := Compile(input)
 	if !strings.Contains(result, "system\n\n## Current Request\n\nrequest") {
 		t.Errorf("sections should be separated by \\n\\n, got: %q", result)
-	}
-}
-
-func TestCompile_RecentMessagesTimeFieldIgnored(t *testing.T) {
-	// Time field should not affect output — just for context metadata.
-	input := PromptInput{
-		RecentMessages: []Message{
-			{Role: "user", Content: "hello", Time: time.Now()},
-		},
-	}
-	result := Compile(input)
-	if !strings.Contains(result, "USER: hello") {
-		t.Error("message with time should still format correctly")
 	}
 }
