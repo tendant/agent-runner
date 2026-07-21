@@ -82,6 +82,10 @@ Pass additional env vars (or bind-mount a `.env` file) for full configuration â€
 
 ## Configuration
 
+> **Upgrading from v0.0.x?** See [MIGRATION.md](MIGRATION.md) â€” legacy env
+> files keep working via aliases; the guide covers the renames and the new
+> defaults.
+
 All configuration is via environment variables (or `.env` file). `.env.example` is the full reference (grouped by category, with every var's default); the table below covers the ones most people touch first.
 
 Key variables:
