@@ -504,10 +504,10 @@ func (c *Commander) handleConfig() string {
 	}
 
 	// Repo git credentials (shown when set; token value hidden).
-	if os.Getenv("GIT_TOKEN") != "" {
+	if c.cfg.GitToken != "" {
 		b.WriteString("**GIT_TOKEN:** set\n")
 	}
-	if v := os.Getenv("GIT_SSH_KEY"); v != "" {
+	if v := c.cfg.GitSSHKey; v != "" {
 		fmt.Fprintf(&b, "**GIT_SSH_KEY:** %s\n", v)
 	}
 
@@ -545,31 +545,24 @@ func (c *Commander) handleSet(args string) string {
 		return "error: usage: /set KEY VALUE  or  /set KEY=VALUE"
 	}
 
-	// Persist to .env.local and apply to current process.
-	if err := config.SetEnvLocal(key, val); err != nil {
-		return fmt.Sprintf("error: %v", err)
-	}
+	// Apply to the process env first — OS env wins the config merge, so the
+	// reload below picks the new value up.
 	if err := os.Setenv(key, val); err != nil {
 		slog.Warn("set: failed to apply env var to process", "key", key, "error", err)
 	}
 
-	// Update live config + executor for agent-level settings.
-	switch key {
-	case "AGENT_CLI":
-		c.cfg.Agent.CLI = val
-		c.handlers.UpdateExecutor()
-	case "AGENT_PROVIDER":
-		c.cfg.Agent.Provider = val
-		c.handlers.UpdateExecutor()
-	case "AGENT_MODEL":
-		c.cfg.Agent.Model = val
-		c.handlers.UpdateExecutor()
-	case "AGENT_MAX_TURNS":
-		// Let executor.NewExecutor re-read via config; best-effort int parse.
-		var n int
-		fmt.Sscanf(val, "%d", &n)
-		c.cfg.Agent.MaxTurns = n
-		c.handlers.UpdateExecutor()
+	// Reload the shared config in place — every consumer sees the change with
+	// the same parsing (splits, aliases, legacy modes) as startup — then
+	// rebuild the executor and LLM clients derived from it.
+	if err := c.cfg.ReloadFromEnv(); err != nil {
+		return fmt.Sprintf("applied %s, but config reload failed: %v — fix the value or restart to apply", key, err)
+	}
+	c.handlers.RefreshRuntime()
+
+	// Persist to DATA_DIR/.env.local (path refreshed by the reload above) so
+	// the change survives restarts.
+	if err := config.SetEnvLocal(key, val); err != nil {
+		return fmt.Sprintf("error: %v", err)
 	}
 
 	if isSensitiveKey(key) {
@@ -953,7 +946,7 @@ func (c *Commander) handleRepoAdd(url string) string {
 	}
 
 	// Clone — inject token into URL so credentials aren't stored.
-	token := os.Getenv("GIT_TOKEN")
+	token := c.cfg.GitToken
 	cloneURL := tmpl.InjectToken(url, token, "")
 	cloneCmd := exec.Command("git", "clone", cloneURL, cachePath)
 	var cloneStderr strings.Builder
@@ -1128,7 +1121,7 @@ func (c *Commander) handleRepoUpdate(name string) string {
 	// a system/global credential.helper for the same host (e.g. macOS
 	// osxkeychain) can satisfy a naive "is something already set" check while
 	// actually being a stale credential for an unrelated project.
-	if token := os.Getenv("GIT_TOKEN"); token != "" {
+	if token := c.cfg.GitToken; token != "" {
 		executor.ConfigureCredHelper(p)
 	}
 

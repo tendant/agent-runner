@@ -20,7 +20,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
-	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	// Import metrics package to register prometheus collectors.
 	_ "github.com/agent-runner/agent-runner/internal/metrics"
@@ -95,43 +94,15 @@ func NewServer(cfg *config.Config) *Server {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
 
-	// The shared fast-LLM slot backs the planner (level 2 planning/response),
-	// the conversation analyzer, and the memory curator. All three fall back
-	// to ExecutorClient when no API credentials are configured.
-	fastProvider, fastModel, fastKey, fastBaseURL := cfg.FastLLMSettings()
-	plannerClient := llm.NewClient(llm.Config{
-		Provider:  fastProvider,
-		Model:     fastModel,
-		APIKey:    fastKey,
-		BaseURL:   fastBaseURL,
-		MaxTokens: 4096,
-	}, exec)
-	handlers.SetPlannerClient(plannerClient)
-
 	if cfg.Agent.MemoryCurationEnabled {
-		curatorClient := llm.NewClient(llm.Config{
-			Provider:  fastProvider,
-			Model:     fastModel,
-			APIKey:    fastKey,
-			BaseURL:   fastBaseURL,
-			MaxTokens: 4096,
-		}, exec)
-		handlers.SetCuratorClient(curatorClient)
 		slog.Info("memory curation enabled", "timeout_seconds", cfg.Agent.MemoryCurationTimeoutSeconds)
 	}
 
-	// Create conversation components for Telegram bot
+	// Conversation analyzer — its inner LLM client (and the planner/curator
+	// clients) are built by RefreshRuntime below, which is also re-run after
+	// /set so runtime config changes apply without a restart.
 	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
-	llmClient := llm.NewClient(llm.Config{
-		Provider: fastProvider,
-		Model:    fastModel,
-		APIKey:   fastKey,
-		BaseURL:  fastBaseURL,
-	}, exec)
-	analyzer := conversation.NewAnalyzer(llmClient)
-	if cfg.FastLLM.TimeoutSeconds > 0 {
-		analyzer.SetTimeout(time.Duration(cfg.FastLLM.TimeoutSeconds) * time.Second)
-	}
+	analyzer := conversation.NewAnalyzer(nil)
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
 			analyzer.SetAgentContext(string(data))
@@ -146,6 +117,7 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	}
 	handlers.SetAnalyzer(analyzer)
+	handlers.RefreshRuntime() // builds executor + planner/curator/analyzer clients
 	commander := NewCommander(cfg, handlers)
 	handlers.SetCommander(commander) // also builds handlers.gateway
 	gateway := handlers.Gateway()

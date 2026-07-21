@@ -48,6 +48,10 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	os.MkdirAll(repoCacheDir, 0755)
 
+	// Pin DATA_DIR so any config.ReloadFromEnv triggered by /set during tests
+	// resolves inside the test sandbox — never the real ~/.agent-runner.
+	t.Setenv("DATA_DIR", dir)
+
 	cfg := config.DefaultConfig()
 	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = logsDir

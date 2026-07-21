@@ -163,6 +163,30 @@ func (h *Handlers) UpdateExecutor() {
 	h.executor = executor.NewExecutor(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
 }
 
+// RefreshRuntime rebuilds everything derived from config: the executor and
+// the fast-LLM clients (planner, curator, and the analyzer's inner client —
+// bots share the analyzer pointer, so they pick the new client up too).
+// Called at startup and after /set changes configuration.
+func (h *Handlers) RefreshRuntime() {
+	h.UpdateExecutor()
+	exec := h.getExecutor()
+
+	provider, model, apiKey, baseURL := h.config.FastLLMSettings()
+	fastCfg := llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL, MaxTokens: 4096}
+	h.plannerClient = llm.NewClient(fastCfg, exec)
+	if h.config.Agent.MemoryCurationEnabled {
+		h.curatorClient = llm.NewClient(fastCfg, exec)
+	} else {
+		h.curatorClient = nil
+	}
+	if h.analyzer != nil {
+		h.analyzer.SetClient(llm.NewClient(llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL}, exec))
+		if h.config.FastLLM.TimeoutSeconds > 0 {
+			h.analyzer.SetTimeout(time.Duration(h.config.FastLLM.TimeoutSeconds) * time.Second)
+		}
+	}
+}
+
 // RunRequest represents the POST /run request body
 type RunRequest struct {
 	Project       string   `json:"project"`

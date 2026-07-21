@@ -172,7 +172,8 @@ func TestRepoAdd_CredHelperConfiguredWithToken(t *testing.T) {
 	}
 	c, cacheDir := repoCommander(t)
 	defer withTempCWD(t)()
-	t.Setenv("GIT_TOKEN", "testtoken123")
+	t.Setenv("GIT_TOKEN", "testtoken123") // read by the credential helper at git-time
+	c.cfg.GitToken = "testtoken123"       // live config drives the setup decision
 
 	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
 	makePopulatedRepo(t, remote)
@@ -428,7 +429,8 @@ func TestRepoUpdate_SetsCredHelperWhenMissing(t *testing.T) {
 	}
 	c, cacheDir := repoCommander(t)
 	defer withTempCWD(t)()
-	t.Setenv("GIT_TOKEN", "testtoken")
+	t.Setenv("GIT_TOKEN", "testtoken") // read by the credential helper at git-time
+	c.cfg.GitToken = "testtoken"       // live config drives the setup decision
 
 	remote := makeBarRepo(t, t.TempDir()+"/myrepo.git")
 	makePopulatedRepo(t, remote)

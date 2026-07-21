@@ -208,6 +208,40 @@ func TestCommander_KnownCommand_WrongFormat_ShowsUsageNotUnknown(t *testing.T) {
 	}
 }
 
+func TestCommander_Set_ReloadsFullConfig(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	// AGENT_MEMORY_CHAR_CAP was never one of the special-cased keys — before
+	// the reload-on-set change it went stale until restart.
+	t.Setenv("AGENT_MEMORY_CHAR_CAP", "")
+	reply, _, _ := c.Handle("/set AGENT_MEMORY_CHAR_CAP 5000", nil)
+	if !strings.HasPrefix(reply, "ok") {
+		t.Fatalf("expected ok reply, got: %s", reply)
+	}
+	if got := env.handlers.config.Agent.MemoryCharCap; got != 5000 {
+		t.Errorf("expected live config MemoryCharCap 5000 after /set, got %d", got)
+	}
+}
+
+func TestCommander_Set_AppliesProviderModelSplit(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.handlers.config, env.handlers)
+
+	// The reload path applies the same provider/model parsing as startup —
+	// the old special-case assignment stored the raw combined string.
+	t.Setenv("AGENT_MODEL", "")
+	reply, _, _ := c.Handle("/set AGENT_MODEL anthropic/claude-opus-4-7", nil)
+	if !strings.HasPrefix(reply, "ok") {
+		t.Fatalf("expected ok reply, got: %s", reply)
+	}
+	if p, m := env.handlers.config.Agent.Provider, env.handlers.config.Agent.Model; p != "anthropic" || m != "claude-opus-4-7" {
+		t.Errorf("expected split anthropic / claude-opus-4-7, got %s / %s", p, m)
+	}
+}
+
 func TestCommander_Set_SpaceSyntax(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
@@ -251,10 +285,11 @@ func TestCommander_Set_WritesEnvLocal(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.handlers.config, env.handlers)
 
+	t.Setenv("MY_VAR", "")
 	c.Handle("/set MY_VAR hello", nil)
 
-	cwd, _ := os.Getwd()
-	data, err := os.ReadFile(filepath.Join(cwd, ".env.local"))
+	// /set persists to DATA_DIR/.env.local (pinned by setupTestEnv).
+	data, err := os.ReadFile(filepath.Join(os.Getenv("DATA_DIR"), ".env.local"))
 	if err != nil {
 		t.Fatalf("expected .env.local to be created: %v", err)
 	}

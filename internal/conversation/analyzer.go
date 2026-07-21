@@ -36,6 +36,13 @@ func NewAnalyzer(client llm.Client) *Analyzer {
 }
 
 // SetTimeout overrides the per-call LLM timeout. Useful for slow local models.
+// SetClient swaps the underlying LLM client. Called when configuration
+// changes at runtime (/set) so every holder of this Analyzer — the bots and
+// the HTTP handlers share one instance — picks up the new model/credentials.
+func (a *Analyzer) SetClient(c llm.Client) {
+	a.client = c
+}
+
 func (a *Analyzer) SetTimeout(d time.Duration) {
 	a.timeout = d
 }

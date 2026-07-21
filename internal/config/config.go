@@ -26,6 +26,10 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".agent-runner")
 }
 
+// legacyLayoutWarned suppresses repeat legacy-layout warnings when the
+// config is reloaded (/set re-runs LoadFromEnv).
+var legacyLayoutWarned bool
+
 // hasLegacyDataLayout reports whether dir contains state from the old
 // default layout (DATA_DIR = process CWD): a non-empty repo-cache/, runs/,
 // or workspaces/ directory.
@@ -289,8 +293,11 @@ func LoadFromEnv() (*Config, error) {
 		// from that layout is present here, keep using it for this run so
 		// existing deployments survive the default change unattended.
 		if hasLegacyDataLayout(".") {
-			slog.Warn("config: found legacy data layout in the working directory; using it for this run — " +
-				"set DATA_DIR=. to keep state here permanently, or move repo-cache/, runs/, workspaces/ etc. to ~/.agent-runner")
+			if !legacyLayoutWarned {
+				legacyLayoutWarned = true
+				slog.Warn("config: found legacy data layout in the working directory; using it for this run — " +
+					"set DATA_DIR=. to keep state here permanently, or move repo-cache/, runs/, workspaces/ etc. to ~/.agent-runner")
+			}
 			dataDir = "."
 		} else {
 			base := defaultDataDir()
@@ -518,6 +525,54 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("api.bind is required")
 	}
 	return nil
+}
+
+// ReloadFromEnv re-resolves the full configuration from the environment and
+// env files, updating c in place. /set writes os.Setenv + .env.local first
+// and then calls this, so every consumer sharing this pointer — handlers,
+// commander, bots, executor wiring — sees the change without a restart, with
+// all parsing (provider/model splits, legacy modes, aliases) applied by the
+// same code path as startup. Directory changes take effect for path lookups
+// but components constructed at startup (loggers, workspace manager, bots)
+// keep their original roots until restart.
+func (c *Config) ReloadFromEnv() error {
+	fresh, err := LoadFromEnv()
+	if err != nil {
+		return err
+	}
+	c.copyFrom(fresh)
+	return nil
+}
+
+// copyFrom copies every configuration section from n into c in place.
+func (c *Config) copyFrom(n *Config) {
+	c.ProjectDir = n.ProjectDir
+	c.RepoCacheRoot = n.RepoCacheRoot
+	c.LogsRoot = n.LogsRoot
+	c.TmpRoot = n.TmpRoot
+	c.OutputsRoot = n.OutputsRoot
+	c.UploadsRoot = n.UploadsRoot
+	c.MemoryDir = n.MemoryDir
+	c.AllowedProjects = n.AllowedProjects
+	c.MaxRuntimeSeconds = n.MaxRuntimeSeconds
+	c.MaxConcurrentJobs = n.MaxConcurrentJobs
+	c.GitHost = n.GitHost
+	c.GitOrg = n.GitOrg
+	c.GitToken = n.GitToken
+	c.GitSSHKey = n.GitSSHKey
+	c.GitPushRetries = n.GitPushRetries
+	c.GitPushRetryDelaySeconds = n.GitPushRetryDelaySeconds
+	c.Validation = n.Validation
+	c.API = n.API
+	c.Agent = n.Agent
+	c.Telegram = n.Telegram
+	c.Stream = n.Stream
+	c.WeChat = n.WeChat
+	c.FastLLM = n.FastLLM
+	c.Scheduler = n.Scheduler
+	c.JobRetentionSeconds = n.JobRetentionSeconds
+	c.StartupCleanupStaleJobs = n.StartupCleanupStaleJobs
+	c.LogRetentionDays = n.LogRetentionDays
 }
 
 // splitProviderModel splits a combined "provider/model" string on the first
