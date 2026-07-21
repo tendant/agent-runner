@@ -13,11 +13,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Package | Responsibility |
 |---------|---------------|
 | `agent/` | Session types, state management, serialized dispatch queue, thread-safe snapshots |
-| `api/` | HTTP server, routing, handlers, chat command dispatch, agent executor loop |
-| `botcommon/` | Shared bot helpers (status formatting, confirmation parsing, poll-and-report) |
+| `api/` | HTTP server, routing, handlers, runtime wiring |
+| `botcommon/` | Shared bot engine (conversation flow) and helpers (formatting, confirmation parsing, poll-and-report) |
+| `chatcmd/` | Chat command layer: /help, /set, /memory, /repo, ... dispatch and the message gateway |
+| `clisetup/` | Agent-CLI lifecycle: install/version checks, credential warnings, default prompt files, auth flows |
 | `config/` | Configuration loading from env files + environment (see Load priority below) |
 | `conversation/` | Conversational state machine and intent analyzer (ask/plan/execute) |
 | `curator/` | Post-session memory curation via a cheap LLM call (allowlisted writes only) |
+| `execution/` | Agent session engine: workspace prep, planner, iteration loop, reviewer, finalization |
 | `executor/` | Agent CLI invocation (opencode/claude/codex), workspace management, validation |
 | `git/` | Git operations (fetch, commit, push with retries) |
 | `jobs/` | One-shot job state, project locking (shared between jobs and agents) |

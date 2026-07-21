@@ -1,4 +1,4 @@
-package api
+package execution
 
 import (
 	"fmt"
@@ -7,26 +7,10 @@ import (
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 )
 
-// AgentStarter is the interface used by bots to start and poll agent sessions.
-type AgentStarter interface {
-	StartAgent(message, source string) (sessionID string, err error)
-	GetAgentSession(sessionID string) (*agent.Session, bool)
-}
-
-// AgentStarterAdapter bridges the Telegram bot to the existing agent creation logic.
-type AgentStarterAdapter struct {
-	handlers *Handlers
-}
-
-// NewAgentStarterAdapter creates an adapter that delegates to Handlers.
-func NewAgentStarterAdapter(h *Handlers) *AgentStarterAdapter {
-	return &AgentStarterAdapter{handlers: h}
-}
-
-// StartAgent validates config, creates an agent session, and starts the background loop.
-func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error) {
-	h := a.handlers
-
+// StartAgent validates config, creates an agent session, and starts the
+// background loop. Together with GetAgentSession it makes the Engine satisfy
+// botcommon.AgentStarter.
+func (h *Engine) StartAgent(message, source string) (string, error) {
 	// Fail fast on a missing CLI binary rather than burning workspace setup,
 	// planning, and iteration retries on a session that can't run at all.
 	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
@@ -56,8 +40,8 @@ func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error)
 	}
 
 	sessionID := session.ID
-	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {
-		h.failSession(sessionID, "agent queue is full")
+	if err := h.agentManager.Enqueue(session, h.ExecuteAgent); err != nil {
+		h.FailSession(sessionID, "agent queue is full")
 		return "", fmt.Errorf("agent queue is full")
 	}
 
@@ -65,6 +49,6 @@ func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error)
 }
 
 // GetAgentSession returns a snapshot of an agent session.
-func (a *AgentStarterAdapter) GetAgentSession(sessionID string) (*agent.Session, bool) {
-	return a.handlers.agentManager.GetSession(sessionID)
+func (h *Engine) GetAgentSession(sessionID string) (*agent.Session, bool) {
+	return h.agentManager.GetSession(sessionID)
 }

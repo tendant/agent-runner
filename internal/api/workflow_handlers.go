@@ -3,47 +3,23 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/execution"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
-// ScheduleEntry represents a single scheduled task written by an agent.
-type ScheduleEntry struct {
-	Message        string `json:"message"`
-	RunAfter       string `json:"run_after,omitempty"`       // RFC3339 absolute time
-	RunInSeconds   int    `json:"run_in_seconds,omitempty"`  // relative delay from now
-	Cron           string `json:"cron,omitempty"`            // cron expression for recurring
-	Timezone       string `json:"timezone,omitempty"`        // timezone for cron (default UTC)
-	IdempotencyKey string `json:"idempotency_key,omitempty"` // dedup key for one-shot tasks
-}
+// ScheduleEntry is the schedule-task payload; canonical type in execution.
+type ScheduleEntry = execution.ScheduleEntry
 
-// ScheduleInfo represents a schedule returned by the list endpoint.
-type ScheduleInfo struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Message     string `json:"message,omitempty"`
-	CronExpr    string `json:"cron"`
-	Timezone    string `json:"timezone"`
-	NextRunAt   string `json:"next_run_at"`
-	LastRunAt   string `json:"last_run_at,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Priority    int    `json:"priority"`
-	MaxAttempts int    `json:"max_attempts"`
-}
+// ScheduleInfo describes a schedule; canonical type in execution.
+type ScheduleInfo = execution.ScheduleInfo
 
-// WorkflowScheduler submits schedule entries via simple-workflow.
-type WorkflowScheduler interface {
-	SubmitSchedule(ctx context.Context, entries []ScheduleEntry, typePrefix string) error
-	ListSchedules(ctx context.Context) ([]ScheduleInfo, error)
-	DeleteSchedule(ctx context.Context, scheduleID string) error
-}
+// WorkflowScheduler submits schedule entries; canonical type in execution.
+type WorkflowScheduler = execution.WorkflowScheduler
 
 // workflowSchedulerClient implements WorkflowScheduler using a simple-workflow Client.
 type workflowSchedulerClient struct {
@@ -192,37 +168,6 @@ func (h *Handlers) HandleDeleteSchedule(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-const scheduleFileName = "_schedule.json"
-
-// collectScheduleEntries reads _schedule.json from the workspace directory.
-func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
-	path := filepath.Join(workspacePath, scheduleFileName)
-	slog.Debug("scheduler: reading schedule file", "path", path)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			slog.Debug("scheduler: no schedule file", "path", path)
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", scheduleFileName, err)
-	}
-
-	slog.Info("scheduler: found schedule file", "file", scheduleFileName, "bytes", len(data))
-
-	var entries []ScheduleEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", scheduleFileName, err)
-	}
-
-	slog.Info("scheduler: parsed schedule entries", "count", len(entries))
-	for i, e := range entries {
-		slog.Debug("scheduler: schedule entry", "index", i, "message", e.Message,
-			"cron", e.Cron, "run_after", e.RunAfter, "run_in_seconds", e.RunInSeconds, "idempotency_key", e.IdempotencyKey)
-	}
-
-	return entries, nil
 }
 
 // submitScheduleEntries submits each entry via simple-workflow client.

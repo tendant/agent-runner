@@ -1,4 +1,4 @@
-package api
+package execution
 
 import (
 	"context"
@@ -126,12 +126,12 @@ func friendlyError(raw string) string {
 	return raw
 }
 
-// failSession fails a session via friendlyError, so every FailSession call
+// FailSession fails a session via friendlyError, so every FailSession call
 // site in this package gets the same plain-language rewrite for known
 // misconfiguration signatures without having to remember to apply it
 // individually. Safe to call with any message — text that doesn't match a
 // known pattern passes through unchanged.
-func (h *Handlers) failSession(sessionID, rawErr string) {
+func (h *Engine) FailSession(sessionID, rawErr string) {
 	h.agentManager.FailSession(sessionID, friendlyError(rawErr))
 }
 
@@ -139,19 +139,19 @@ func (h *Handlers) failSession(sessionID, rawErr string) {
 // the reviewer feedback loop can trigger after the main iteration loop.
 const maxReviewerCorrections = 3
 
-func (h *Handlers) executeAgent(session *agent.Session) {
-	h.executeAgentWithContext(h.agentManager.Context(), session)
+func (h *Engine) ExecuteAgent(session *agent.Session) {
+	h.ExecuteAgentWithContext(h.agentManager.Context(), session)
 }
 
-// executeAgentWithContext runs the agent iteration loop.
+// ExecuteAgentWithContext runs the agent iteration loop.
 // The CLI handles workspace changes through the prompt; the loop manages
 // planning, retries, completion criteria, and session bookkeeping.
-func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.Session) {
+func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Session) {
 	defer func() {
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic in agent executor: %v", r)
 			slog.Error("agent goroutine panicked", "session_id", session.ID, "panic", r)
-			h.failSession(session.ID, msg)
+			h.FailSession(session.ID, msg)
 		}
 	}()
 
@@ -273,7 +273,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		// rides the same commit. Fresh context: the session ctx may already be
 		// canceled (stop/shutdown). Non-fatal; skipped for user-stopped
 		// sessions (nothing durable to learn from an aborted run).
-		if h.config.Agent.MemoryCurationEnabled && h.curatorClient != nil && snap.Status != agent.SessionStatusStopped {
+		if h.config.Agent.MemoryCurationEnabled && h.deps.CuratorClient() != nil && snap.Status != agent.SessionStatusStopped {
 			curIn := curator.Input{
 				TaskPreview:  msgPreview,
 				Status:       string(snap.Status),
@@ -286,7 +286,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 				curIn.ReviewIssues = rr.Issues
 				curIn.ReviewSuggestions = rr.Suggestions
 			}
-			cur := curator.New(h.curatorClient, curator.Config{
+			cur := curator.New(h.deps.CuratorClient(), curator.Config{
 				MemoryDir: h.config.MemoryDir,
 				CharCap:   h.config.Agent.MemoryCharCap,
 				Timeout:   time.Duration(h.config.Agent.MemoryCurationTimeoutSeconds) * time.Second,
@@ -348,7 +348,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 	preamble, err := h.resolvePrompt(message)
 	if err != nil {
-		h.failSession(sessionID, "Failed to resolve prompt: "+err.Error())
+		h.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
 		return
 	}
 
@@ -377,15 +377,15 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 
 // prepareWorkspace sets up the agent's workspace (cloning/copying shared
 // repos) and returns the checkout path the CLI will run in. On failure it
-// calls h.failSession and returns aborted=true; the caller should return
+// calls h.FailSession and returns aborted=true; the caller should return
 // immediately.
-func (h *Handlers) prepareWorkspace(sessionID string, liveSession *agent.Session) (checkoutPath string, aborted bool) {
+func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) (checkoutPath string, aborted bool) {
 	workspacePath, missingRepos, err := h.workspaceManager.PrepareAgentWorkspace(
 		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
 		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
 	)
 	if err != nil {
-		h.failSession(sessionID, "Failed to prepare workspace: "+err.Error())
+		h.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return "", true
 	}
 	// [M7] Surface missing shared repos as session warnings so the user knows
@@ -407,13 +407,13 @@ func (h *Handlers) prepareWorkspace(sessionID string, liveSession *agent.Session
 // transient failure). Returns the plan (nil if disabled, or if planning
 // failed non-fatally) and the prompt text used, recorded in the audit log
 // regardless of outcome. On a permanent planner error it calls
-// h.failSession and returns aborted=true.
-func (h *Handlers) runPlanner(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath, preamble, message string) (plan *subagent.PlanResult, plannerPromptText string, aborted bool) {
+// h.FailSession and returns aborted=true.
+func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath, preamble, message string) (plan *subagent.PlanResult, plannerPromptText string, aborted bool) {
 	if !h.config.Agent.PlannerEnabled {
 		return nil, "", false
 	}
 	slog.Info("running planner", "session_id", sessionID)
-	planner := subagent.NewPlanner(h.plannerClient, preamble)
+	planner := subagent.NewPlanner(h.deps.PlannerClient(), preamble)
 	plannerState := subagent.ReadWorkspaceState(ctx, checkoutPath)
 	plannerPromptText = planner.BuildPrompt(plannerState, message)
 	slog.Info("planner prompt built", "session_id", sessionID, "chars", len(plannerPromptText))
@@ -421,7 +421,7 @@ func (h *Handlers) runPlanner(ctx context.Context, sessionID string, liveSession
 	if err != nil {
 		if isPermanentError(err.Error()) {
 			slog.Error("aborting: permanent planner error", "session_id", sessionID, "error", err)
-			h.failSession(sessionID, err.Error())
+			h.FailSession(sessionID, err.Error())
 			return nil, plannerPromptText, true
 		}
 		// [M8] Non-permanent planner failure: fall through to the executor without
@@ -440,8 +440,8 @@ func (h *Handlers) runPlanner(ctx context.Context, sessionID string, liveSession
 // not rebuilt), why iteration stopped, whether the task completed, whether
 // the session is blocked/stuck, and whether the session should abort
 // entirely. On a consecutive-failure or permanent-iteration-error abort it
-// calls h.failSession and returns aborted=true.
-func (h *Handlers) runIterationLoop(
+// calls h.FailSession and returns aborted=true.
+func (h *Engine) runIterationLoop(
 	ctx context.Context, sessionID, source string, liveSession *agent.Session,
 	checkoutPath, preamble, message string, maxIter, maxSeconds int, startTime, deadline time.Time,
 	plan *subagent.PlanResult,
@@ -481,7 +481,7 @@ func (h *Handlers) runIterationLoop(
 				failMsg += ": " + lastErr
 			}
 			slog.Error("aborting session", "session_id", sessionID, "reason", failMsg)
-			h.failSession(sessionID, failMsg)
+			h.FailSession(sessionID, failMsg)
 			return promptBuilder, stopReason, completed, blockedOrStuck, true
 		}
 
@@ -514,7 +514,7 @@ func (h *Handlers) runIterationLoop(
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		liveSession.BeginIteration(i)
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.getExecutor())
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.deps.Executor())
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		iterationsRun = i
@@ -529,7 +529,7 @@ func (h *Handlers) runIterationLoop(
 
 		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
-			h.failSession(sessionID, result.Error)
+			h.FailSession(sessionID, result.Error)
 			return promptBuilder, stopReason, completed, blockedOrStuck, true
 		}
 
@@ -599,7 +599,7 @@ func (h *Handlers) runIterationLoop(
 // the session stopped because the agent was blocked or stuck — reviewing
 // incomplete work isn't useful and wastes tokens. Never aborts the
 // session — a failed review just stops this loop and falls through.
-func (h *Handlers) runReviewerPhase(
+func (h *Engine) runReviewerPhase(
 	ctx context.Context, sessionID, source string, liveSession *agent.Session,
 	checkoutPath, message string, deadline time.Time,
 	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, blockedOrStuck bool,
@@ -607,7 +607,7 @@ func (h *Handlers) runReviewerPhase(
 	if !h.config.Agent.ReviewerEnabled || blockedOrStuck {
 		return
 	}
-	reviewer := subagent.NewReviewer(h.getExecutor())
+	reviewer := subagent.NewReviewer(h.deps.Executor())
 
 	for correction := 0; correction <= maxReviewerCorrections; correction++ {
 		if liveSession.StopRequested() || ctx.Err() != nil || time.Now().After(deadline) {
@@ -651,7 +651,7 @@ func (h *Handlers) runReviewerPhase(
 		slog.Info("running corrective iteration", "session_id", sessionID,
 			"iteration", iterNum, "issues", len(review.Issues))
 
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.getExecutor())
+		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.deps.Executor())
 		result.Prompt = systemPrompt
 		result.Retry = true
 		liveSession.AddIteration(result)
@@ -684,7 +684,7 @@ func (h *Handlers) runReviewerPhase(
 // commits, collecting _send/ output files, and submitting any scheduled
 // tasks from _schedule.json. Non-fatal — failures are recorded as session
 // warnings or logged, never abort the session.
-func (h *Handlers) finalizeAgentOutputs(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath string) {
+func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath string) {
 	// If the agent committed but didn't push, try to push now and warn on failure.
 	if pushWarn := pushUnpushedCommits(ctx, checkoutPath, h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds); pushWarn != "" {
 		slog.Warn("unpushed commits after agent completed", "session_id", sessionID, "warning", pushWarn)
@@ -709,9 +709,9 @@ func (h *Handlers) finalizeAgentOutputs(ctx context.Context, sessionID string, l
 	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {
 		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
 	} else if len(schedEntries) > 0 {
-		if h.workflowClient != nil {
+		if h.deps.WorkflowClient() != nil {
 			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
-			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
+			if err := h.deps.WorkflowClient().SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
 				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
 			}
 		} else {
@@ -720,9 +720,9 @@ func (h *Handlers) finalizeAgentOutputs(ctx context.Context, sessionID string, l
 	}
 }
 
-// determineFinalStatus makes the terminal CompleteSession/failSession call
+// determineFinalStatus makes the terminal CompleteSession/FailSession call
 // for the session based on how the iteration loop ended.
-func (h *Handlers) determineFinalStatus(ctx context.Context, sessionID string, liveSession *agent.Session, completed, blockedOrStuck bool, stopReason string) {
+func (h *Engine) determineFinalStatus(ctx context.Context, sessionID string, liveSession *agent.Session, completed, blockedOrStuck bool, stopReason string) {
 	if completed {
 		h.agentManager.CompleteSession(sessionID)
 		return
@@ -732,15 +732,15 @@ func (h *Handlers) determineFinalStatus(ctx context.Context, sessionID string, l
 		return
 	}
 	if ctx.Err() != nil {
-		h.failSession(sessionID, "context cancelled before completion")
+		h.FailSession(sessionID, "context cancelled before completion")
 		return
 	}
 	if strings.HasPrefix(stopReason, "time limit reached") {
-		h.failSession(sessionID, stopReason)
+		h.FailSession(sessionID, stopReason)
 		return
 	}
 	if blockedOrStuck {
-		h.failSession(sessionID, stopReason)
+		h.FailSession(sessionID, stopReason)
 		return
 	}
 	snap := liveSession.Snapshot()
@@ -751,13 +751,13 @@ func (h *Handlers) determineFinalStatus(ctx context.Context, sessionID string, l
 			return
 		}
 	}
-	h.failSession(sessionID, stopReason)
+	h.FailSession(sessionID, stopReason)
 }
 
 // resolvePrompt builds the combined system prompt using the new single-agent
 // memory architecture: system instructions → memory sections → current request.
-func (h *Handlers) resolvePrompt(message string) (string, error) {
-	systemPromptPath, promptFilePath := h.bootstrapPaths()
+func (h *Engine) resolvePrompt(message string) (string, error) {
+	systemPromptPath, promptFilePath := h.deps.BootstrapPaths()
 
 	// Read system instructions (agent.md); empty string if file missing — no error.
 	var systemInstructions string
@@ -831,7 +831,7 @@ func (h *Handlers) resolvePrompt(message string) (string, error) {
 
 // executeIteration runs a single iteration of the agent loop.
 // It just runs Claude and records success or error — no git operations.
-func (h *Handlers) executeIteration(
+func (h *Engine) executeIteration(
 	ctx context.Context,
 	workspacePath, systemPrompt, userMessage string,
 	iteration int,
@@ -994,11 +994,11 @@ func copyFile(src, dst string) error {
 }
 
 // notifySessionResult sends the agent session result to connected chat channels.
-// Called from executeAgent's defer so both runner-initiated and API-initiated sessions
+// Called from ExecuteAgent's defer so both runner-initiated and API-initiated sessions
 // get notifications. Runner bridge also calls its own notify (which is fine — the
 // runner bridge notify is richer for runner tasks; this one is the catch-all).
-func (h *Handlers) notifySessionResult(snap *agent.Session) {
-	if h.notifier == nil {
+func (h *Engine) notifySessionResult(snap *agent.Session) {
+	if h.deps.Notifier() == nil {
 		return
 	}
 
@@ -1043,7 +1043,7 @@ func (h *Handlers) notifySessionResult(snap *agent.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := h.notifier.SendNotification(ctx, msg); err != nil {
+	if err := h.deps.Notifier().SendNotification(ctx, msg); err != nil {
 		slog.Error("notification failed", "session_id", snap.ID, "error", err)
 	} else {
 		slog.Info("notification sent", "session_id", snap.ID)

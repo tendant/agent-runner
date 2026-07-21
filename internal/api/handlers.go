@@ -16,6 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
@@ -24,10 +25,9 @@ import (
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
-// Notifier can send messages to configured chat channels.
-type Notifier interface {
-	SendNotification(ctx context.Context, message string) error
-}
+// Notifier can send messages to configured chat channels; canonical type in
+// execution.
+type Notifier = execution.Notifier
 
 // MultiNotifier fans out SendNotification calls to multiple Notifier backends.
 type MultiNotifier struct {
@@ -74,6 +74,7 @@ type Handlers struct {
 	runnerDB         RunnerDB // set when runner is enabled, for debug queries
 	commander        *chatcmd.Commander
 	gateway          *chatcmd.MessageGateway
+	execEngine       *execution.Engine
 }
 
 // NewHandlers creates a new handlers instance
@@ -87,7 +88,7 @@ func NewHandlers(
 	workspaceManager *executor.WorkspaceManager,
 	runLogger *logging.RunLogger,
 ) *Handlers {
-	return &Handlers{
+	h := &Handlers{
 		config:           cfg,
 		jobManager:       jobManager,
 		agentManager:     agentManager,
@@ -97,7 +98,20 @@ func NewHandlers(
 		workspaceManager: workspaceManager,
 		runLogger:        runLogger,
 	}
+	h.execEngine = execution.New(cfg, agentManager, workspaceManager, runLogger, h)
+	return h
 }
+
+// Executor, PlannerClient, CuratorClient, Notifier, WorkflowClient, and
+// BootstrapPaths implement execution.Deps — the engine reads these at call
+// time so /set-driven rebuilds (RefreshRuntime) and late bot wiring
+// (SetNotifier/SetWorkflowClient) are always visible to running sessions.
+
+func (h *Handlers) Executor() executor.Executor                 { return h.getExecutor() }
+func (h *Handlers) PlannerClient() llm.Client                   { return h.plannerClient }
+func (h *Handlers) CuratorClient() llm.Client                   { return h.curatorClient }
+func (h *Handlers) Notifier() execution.Notifier                { return h.notifier }
+func (h *Handlers) WorkflowClient() execution.WorkflowScheduler { return h.workflowClient }
 
 // SetNotifier sets the notifier used by HandleNotify. Called after bot initialization.
 func (h *Handlers) SetNotifier(n Notifier) {
@@ -161,9 +175,9 @@ func (h *Handlers) AgentManager() *agent.Manager {
 	return h.agentManager
 }
 
-// AgentStarter returns the session-starting facade.
+// AgentStarter returns the session-starting facade (the execution engine).
 func (h *Handlers) AgentStarter() botcommon.AgentStarter {
-	return NewAgentStarterAdapter(h)
+	return h.execEngine
 }
 
 // getExecutor returns the current executor, safe for concurrent use.

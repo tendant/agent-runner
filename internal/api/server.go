@@ -123,7 +123,7 @@ func NewServer(cfg *config.Config) *Server {
 	commander := chatcmd.NewCommander(cfg, handlers)
 	handlers.SetCommander(commander) // also builds handlers.gateway
 	gateway := handlers.Gateway()
-	agentStarter := NewAgentStarterAdapter(handlers)
+	agentStarter := handlers.AgentStarter()
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, gateway)
 	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, gateway)
 	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, gateway)

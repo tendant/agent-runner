@@ -118,8 +118,8 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	preview = textutil.Truncate(preview, 80)
 	slog.Info("agent session started", "session_id", sessionID, "message_len", len(req.Message), "message", preview)
 
-	if err := h.agentManager.Enqueue(session, h.executeAgent); err != nil {
-		h.failSession(sessionID, "agent queue is full")
+	if err := h.agentManager.Enqueue(session, h.execEngine.ExecuteAgent); err != nil {
+		h.execEngine.FailSession(sessionID, "agent queue is full")
 		h.writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "agent queue is full"})
 		return
 	}

@@ -1,4 +1,4 @@
-package api
+package execution
 
 import (
 	"os"
@@ -7,10 +7,33 @@ import (
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/executor"
+	"github.com/agent-runner/agent-runner/internal/llm"
 )
 
-// makeHandlers builds a minimal Handlers wired to a temp dir for prompt tests.
-func makeHandlers(t *testing.T) (*Handlers, string) {
+// promptDeps is a minimal Deps for prompt-resolution tests — only
+// BootstrapPaths is exercised.
+type promptDeps struct{ cfg *config.Config }
+
+func (d promptDeps) Executor() executor.Executor       { return nil }
+func (d promptDeps) PlannerClient() llm.Client         { return nil }
+func (d promptDeps) CuratorClient() llm.Client         { return nil }
+func (d promptDeps) Notifier() Notifier                { return nil }
+func (d promptDeps) WorkflowClient() WorkflowScheduler { return nil }
+func (d promptDeps) BootstrapPaths() (string, string) {
+	systemPrompt := d.cfg.Agent.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = filepath.Join(d.cfg.MemoryDir, "agent.md")
+	}
+	promptFile := d.cfg.Agent.PromptFile
+	if promptFile == "" {
+		promptFile = filepath.Join(d.cfg.MemoryDir, "prompt.md")
+	}
+	return systemPrompt, promptFile
+}
+
+// makeHandlers builds a minimal Engine wired to a temp dir for prompt tests.
+func makeHandlers(t *testing.T) (*Engine, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.DefaultConfig()
@@ -18,7 +41,7 @@ func makeHandlers(t *testing.T) (*Handlers, string) {
 	cfg.Agent.SystemPrompt = ""
 	cfg.Agent.PromptFile = ""
 	os.MkdirAll(cfg.MemoryDir, 0755)
-	return &Handlers{config: cfg}, dir
+	return &Engine{config: cfg, deps: promptDeps{cfg: cfg}}, dir
 }
 
 // TestResolvePrompt_NoFilesReturnsCurrentRequest verifies that when no agent.md,
@@ -113,7 +136,7 @@ func TestResolvePrompt_ExplicitEnvVarOverridesFallback(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(orig) })
 	os.Chdir(dir)
 
-	h := &Handlers{config: cfg}
+	h := &Engine{config: cfg, deps: promptDeps{cfg: cfg}}
 	got, err := h.resolvePrompt("task")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

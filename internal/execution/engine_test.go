@@ -1,4 +1,4 @@
-package api
+package execution
 
 import (
 	"context"
@@ -324,7 +324,7 @@ func TestFailSession_AppliesFriendlyError(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	env.handlers.failSession(session.ID, `CLAUDE_ERROR: exec: "claude": executable file not found in $PATH - `)
+	env.handlers.FailSession(session.ID, `CLAUDE_ERROR: exec: "claude": executable file not found in $PATH - `)
 
 	snap := session.Snapshot()
 	if snap.Status != agent.SessionStatusFailed {
@@ -367,7 +367,7 @@ func TestPanicRecovery_MarksSessionFailed(t *testing.T) {
 	}
 
 	// Run synchronously so we can inspect state immediately.
-	env.handlers.executeAgent(session)
+	env.handlers.ExecuteAgent(session)
 
 	snap := session.Snapshot()
 	if snap.Status != agent.SessionStatusFailed {
@@ -489,7 +489,7 @@ func TestDetermineFinalStatus(t *testing.T) {
 				session.AddIteration(iter)
 			}
 
-			env.handlers.determineFinalStatus(tt.ctx, session.ID, session, tt.completed, tt.blockedOrStuck, tt.stopReason)
+			env.handlers.Engine.determineFinalStatus(tt.ctx, session.ID, session, tt.completed, tt.blockedOrStuck, tt.stopReason)
 
 			snap := session.Snapshot()
 			if snap.Status != tt.wantStatus {
