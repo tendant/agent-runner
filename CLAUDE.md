@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `llm/` | Minimal LLM client (anthropic/openai/deepseek + executor-CLI fallback) |
 | `logging/` | Markdown audit log writer |
 | `metrics/` | Prometheus metrics |
-| `runner/` | DB-backed workflow scheduler (cron/delayed tasks via simple-workflow) |
+| `scheduler/` | DB-backed workflow scheduler (cron/delayed tasks via simple-workflow) |
 | `stream/` | Agent Stream bot (SSE client, file upload/download) |
 | `subagent/` | Planner and reviewer sub-agents, per-iteration prompt builder |
 | `telegram/` | Telegram bot |
