@@ -1,4 +1,4 @@
-package api
+package chatcmd
 
 import (
 	"os"
@@ -27,7 +27,7 @@ func withTempCWD(t *testing.T) (restore func()) {
 
 func TestCommander_Handle_UnknownInput(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	_, _, handled := c.Handle("hello world", nil)
 	if handled {
@@ -38,7 +38,7 @@ func TestCommander_Handle_UnknownInput(t *testing.T) {
 func TestCommander_Handle_BareCommandNormalization(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	for _, bare := range []string{"help", "Help", "HELP", "config", "bootstrap"} {
 		reply, _, handled := c.Handle(bare, nil)
@@ -53,7 +53,7 @@ func TestCommander_Handle_BareCommandNormalization(t *testing.T) {
 
 func TestCommander_Handle_MultiWordRequiresSlash(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	// "set" alone should NOT be handled (multi-word command, needs slash)
 	_, _, handled := c.Handle("set AGENT_MODEL foo", nil)
@@ -66,7 +66,7 @@ func TestCommander_Handle_MultiWordRequiresSlash(t *testing.T) {
 
 func TestCommander_Help(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/help", nil)
 	if !handled {
@@ -82,8 +82,8 @@ func TestCommander_Help(t *testing.T) {
 func TestCommander_Config_ShowsCLIDefault(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	env.handlers.config.Agent.CLI = ""
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = ""
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "opencode") {
@@ -95,7 +95,7 @@ func TestCommander_Config_ShowsSetAPIKey(t *testing.T) {
 	defer withTempCWD(t)()
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "DEEPSEEK_API_KEY") || !strings.Contains(reply, "set") {
@@ -107,7 +107,7 @@ func TestCommander_Config_OmitsUnsetAPIKey(t *testing.T) {
 	defer withTempCWD(t)()
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
 	if strings.Contains(reply, "DEEPSEEK_API_KEY") {
@@ -118,7 +118,7 @@ func TestCommander_Config_OmitsUnsetAPIKey(t *testing.T) {
 func TestCommander_Config_FileStateMissing(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "missing") {
@@ -139,7 +139,7 @@ func TestCommander_Config_FileStateExists(t *testing.T) {
 	os.WriteFile(filepath.Join(cwd, "memory", "agent.md"), []byte("test"), 0644)
 	os.WriteFile(filepath.Join(cwd, "memory", "prompt.md"), []byte("test"), 0644)
 
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 	reply, _, _ := c.Handle("/config", nil)
 
 	if !strings.Contains(reply, "agent.md") || !strings.Contains(reply, "exists") {
@@ -157,9 +157,9 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	env := setupTestEnv(t)
-	env.handlers.config.Agent.CLI = "claude"
-	env.handlers.config.Agent.Provider = ""
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "claude"
+	env.cfg.Agent.Provider = ""
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
 	if !strings.Contains(reply, "ready") || strings.Contains(reply, "✓") {
@@ -171,7 +171,7 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 
 func TestCommander_Set_InvalidFormat(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	// "/set KEY" with no value — handled but returns usage error
 	reply, _, handled := c.Handle("/set ONLYKEY", nil)
@@ -185,7 +185,7 @@ func TestCommander_Set_InvalidFormat(t *testing.T) {
 
 func TestCommander_KnownCommand_WrongFormat_ShowsUsageNotUnknown(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	cases := []struct {
 		input string
@@ -211,7 +211,7 @@ func TestCommander_KnownCommand_WrongFormat_ShowsUsageNotUnknown(t *testing.T) {
 func TestCommander_Set_ReloadsFullConfig(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	// AGENT_MEMORY_CHAR_CAP was never one of the special-cased keys — before
 	// the reload-on-set change it went stale until restart.
@@ -220,7 +220,7 @@ func TestCommander_Set_ReloadsFullConfig(t *testing.T) {
 	if !strings.HasPrefix(reply, "ok") {
 		t.Fatalf("expected ok reply, got: %s", reply)
 	}
-	if got := env.handlers.config.Agent.MemoryCharCap; got != 5000 {
+	if got := env.cfg.Agent.MemoryCharCap; got != 5000 {
 		t.Errorf("expected live config MemoryCharCap 5000 after /set, got %d", got)
 	}
 }
@@ -228,7 +228,7 @@ func TestCommander_Set_ReloadsFullConfig(t *testing.T) {
 func TestCommander_Set_AppliesProviderModelSplit(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	// The reload path applies the same provider/model parsing as startup —
 	// the old special-case assignment stored the raw combined string.
@@ -237,7 +237,7 @@ func TestCommander_Set_AppliesProviderModelSplit(t *testing.T) {
 	if !strings.HasPrefix(reply, "ok") {
 		t.Fatalf("expected ok reply, got: %s", reply)
 	}
-	if p, m := env.handlers.config.Agent.Provider, env.handlers.config.Agent.Model; p != "anthropic" || m != "claude-opus-4-7" {
+	if p, m := env.cfg.Agent.Provider, env.cfg.Agent.Model; p != "anthropic" || m != "claude-opus-4-7" {
 		t.Errorf("expected split anthropic / claude-opus-4-7, got %s / %s", p, m)
 	}
 }
@@ -245,7 +245,7 @@ func TestCommander_Set_AppliesProviderModelSplit(t *testing.T) {
 func TestCommander_Set_SpaceSyntax(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/set AGENT_CLI claude", nil)
 	if reply != "ok AGENT_CLI=claude" {
@@ -256,7 +256,7 @@ func TestCommander_Set_SpaceSyntax(t *testing.T) {
 func TestCommander_Set_EqualsSyntax(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/set AGENT_CLI=codex", nil)
 	if reply != "ok AGENT_CLI=codex" {
@@ -267,7 +267,7 @@ func TestCommander_Set_EqualsSyntax(t *testing.T) {
 func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	for _, key := range []string{"DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "MY_SECRET", "DB_PASSWORD"} {
 		reply, _, _ := c.Handle("/set "+key+" super-secret-value", nil)
@@ -283,7 +283,7 @@ func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
 func TestCommander_Set_WritesEnvLocal(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	t.Setenv("MY_VAR", "")
 	c.Handle("/set MY_VAR hello", nil)
@@ -301,33 +301,33 @@ func TestCommander_Set_WritesEnvLocal(t *testing.T) {
 func TestCommander_Set_LiveConfigUpdate_AgentCLI(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	c.Handle("/set AGENT_CLI claude", nil)
-	if env.handlers.config.Agent.CLI != "claude" {
-		t.Errorf("expected Agent.CLI=claude, got: %s", env.handlers.config.Agent.CLI)
+	if env.cfg.Agent.CLI != "claude" {
+		t.Errorf("expected Agent.CLI=claude, got: %s", env.cfg.Agent.CLI)
 	}
 }
 
 func TestCommander_Set_LiveConfigUpdate_AgentModel(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	c.Handle("/set AGENT_MODEL my-model", nil)
-	if env.handlers.config.Agent.Model != "my-model" {
-		t.Errorf("expected Agent.Model=my-model, got: %s", env.handlers.config.Agent.Model)
+	if env.cfg.Agent.Model != "my-model" {
+		t.Errorf("expected Agent.Model=my-model, got: %s", env.cfg.Agent.Model)
 	}
 }
 
 func TestCommander_Set_LiveConfigUpdate_AgentMaxTurns(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	c.Handle("/set AGENT_MAX_TURNS 99", nil)
-	if env.handlers.config.Agent.MaxTurns != 99 {
-		t.Errorf("expected Agent.MaxTurns=99, got: %d", env.handlers.config.Agent.MaxTurns)
+	if env.cfg.Agent.MaxTurns != 99 {
+		t.Errorf("expected Agent.MaxTurns=99, got: %d", env.cfg.Agent.MaxTurns)
 	}
 }
 
@@ -338,9 +338,9 @@ func TestCommander_Bootstrap_CreatesFiles(t *testing.T) {
 	env := setupTestEnv(t)
 	// Ensure API key so ready=true
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	env.handlers.config.Agent.CLI = "opencode"
-	env.handlers.config.Agent.Provider = "deepseek"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "opencode"
+	env.cfg.Agent.Provider = "deepseek"
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/bootstrap", nil)
 	if !handled {
@@ -361,9 +361,9 @@ func TestCommander_Bootstrap_SkipsExisting(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	env.handlers.config.Agent.CLI = "opencode"
-	env.handlers.config.Agent.Provider = "deepseek"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "opencode"
+	env.cfg.Agent.Provider = "deepseek"
+	c := NewCommander(env.cfg, env.rt)
 
 	// Create first
 	c.Handle("/bootstrap", nil)
@@ -382,9 +382,9 @@ func TestCommander_Bootstrap_ForceOverwrites(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	env.handlers.config.Agent.CLI = "opencode"
-	env.handlers.config.Agent.Provider = "deepseek"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "opencode"
+	env.cfg.Agent.Provider = "deepseek"
+	c := NewCommander(env.cfg, env.rt)
 
 	c.Handle("/bootstrap", nil)
 	reply, _, _ := c.Handle("/bootstrap force", nil)
@@ -413,8 +413,8 @@ func TestCommander_InstallCLI_AlreadyInstalled_ShowsVersion(t *testing.T) {
 	env := setupTestEnv(t)
 	binDir := fakeCLIBin(t, "opencode", "v9.9.9")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	env.handlers.config.Agent.CLI = "opencode"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "opencode"
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/install-cli opencode", nil)
 	if !handled {
@@ -432,8 +432,8 @@ func TestCommander_InstallCLI_DefaultCLI_ShowsVersion(t *testing.T) {
 	env := setupTestEnv(t)
 	binDir := fakeCLIBin(t, "opencode", "v1.2.3")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	env.handlers.config.Agent.CLI = ""
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = ""
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/install-cli", nil)
 	if !handled {
@@ -449,7 +449,7 @@ func TestCommander_InstallCLI_DefaultCLI_ShowsVersion(t *testing.T) {
 func TestCommander_SetAgent_EmptyContent(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/set-agent", nil)
 	if !handled {
@@ -463,7 +463,7 @@ func TestCommander_SetAgent_EmptyContent(t *testing.T) {
 func TestCommander_SetAgent_WritesFile(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/set-agent you are a helpful agent", nil)
 	if !strings.Contains(reply, "ok wrote agent.md") {
@@ -483,7 +483,7 @@ func TestCommander_SetAgent_WritesFile(t *testing.T) {
 func TestCommander_SetPrompt_WritesFile(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/set-prompt do the task step by step", nil)
 	if !strings.Contains(reply, "ok wrote prompt.md") {
@@ -574,8 +574,8 @@ func newMemoryCommander(t *testing.T) (*Commander, string) {
 	t.Helper()
 	env := setupTestEnv(t)
 	memDir := filepath.Join(t.TempDir(), "memory")
-	env.handlers.config.MemoryDir = memDir
-	return NewCommander(env.handlers.config, env.handlers), memDir
+	env.cfg.MemoryDir = memDir
+	return NewCommander(env.cfg, env.rt), memDir
 }
 
 func TestCommander_Memory_NoSubcommand_ShowsStatus(t *testing.T) {
@@ -777,7 +777,7 @@ func TestCommander_Memory_Pull_NotGitRepo(t *testing.T) {
 
 func TestCommander_Status_ShowsFields(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/status", nil)
 	if !handled {
@@ -792,7 +792,7 @@ func TestCommander_Status_ShowsFields(t *testing.T) {
 
 func TestCommander_Status_IdleWhenNoSessions(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/status", nil)
 	if !strings.Contains(reply, "idle") {
@@ -805,9 +805,9 @@ func TestCommander_Status_ReadyFalseWhenNoAPIKey(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	env := setupTestEnv(t)
-	env.handlers.config.Agent.CLI = "claude"
-	env.handlers.config.Agent.Provider = ""
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "claude"
+	env.cfg.Agent.Provider = ""
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/status", nil)
 	if !strings.Contains(reply, "ready:") || strings.Contains(reply, "ready: ✓") {
@@ -819,7 +819,7 @@ func TestCommander_Status_ReadyFalseWhenNoAPIKey(t *testing.T) {
 
 func TestCommander_Auth_RESTCallReturnsError(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	// send=nil simulates a REST caller with no chat channel.
 	reply, _, handled := c.Handle("/auth claude", nil)
@@ -833,7 +833,7 @@ func TestCommander_Auth_RESTCallReturnsError(t *testing.T) {
 
 func TestCommander_AuthCancel_NoFlow(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/auth cancel", nil)
 	if !handled {
@@ -846,8 +846,8 @@ func TestCommander_AuthCancel_NoFlow(t *testing.T) {
 
 func TestCommander_Auth_OpencodeNotSupported(t *testing.T) {
 	env := setupTestEnv(t)
-	env.handlers.config.Agent.CLI = "opencode"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "opencode"
+	c := NewCommander(env.cfg, env.rt)
 
 	var sent []string
 	send := func(msg string) { sent = append(sent, msg) }
@@ -934,7 +934,7 @@ func TestParseSystemUser_MultilineBothSections(t *testing.T) {
 func TestHandleUpdatePrompt_PlainBody(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, sid, handled := c.Handle("Update prompt: follow the rules carefully", nil)
 	if !handled {
@@ -960,7 +960,7 @@ func TestHandleUpdatePrompt_PlainBody(t *testing.T) {
 func TestHandleUpdatePrompt_EmptyBody(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("Update prompt:", nil)
 	if !handled {
@@ -974,7 +974,7 @@ func TestHandleUpdatePrompt_EmptyBody(t *testing.T) {
 func TestHandleUpdatePrompt_SystemSection(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	body := "Update prompt:\nSystem: always commit at the end"
 	reply, sid, handled := c.Handle(body, nil)
@@ -1002,13 +1002,13 @@ func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	// Disable planner so the background goroutine doesn't panic on nil plannerClient.
-	env.handlers.config.Agent.PlannerEnabled = false
+	env.cfg.Agent.PlannerEnabled = false
 	// StartAgent now preflights the CLI backend binary — fake an installed
 	// "claude" so the session-start path isn't rejected.
 	binDir := fakeCLIBin(t, "claude", "v1.0.0")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	env.handlers.config.Agent.CLI = "claude"
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.Agent.CLI = "claude"
+	c := NewCommander(env.cfg, env.rt)
 
 	body := "Update prompt:\nSystem: always commit at the end\nUser: fix the tests"
 	reply, sid, handled := c.Handle(body, nil)
@@ -1022,7 +1022,7 @@ func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
 		// asynchronously, and this test only cares that one was started, not
 		// that it runs to completion against a fake CLI in a temp workspace
 		// that's about to be torn down.
-		env.handlers.agentManager.StopSession(sid)
+		env.rt.mgr.StopSession(sid)
 	}
 	if !strings.Contains(reply, "ok wrote prompt.md") {
 		t.Errorf("expected ok reply mentioning prompt.md, got: %s", reply)
@@ -1044,7 +1044,7 @@ func TestHandleUpdatePrompt_SystemAndUser(t *testing.T) {
 func TestHandleUpdatePrompt_SlashVariant(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/update-prompt: keep responses brief", nil)
 	if !handled {
@@ -1057,7 +1057,7 @@ func TestHandleUpdatePrompt_SlashVariant(t *testing.T) {
 
 func TestHandleStop_NoArg(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/stop", nil)
 	if !handled {
@@ -1070,7 +1070,7 @@ func TestHandleStop_NoArg(t *testing.T) {
 
 func TestHandleStop_NotFound(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, handled := c.Handle("/stop deadbeef", nil)
 	if !handled {
@@ -1083,9 +1083,9 @@ func TestHandleStop_NotFound(t *testing.T) {
 
 func TestHandleStop_RunningSession(t *testing.T) {
 	env := setupTestEnv(t)
-	c := NewCommander(env.handlers.config, env.handlers)
+	c := NewCommander(env.cfg, env.rt)
 
-	session, err := env.handlers.agentManager.CreateSession("test task", nil, "test", "", 5, 60)
+	session, err := env.rt.mgr.CreateSession("test task", nil, "test", "", 5, 60)
 	if err != nil {
 		t.Fatal(err)
 	}

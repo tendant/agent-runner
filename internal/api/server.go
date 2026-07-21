@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
@@ -119,7 +120,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	handlers.SetAnalyzer(analyzer)
 	handlers.RefreshRuntime() // builds executor + planner/curator/analyzer clients
-	commander := NewCommander(cfg, handlers)
+	commander := chatcmd.NewCommander(cfg, handlers)
 	handlers.SetCommander(commander) // also builds handlers.gateway
 	gateway := handlers.Gateway()
 	agentStarter := NewAgentStarterAdapter(handlers)

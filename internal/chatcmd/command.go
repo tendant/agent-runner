@@ -1,4 +1,4 @@
-package api
+package chatcmd
 
 import (
 	"context"
@@ -196,8 +196,8 @@ func (c *Commander) handleAuth(arg string, send func(string)) string {
 	return msg
 }
 
-// validateAuth resolves and validates the CLI name for an auth flow.
-func (c *Commander) validateAuth(cli string) (string, error) {
+// ValidateAuth resolves and validates the CLI name for an auth flow.
+func (c *Commander) ValidateAuth(cli string) (string, error) {
 	if cli == "" {
 		cli = c.cfg.Agent.CLI
 	}
@@ -213,9 +213,9 @@ func (c *Commander) validateAuth(cli string) (string, error) {
 	return cli, nil
 }
 
-// registerAuthCancel locks the auth mutex and stores cancel for /auth cancel.
+// RegisterAuthCancel locks the auth mutex and stores cancel for /auth cancel.
 // Returns an error if another flow is already running.
-func (c *Commander) registerAuthCancel(cancel context.CancelFunc) error {
+func (c *Commander) RegisterAuthCancel(cancel context.CancelFunc) error {
 	if !c.authMu.TryLock() {
 		return fmt.Errorf("an auth flow is already in progress — use /auth cancel to stop it")
 	}
@@ -223,25 +223,25 @@ func (c *Commander) registerAuthCancel(cancel context.CancelFunc) error {
 	return nil
 }
 
-// releaseAuthCancel clears the stored cancel and unlocks the auth mutex.
-func (c *Commander) releaseAuthCancel() {
+// ReleaseAuthCancel clears the stored cancel and unlocks the auth mutex.
+func (c *Commander) ReleaseAuthCancel() {
 	c.authCancel = nil
 	c.authMu.Unlock()
 }
 
 // startAuthFlow starts an async auth flow for chat channels (Telegram, WeChat, stream).
 func (c *Commander) startAuthFlow(cli string, send func(string)) (string, error) {
-	cli, err := c.validateAuth(cli)
+	cli, err := c.ValidateAuth(cli)
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := c.registerAuthCancel(cancel); err != nil {
+	if err := c.RegisterAuthCancel(cancel); err != nil {
 		cancel()
 		return "", err
 	}
 	go func() {
-		defer c.releaseAuthCancel()
+		defer c.ReleaseAuthCancel()
 		if err := clisetup.RunAuthFlow(ctx, cli, send); err != nil && ctx.Err() == nil {
 			send("auth failed: " + err.Error())
 		}

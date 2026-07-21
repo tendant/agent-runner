@@ -1,4 +1,4 @@
-package api
+package chatcmd
 
 import (
 	"os"
@@ -50,8 +50,8 @@ func repoCommander(t *testing.T) (*Commander, string) {
 	t.Helper()
 	env := setupTestEnv(t)
 	// Give the Commander a real RepoCacheRoot that exists.
-	env.handlers.config.RepoCacheRoot = env.repoCacheDir
-	c := NewCommander(env.handlers.config, env.handlers)
+	env.cfg.RepoCacheRoot = env.repoCacheDir
+	c := NewCommander(env.cfg, env.rt)
 	return c, env.repoCacheDir
 }
 

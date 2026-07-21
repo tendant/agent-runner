@@ -189,7 +189,7 @@ func (h *Handlers) HandleStopAgent(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleAuthStream(w http.ResponseWriter, r *http.Request, message string) {
 	arg := strings.TrimSpace(message[5:]) // strip "/auth"
 
-	cli, valErr := h.commander.validateAuth(arg)
+	cli, valErr := h.commander.ValidateAuth(arg)
 	if valErr != nil {
 		h.writeJSON(w, http.StatusOK, map[string]any{"reply": "error: " + valErr.Error()})
 		return
@@ -203,14 +203,14 @@ func (h *Handlers) handleAuthStream(w http.ResponseWriter, r *http.Request, mess
 
 	// Acquire auth lock so /auth cancel can stop this flow.
 	ctx, cancel := context.WithCancel(r.Context())
-	if err := h.commander.registerAuthCancel(cancel); err != nil {
+	if err := h.commander.RegisterAuthCancel(cancel); err != nil {
 		cancel()
 		h.writeJSON(w, http.StatusOK, map[string]any{"reply": "error: " + err.Error()})
 		return
 	}
 	defer func() {
 		cancel()
-		h.commander.releaseAuthCancel()
+		h.commander.ReleaseAuthCancel()
 	}()
 
 	// Disable the server write deadline — SSE connections are long-lived.

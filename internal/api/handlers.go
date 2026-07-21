@@ -13,6 +13,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
+	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
@@ -71,8 +72,8 @@ type Handlers struct {
 	notifier         Notifier
 	workflowClient   WorkflowScheduler
 	runnerDB         RunnerDB // set when runner is enabled, for debug queries
-	commander        *Commander
-	gateway          *MessageGateway
+	commander        *chatcmd.Commander
+	gateway          *chatcmd.MessageGateway
 }
 
 // NewHandlers creates a new handlers instance
@@ -137,13 +138,13 @@ func (h *Handlers) SetRunnerDB(db RunnerDB) {
 }
 
 // SetCommander wires the commander and builds the shared message gateway.
-func (h *Handlers) SetCommander(c *Commander) {
+func (h *Handlers) SetCommander(c *chatcmd.Commander) {
 	h.commander = c
-	h.gateway = NewMessageGateway(c)
+	h.gateway = chatcmd.NewMessageGateway(c)
 }
 
 // Gateway returns the shared message gateway for use by bot channels.
-func (h *Handlers) Gateway() *MessageGateway {
+func (h *Handlers) Gateway() *chatcmd.MessageGateway {
 	return h.gateway
 }
 
