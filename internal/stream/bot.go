@@ -51,6 +51,7 @@ type Bot struct {
 	wechatLoginMu     sync.Mutex                  // prevents concurrent /wechat-login flows
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
+	engine            *botcommon.Engine
 }
 
 // SetWeChatReloader registers a callback that is invoked with the new token and
@@ -73,7 +74,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		maxCatchUpBacklog = defaultMaxCatchUpBacklog
 	}
 
-	return &Bot{
+	b := &Bot{
 		client:            NewClient(cfg.ServerURL, cfg.BotToken),
 		starter:           starter,
 		gateway:           gateway,
@@ -86,6 +87,41 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		stateDir:          cfg.StateDir,
 		maxCatchUpBacklog: maxCatchUpBacklog,
 	}
+	b.engine = &botcommon.Engine{
+		Starter:     starter,
+		ConvManager: convMgr,
+		Analyzer:    analyzer,
+		Sender:      (*streamSender)(b),
+		Source:      "stream",
+		Label:       "stream bot",
+		StartText:   "Working on it...",
+		// The session-started note is logged, not sent — streaming clients
+		// see progress through thinking/delta events instead.
+		SessionStartedFormat: "",
+		AnnounceQueued:       false,
+		OnSessionDone: func(ctx context.Context, id string, session *agent.Session) {
+			b.uploadOutputFiles(ctx, id, session)
+		},
+		NewReporter: func(id string) botcommon.Reporter {
+			return &streamReporter{bot: b, ctx: context.Background(), convID: id}
+		},
+		WG: &b.wg,
+	}
+	return b
+}
+
+// streamSender adapts the engine's Sender to typed stream events: Status is
+// a thinking event, Reply keeps the delta stream open, Final closes it.
+type streamSender Bot
+
+func (s *streamSender) Status(ctx context.Context, id, text string) {
+	(*Bot)(s).emitThinking(ctx, id, text)
+}
+func (s *streamSender) Reply(ctx context.Context, id, text string) {
+	(*Bot)(s).emitDelta(ctx, id, text+"\n")
+}
+func (s *streamSender) Final(ctx context.Context, id, text string) {
+	(*Bot)(s).emitFinal(ctx, id, text)
 }
 
 // Start begins listening on all configured conversations. Non-blocking.
@@ -690,7 +726,7 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 
 	if state == conversation.StateConfirming {
 		if botcommon.IsConfirmation(text) {
-			b.handleConfirmation(ctx, convID, conv)
+			b.engine.HandleConfirmation(ctx, convID, conv)
 			return
 		}
 		if botcommon.IsDenial(text) {
@@ -704,120 +740,11 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 
 	// If no analyzer is configured, skip analysis and execute directly
 	if b.analyzer == nil {
-		b.handleConfirmation(ctx, convID, conv)
+		b.engine.HandleConfirmation(ctx, convID, conv)
 		return
 	}
 
-	b.handleAnalysis(ctx, convID, conv)
-}
-
-func (b *Bot) handleConfirmation(ctx context.Context, convID string, conv *conversation.Conversation) {
-	b.emitThinking(ctx, convID, "Working on it...")
-	conv.SetState(conversation.StateExecuting)
-
-	// Build message: latest user message + conversation history for context
-	messages := conv.GetMessages()
-	var currentMsg string
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			currentMsg = messages[i].Content
-			break
-		}
-	}
-	message := currentMsg
-	if history := conv.GetFormattedHistory(); history != "" {
-		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
-	}
-
-	sessionID, err := b.starter.StartAgent(message, "stream")
-	if err != nil {
-		conv.SetState(conversation.StateGathering)
-		b.emitFinal(ctx, convID, fmt.Sprintf("Failed to start agent: %s", err))
-		return
-	}
-
-	slog.Info("stream bot: agent session started", "session_id", sessionID)
-
-	goroutineCtx := ctx // capture for goroutine; respects bot shutdown
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		b.pollAndReport(convID, sessionID)
-
-		// Agent result has been sent to the user. Collect session data and
-		// check for pending messages before touching the conversation state.
-		session, sessionOk := b.starter.GetAgentSession(sessionID)
-		if sessionOk {
-			for _, iter := range session.Iterations {
-				if iter.Output != "" {
-					conv.AddMessage("assistant", iter.Output)
-				}
-			}
-		}
-		hasPending := conv.ClearPendingInput()
-
-		// Clear StateExecuting NOW — before slow post-processing — so new
-		// messages from the user are accepted immediately rather than queued.
-		// If there was pending input we'll process it after post-processing.
-		if !hasPending {
-			b.convManager.Complete(convID)
-		}
-
-		// Post-processing (file uploads, summarisation) runs after state is
-		// cleared so it never blocks incoming messages.
-		if sessionOk && len(session.OutputFiles) > 0 {
-			b.uploadOutputFiles(goroutineCtx, convID, session)
-		}
-		if b.analyzer != nil && conv.NeedsCompaction() {
-			botcommon.SummarizeConversation(b.analyzer, conv, "stream bot")
-		}
-
-		// Process messages that arrived during execution.
-		if hasPending {
-			conv.SetState(conversation.StateGathering)
-			if b.analyzer == nil {
-				b.handleConfirmation(goroutineCtx, convID, conv)
-			} else {
-				b.handleAnalysis(goroutineCtx, convID, conv)
-			}
-		}
-	}()
-}
-
-func (b *Bot) handleAnalysis(ctx context.Context, convID string, conv *conversation.Conversation) {
-	analysisCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	result, err := b.analyzer.Analyze(analysisCtx, conv)
-	if err != nil {
-		slog.Error("stream bot: analyzer error", "error", err)
-		if analysisCtx.Err() == context.DeadlineExceeded {
-			b.emitFinal(ctx, convID, "Sorry, the request timed out. Please try again.")
-		} else {
-			b.emitFinal(ctx, convID, "Sorry, I had trouble understanding that. Could you rephrase?")
-		}
-		return
-	}
-
-	switch result.Action {
-	case "execute":
-		conv.AddMessage("assistant", result.Message)
-		b.emitDelta(ctx, convID, result.Message+"\n")
-		b.handleConfirmation(ctx, convID, conv)
-
-	case "ask":
-		conv.AddMessage("assistant", result.Message)
-		b.emitFinal(ctx, convID, result.Message)
-
-	case "plan":
-		conv.SetPlan(result.Message)
-		conv.AddMessage("assistant", result.Message)
-		b.emitFinal(ctx, convID, result.Message+"\n\nProceed? (yes/no)")
-
-	default:
-		conv.AddMessage("assistant", result.Message)
-		b.emitFinal(ctx, convID, result.Message)
-	}
+	b.engine.HandleAnalysis(ctx, convID, conv)
 }
 
 // uploadOutputFiles uploads output files from the agent session and sends them
@@ -877,10 +804,6 @@ func (r *streamReporter) OnFinal(session *agent.Session) {
 func (r *streamReporter) OnNotFound() { r.bot.emitFinal(r.ctx, r.convID, "Session not found.") }
 func (r *streamReporter) OnTimeout() {
 	r.bot.emitFinal(r.ctx, r.convID, "Session timed out waiting for a response.")
-}
-
-func (b *Bot) pollAndReport(convID, sessionID string) {
-	botcommon.PollAndReport(b.starter, sessionID, &streamReporter{bot: b, ctx: context.Background(), convID: convID})
 }
 
 // Event emission helpers

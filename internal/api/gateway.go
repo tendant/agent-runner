@@ -16,11 +16,9 @@ import "strings"
 //
 // asyncSend is an optional callback for async messages (e.g. /auth URL relay).
 // resetConversation is called when the user sends /cancel; pass nil if not applicable.
-type Gateway interface {
-	Handle(text string, asyncSend func(string), resetConversation func()) (reply, sessionID string, handled bool)
-}
-
-// MessageGateway implements Gateway by wrapping a Commander.
+//
+// MessageGateway implements botcommon.Gateway (the single canonical gateway
+// interface, consumed by every bot) by wrapping a Commander.
 type MessageGateway struct {
 	commander *Commander
 }
