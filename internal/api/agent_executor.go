@@ -88,7 +88,7 @@ var errorGuidanceTable = []errorGuidance{
 	{
 		match: []string{"model not found", "model_not_found"},
 		title: "the configured model does not exist or isn't accessible",
-		hint:  "check AGENT_MODEL / AGENT_REASONING_MODEL with /config",
+		hint:  "check AGENT_MODEL / AGENT_FAST_MODEL with /config",
 	},
 }
 

@@ -53,7 +53,7 @@ func NewServer(cfg *config.Config) *Server {
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	gitOps.Token = cfg.GitToken
 	// Level 3: agent CLI executor — uses reasoning model/provider (or CLI default if unset).
-	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel, cfg.Agent.MaxTurns)
+	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.Provider, cfg.Agent.Model, cfg.Agent.MaxTurns)
 	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
 	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)

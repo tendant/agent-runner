@@ -112,41 +112,43 @@ func chtempdir(t *testing.T) (restore func()) {
 }
 
 func TestLoad_OpenCodeModelDefaults(t *testing.T) {
-	// opencode (the default CLI) should get deepseek model defaults from Load().
+	// opencode (the default CLI) ships a two-tier default pair:
+	// pro does the real work, flash is the fast tier.
 	cfg, _ := LoadFromEnv()
 	if cfg.Agent.CLI != "opencode" {
 		t.Skipf("AGENT_CLI=%s, skipping opencode default test", cfg.Agent.CLI)
 	}
-	if cfg.Agent.Model != "deepseek-v4-flash" {
-		t.Errorf("expected Agent.Model deepseek-v4-flash, got %s", cfg.Agent.Model)
+	if cfg.Agent.Model != "deepseek-v4-pro" {
+		t.Errorf("expected work model deepseek-v4-pro, got %s", cfg.Agent.Model)
 	}
-	if cfg.Agent.ReasoningModel != "deepseek-v4-pro" {
-		t.Errorf("expected Agent.ReasoningModel deepseek-v4-pro, got %s", cfg.Agent.ReasoningModel)
+	if cfg.Agent.FastModel != "deepseek-v4-flash" {
+		t.Errorf("expected fast model deepseek-v4-flash, got %s", cfg.Agent.FastModel)
 	}
 }
 
-// TestLoad_ReasoningModelFallsBackToModel covers the claude/codex case: a
-// single CLI invocation drives both real task iterations and the
-// analyzer/planner fallback (internal/api/server.go's shared `exec`), so if
-// only AGENT_MODEL is set, AGENT_REASONING_MODEL should pick it up rather
-// than silently defaulting to the CLI's own built-in model.
-func TestLoad_ReasoningModelFallsBackToModel(t *testing.T) {
+// TestLoad_FastModelFallsBackToModel: with only AGENT_MODEL set, the fast
+// tier follows the work model so the planner/analyzer use what the user
+// picked rather than a provider default.
+func TestLoad_FastModelFallsBackToModel(t *testing.T) {
 	t.Setenv("AGENT_CLI", "codex")
 	t.Setenv("AGENT_MODEL", "gpt-5.5")
-	t.Setenv("AGENT_REASONING_MODEL", "")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Agent.ReasoningModel != "gpt-5.5" {
-		t.Errorf("expected Agent.ReasoningModel to fall back to gpt-5.5, got %q", cfg.Agent.ReasoningModel)
+	if cfg.Agent.Model != "gpt-5.5" {
+		t.Errorf("expected work model gpt-5.5, got %q", cfg.Agent.Model)
+	}
+	if cfg.Agent.FastModel != "gpt-5.5" {
+		t.Errorf("expected fast model to follow work model, got %q", cfg.Agent.FastModel)
 	}
 }
 
-// TestLoad_ReasoningModelExplicitNotClobbered confirms the fallback only
-// fills in an unset AGENT_REASONING_MODEL — an explicit value always wins.
-func TestLoad_ReasoningModelExplicitNotClobbered(t *testing.T) {
+// TestLoad_LegacyReasoningModeMapping: when the deprecated
+// AGENT_REASONING_MODEL is set, the old semantics are preserved exactly —
+// REASONING names the work model and AGENT_MODEL names the fast tier.
+func TestLoad_LegacyReasoningModeMapping(t *testing.T) {
 	t.Setenv("AGENT_CLI", "codex")
 	t.Setenv("AGENT_MODEL", "gpt-5.5")
 	t.Setenv("AGENT_REASONING_MODEL", "gpt-6")
@@ -155,25 +157,49 @@ func TestLoad_ReasoningModelExplicitNotClobbered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Agent.ReasoningModel != "gpt-6" {
-		t.Errorf("expected explicit Agent.ReasoningModel gpt-6 to be preserved, got %q", cfg.Agent.ReasoningModel)
+	if cfg.Agent.Model != "gpt-6" {
+		t.Errorf("legacy mode: expected work model gpt-6, got %q", cfg.Agent.Model)
+	}
+	if cfg.Agent.FastModel != "gpt-5.5" {
+		t.Errorf("legacy mode: expected fast model gpt-5.5, got %q", cfg.Agent.FastModel)
 	}
 }
 
-// TestLoad_OpencodeReasoningModelDefaultNotClobbered confirms opencode's own
-// paired fast/reasoning model defaults aren't overridden by the
-// claude/codex fallback — opencode intentionally uses two different models.
-func TestLoad_OpencodeReasoningModelDefaultNotClobbered(t *testing.T) {
+// TestLoad_OpencodeFastModelDefaultSurvives: setting AGENT_MODEL changes the
+// work model; opencode's own flash default for the fast tier stays in place
+// (the fast tier only follows the work model when no fast default exists).
+func TestLoad_OpencodeFastModelDefaultSurvives(t *testing.T) {
 	t.Setenv("AGENT_CLI", "opencode")
-	t.Setenv("AGENT_MODEL", "custom-fast-model")
-	t.Setenv("AGENT_REASONING_MODEL", "")
+	t.Setenv("AGENT_MODEL", "custom-work-model")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Agent.ReasoningModel != "deepseek-v4-pro" {
-		t.Errorf("expected opencode's own ReasoningModel default deepseek-v4-pro to survive, got %q", cfg.Agent.ReasoningModel)
+	if cfg.Agent.Model != "custom-work-model" {
+		t.Errorf("expected work model custom-work-model, got %q", cfg.Agent.Model)
+	}
+	if cfg.Agent.FastModel != "deepseek-v4-flash" {
+		t.Errorf("expected opencode's flash fast-tier default to survive, got %q", cfg.Agent.FastModel)
+	}
+}
+
+// TestLoad_AgentFastModelExplicit: AGENT_FAST_MODEL sets the fast tier, with
+// combined provider/model form.
+func TestLoad_AgentFastModelExplicit(t *testing.T) {
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("AGENT_MODEL", "anthropic/claude-opus-4-7")
+	t.Setenv("AGENT_FAST_MODEL", "anthropic/claude-haiku-4-5-20251001")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Agent.Provider != "anthropic" || cfg.Agent.Model != "claude-opus-4-7" {
+		t.Errorf("expected anthropic/claude-opus-4-7 work pair, got %s / %s", cfg.Agent.Provider, cfg.Agent.Model)
+	}
+	if cfg.Agent.FastProvider != "anthropic" || cfg.Agent.FastModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("expected anthropic haiku fast pair, got %s / %s", cfg.Agent.FastProvider, cfg.Agent.FastModel)
 	}
 }
 
@@ -466,8 +492,10 @@ func TestLoad_CombinedProviderModel(t *testing.T) {
 	t.Setenv("AGENT_CLI", "opencode")
 	t.Setenv("AGENT_MODEL", "myprovider/model-name")
 	t.Setenv("AGENT_PROVIDER", "")
-	t.Setenv("AGENT_REASONING_MODEL", "openrouter/deepseek/deepseek-r1")
-	t.Setenv("AGENT_REASONING_PROVIDER", "")
+	// Multi-slash form on the fast tier: first segment is the provider,
+	// the rest stays as the model.
+	t.Setenv("AGENT_FAST_MODEL", "openrouter/deepseek/deepseek-r1")
+	t.Setenv("AGENT_FAST_PROVIDER", "")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -476,9 +504,8 @@ func TestLoad_CombinedProviderModel(t *testing.T) {
 	if cfg.Agent.Provider != "myprovider" || cfg.Agent.Model != "model-name" {
 		t.Errorf("expected myprovider/model-name split, got %s / %s", cfg.Agent.Provider, cfg.Agent.Model)
 	}
-	// Multi-slash: first segment is the provider, rest stays as the model.
-	if cfg.Agent.ReasoningProvider != "openrouter" || cfg.Agent.ReasoningModel != "deepseek/deepseek-r1" {
-		t.Errorf("expected openrouter / deepseek/deepseek-r1, got %s / %s", cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel)
+	if cfg.Agent.FastProvider != "openrouter" || cfg.Agent.FastModel != "deepseek/deepseek-r1" {
+		t.Errorf("expected openrouter / deepseek/deepseek-r1, got %s / %s", cfg.Agent.FastProvider, cfg.Agent.FastModel)
 	}
 }
 

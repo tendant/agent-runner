@@ -105,10 +105,10 @@ type AgentConfig struct {
 	Paths               []string // Comma-separated allowed paths
 	Author              string
 	CommitPrefix        string
-	Provider            string   // Optional: model provider (e.g., "deepseek", "openrouter") — opencode only; prepended to Model as "provider/model"
-	Model               string   // Optional: model name (e.g., "deepseek-chat"); combined with Provider when set
-	ReasoningProvider   string   // Optional: provider for agent CLI execution (e.g., "openai"); omit to use CLI default
-	ReasoningModel      string   // Optional: model for agent CLI execution; omit to use CLI default
+	Provider            string   // provider for the work model (AGENT_PROVIDER, or first segment of AGENT_MODEL)
+	Model               string   // AGENT_MODEL — the model doing real work at the agent CLI
+	FastProvider        string   // provider for the fast tier (AGENT_FAST_PROVIDER, or first segment of AGENT_FAST_MODEL)
+	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
@@ -380,42 +380,60 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
-	// opencode requires explicit model/provider; set defaults unless overridden below.
+	// opencode requires an explicit model; ship a two-tier default pair
+	// (pro for real work, flash for the fast tier).
 	if cfg.Agent.CLI == "opencode" || cfg.Agent.CLI == "" {
 		cfg.Agent.Provider = "deepseek"
-		cfg.Agent.Model = "deepseek-v4-flash"
-		cfg.Agent.ReasoningProvider = "deepseek"
-		cfg.Agent.ReasoningModel = "deepseek-v4-pro"
+		cfg.Agent.Model = "deepseek-v4-pro"
+		cfg.Agent.FastProvider = "deepseek"
+		cfg.Agent.FastModel = "deepseek-v4-flash"
 	}
-	cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
-	cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
-	cfg.Agent.ReasoningProvider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.ReasoningProvider)
-	cfg.Agent.ReasoningModel = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.ReasoningModel)
-	// Combined "provider/model" form: when a model env var contains a slash
-	// and its provider var is not explicitly set, the first segment is the
-	// provider. This is the preferred way to pick a model — the separate
-	// *_PROVIDER vars remain supported for explicit control (and for models
-	// whose names themselves contain slashes under a separately-set provider).
-	if os.Getenv("AGENT_PROVIDER") == "" {
-		if p, m, ok := splitProviderModel(os.Getenv("AGENT_MODEL")); ok {
-			cfg.Agent.Provider, cfg.Agent.Model = p, m
+
+	// Model tiers: AGENT_MODEL is the model doing real work at the agent CLI;
+	// AGENT_FAST_MODEL is the optional cheap tier feeding the fast-LLM slot
+	// (planning, intent routing, curation). Both accept combined
+	// "provider/model" form; the *_PROVIDER vars remain for explicit control.
+	//
+	// Legacy mode: AGENT_REASONING_MODEL/AGENT_REASONING_PROVIDER (deprecated)
+	// used to name the work tier, with AGENT_MODEL as the fast tier. When
+	// either is set, that old meaning is preserved exactly.
+	if os.Getenv("AGENT_REASONING_MODEL") != "" || os.Getenv("AGENT_REASONING_PROVIDER") != "" {
+		warnDeprecatedOnce("AGENT_REASONING_MODEL/AGENT_REASONING_PROVIDER", "AGENT_MODEL (work) + AGENT_FAST_MODEL (fast tier)")
+		cfg.Agent.Provider = envOrDefault("AGENT_REASONING_PROVIDER", cfg.Agent.Provider)
+		cfg.Agent.Model = envOrDefault("AGENT_REASONING_MODEL", cfg.Agent.Model)
+		if os.Getenv("AGENT_REASONING_PROVIDER") == "" {
+			if p, m, ok := splitProviderModel(os.Getenv("AGENT_REASONING_MODEL")); ok {
+				cfg.Agent.Provider, cfg.Agent.Model = p, m
+			}
 		}
-	}
-	if os.Getenv("AGENT_REASONING_PROVIDER") == "" {
-		if p, m, ok := splitProviderModel(os.Getenv("AGENT_REASONING_MODEL")); ok {
-			cfg.Agent.ReasoningProvider, cfg.Agent.ReasoningModel = p, m
+		cfg.Agent.FastProvider = envOrDefault("AGENT_PROVIDER", cfg.Agent.FastProvider)
+		cfg.Agent.FastModel = envOrDefault("AGENT_MODEL", cfg.Agent.FastModel)
+		if os.Getenv("AGENT_PROVIDER") == "" {
+			if p, m, ok := splitProviderModel(os.Getenv("AGENT_MODEL")); ok {
+				cfg.Agent.FastProvider, cfg.Agent.FastModel = p, m
+			}
 		}
-	}
-	// ReasoningModel drives the actual CLI invocation (both real task
-	// iterations and the analyzer/planner fallback when no fast-LLM API
-	// credentials are configured — see internal/api/server.go's shared
-	// `exec` instance). If it's still unset, fall back to AGENT_MODEL rather
-	// than the CLI's own built-in default — someone who only set AGENT_MODEL
-	// almost certainly wants that model used everywhere, not just on the
-	// fast-path tier-2 client. opencode is unaffected: its defaults above
-	// already set both fields to a distinct, intentional pair.
-	if cfg.Agent.ReasoningModel == "" && cfg.Agent.Model != "" {
-		cfg.Agent.ReasoningModel = cfg.Agent.Model
+	} else {
+		cfg.Agent.Provider = envOrDefault("AGENT_PROVIDER", cfg.Agent.Provider)
+		cfg.Agent.Model = envOrDefault("AGENT_MODEL", cfg.Agent.Model)
+		if os.Getenv("AGENT_PROVIDER") == "" {
+			if p, m, ok := splitProviderModel(os.Getenv("AGENT_MODEL")); ok {
+				cfg.Agent.Provider, cfg.Agent.Model = p, m
+			}
+		}
+		cfg.Agent.FastProvider = envOrDefault("AGENT_FAST_PROVIDER", cfg.Agent.FastProvider)
+		cfg.Agent.FastModel = envOrDefault("AGENT_FAST_MODEL", cfg.Agent.FastModel)
+		if os.Getenv("AGENT_FAST_PROVIDER") == "" {
+			if p, m, ok := splitProviderModel(os.Getenv("AGENT_FAST_MODEL")); ok {
+				cfg.Agent.FastProvider, cfg.Agent.FastModel = p, m
+			}
+		}
+		// No explicit fast tier: follow the work model so the planner/analyzer
+		// use whatever the user picked rather than a provider default.
+		if cfg.Agent.FastModel == "" && cfg.Agent.Model != "" {
+			cfg.Agent.FastProvider = cfg.Agent.Provider
+			cfg.Agent.FastModel = cfg.Agent.Model
+		}
 	}
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
@@ -524,7 +542,7 @@ func splitProviderModel(s string) (provider, model string, ok bool) {
 func (c *Config) FastLLMSettings() (provider, model, apiKey, baseURL string) {
 	provider, model = c.FastLLM.Provider, c.FastLLM.Model
 	if provider == "" && model == "" {
-		provider, model = c.Agent.Provider, c.Agent.Model
+		provider, model = c.Agent.FastProvider, c.Agent.FastModel
 	}
 	return provider, model, c.FastLLM.APIKey, c.FastLLM.BaseURL
 }

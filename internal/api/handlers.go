@@ -147,7 +147,7 @@ func (h *Handlers) Gateway() *MessageGateway {
 }
 
 // getExecutor returns the current executor, safe for concurrent use.
-// The executor uses AGENT_REASONING_MODEL/AGENT_REASONING_PROVIDER (agent CLI level).
+// The executor uses AGENT_MODEL/AGENT_PROVIDER (the work tier).
 func (h *Handlers) getExecutor() executor.Executor {
 	h.execMu.RLock()
 	defer h.execMu.RUnlock()
@@ -155,12 +155,12 @@ func (h *Handlers) getExecutor() executor.Executor {
 }
 
 // UpdateExecutor recreates the executor from the current config. Called after
-// AGENT_CLI / AGENT_REASONING_MODEL / AGENT_REASONING_PROVIDER are changed at runtime.
+// AGENT_CLI / AGENT_MODEL / AGENT_PROVIDER are changed at runtime.
 func (h *Handlers) UpdateExecutor() {
 	h.execMu.Lock()
 	defer h.execMu.Unlock()
 	cfg := h.config.Agent
-	h.executor = executor.NewExecutor(cfg.CLI, cfg.ReasoningProvider, cfg.ReasoningModel, cfg.MaxTurns)
+	h.executor = executor.NewExecutor(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
 }
 
 // RunRequest represents the POST /run request body
