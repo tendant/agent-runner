@@ -1,4 +1,4 @@
-package runner
+package scheduler
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func (m *mockExecutor) ExecuteAgentTask(_ context.Context, payload AgentTaskPayl
 	return m.execErr
 }
 
-func TestHybridRunnerSQLite(t *testing.T) {
+func TestSchedulerSQLite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

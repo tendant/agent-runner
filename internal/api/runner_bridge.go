@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
-	"github.com/agent-runner/agent-runner/internal/runner"
+	"github.com/agent-runner/agent-runner/internal/scheduler"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
-// RunnerBridge adapts the runner.AgentExecutor interface to the existing
+// RunnerBridge adapts the scheduler.AgentExecutor interface to the existing
 // Handlers.executeAgent() pipeline. It bypasses the in-memory dispatch queue
 // since the runner's lease-based claiming already serializes work.
 type RunnerBridge struct {
@@ -22,9 +22,9 @@ func NewRunnerBridge(handlers *Handlers) *RunnerBridge {
 	return &RunnerBridge{handlers: handlers}
 }
 
-// ExecuteAgentTask implements runner.AgentExecutor.
+// ExecuteAgentTask implements scheduler.AgentExecutor.
 // It creates a session via agentManager and runs executeAgent synchronously.
-func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload runner.AgentTaskPayload) error {
+func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload scheduler.AgentTaskPayload) error {
 	h := b.handlers
 
 	// Use payload values or fall back to config defaults

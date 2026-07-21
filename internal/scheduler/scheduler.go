@@ -1,4 +1,4 @@
-package runner
+package scheduler
 
 import (
 	"context"
@@ -28,9 +28,9 @@ type AgentExecutor interface {
 	ExecuteAgentTask(ctx context.Context, payload AgentTaskPayload) error
 }
 
-// HybridRunner pulls agent tasks from workflow_run via simple-workflow,
+// Scheduler pulls agent tasks from workflow_run via simple-workflow,
 // processes them through AgentExecutor, and tracks status via heartbeat.
-type HybridRunner struct {
+type Scheduler struct {
 	db         *sql.DB
 	dialect    simpleworkflow.Dialect
 	driverName string
@@ -61,8 +61,8 @@ type Config struct {
 	MemoryDir         string // Optional: memory dir to read heartbeat config from
 }
 
-// New creates a new HybridRunner.
-func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
+// New creates a new Scheduler.
+func New(cfg Config, executor AgentExecutor) (*Scheduler, error) {
 	dialect, dsn, err := simpleworkflow.DetectDialect(cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("detect dialect: %w", err)
@@ -91,7 +91,7 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 		}
 	}
 
-	return &HybridRunner{
+	return &Scheduler{
 		db:            db,
 		dialect:       dialect,
 		driverName:    driverName,
@@ -109,7 +109,7 @@ func New(cfg Config, executor AgentExecutor) (*HybridRunner, error) {
 
 // Start runs migrations, starts the listener (postgres only), and enters the main loop.
 // Blocks until ctx is cancelled.
-func (r *HybridRunner) Start(ctx context.Context) error {
+func (r *Scheduler) Start(ctx context.Context) error {
 	// Run simple-workflow migrations
 	swClient := simpleworkflow.NewClientWithDB(r.db, r.dialect)
 	if err := swClient.AutoMigrate(ctx); err != nil {
@@ -147,22 +147,22 @@ func (r *HybridRunner) Start(ctx context.Context) error {
 }
 
 // DB returns the underlying database connection.
-func (r *HybridRunner) DB() *sql.DB {
+func (r *Scheduler) DB() *sql.DB {
 	return r.db
 }
 
 // Dialect returns the simple-workflow dialect.
-func (r *HybridRunner) Dialect() simpleworkflow.Dialect {
+func (r *Scheduler) Dialect() simpleworkflow.Dialect {
 	return r.dialect
 }
 
 // ConnString returns the database connection string.
-func (r *HybridRunner) ConnString() string {
+func (r *Scheduler) ConnString() string {
 	return r.connString
 }
 
 // Stop cleans up resources.
-func (r *HybridRunner) Stop() {
+func (r *Scheduler) Stop() {
 	if r.scheduleTicker != nil {
 		r.scheduleTicker.Stop()
 	}
@@ -172,7 +172,7 @@ func (r *HybridRunner) Stop() {
 	r.db.Close()
 }
 
-func (r *HybridRunner) loop(ctx context.Context) {
+func (r *Scheduler) loop(ctx context.Context) {
 	pollTimer := time.NewTimer(r.pollCap)
 	defer pollTimer.Stop()
 
@@ -212,7 +212,7 @@ func (r *HybridRunner) loop(ctx context.Context) {
 	}
 }
 
-func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
+func (r *Scheduler) claimAndExecuteOne(ctx context.Context) bool {
 	// Ensure type prefix ends with % for LIKE matching
 	prefix := r.typePrefix
 	if len(prefix) > 0 && prefix[len(prefix)-1] != '%' {
@@ -277,7 +277,7 @@ func (r *HybridRunner) claimAndExecuteOne(ctx context.Context) bool {
 }
 
 // extendLease extends the lease at 50% of lease duration until ctx is cancelled.
-func (r *HybridRunner) extendLease(ctx context.Context, runID string) {
+func (r *Scheduler) extendLease(ctx context.Context, runID string) {
 	interval := r.leaseDuration / 2
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

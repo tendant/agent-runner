@@ -86,8 +86,8 @@ type Config struct {
 	// Analyzer LLM settings
 	Analyzer AnalyzerConfig
 
-	// Runner settings
-	Runner RunnerConfig
+	// Workflow scheduler settings
+	Scheduler SchedulerConfig
 
 	// Cleanup settings
 	JobRetentionSeconds     int
@@ -164,8 +164,8 @@ type AnalyzerConfig struct {
 	TimeoutSeconds int    // per-call timeout; default 30s
 }
 
-// RunnerConfig contains hybrid runner settings
-type RunnerConfig struct {
+// SchedulerConfig contains workflow scheduler settings (SCHEDULER_* env vars)
+type SchedulerConfig struct {
 	Enabled           bool   // SCHEDULER_ENABLED
 	DatabaseURL       string // SCHEDULER_DATABASE_URL (postgres:// or sqlite://)
 	AgentID           string // SCHEDULER_AGENT_ID (default: hostname-pid)
@@ -241,7 +241,7 @@ func defaultConfigForDataDir(data string) *Config {
 			MemoryCurationEnabled:        false,
 			MemoryCurationTimeoutSeconds: 60,
 		},
-		Runner: RunnerConfig{
+		Scheduler: SchedulerConfig{
 			LeaseDuration:     60,
 			PollCap:           30,
 			HeartbeatInterval: 300,
@@ -461,14 +461,14 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
 	cfg.Analyzer.TimeoutSeconds = envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30)
 
-	cfg.Runner.Enabled = envBoolOrDefault("SCHEDULER_ENABLED", cfg.Runner.Enabled)
-	cfg.Runner.DatabaseURL = envOrDefault("SCHEDULER_DATABASE_URL", cfg.Runner.DatabaseURL)
-	cfg.Runner.AgentID = envOrDefault("SCHEDULER_AGENT_ID", cfg.Runner.AgentID)
-	cfg.Runner.LeaseDuration = envIntOrDefault("SCHEDULER_LEASE_DURATION", cfg.Runner.LeaseDuration)
-	cfg.Runner.PollCap = envIntOrDefault("SCHEDULER_POLL_CAP", cfg.Runner.PollCap)
-	cfg.Runner.HeartbeatInterval = envIntOrDefault("SCHEDULER_HEARTBEAT_INTERVAL", cfg.Runner.HeartbeatInterval)
-	cfg.Runner.MaxAttempts = envIntOrDefault("SCHEDULER_MAX_ATTEMPTS", cfg.Runner.MaxAttempts)
-	cfg.Runner.TypePrefix = envOrDefault("SCHEDULER_TYPE_PREFIX", cfg.Runner.TypePrefix)
+	cfg.Scheduler.Enabled = envBoolOrDefault("SCHEDULER_ENABLED", cfg.Scheduler.Enabled)
+	cfg.Scheduler.DatabaseURL = envOrDefault("SCHEDULER_DATABASE_URL", cfg.Scheduler.DatabaseURL)
+	cfg.Scheduler.AgentID = envOrDefault("SCHEDULER_AGENT_ID", cfg.Scheduler.AgentID)
+	cfg.Scheduler.LeaseDuration = envIntOrDefault("SCHEDULER_LEASE_DURATION", cfg.Scheduler.LeaseDuration)
+	cfg.Scheduler.PollCap = envIntOrDefault("SCHEDULER_POLL_CAP", cfg.Scheduler.PollCap)
+	cfg.Scheduler.HeartbeatInterval = envIntOrDefault("SCHEDULER_HEARTBEAT_INTERVAL", cfg.Scheduler.HeartbeatInterval)
+	cfg.Scheduler.MaxAttempts = envIntOrDefault("SCHEDULER_MAX_ATTEMPTS", cfg.Scheduler.MaxAttempts)
+	cfg.Scheduler.TypePrefix = envOrDefault("SCHEDULER_TYPE_PREFIX", cfg.Scheduler.TypePrefix)
 
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)

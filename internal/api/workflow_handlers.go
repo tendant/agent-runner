@@ -125,7 +125,7 @@ func (h *Handlers) HandleSchedule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if err := h.workflowClient.SubmitSchedule(ctx, []ScheduleEntry{entry}, h.config.Runner.TypePrefix); err != nil {
+	if err := h.workflowClient.SubmitSchedule(ctx, []ScheduleEntry{entry}, h.config.Scheduler.TypePrefix); err != nil {
 		h.writeError(w, http.StatusBadGateway, "failed to submit schedule: "+err.Error())
 		return
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/runner"
+	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
@@ -81,36 +81,36 @@ func main() {
 	server := api.NewServer(cfg)
 
 	// Conditionally start hybrid scheduler
-	if cfg.Runner.Enabled {
+	if cfg.Scheduler.Enabled {
 		slog.Info("scheduler enabled",
-			"db", cfg.Runner.DatabaseURL, "prefix", cfg.Runner.TypePrefix,
-			"lease_seconds", cfg.Runner.LeaseDuration, "poll_cap_seconds", cfg.Runner.PollCap)
-		if cfg.Runner.DatabaseURL == "" {
+			"db", cfg.Scheduler.DatabaseURL, "prefix", cfg.Scheduler.TypePrefix,
+			"lease_seconds", cfg.Scheduler.LeaseDuration, "poll_cap_seconds", cfg.Scheduler.PollCap)
+		if cfg.Scheduler.DatabaseURL == "" {
 			slog.Error("SCHEDULER_DATABASE_URL is required when SCHEDULER_ENABLED=true")
 			os.Exit(1)
 		}
 
 		bridge := api.NewRunnerBridge(server.Handlers())
-		r, err := runner.New(runner.Config{
-			DatabaseURL:       cfg.Runner.DatabaseURL,
-			AgentID:           cfg.Runner.AgentID,
-			LeaseDuration:     time.Duration(cfg.Runner.LeaseDuration) * time.Second,
-			PollCap:           time.Duration(cfg.Runner.PollCap) * time.Second,
-			HeartbeatInterval: time.Duration(cfg.Runner.HeartbeatInterval) * time.Second,
-			MaxAttempts:       cfg.Runner.MaxAttempts,
-			TypePrefix:        cfg.Runner.TypePrefix,
+		r, err := scheduler.New(scheduler.Config{
+			DatabaseURL:       cfg.Scheduler.DatabaseURL,
+			AgentID:           cfg.Scheduler.AgentID,
+			LeaseDuration:     time.Duration(cfg.Scheduler.LeaseDuration) * time.Second,
+			PollCap:           time.Duration(cfg.Scheduler.PollCap) * time.Second,
+			HeartbeatInterval: time.Duration(cfg.Scheduler.HeartbeatInterval) * time.Second,
+			MaxAttempts:       cfg.Scheduler.MaxAttempts,
+			TypePrefix:        cfg.Scheduler.TypePrefix,
 			MemoryDir:         cfg.MemoryDir,
 		}, bridge)
 		if err != nil {
 			slog.Error("failed to create scheduler", "error", err)
 			os.Exit(1)
 		}
-		server.SetRunner(r)
+		server.SetScheduler(r)
 
 		// Create workflow client for agent scheduling
 		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
 		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
-		server.Handlers().SetRunnerDB(runner.NewDebugDB(r.DB(), r.Dialect().DriverName()))
+		server.Handlers().SetRunnerDB(scheduler.NewDebugDB(r.DB(), r.Dialect().DriverName()))
 		slog.Info("scheduler workflow client initialized")
 
 		go func() {

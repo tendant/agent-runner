@@ -24,7 +24,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/logging"
 	// Import metrics package to register prometheus collectors.
 	_ "github.com/agent-runner/agent-runner/internal/metrics"
-	"github.com/agent-runner/agent-runner/internal/runner"
+	"github.com/agent-runner/agent-runner/internal/scheduler"
 	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/wechat"
@@ -42,7 +42,7 @@ type Server struct {
 	jobManager   *jobs.Manager
 	agentManager *agent.Manager
 	convManager  *conversation.Manager
-	runner       *runner.HybridRunner
+	scheduler    *scheduler.Scheduler
 }
 
 // NewServer creates a new API server
@@ -249,8 +249,8 @@ func (s *Server) Start() error {
 		s.jobManager.Stop()
 
 		// Stop runner (it may be executing a task).
-		if s.runner != nil {
-			s.runner.Stop()
+		if s.scheduler != nil {
+			s.scheduler.Stop()
 		}
 
 		// Stop bots in parallel with a 3-second cap — a hung SSE/poll loop
@@ -479,7 +479,7 @@ func (s *Server) Handlers() *Handlers {
 	return s.handlers
 }
 
-// SetRunner sets the hybrid runner on the server for lifecycle management.
-func (s *Server) SetRunner(r *runner.HybridRunner) {
-	s.runner = r
+// SetScheduler sets the workflow scheduler on the server for lifecycle management.
+func (s *Server) SetScheduler(r *scheduler.Scheduler) {
+	s.scheduler = r
 }

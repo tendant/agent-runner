@@ -711,7 +711,7 @@ func (h *Handlers) finalizeAgentOutputs(ctx context.Context, sessionID string, l
 	} else if len(schedEntries) > 0 {
 		if h.workflowClient != nil {
 			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
-			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Runner.TypePrefix); err != nil {
+			if err := h.workflowClient.SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
 				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
 			}
 		} else {
