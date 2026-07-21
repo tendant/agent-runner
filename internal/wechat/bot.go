@@ -43,6 +43,8 @@ type Bot struct {
 	ctxTokens     map[string]string
 	ctxTokenTimes map[string]time.Time
 
+	engine *botcommon.Engine
+
 	// loginMu prevents concurrent /wechat-login flows.
 	loginMu sync.Mutex
 
@@ -58,7 +60,7 @@ type Bot struct {
 // Reload is called with a valid token.
 func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, gateway Gateway) *Bot {
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
-	return &Bot{
+	b := &Bot{
 		client:        NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
 		downloader:    NewDownloader(cfg.CDNBaseURL, mediaDir),
 		starter:       starter,
@@ -68,6 +70,41 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 		ctxTokens:     make(map[string]string),
 		ctxTokenTimes: make(map[string]time.Time),
 	}
+	b.engine = &botcommon.Engine{
+		Starter:              starter,
+		ConvManager:          convMgr,
+		Analyzer:             analyzer,
+		Sender:               (*wechatSender)(b),
+		Source:               "wechat",
+		Label:                "wechat",
+		StartText:            "Starting agent...",
+		SessionStartedFormat: "Agent session started: %s",
+		AnnounceQueued:       true,
+		OnSessionDone: func(ctx context.Context, id string, session *agent.Session) {
+			b.sendOutputFiles(ctx, id, session.OutputFiles)
+		},
+		NewReporter: func(id string) botcommon.Reporter {
+			return &wechatReporter{bot: b, userID: id}
+		},
+		WG: &b.wg,
+	}
+	return b
+}
+
+// wechatSender adapts the engine's Sender to WeChat text sends. The engine's
+// conversation id is the WeChat user ID. Every send uses a fresh background
+// context, matching the previous behavior (WeChat's context-token routing
+// doesn't carry across a parent request's cancellation).
+type wechatSender Bot
+
+func (s *wechatSender) Status(_ context.Context, id, text string) {
+	(*Bot)(s).sendText(context.Background(), id, text)
+}
+func (s *wechatSender) Reply(_ context.Context, id, text string) {
+	(*Bot)(s).sendText(context.Background(), id, text)
+}
+func (s *wechatSender) Final(_ context.Context, id, text string) {
+	(*Bot)(s).sendText(context.Background(), id, text)
 }
 
 // Reload updates the bot's credentials at runtime and restarts the poll loop
@@ -326,7 +363,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 	if state == conversation.StateConfirming {
 		if botcommon.IsConfirmation(content) {
-			b.handleConfirmation(userID, chatID, conv)
+			b.engine.HandleConfirmation(context.Background(), chatID, conv)
 			return
 		}
 		if botcommon.IsDenial(content) {
@@ -338,7 +375,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	}
 
 	b.sendText(ctx, userID, "Thinking...")
-	b.handleAnalysis(userID, chatID, conv)
+	b.engine.HandleAnalysis(context.Background(), chatID, conv)
 }
 
 // handleLogin runs the iLink QR login flow in a background goroutine and sends
@@ -410,109 +447,6 @@ func (b *Bot) handleLogin(userID string) {
 	}()
 }
 
-// handleConfirmation starts the agent after the user confirms.
-func (b *Bot) handleConfirmation(userID, chatID string, conv *conversation.Conversation) {
-	slog.Info("wechat: starting agent", "user_id", userID)
-	b.sendText(context.Background(), userID, "Starting agent...")
-	conv.SetState(conversation.StateExecuting)
-
-	messages := conv.GetMessages()
-	var currentMsg string
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			currentMsg = messages[i].Content
-			break
-		}
-	}
-	message := currentMsg
-	if history := conv.GetFormattedHistory(); history != "" {
-		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
-	}
-
-	sessionID, err := b.starter.StartAgent(message, "wechat")
-	if err != nil {
-		slog.Error("wechat: failed to start agent", "user_id", userID, "error", err)
-		conv.SetState(conversation.StateGathering)
-		b.sendText(context.Background(), userID, fmt.Sprintf("Failed to start agent: %s", err))
-		return
-	}
-
-	slog.Info("wechat: agent session started", "user_id", userID, "session_id", sessionID)
-	b.sendText(context.Background(), userID, fmt.Sprintf("Agent session started: %s", sessionID))
-
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		b.pollAndReport(userID, sessionID)
-
-		session, sessionOk := b.starter.GetAgentSession(sessionID)
-		if sessionOk {
-			for _, iter := range session.Iterations {
-				if iter.Output != "" {
-					conv.AddMessage("assistant", iter.Output)
-				}
-			}
-		}
-		hasPending := conv.ClearPendingInput()
-
-		// Clear StateExecuting before slow post-processing so new messages
-		// are accepted immediately instead of being queued.
-		if !hasPending {
-			b.convManager.Complete(chatID)
-		}
-
-		if sessionOk && len(session.OutputFiles) > 0 {
-			b.sendOutputFiles(context.Background(), userID, session.OutputFiles)
-		}
-		if b.analyzer != nil && conv.NeedsCompaction() {
-			botcommon.SummarizeConversation(b.analyzer, conv, "wechat")
-		}
-
-		if hasPending {
-			conv.SetState(conversation.StateGathering)
-			b.sendText(context.Background(), userID, "Processing queued messages...")
-			b.handleAnalysis(userID, chatID, conv)
-		}
-	}()
-}
-
-// handleAnalysis calls the analyzer to decide the next action.
-func (b *Bot) handleAnalysis(userID, chatID string, conv *conversation.Conversation) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	result, err := b.analyzer.Analyze(ctx, conv)
-	if err != nil {
-		slog.Error("wechat: analyzer error", "error", err)
-		if ctx.Err() == context.DeadlineExceeded {
-			b.sendText(context.Background(), userID, "Sorry, the request timed out. Please try again.")
-		} else {
-			b.sendText(context.Background(), userID, "Sorry, I had trouble understanding that. Could you rephrase?")
-		}
-		return
-	}
-
-	switch result.Action {
-	case "execute":
-		conv.AddMessage("assistant", result.Message)
-		b.sendText(context.Background(), userID, result.Message)
-		b.handleConfirmation(userID, chatID, conv)
-
-	case "ask":
-		conv.AddMessage("assistant", result.Message)
-		b.sendText(context.Background(), userID, result.Message)
-
-	case "plan":
-		conv.SetPlan(result.Message)
-		conv.AddMessage("assistant", result.Message)
-		b.sendText(context.Background(), userID, result.Message+"\n\nProceed? (yes/no)")
-
-	default:
-		conv.AddMessage("assistant", result.Message)
-		b.sendText(context.Background(), userID, result.Message)
-	}
-}
-
 // wechatReporter adapts botcommon.PollAndReport's callbacks to WeChat
 // message sends. WeChat reports progress per completed iteration, so
 // OnIterationStart is unused. Every send uses a fresh context.Background(),
@@ -535,12 +469,6 @@ func (r *wechatReporter) OnNotFound() {
 }
 func (r *wechatReporter) OnTimeout() {
 	r.bot.sendText(context.Background(), r.userID, "Session timed out waiting for a response.")
-}
-
-// pollAndReport polls the agent session every 5 seconds and sends incremental
-// iteration updates to the user.
-func (b *Bot) pollAndReport(userID, sessionID string) {
-	botcommon.PollAndReport(b.starter, sessionID, &wechatReporter{bot: b, userID: userID})
 }
 
 // sendText sends a plain-text message to a WeChat user.
