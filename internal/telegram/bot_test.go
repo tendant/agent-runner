@@ -130,38 +130,6 @@ func TestFormatFinalResult_FailedNoError(t *testing.T) {
 	}
 }
 
-func TestIsConfirmation(t *testing.T) {
-	positives := []string{"yes", "Yes", "YES", "y", "ok", "sure", "proceed", "go", "yep", "yeah"}
-	for _, s := range positives {
-		if !isConfirmation(s) {
-			t.Errorf("expected %q to be confirmation", s)
-		}
-	}
-
-	negatives := []string{"no", "maybe", "hello", "what"}
-	for _, s := range negatives {
-		if isConfirmation(s) {
-			t.Errorf("expected %q not to be confirmation", s)
-		}
-	}
-}
-
-func TestIsDenial(t *testing.T) {
-	positives := []string{"no", "No", "NO", "n", "nope", "cancel", "stop", "nah"}
-	for _, s := range positives {
-		if !isDenial(s) {
-			t.Errorf("expected %q to be denial", s)
-		}
-	}
-
-	negatives := []string{"yes", "maybe", "hello"}
-	for _, s := range negatives {
-		if isDenial(s) {
-			t.Errorf("expected %q not to be denial", s)
-		}
-	}
-}
-
 // mockStarter implements AgentStarter for testing.
 type mockStarter struct {
 	startCalled  bool

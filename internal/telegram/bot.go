@@ -37,6 +37,7 @@ type Bot struct {
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
+	engine      *botcommon.Engine
 
 	api    *tgbotapi.BotAPI
 	cancel context.CancelFunc
@@ -51,7 +52,7 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 		return nil
 	}
 
-	return &Bot{
+	b := &Bot{
 		token:       cfg.BotToken,
 		chatID:      cfg.ChatID,
 		mediaDir:    filepath.Join(tmpRoot, "telegram-media"),
@@ -60,6 +61,46 @@ func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.
 		convManager: convMgr,
 		analyzer:    analyzer,
 	}
+	b.engine = &botcommon.Engine{
+		Starter:              starter,
+		ConvManager:          convMgr,
+		Analyzer:             analyzer,
+		Sender:               (*telegramSender)(b),
+		Source:               "telegram",
+		Label:                "telegram",
+		StartText:            "Starting agent...",
+		SessionStartedFormat: "Agent session started: `%s`",
+		AnnounceQueued:       true,
+		OnSessionDone: func(_ context.Context, id string, session *agent.Session) {
+			b.uploadOutputFiles(parseChatID(id), session)
+		},
+		NewReporter: func(id string) botcommon.Reporter {
+			return &telegramReporter{bot: b, chatID: parseChatID(id)}
+		},
+		WG: &b.wg,
+	}
+	return b
+}
+
+// telegramSender adapts the engine's Sender to Telegram sends. The engine's
+// conversation id is the decimal chat ID.
+type telegramSender Bot
+
+func (s *telegramSender) Status(_ context.Context, id, text string) {
+	(*Bot)(s).send(parseChatID(id), text)
+}
+func (s *telegramSender) Reply(_ context.Context, id, text string) {
+	(*Bot)(s).send(parseChatID(id), text)
+}
+func (s *telegramSender) Final(_ context.Context, id, text string) {
+	(*Bot)(s).send(parseChatID(id), text)
+}
+
+// parseChatID converts the engine's string conversation id back to the
+// native Telegram chat ID.
+func parseChatID(id string) int64 {
+	n, _ := strconv.ParseInt(id, 10, 64)
+	return n
 }
 
 // Start connects to the Telegram API and begins long-polling. Non-blocking.
@@ -158,11 +199,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	// If confirming, check for yes/no
 	if state == conversation.StateConfirming {
-		if isConfirmation(content) {
-			b.handleConfirmation(tgChatID, chatID, conv)
+		if botcommon.IsConfirmation(content) {
+			b.engine.HandleConfirmation(context.Background(), chatID, conv)
 			return
 		}
-		if isDenial(content) {
+		if botcommon.IsDenial(content) {
 			conv.SetState(conversation.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
 			b.send(tgChatID, "OK, what would you like to change?")
@@ -173,117 +214,13 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	// If no analyzer is configured, execute directly.
 	if b.analyzer == nil {
-		b.handleConfirmation(tgChatID, chatID, conv)
+		b.engine.HandleConfirmation(context.Background(), chatID, conv)
 		return
 	}
 
 	// Analyze conversation via Claude (slow — acknowledge first)
 	b.send(tgChatID, "Thinking...")
-	b.handleAnalysis(tgChatID, chatID, conv)
-}
-
-// handleConfirmation starts the agent after the user confirms the plan.
-func (b *Bot) handleConfirmation(tgChatID int64, chatID string, conv *conversation.Conversation) {
-	b.send(tgChatID, "Starting agent...")
-	conv.SetState(conversation.StateExecuting)
-
-	// Build message: latest user message + conversation history for context
-	messages := conv.GetMessages()
-	var currentMsg string
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			currentMsg = messages[i].Content
-			break
-		}
-	}
-	message := currentMsg
-	if history := conv.GetFormattedHistory(); history != "" {
-		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
-	}
-
-	sessionID, err := b.starter.StartAgent(message, "telegram")
-	if err != nil {
-		conv.SetState(conversation.StateGathering)
-		b.send(tgChatID, fmt.Sprintf("Failed to start agent: %s", err))
-		return
-	}
-
-	b.send(tgChatID, fmt.Sprintf("Agent session started: `%s`", sessionID))
-
-	// Poll and report in background
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		b.pollAndReport(tgChatID, sessionID)
-
-		session, sessionOk := b.starter.GetAgentSession(sessionID)
-		if sessionOk {
-			for _, iter := range session.Iterations {
-				if iter.Output != "" {
-					conv.AddMessage("assistant", iter.Output)
-				}
-			}
-		}
-		hasPending := conv.ClearPendingInput()
-
-		// Clear StateExecuting before slow post-processing so new messages
-		// are accepted immediately instead of being queued.
-		if !hasPending {
-			b.convManager.Complete(chatID)
-		}
-
-		if sessionOk && len(session.OutputFiles) > 0 {
-			b.uploadOutputFiles(tgChatID, session)
-		}
-		if b.analyzer != nil && conv.NeedsCompaction() {
-			botcommon.SummarizeConversation(b.analyzer, conv, "telegram")
-		}
-
-		if hasPending {
-			conv.SetState(conversation.StateGathering)
-			b.send(tgChatID, "Processing queued messages...")
-			b.handleAnalysis(tgChatID, chatID, conv)
-		}
-	}()
-}
-
-// handleAnalysis calls the analyzer to decide the next action.
-func (b *Bot) handleAnalysis(tgChatID int64, chatID string, conv *conversation.Conversation) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	result, err := b.analyzer.Analyze(ctx, conv)
-	if err != nil {
-		slog.Error("telegram: analyzer error", "error", err)
-		if ctx.Err() == context.DeadlineExceeded {
-			b.send(tgChatID, "Sorry, the request timed out. Please try again.")
-		} else {
-			b.send(tgChatID, "Sorry, I had trouble understanding that. Could you rephrase?")
-		}
-		return
-	}
-
-	switch result.Action {
-	case "execute":
-		// High-confidence action — skip confirmation, run immediately
-		conv.AddMessage("assistant", result.Message)
-		b.send(tgChatID, result.Message)
-		b.handleConfirmation(tgChatID, chatID, conv)
-
-	case "ask":
-		conv.AddMessage("assistant", result.Message)
-		b.send(tgChatID, result.Message)
-
-	case "plan":
-		conv.SetPlan(result.Message)
-		conv.AddMessage("assistant", result.Message)
-		b.send(tgChatID, result.Message+"\n\nProceed? (yes/no)")
-
-	default:
-		// Unknown action — treat as "ask"
-		conv.AddMessage("assistant", result.Message)
-		b.send(tgChatID, result.Message)
-	}
+	b.engine.HandleAnalysis(context.Background(), chatID, conv)
 }
 
 // telegramReporter adapts botcommon.PollAndReport's callbacks to Telegram
@@ -304,10 +241,6 @@ func (r *telegramReporter) OnFinal(session *agent.Session) {
 func (r *telegramReporter) OnNotFound() { r.bot.send(r.chatID, "Session not found.") }
 func (r *telegramReporter) OnTimeout() {
 	r.bot.send(r.chatID, "Session timed out waiting for a response.")
-}
-
-func (b *Bot) pollAndReport(tgChatID int64, sessionID string) {
-	botcommon.PollAndReport(b.starter, sessionID, &telegramReporter{bot: b, chatID: tgChatID})
 }
 
 // extractContent assembles a text representation of a Telegram message.
@@ -504,14 +437,4 @@ func FormatFinalResult(session *agent.Session) string {
 	}
 	sb += botcommon.FormatWarningsSuffix(session)
 	return sb
-}
-
-// isConfirmation checks if the message is a positive confirmation.
-func isConfirmation(text string) bool {
-	return botcommon.IsConfirmation(text)
-}
-
-// isDenial checks if the message is a negative response.
-func isDenial(text string) bool {
-	return botcommon.IsDenial(text)
 }
