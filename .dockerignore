@@ -5,7 +5,16 @@
 agent-runner
 agent-cli
 wechat-login
+cli
+server
 logs/
 tmp/
 repos/
 repo-cache/
+runs/
+workspaces/
+origins/
+projects/
+memory/
+outputs/
+uploads/

@@ -11,6 +11,9 @@ origins/
 runs/
 logs/
 tmp/
+memory/
+outputs/
+uploads/
 .claude/
 internal/api/memory/
 

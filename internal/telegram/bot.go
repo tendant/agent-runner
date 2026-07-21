@@ -29,11 +29,11 @@ type Gateway = botcommon.Gateway
 
 // Bot is a Telegram bot that bridges messages to the agent runner.
 type Bot struct {
-	token     string
-	chatID    int64
-	mediaDir  string // directory for downloaded media files
-	starter   AgentStarter
-	gateway Gateway
+	token    string
+	chatID   int64
+	mediaDir string // directory for downloaded media files
+	starter  AgentStarter
+	gateway  Gateway
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer

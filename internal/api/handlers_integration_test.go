@@ -18,10 +18,10 @@ import (
 )
 
 type testEnv struct {
-	handlers    *Handlers
+	handlers     *Handlers
 	repoCacheDir string
-	logsDir     string
-	tmpDir      string
+	logsDir      string
+	tmpDir       string
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
@@ -66,10 +66,10 @@ func setupTestEnv(t *testing.T) *testEnv {
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
 
 	return &testEnv{
-		handlers:    handlers,
+		handlers:     handlers,
 		repoCacheDir: repoCacheDir,
-		logsDir:     logsDir,
-		tmpDir:      tmpDir,
+		logsDir:      logsDir,
+		tmpDir:       tmpDir,
 	}
 }
 

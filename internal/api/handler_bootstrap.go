@@ -202,7 +202,6 @@ func (h *Handlers) bootstrapPaths() (systemPrompt, promptFile string) {
 	return
 }
 
-
 // CLIInstalled reports whether the given CLI binary is present in PATH.
 func CLIInstalled(cli string) bool {
 	if cli == "" {

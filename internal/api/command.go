@@ -31,10 +31,10 @@ const (
 // Commander handles chat configuration commands. Zero LLM dependencies —
 // safe to call before any model or provider is configured.
 type Commander struct {
-	cfg          *config.Config
-	handlers     *Handlers
-	authMu       sync.Mutex // guards against concurrent /auth flows
-	authCancel   func()     // non-nil while an auth flow is running
+	cfg        *config.Config
+	handlers   *Handlers
+	authMu     sync.Mutex // guards against concurrent /auth flows
+	authCancel func()     // non-nil while an auth flow is running
 }
 
 // NewCommander creates a Commander backed by the given config and handlers.
@@ -88,21 +88,21 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	// returns the specific usage hint instead of falling through to the
 	// gateway's generic "Unknown command" response.
 	knownCommands := map[string]string{
-		"/help":       "usage: /help",
-		"/config":     "usage: /config",
-		"/status":     "usage: /status",
-		"/sessions":   "usage: /sessions",
-		"/set":        "usage: /set KEY VALUE  or  /set KEY=VALUE",
-		"/bootstrap":  "usage: /bootstrap [force]",
-		"/migrate":    "usage: /migrate",
-		"/install-cli": "usage: /install-cli [claude|codex|opencode] [force]",
-		cmdSetAgent:   "usage: " + cmdSetAgent + " <content>",
-		cmdSetPrompt:  "usage: " + cmdSetPrompt + " <content>",
-		"/auth":       "usage: /auth [claude|codex] — only available via chat",
-		cmdMemory:     "usage: " + cmdMemory + " [show|clear|git <url>]",
-		cmdRepo:       "usage: " + cmdRepo + " [add|remove|list] <url>",
-		"/stop":       "usage: /stop [session-id]",
-		"/logs":       "usage: /logs [session-id-prefix]",
+		"/help":          "usage: /help",
+		"/config":        "usage: /config",
+		"/status":        "usage: /status",
+		"/sessions":      "usage: /sessions",
+		"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
+		"/bootstrap":     "usage: /bootstrap [force]",
+		"/migrate":       "usage: /migrate",
+		"/install-cli":   "usage: /install-cli [claude|codex|opencode] [force]",
+		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
+		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
+		"/auth":          "usage: /auth [claude|codex] — only available via chat",
+		cmdMemory:        "usage: " + cmdMemory + " [show|clear|git <url>]",
+		cmdRepo:          "usage: " + cmdRepo + " [add|remove|list] <url>",
+		"/stop":          "usage: /stop [session-id]",
+		"/logs":          "usage: /logs [session-id-prefix]",
 		"/update-prompt": "usage: /update-prompt <content>",
 	}
 
@@ -883,7 +883,7 @@ func parseSystemUser(body string) (system, user string) {
 	lines := strings.Split(body, "\n")
 
 	const (
-		secNone   = iota
+		secNone = iota
 		secSystem
 		secUser
 	)

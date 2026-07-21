@@ -905,7 +905,7 @@ var emitBackoffs = []time.Duration{
 	3 * time.Second,
 }
 
-func (b *Bot) emit(ctx context.Context, convID, eventType string, payload interface{}) {
+func (b *Bot) emit(ctx context.Context, convID, eventType string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("stream bot: marshal error", "error", err)

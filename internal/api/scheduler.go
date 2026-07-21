@@ -17,25 +17,25 @@ import (
 // ScheduleEntry represents a single scheduled task written by an agent.
 type ScheduleEntry struct {
 	Message        string `json:"message"`
-	RunAfter       string `json:"run_after,omitempty"`        // RFC3339 absolute time
-	RunInSeconds   int    `json:"run_in_seconds,omitempty"`   // relative delay from now
-	Cron           string `json:"cron,omitempty"`             // cron expression for recurring
-	Timezone       string `json:"timezone,omitempty"`         // timezone for cron (default UTC)
+	RunAfter       string `json:"run_after,omitempty"`       // RFC3339 absolute time
+	RunInSeconds   int    `json:"run_in_seconds,omitempty"`  // relative delay from now
+	Cron           string `json:"cron,omitempty"`            // cron expression for recurring
+	Timezone       string `json:"timezone,omitempty"`        // timezone for cron (default UTC)
 	IdempotencyKey string `json:"idempotency_key,omitempty"` // dedup key for one-shot tasks
 }
 
 // ScheduleInfo represents a schedule returned by the list endpoint.
 type ScheduleInfo struct {
-	ID          string  `json:"id"`
-	Type        string  `json:"type"`
-	Message     string  `json:"message,omitempty"`
-	CronExpr    string  `json:"cron"`
-	Timezone    string  `json:"timezone"`
-	NextRunAt   string  `json:"next_run_at"`
-	LastRunAt   string  `json:"last_run_at,omitempty"`
-	Enabled     bool    `json:"enabled"`
-	Priority    int     `json:"priority"`
-	MaxAttempts int     `json:"max_attempts"`
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Message     string `json:"message,omitempty"`
+	CronExpr    string `json:"cron"`
+	Timezone    string `json:"timezone"`
+	NextRunAt   string `json:"next_run_at"`
+	LastRunAt   string `json:"last_run_at,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Priority    int    `json:"priority"`
+	MaxAttempts int    `json:"max_attempts"`
 }
 
 // WorkflowScheduler submits schedule entries via simple-workflow.
@@ -80,7 +80,7 @@ func (w *workflowSchedulerClient) ListSchedules(ctx context.Context) ([]Schedule
 			info.LastRunAt = s.LastRunAt.Format(time.RFC3339)
 		}
 		// Extract message from payload if available
-		if payload, ok := s.Payload.(map[string]interface{}); ok {
+		if payload, ok := s.Payload.(map[string]any); ok {
 			if msg, ok := payload["message"].(string); ok {
 				info.Message = msg
 			}
@@ -158,7 +158,7 @@ func (h *Handlers) HandleListSchedules(w http.ResponseWriter, r *http.Request) {
 		schedules = []ScheduleInfo{}
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]interface{}{"schedules": schedules})
+	h.writeJSON(w, http.StatusOK, map[string]any{"schedules": schedules})
 }
 
 // HandleDeleteSchedule handles DELETE /schedule/{id} — soft-deletes a schedule.

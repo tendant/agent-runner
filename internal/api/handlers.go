@@ -125,8 +125,8 @@ func (h *Handlers) SetWorkflowClient(w WorkflowScheduler) {
 
 // RunnerDB provides read-only access to the runner's database for debug queries.
 type RunnerDB interface {
-	QuerySchedules() ([]map[string]interface{}, error)
-	QueryRuns(limit int) ([]map[string]interface{}, error)
+	QuerySchedules() ([]map[string]any, error)
+	QueryRuns(limit int) ([]map[string]any, error)
 }
 
 // SetRunnerDB sets the runner DB for debug endpoints.
@@ -221,13 +221,13 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 	job, err := h.jobManager.CreateJob(req.Project, req.Instruction, req.Paths, req.CommitMessage, author)
 	if err != nil {
 		if strings.Contains(err.Error(), "locked") {
-			h.writeJSON(w, http.StatusConflict, map[string]interface{}{
+			h.writeJSON(w, http.StatusConflict, map[string]any{
 				"error": err.Error(),
 			})
 			return
 		}
 		if strings.Contains(err.Error(), "capacity") {
-			h.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			h.writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"error": err.Error(),
 			})
 			return
@@ -245,7 +245,7 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 	go h.executeJob(job, projectPath)
 
 	// Return 202 Accepted with job info
-	h.writeJSON(w, http.StatusAccepted, map[string]interface{}{
+	h.writeJSON(w, http.StatusAccepted, map[string]any{
 		"job_id":  jobID,
 		"status":  jobStatus,
 		"project": jobProject,
@@ -315,7 +315,7 @@ func (h *Handlers) HandleGetProjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+	h.writeJSON(w, http.StatusOK, map[string]any{
 		"projects": h.jobManager.ListProjects(projects),
 	})
 }
@@ -569,7 +569,7 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)

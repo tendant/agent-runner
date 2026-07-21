@@ -91,10 +91,10 @@ type MessageItem struct {
 // WeixinMessage is the core message type used for both inbound (getupdates)
 // and outbound (sendmessage) calls.
 type WeixinMessage struct {
-	FromUserID   string        `json:"from_user_id"`           // "" for outbound bot messages
+	FromUserID   string        `json:"from_user_id"` // "" for outbound bot messages
 	ToUserID     string        `json:"to_user_id,omitempty"`
-	ClientID     string        `json:"client_id,omitempty"`    // unique UUID per outbound message
-	MessageType  int           `json:"message_type,omitempty"` // 1=USER (inbound), 2=BOT (outbound)
+	ClientID     string        `json:"client_id,omitempty"`     // unique UUID per outbound message
+	MessageType  int           `json:"message_type,omitempty"`  // 1=USER (inbound), 2=BOT (outbound)
 	MessageState int           `json:"message_state,omitempty"` // 2=FINISH for outbound
 	ItemList     []MessageItem `json:"item_list,omitempty"`
 	ContextToken string        `json:"context_token,omitempty"`
@@ -143,41 +143,41 @@ const (
 
 // GetUploadUrlReq is the request body for ilink/bot/getuploadurl.
 type GetUploadUrlReq struct {
-	FileKey      string   `json:"filekey"`
-	MediaType    int      `json:"media_type"`
-	ToUserID     string   `json:"to_user_id,omitempty"`
-	RawSize      int      `json:"rawsize"`
-	RawFileMD5   string   `json:"rawfilemd5"`  // MD5 of plaintext, hex-encoded
-	FileSize     int      `json:"filesize"`    // AES-128-ECB padded ciphertext size
-	NoNeedThumb  bool     `json:"no_need_thumb"`
-	AESKey       string   `json:"aeskey"`      // hex-encoded 16-byte key
-	BaseInfo     BaseInfo `json:"base_info"`
+	FileKey     string   `json:"filekey"`
+	MediaType   int      `json:"media_type"`
+	ToUserID    string   `json:"to_user_id,omitempty"`
+	RawSize     int      `json:"rawsize"`
+	RawFileMD5  string   `json:"rawfilemd5"` // MD5 of plaintext, hex-encoded
+	FileSize    int      `json:"filesize"`   // AES-128-ECB padded ciphertext size
+	NoNeedThumb bool     `json:"no_need_thumb"`
+	AESKey      string   `json:"aeskey"` // hex-encoded 16-byte key
+	BaseInfo    BaseInfo `json:"base_info"`
 }
 
 // GetUploadUrlResp is the response from ilink/bot/getuploadurl.
 type GetUploadUrlResp struct {
-	Ret             int    `json:"ret"`
-	ErrCode         int    `json:"errcode"`
-	ErrMsg          string `json:"errmsg"`
-	UploadParam     string `json:"upload_param"`
+	Ret              int    `json:"ret"`
+	ErrCode          int    `json:"errcode"`
+	ErrMsg           string `json:"errmsg"`
+	UploadParam      string `json:"upload_param"`
 	ThumbUploadParam string `json:"thumb_upload_param,omitempty"`
 }
 
 // GetQRCodeResp is the response from ilink/bot/get_bot_qrcode.
 type GetQRCodeResp struct {
-	Ret           int    `json:"ret"`
-	ErrMsg        string `json:"errmsg"`
-	QRCode        string `json:"qrcode"`
+	Ret              int    `json:"ret"`
+	ErrMsg           string `json:"errmsg"`
+	QRCode           string `json:"qrcode"`
 	QRCodeImgContent string `json:"qrcode_img_content"`
 }
 
 // GetQRCodeStatusResp is the response from ilink/bot/get_qrcode_status.
 type GetQRCodeStatusResp struct {
-	Ret        int    `json:"ret"`
-	ErrMsg     string `json:"errmsg"`
-	Status     string `json:"status"` // "wait" | "scaned" | "confirmed" | "expired"
-	BotToken   string `json:"bot_token"`
-	ILinkBotID string `json:"ilink_bot_id"`
-	BaseURL    string `json:"baseurl"`
+	Ret         int    `json:"ret"`
+	ErrMsg      string `json:"errmsg"`
+	Status      string `json:"status"` // "wait" | "scaned" | "confirmed" | "expired"
+	BotToken    string `json:"bot_token"`
+	ILinkBotID  string `json:"ilink_bot_id"`
+	BaseURL     string `json:"baseurl"`
 	ILinkUserID string `json:"ilink_user_id"`
 }

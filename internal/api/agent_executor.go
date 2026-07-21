@@ -308,7 +308,7 @@ func (h *Handlers) executeAgentWithContext(ctx context.Context, session *agent.S
 		// [H5] Retry memory push up to 3 times to survive transient network errors.
 		memoryCreds := tmpl.MemoryGitCredsFromEnv()
 		var pushErr error
-		for attempt := 0; attempt < 3; attempt++ {
+		for attempt := range 3 {
 			if attempt > 0 {
 				time.Sleep(2 * time.Second)
 				slog.Info("retrying memory push", "session_id", sessionID, "attempt", attempt+1)

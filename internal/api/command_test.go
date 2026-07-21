@@ -236,7 +236,7 @@ func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
 	c := NewCommander(env.handlers.config, env.handlers)
 
 	for _, key := range []string{"DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "MY_SECRET", "DB_PASSWORD"} {
-		reply, _, _ := c.Handle("/set " + key + " super-secret-value", nil)
+		reply, _, _ := c.Handle("/set "+key+" super-secret-value", nil)
 		if reply != "ok "+key {
 			t.Errorf("sensitive key %s: expected 'ok %s', got: %s", key, key, reply)
 		}
@@ -639,7 +639,7 @@ func TestCommander_Memory_Git_InitialisesRepo(t *testing.T) {
 func TestCommander_Memory_Git_SameRemote_NoOp(t *testing.T) {
 	c, _ := newMemoryCommander(t)
 	remote := "file:///" + t.TempDir()
-	c.Handle("/memory git "+remote, nil) // first call: init
+	c.Handle("/memory git "+remote, nil)                // first call: init
 	reply, _, _ := c.Handle("/memory git "+remote, nil) // second call: same remote
 	if !strings.Contains(reply, "already configured") {
 		t.Errorf("expected 'already configured', got: %s", reply)

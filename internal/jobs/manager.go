@@ -55,8 +55,8 @@ type Job struct {
 }
 
 // ToResponse converts a Job to a response-appropriate format
-func (j *Job) ToResponse() map[string]interface{} {
-	resp := map[string]interface{}{
+func (j *Job) ToResponse() map[string]any {
+	resp := map[string]any{
 		"job_id":  j.ID,
 		"status":  j.Status,
 		"project": j.Project,
@@ -293,11 +293,11 @@ func (m *Manager) IsProjectLocked(project string) (bool, *Lock) {
 }
 
 // GetProjectStatus returns the lock status of a project
-func (m *Manager) GetProjectStatus(project string) map[string]interface{} {
+func (m *Manager) GetProjectStatus(project string) map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"project": project,
 		"locked":  false,
 	}
@@ -312,13 +312,13 @@ func (m *Manager) GetProjectStatus(project string) map[string]interface{} {
 }
 
 // ListProjects returns lock status for multiple projects
-func (m *Manager) ListProjects(projects []string) []map[string]interface{} {
+func (m *Manager) ListProjects(projects []string) []map[string]any {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]map[string]interface{}, 0, len(projects))
+	result := make([]map[string]any, 0, len(projects))
 	for _, project := range projects {
-		item := map[string]interface{}{
+		item := map[string]any{
 			"name":   project,
 			"locked": false,
 		}

@@ -50,18 +50,18 @@ type ValidationResult struct {
 
 // AgentLogData contains data for writing an agent session log
 type AgentLogData struct {
-	SessionID     string
-	Status        string
-	Duration      int
-	Message       string
-	Author        string
-	Iterations    []AgentIterationLog
+	SessionID            string
+	Status               string
+	Duration             int
+	Message              string
+	Author               string
+	Iterations           []AgentIterationLog
 	SuccessfulIterations int
-	TotalCostUSD  float64
-	Error         string
-	Plan          string // JSON string of planner output (if enabled)
-	Review        string // JSON string of reviewer output (if enabled)
-	PlannerPrompt string // full prompt sent to the planner (for debugging)
+	TotalCostUSD         float64
+	Error                string
+	Plan                 string // JSON string of planner output (if enabled)
+	Review               string // JSON string of reviewer output (if enabled)
+	PlannerPrompt        string // full prompt sent to the planner (for debugging)
 }
 
 // AgentIterationLog captures one iteration for the log

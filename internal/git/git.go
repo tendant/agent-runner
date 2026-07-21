@@ -209,7 +209,7 @@ func (o *Operations) Push(ctx context.Context, repoPath string) error {
 	var lastErr error
 	pushTarget := o.resolveRemote(ctx, repoPath)
 
-	for i := 0; i < o.PushRetries; i++ {
+	for i := range o.PushRetries {
 		if i > 0 {
 			time.Sleep(time.Duration(o.PushRetryDelaySeconds) * time.Second)
 		}

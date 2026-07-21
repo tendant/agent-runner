@@ -135,8 +135,8 @@ func replPipe(baseURL, apiKey string) {
 // Returns ("", false) on EOF or Ctrl+D.
 func readMessage(r *bufio.Reader) (string, bool) {
 	fmt.Print("> ")
-	var line []byte   // current typed line
-	var acc  []string // lines from previous paste blocks
+	var line []byte  // current typed line
+	var acc []string // lines from previous paste blocks
 
 	for {
 		b, err := r.ReadByte()

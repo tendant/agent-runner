@@ -285,14 +285,14 @@ func UploadImage(ctx context.Context, client *Client, cdnBaseURL, toUserID strin
 	slog.Debug("wechat: upload image", "rawsize", len(imageData), "ciphersize", cipherSize, "md5", rawMD5Hex)
 
 	uploadResp, err := client.GetUploadUrl(ctx, GetUploadUrlReq{
-		FileKey:    filekey,
-		MediaType:  UploadMediaTypeImage,
-		ToUserID:   toUserID,
-		RawSize:    len(imageData),
-		RawFileMD5: rawMD5Hex,
-		FileSize:   cipherSize,
+		FileKey:     filekey,
+		MediaType:   UploadMediaTypeImage,
+		ToUserID:    toUserID,
+		RawSize:     len(imageData),
+		RawFileMD5:  rawMD5Hex,
+		FileSize:    cipherSize,
 		NoNeedThumb: true,
-		AESKey:     aeskeyHex,
+		AESKey:      aeskeyHex,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getuploadurl: %w", err)

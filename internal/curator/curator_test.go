@@ -177,10 +177,10 @@ func TestCurate_ReviewFindingsInPrompt(t *testing.T) {
 	c := New(fake, Config{MemoryDir: dir, CharCap: 12000})
 
 	_, err := c.Curate(context.Background(), Input{
-		TaskPreview: "fix the parser",
-		Status:      "completed",
-		HasReview:   true,
-		ReviewScore: 6,
+		TaskPreview:  "fix the parser",
+		Status:       "completed",
+		HasReview:    true,
+		ReviewScore:  6,
 		ReviewIssues: []string{"missing error handling"},
 	})
 	if err != nil {

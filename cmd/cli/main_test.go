@@ -67,4 +67,3 @@ func TestCollectPaste_PreservesPriorTypedText(t *testing.T) {
 		t.Errorf("expected 'pasted' as current line, got %q", line)
 	}
 }
-

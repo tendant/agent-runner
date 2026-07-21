@@ -2,8 +2,8 @@ package subagent
 
 // PlanStep represents one step in a structured plan.
 type PlanStep struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
 	Files       []string `json:"files,omitempty"`
 	Done        bool     `json:"done"`
 }

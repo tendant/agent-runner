@@ -43,7 +43,7 @@ func NewClient(serverURL, botToken string) *Client {
 
 // EmitEvent sends an event to a conversation.
 func (c *Client) EmitEvent(ctx context.Context, conversationID, eventType string, payload json.RawMessage) error {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"type":    eventType,
 		"payload": json.RawMessage(payload),
 	}
@@ -178,7 +178,7 @@ func (c *Client) UploadFile(ctx context.Context, conversationID, filename, conte
 
 // SendMessage sends a message to a conversation, optionally with file attachments.
 func (c *Client) SendMessage(ctx context.Context, conversationID, content string, fileIDs []string) error {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"content": content,
 	}
 	if len(fileIDs) > 0 {

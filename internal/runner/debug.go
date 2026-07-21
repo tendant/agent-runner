@@ -17,7 +17,7 @@ func NewDebugDB(db *sql.DB, driverName string) *DebugDB {
 }
 
 // QuerySchedules returns all active schedules from workflow_schedule.
-func (d *DebugDB) QuerySchedules() ([]map[string]interface{}, error) {
+func (d *DebugDB) QuerySchedules() ([]map[string]any, error) {
 	rows, err := d.db.Query(`
 		SELECT id, type, payload, schedule, timezone, next_run_at, last_run_at, enabled, created_at
 		FROM workflow_schedule
@@ -29,7 +29,7 @@ func (d *DebugDB) QuerySchedules() ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	var results []map[string]any
 	for rows.Next() {
 		var id, typ, payload, schedule, timezone string
 		var nextRunAt, createdAt string
@@ -40,7 +40,7 @@ func (d *DebugDB) QuerySchedules() ([]map[string]interface{}, error) {
 			return nil, fmt.Errorf("scan schedule: %w", err)
 		}
 
-		row := map[string]interface{}{
+		row := map[string]any{
 			"id":          id,
 			"type":        typ,
 			"payload":     payload,
@@ -60,7 +60,7 @@ func (d *DebugDB) QuerySchedules() ([]map[string]interface{}, error) {
 }
 
 // QueryRuns returns the most recent workflow runs.
-func (d *DebugDB) QueryRuns(limit int) ([]map[string]interface{}, error) {
+func (d *DebugDB) QueryRuns(limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -77,7 +77,7 @@ func (d *DebugDB) QueryRuns(limit int) ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	var results []map[string]any
 	for rows.Next() {
 		var id, typ, payload, status string
 		var priority, attempt, maxAttempts int
@@ -90,7 +90,7 @@ func (d *DebugDB) QueryRuns(limit int) ([]map[string]interface{}, error) {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
 
-		row := map[string]interface{}{
+		row := map[string]any{
 			"id":           id,
 			"type":         typ,
 			"payload":      payload,

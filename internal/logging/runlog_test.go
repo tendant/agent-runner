@@ -20,9 +20,9 @@ func TestGenerateMarkdown_SuccessfulRun(t *testing.T) {
 			{Path: "auth.go", Insertions: 10, Deletions: 5},
 			{Path: "auth_test.go", Insertions: 20, Deletions: 2},
 		},
-		DiffSummary: DiffSummary{Insertions: 30, Deletions: 7},
-		Commit:      "abc1234",
-		Branch:      "main",
+		DiffSummary:  DiffSummary{Insertions: 30, Deletions: 7},
+		Commit:       "abc1234",
+		Branch:       "main",
 		ValidationOK: true,
 	}
 
@@ -95,10 +95,10 @@ func TestGenerateMarkdown_ValidationFailure(t *testing.T) {
 	l := NewRunLogger("/tmp/runs")
 
 	data := &RunLogData{
-		JobID:       "job-789",
-		Project:     "my-project",
-		Status:      "failed",
-		Instruction: "Modify CI",
+		JobID:        "job-789",
+		Project:      "my-project",
+		Status:       "failed",
+		Instruction:  "Modify CI",
 		ValidationOK: false,
 		ValidationError: &ValidationResult{
 			Code:    "CI_CONFIG_VIOLATION",
@@ -149,10 +149,10 @@ func TestGenerateMarkdown_MinimalData(t *testing.T) {
 	l := NewRunLogger("/tmp/runs")
 
 	data := &RunLogData{
-		JobID:       "job-1",
-		Project:     "test",
-		Status:      "completed",
-		Instruction: "Simple task",
+		JobID:        "job-1",
+		Project:      "test",
+		Status:       "completed",
+		Instruction:  "Simple task",
 		ValidationOK: true,
 	}
 

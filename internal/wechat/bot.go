@@ -30,7 +30,7 @@ type Bot struct {
 	client     *Client
 	downloader *Downloader
 	starter    AgentStarter
-	gateway   Gateway
+	gateway    Gateway
 
 	convManager *conversation.Manager
 	analyzer    *conversation.Analyzer
@@ -62,7 +62,7 @@ func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Ma
 		client:        NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
 		downloader:    NewDownloader(cfg.CDNBaseURL, mediaDir),
 		starter:       starter,
-		gateway:      gateway,
+		gateway:       gateway,
 		convManager:   convMgr,
 		analyzer:      analyzer,
 		ctxTokens:     make(map[string]string),
@@ -133,7 +133,7 @@ func (b *Bot) Stop() {
 
 // runLoop continuously long-polls getupdates and dispatches inbound messages.
 func (b *Bot) runLoop(ctx context.Context) {
-	buf := b.client.loadSyncBuf()  // restore cursor from disk across restarts
+	buf := b.client.loadSyncBuf() // restore cursor from disk across restarts
 	pollCount := 0
 	consecutiveFailures := 0
 

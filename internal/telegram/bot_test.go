@@ -94,11 +94,11 @@ func TestFormatIteration_Error(t *testing.T) {
 func TestFormatFinalResult_Completed(t *testing.T) {
 	now := time.Now()
 	session := &agent.Session{
-		Status:         agent.SessionStatusCompleted,
+		Status:               agent.SessionStatusCompleted,
 		SuccessfulIterations: 7,
-		ElapsedSeconds: 120,
-		CompletedAt:    &now,
-		Iterations:     make([]agent.IterationResult, 5),
+		ElapsedSeconds:       120,
+		CompletedAt:          &now,
+		Iterations:           make([]agent.IterationResult, 5),
 	}
 	got := FormatFinalResult(session)
 	want := "Session completed — 5 iterations in 120s"

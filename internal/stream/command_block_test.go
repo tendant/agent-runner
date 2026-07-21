@@ -33,7 +33,9 @@ type fakeGateway struct{}
 
 func (fakeGateway) Handle(text string, _ func(string), reset func()) (string, string, bool) {
 	if strings.ToLower(strings.TrimSpace(text)) == "/cancel" {
-		if reset != nil { reset() }
+		if reset != nil {
+			reset()
+		}
 		return "Conversation cancelled. Send a new message to start over.", "", true
 	}
 	lower := strings.ToLower(strings.TrimSpace(text))

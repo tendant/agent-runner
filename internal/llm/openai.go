@@ -64,7 +64,7 @@ func (c *OpenAIClient) CompleteWithImages(ctx context.Context, prompt string, im
 		}
 		dataURI := "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(data)
 		content = append(content, map[string]any{
-			"type": "image_url",
+			"type":      "image_url",
 			"image_url": map[string]string{"url": dataURI},
 		})
 	}

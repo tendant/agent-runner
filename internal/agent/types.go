@@ -265,29 +265,29 @@ func (s *Session) Snapshot() *Session {
 	defer s.mu.RUnlock()
 
 	snap := &Session{
-		ID:                  s.ID,
-		Source:              s.Source,
-		Message:             s.Message,
-		Paths:               append([]string{}, s.Paths...),
-		Author:              s.Author,
-		CommitMessagePrefix: s.CommitMessagePrefix,
-		MaxIterations:       s.MaxIterations,
-		MaxTotalSeconds:     s.MaxTotalSeconds,
-		Status:              s.Status,
-		CurrentIteration:    s.CurrentIteration,
+		ID:                   s.ID,
+		Source:               s.Source,
+		Message:              s.Message,
+		Paths:                append([]string{}, s.Paths...),
+		Author:               s.Author,
+		CommitMessagePrefix:  s.CommitMessagePrefix,
+		MaxIterations:        s.MaxIterations,
+		MaxTotalSeconds:      s.MaxTotalSeconds,
+		Status:               s.Status,
+		CurrentIteration:     s.CurrentIteration,
 		SuccessfulIterations: s.SuccessfulIterations,
-		Iterations:          make([]IterationResult, len(s.Iterations)),
-		StartedAt:           s.StartedAt,
-		CompletedAt:         s.CompletedAt,
-		Error:               s.Error,
-		Warnings:            append([]string{}, s.Warnings...),
-		TotalCostUSD:        s.TotalCostUSD,
-		ElapsedSeconds:      int(time.Since(s.StartedAt).Seconds()),
-		CompletedSteps:      append([]string{}, s.CompletedSteps...),
-		PlanStepCount:       s.PlanStepCount,
-		PlanJSON:            s.PlanJSON,
-		ReviewJSON:          s.ReviewJSON,
-		LogLines:            append([]string{}, s.LogLines...),
+		Iterations:           make([]IterationResult, len(s.Iterations)),
+		StartedAt:            s.StartedAt,
+		CompletedAt:          s.CompletedAt,
+		Error:                s.Error,
+		Warnings:             append([]string{}, s.Warnings...),
+		TotalCostUSD:         s.TotalCostUSD,
+		ElapsedSeconds:       int(time.Since(s.StartedAt).Seconds()),
+		CompletedSteps:       append([]string{}, s.CompletedSteps...),
+		PlanStepCount:        s.PlanStepCount,
+		PlanJSON:             s.PlanJSON,
+		ReviewJSON:           s.ReviewJSON,
+		LogLines:             append([]string{}, s.LogLines...),
 	}
 	copy(snap.Iterations, s.Iterations)
 
@@ -316,13 +316,13 @@ func (s *Session) Snapshot() *Session {
 // ToResponse converts a session snapshot to a response map
 func (s *Session) ToResponse() map[string]any {
 	resp := map[string]any{
-		"session_id":        s.ID,
-		"status":            s.Status,
-		"current_iteration": s.CurrentIteration,
+		"session_id":            s.ID,
+		"status":                s.Status,
+		"current_iteration":     s.CurrentIteration,
 		"successful_iterations": s.SuccessfulIterations,
-		"max_iterations":    s.MaxIterations,
-		"elapsed_seconds":   s.ElapsedSeconds,
-		"started_at":        s.StartedAt.Format(time.RFC3339),
+		"max_iterations":        s.MaxIterations,
+		"elapsed_seconds":       s.ElapsedSeconds,
+		"started_at":            s.StartedAt.Format(time.RFC3339),
 	}
 
 	if s.TotalCostUSD > 0 {

@@ -13,11 +13,11 @@ func (h *Handlers) HandleDebugSchedules(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if h.runnerDB == nil {
-		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		h.writeJSON(w, http.StatusOK, map[string]any{
 			"error":     "runner not enabled",
 			"hint":      "Set SCHEDULER_ENABLED=true and SCHEDULER_DATABASE_URL to enable the runner",
-			"schedules": []interface{}{},
-			"runs":      []interface{}{},
+			"schedules": []any{},
+			"runs":      []any{},
 		})
 		return
 	}
@@ -32,7 +32,7 @@ func (h *Handlers) HandleDebugSchedules(w http.ResponseWriter, r *http.Request) 
 	schedules, schedErr := h.runnerDB.QuerySchedules()
 	runs, runsErr := h.runnerDB.QueryRuns(limit)
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"schedules": schedules,
 		"runs":      runs,
 	}
