@@ -83,8 +83,8 @@ type Config struct {
 	// WeChat bot settings
 	WeChat WeChatConfig
 
-	// Analyzer LLM settings
-	Analyzer AnalyzerConfig
+	// Shared fast-LLM slot (analyzer, planner, curator)
+	FastLLM FastLLMConfig
 
 	// Workflow scheduler settings
 	Scheduler SchedulerConfig
@@ -113,8 +113,6 @@ type AgentConfig struct {
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
-	PlannerAPIKey       string   // Optional: API key for the planner LLM (PLANNER_API_KEY)
-	PlannerBaseURL      string   // Optional: base URL override for the planner LLM (PLANNER_BASE_URL)
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
@@ -122,7 +120,7 @@ type AgentConfig struct {
 	MemoryPullOnStart   bool     // Pull memory from git before each session
 	MemoryCharCap       int      // Max characters in composed memory section (0 = no limit)
 
-	// Post-session memory curation: a cheap LLM pass (uses the ANALYZER_*
+	// Post-session memory curation: a cheap LLM pass (uses the fast-LLM
 	// config) that distills each session's outcome into lessons.md and
 	// compacts over-budget memory files. Opt-in — costs one small LLM call
 	// per session.
@@ -154,12 +152,14 @@ type WeChatConfig struct {
 	StateDir   string // WECHAT_STATE_DIR — directory for sync buf cursor; defaults to TmpRoot
 }
 
-// AnalyzerConfig configures the fast LLM used for conversation intent routing.
-// If no provider/key is set, falls back to the executor (Claude CLI).
-type AnalyzerConfig struct {
-	Provider       string // "anthropic" | "openai" | "" (auto-detect from env)
+// FastLLMConfig configures the shared cheap/fast LLM slot used by the
+// conversation analyzer, the planner, and the memory curator. If no
+// provider/key is set, the agent's fast tier is used, then key auto-detect,
+// then the executor CLI as a last resort.
+type FastLLMConfig struct {
+	Provider       string // "anthropic" | "openai" | "deepseek" | "" (auto-detect from env)
 	Model          string // model ID; provider default used if empty
-	APIKey         string // ANALYZER_API_KEY; falls back to ANTHROPIC_API_KEY / OPENAI_API_KEY
+	APIKey         string // FAST_LLM_API_KEY; falls back to the provider's own env key
 	BaseURL        string // override API base URL (e.g. http://localhost:11434 for Ollama)
 	TimeoutSeconds int    // per-call timeout; default 30s
 }
@@ -420,8 +420,6 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
 	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.SkillsDir = envOrDefault("AGENT_SKILLS_DIR", cfg.Agent.SkillsDir)
-	cfg.Agent.PlannerAPIKey = envOrDefault("PLANNER_API_KEY", cfg.Agent.PlannerAPIKey)
-	cfg.Agent.PlannerBaseURL = envOrDefault("PLANNER_BASE_URL", cfg.Agent.PlannerBaseURL)
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
@@ -450,16 +448,16 @@ func LoadFromEnv() (*Config, error) {
 	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c")
 	cfg.WeChat.StateDir = envOrDefault("WECHAT_STATE_DIR", cfg.TmpRoot)
 
-	cfg.Analyzer.Provider = envOrDefault("ANALYZER_PROVIDER", "")
-	cfg.Analyzer.Model = envOrDefault("ANALYZER_MODEL", "")
-	if cfg.Analyzer.Provider == "" {
-		if p, m, ok := splitProviderModel(cfg.Analyzer.Model); ok {
-			cfg.Analyzer.Provider, cfg.Analyzer.Model = p, m
+	cfg.FastLLM.Provider = envAlias("FAST_LLM_PROVIDER", "ANALYZER_PROVIDER")
+	cfg.FastLLM.Model = envAlias("FAST_LLM_MODEL", "ANALYZER_MODEL")
+	if cfg.FastLLM.Provider == "" {
+		if p, m, ok := splitProviderModel(cfg.FastLLM.Model); ok {
+			cfg.FastLLM.Provider, cfg.FastLLM.Model = p, m
 		}
 	}
-	cfg.Analyzer.APIKey = envOrDefault("ANALYZER_API_KEY", "")
-	cfg.Analyzer.BaseURL = envOrDefault("ANALYZER_BASE_URL", "")
-	cfg.Analyzer.TimeoutSeconds = envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30)
+	cfg.FastLLM.APIKey = envAlias("FAST_LLM_API_KEY", "ANALYZER_API_KEY", "PLANNER_API_KEY")
+	cfg.FastLLM.BaseURL = envAlias("FAST_LLM_BASE_URL", "ANALYZER_BASE_URL", "PLANNER_BASE_URL")
+	cfg.FastLLM.TimeoutSeconds = envIntOrDefault("FAST_LLM_TIMEOUT_SECONDS", envIntOrDefault("ANALYZER_TIMEOUT_SECONDS", 30))
 
 	cfg.Scheduler.Enabled = envBoolOrDefault("SCHEDULER_ENABLED", cfg.Scheduler.Enabled)
 	cfg.Scheduler.DatabaseURL = envOrDefault("SCHEDULER_DATABASE_URL", cfg.Scheduler.DatabaseURL)
@@ -516,28 +514,19 @@ func splitProviderModel(s string) (provider, model string, ok bool) {
 	return s[:i], s[i+1:], true
 }
 
-// FastLLM resolves the shared fast-LLM slot used by the planner, the
-// conversation analyzer, and the memory curator. Precedence: an explicit
-// ANALYZER_PROVIDER/ANALYZER_MODEL pair wins; otherwise the agent's fast
+// FastLLMSettings resolves the shared fast-LLM slot used by the planner,
+// the conversation analyzer, and the memory curator. Precedence: an explicit
+// FAST_LLM_PROVIDER/FAST_LLM_MODEL pair wins; otherwise the agent's fast
 // tier (AGENT_PROVIDER/AGENT_MODEL) is used, so all three consumers follow
-// the model the user already picked. ANALYZER_API_KEY/ANALYZER_BASE_URL
-// override credentials, with PLANNER_API_KEY/PLANNER_BASE_URL honored as
-// legacy fallbacks; when empty, llm.NewClient auto-detects from the
-// provider's own env key and finally falls back to the executor CLI.
-func (c *Config) FastLLM() (provider, model, apiKey, baseURL string) {
-	provider, model = c.Analyzer.Provider, c.Analyzer.Model
+// the model the user already picked. When the key is empty, llm.NewClient
+// auto-detects from the provider's own env key and finally falls back to
+// the executor CLI.
+func (c *Config) FastLLMSettings() (provider, model, apiKey, baseURL string) {
+	provider, model = c.FastLLM.Provider, c.FastLLM.Model
 	if provider == "" && model == "" {
 		provider, model = c.Agent.Provider, c.Agent.Model
 	}
-	apiKey = c.Analyzer.APIKey
-	if apiKey == "" {
-		apiKey = c.Agent.PlannerAPIKey
-	}
-	baseURL = c.Analyzer.BaseURL
-	if baseURL == "" {
-		baseURL = c.Agent.PlannerBaseURL
-	}
-	return provider, model, apiKey, baseURL
+	return provider, model, c.FastLLM.APIKey, c.FastLLM.BaseURL
 }
 
 // IsProjectAllowed checks if a project is in the allowlist
@@ -553,6 +542,32 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envAlias reads key, falling back to legacy alias names in order. Reading a
+// value through an alias emits a one-time deprecation warning naming the
+// canonical key.
+func envAlias(key string, aliases ...string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	for _, alias := range aliases {
+		if v := os.Getenv(alias); v != "" {
+			warnDeprecatedOnce(alias, key)
+			return v
+		}
+	}
+	return ""
+}
+
+var deprecationWarned = map[string]bool{}
+
+func warnDeprecatedOnce(oldKey, newKey string) {
+	if deprecationWarned[oldKey] {
+		return
+	}
+	deprecationWarned[oldKey] = true
+	slog.Warn("deprecated env var in use", "var", oldKey, "use_instead", newKey)
 }
 
 func envIntOrDefault(key string, fallback int) int {

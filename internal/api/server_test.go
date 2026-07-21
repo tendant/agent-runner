@@ -71,7 +71,7 @@ func TestWriteTimeout_ExceedsAnalyzerTimeout(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Analyzer: config.AnalyzerConfig{TimeoutSeconds: tc.analyzerTimeout}}
+			cfg := &config.Config{FastLLM: config.FastLLMConfig{TimeoutSeconds: tc.analyzerTimeout}}
 			got := writeTimeout(cfg)
 			if got != tc.wantWriteTimeout {
 				t.Errorf("writeTimeout() = %v, want %v", got, tc.wantWriteTimeout)

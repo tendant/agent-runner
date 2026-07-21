@@ -503,7 +503,7 @@ func TestFastLLM_DefaultsToAgentFastTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	provider, model, _, _ := cfg.FastLLM()
+	provider, model, _, _ := cfg.FastLLMSettings()
 	if provider != "deepseek" || model != "deepseek-v4-flash" {
 		t.Errorf("expected agent fast tier deepseek/deepseek-v4-flash, got %s / %s", provider, model)
 	}
@@ -518,7 +518,7 @@ func TestFastLLM_AnalyzerOverridesAndLegacyPlannerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	provider, model, apiKey, _ := cfg.FastLLM()
+	provider, model, apiKey, _ := cfg.FastLLMSettings()
 	if provider != "anthropic" || model != "claude-haiku-4-5-20251001" {
 		t.Errorf("expected analyzer pair (combined form) to win, got %s / %s", provider, model)
 	}

@@ -98,7 +98,7 @@ func NewServer(cfg *config.Config) *Server {
 	// The shared fast-LLM slot backs the planner (level 2 planning/response),
 	// the conversation analyzer, and the memory curator. All three fall back
 	// to ExecutorClient when no API credentials are configured.
-	fastProvider, fastModel, fastKey, fastBaseURL := cfg.FastLLM()
+	fastProvider, fastModel, fastKey, fastBaseURL := cfg.FastLLMSettings()
 	plannerClient := llm.NewClient(llm.Config{
 		Provider:  fastProvider,
 		Model:     fastModel,
@@ -129,8 +129,8 @@ func NewServer(cfg *config.Config) *Server {
 		BaseURL:  fastBaseURL,
 	}, exec)
 	analyzer := conversation.NewAnalyzer(llmClient)
-	if cfg.Analyzer.TimeoutSeconds > 0 {
-		analyzer.SetTimeout(time.Duration(cfg.Analyzer.TimeoutSeconds) * time.Second)
+	if cfg.FastLLM.TimeoutSeconds > 0 {
+		analyzer.SetTimeout(time.Duration(cfg.FastLLM.TimeoutSeconds) * time.Second)
 	}
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
@@ -381,7 +381,7 @@ const writeTimeoutMargin = 30 * time.Second
 // work (the actual iteration loop) runs in a background goroutine after an
 // immediate 202, so it never hits this deadline.
 func writeTimeout(cfg *config.Config) time.Duration {
-	d := time.Duration(cfg.Analyzer.TimeoutSeconds)*time.Second + writeTimeoutMargin
+	d := time.Duration(cfg.FastLLM.TimeoutSeconds)*time.Second + writeTimeoutMargin
 	if d < minWriteTimeout {
 		return minWriteTimeout
 	}
