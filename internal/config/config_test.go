@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,9 +20,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.TmpRoot != filepath.Join(data, "tmp") {
 		t.Errorf("expected TmpRoot under data dir, got %s", cfg.TmpRoot)
 	}
-	// Paths should be relative (CWD-based default).
-	if filepath.IsAbs(cfg.RepoCacheRoot) {
-		t.Errorf("expected relative RepoCacheRoot by default, got %s", cfg.RepoCacheRoot)
+	// Default data dir is ~/.agent-runner (absolute), falling back to "." only
+	// when the home directory cannot be resolved.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if !strings.HasPrefix(cfg.RepoCacheRoot, filepath.Join(home, ".agent-runner")) {
+			t.Errorf("expected RepoCacheRoot under ~/.agent-runner, got %s", cfg.RepoCacheRoot)
+		}
 	}
 	if cfg.MaxRuntimeSeconds != 300 {
 		t.Errorf("expected MaxRuntimeSeconds 300, got %d", cfg.MaxRuntimeSeconds)
@@ -44,6 +48,67 @@ func TestDefaultConfig(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("default config should pass validation, got: %v", err)
 	}
+}
+
+func TestLoadFromEnv_ExplicitDataDirWins(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RepoCacheRoot != filepath.Join(dir, "repo-cache") {
+		t.Errorf("explicit DATA_DIR should root state dirs, got %s", cfg.RepoCacheRoot)
+	}
+}
+
+func TestLoadFromEnv_LegacyLayoutFallsBackToCWD(t *testing.T) {
+	defer chtempdir(t)()
+	t.Setenv("DATA_DIR", "")
+	// Simulate the old CWD-based layout: a non-empty repo-cache/ in CWD.
+	if err := os.MkdirAll("repo-cache/somerepo", 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RepoCacheRoot != filepath.Join(".", "repo-cache") {
+		t.Errorf("legacy layout should keep DATA_DIR=. for this run, got %s", cfg.RepoCacheRoot)
+	}
+}
+
+func TestLoadFromEnv_CleanDirDefaultsToHome(t *testing.T) {
+	defer chtempdir(t)()
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("INSTANCE", "")
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	home, herr := os.UserHomeDir()
+	if herr != nil || home == "" {
+		t.Skip("no home dir available")
+	}
+	if !strings.HasPrefix(cfg.RepoCacheRoot, filepath.Join(home, ".agent-runner")) {
+		t.Errorf("clean CWD should default DATA_DIR to ~/.agent-runner, got %s", cfg.RepoCacheRoot)
+	}
+}
+
+// chtempdir switches the CWD to a temp dir for the duration of a test.
+func chtempdir(t *testing.T) (restore func()) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	return func() { os.Chdir(orig) } //nolint:errcheck
 }
 
 func TestLoad_OpenCodeModelDefaults(t *testing.T) {

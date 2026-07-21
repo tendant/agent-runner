@@ -52,6 +52,11 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.RepoCacheRoot = repoCacheDir
 	cfg.LogsRoot = logsDir
 	cfg.TmpRoot = tmpDir
+	// Relative so tests that chdir into a temp CWD (withTempCWD) get an
+	// isolated memory dir — never the real ~/.agent-runner default.
+	cfg.MemoryDir = "memory"
+	cfg.OutputsRoot = filepath.Join(dir, "outputs")
+	cfg.UploadsRoot = filepath.Join(dir, "uploads")
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)

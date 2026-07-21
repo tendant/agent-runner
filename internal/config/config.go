@@ -15,10 +15,28 @@ import (
 )
 
 // defaultDataDir returns the default base directory for all mutable agent-runner
-// data: the process working directory. Using CWD means each agent-runner instance
-// running from its own directory gets isolated data without any explicit DATA_DIR.
+// data: ~/.agent-runner. Keeping state out of the working directory means repo
+// checkouts, logs, and caches don't pollute the process CWD (which is often a
+// source tree). Falls back to "." when the home directory can't be resolved.
 func defaultDataDir() string {
-	return "."
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, ".agent-runner")
+}
+
+// hasLegacyDataLayout reports whether dir contains state from the old
+// default layout (DATA_DIR = process CWD): a non-empty repo-cache/, runs/,
+// or workspaces/ directory.
+func hasLegacyDataLayout(dir string) bool {
+	for _, name := range []string{"repo-cache", "runs", "workspaces"} {
+		entries, err := os.ReadDir(filepath.Join(dir, name))
+		if err == nil && len(entries) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Config represents the application configuration
@@ -267,11 +285,20 @@ func LoadFromEnv() (*Config, error) {
 		dataDir = merged["DATA_DIR"]
 	}
 	if dataDir == "" {
-		base := defaultDataDir()
-		if instance != "" {
-			dataDir = filepath.Join(base, instance)
+		// Migration guard: the default used to be the process CWD. If state
+		// from that layout is present here, keep using it for this run so
+		// existing deployments survive the default change unattended.
+		if hasLegacyDataLayout(".") {
+			slog.Warn("config: found legacy data layout in the working directory; using it for this run — " +
+				"set DATA_DIR=. to keep state here permanently, or move repo-cache/, runs/, workspaces/ etc. to ~/.agent-runner")
+			dataDir = "."
 		} else {
-			dataDir = base
+			base := defaultDataDir()
+			if instance != "" {
+				dataDir = filepath.Join(base, instance)
+			} else {
+				dataDir = base
+			}
 		}
 	}
 
