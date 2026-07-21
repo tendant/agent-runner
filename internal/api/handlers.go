@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
@@ -144,6 +145,24 @@ func (h *Handlers) SetCommander(c *Commander) {
 // Gateway returns the shared message gateway for use by bot channels.
 func (h *Handlers) Gateway() *MessageGateway {
 	return h.gateway
+}
+
+// BootstrapPaths, AgentManager, and AgentStarter implement the Commander's
+// Runtime interface, keeping the api → commander dependency one-directional.
+
+// BootstrapPaths returns the agent.md and prompt.md paths.
+func (h *Handlers) BootstrapPaths() (systemPrompt, promptFile string) {
+	return h.bootstrapPaths()
+}
+
+// AgentManager exposes the session manager.
+func (h *Handlers) AgentManager() *agent.Manager {
+	return h.agentManager
+}
+
+// AgentStarter returns the session-starting facade.
+func (h *Handlers) AgentStarter() botcommon.AgentStarter {
+	return NewAgentStarterAdapter(h)
 }
 
 // getExecutor returns the current executor, safe for concurrent use.

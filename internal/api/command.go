@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
@@ -29,18 +30,33 @@ const (
 	cmdRepo      = "/repo"
 )
 
+// Runtime is the narrow surface of the API layer the Commander needs. It
+// keeps the dependency one-directional: the api package implements Runtime
+// (see Handlers) and constructs the Commander, never the other way round.
+type Runtime interface {
+	// BootstrapPaths returns the agent.md and prompt.md paths.
+	BootstrapPaths() (systemPrompt, promptFile string)
+	// AgentManager exposes session start/stop/inspection.
+	AgentManager() *agent.Manager
+	// RefreshRuntime rebuilds the executor and LLM clients after a config change.
+	RefreshRuntime()
+	// AgentStarter returns the session-starting facade used for
+	// command-initiated agent sessions.
+	AgentStarter() botcommon.AgentStarter
+}
+
 // Commander handles chat configuration commands. Zero LLM dependencies —
 // safe to call before any model or provider is configured.
 type Commander struct {
 	cfg        *config.Config
-	handlers   *Handlers
+	rt         Runtime
 	authMu     sync.Mutex // guards against concurrent /auth flows
 	authCancel func()     // non-nil while an auth flow is running
 }
 
-// NewCommander creates a Commander backed by the given config and handlers.
-func NewCommander(cfg *config.Config, h *Handlers) *Commander {
-	return &Commander{cfg: cfg, handlers: h}
+// NewCommander creates a Commander backed by the given config and runtime.
+func NewCommander(cfg *config.Config, rt Runtime) *Commander {
+	return &Commander{cfg: cfg, rt: rt}
 }
 
 // Handle parses text and executes a recognised command. Returns the reply
@@ -250,7 +266,7 @@ func (c *Commander) handleStatus() string {
 	b.WriteString("**Status**\n\n")
 
 	// Active sessions
-	sessions := c.handlers.agentManager.ListActiveSessions()
+	sessions := c.rt.AgentManager().ListActiveSessions()
 	var running, waiting []*agent.Session
 	for _, s := range sessions {
 		if s.Status == agent.SessionStatusRunning || s.Status == agent.SessionStatusStopping {
@@ -273,7 +289,7 @@ func (c *Commander) handleStatus() string {
 	fmt.Fprintf(&b, "**queued:** %d\n", len(waiting))
 
 	// Last completed session
-	if last := c.handlers.agentManager.LastCompletedSession(); last != nil {
+	if last := c.rt.AgentManager().LastCompletedSession(); last != nil {
 		ago := time.Since(*last.CompletedAt).Round(time.Second)
 		preview := last.Message
 		preview = textutil.Truncate(preview, 50)
@@ -329,7 +345,7 @@ func (c *Commander) handleStatus() string {
 
 // handleSessions lists all active and recent sessions with their IDs and status.
 func (c *Commander) handleSessions() string {
-	sessions := c.handlers.agentManager.ListSessions(20)
+	sessions := c.rt.AgentManager().ListSessions(20)
 	if len(sessions) == 0 {
 		return "no sessions"
 	}
@@ -375,7 +391,7 @@ func (c *Commander) handleSessions() string {
 // prefix (show that session's log).
 func (c *Commander) handleLogs(arg string) string {
 	arg = strings.TrimSpace(arg)
-	logsRoot := c.handlers.config.LogsRoot
+	logsRoot := c.cfg.LogsRoot
 	if logsRoot == "" {
 		return "error: LOGS_ROOT is not configured"
 	}
@@ -451,13 +467,13 @@ func (c *Commander) handleStop(arg string) string {
 	if arg == "" {
 		return "usage: /stop <session-id>"
 	}
-	sessions := c.handlers.agentManager.ListSessions(0)
+	sessions := c.rt.AgentManager().ListSessions(0)
 	for _, s := range sessions {
 		if s.ID == arg || strings.HasPrefix(s.ID, "agent-"+arg) || strings.HasPrefix(s.ID, arg) {
 			if s.Status != agent.SessionStatusRunning && s.Status != agent.SessionStatusQueued {
 				return fmt.Sprintf("session %s is not running (status: %s)", s.ID, s.Status)
 			}
-			if err := c.handlers.agentManager.StopSession(s.ID); err != nil {
+			if err := c.rt.AgentManager().StopSession(s.ID); err != nil {
 				return fmt.Sprintf("error stopping %s: %v", s.ID, err)
 			}
 			return fmt.Sprintf("stop requested for %s", s.ID)
@@ -523,7 +539,7 @@ func (c *Commander) handleConfig() string {
 	}
 
 	// File state always shown.
-	systemPath, promptPath := c.handlers.bootstrapPaths()
+	systemPath, promptPath := c.rt.BootstrapPaths()
 	fmt.Fprintf(&b, "**agent.md:** %s\n", fileState(systemPath))
 	fmt.Fprintf(&b, "**prompt.md:** %s\n", fileState(promptPath))
 
@@ -557,7 +573,7 @@ func (c *Commander) handleSet(args string) string {
 	if err := c.cfg.ReloadFromEnv(); err != nil {
 		return fmt.Sprintf("applied %s, but config reload failed: %v — fix the value or restart to apply", key, err)
 	}
-	c.handlers.RefreshRuntime()
+	c.rt.RefreshRuntime()
 
 	// Persist to DATA_DIR/.env.local (path refreshed by the reload above) so
 	// the change survives restarts.
@@ -611,7 +627,7 @@ func (c *Commander) handleSetFile(name, content string, isSystem bool) string {
 	if content == "" {
 		return fmt.Sprintf("error: usage: %s <content>", map[bool]string{true: cmdSetAgent, false: cmdSetPrompt}[isSystem])
 	}
-	systemPath, promptPath := c.handlers.bootstrapPaths()
+	systemPath, promptPath := c.rt.BootstrapPaths()
 	path := promptPath
 	if isSystem {
 		path = systemPath
@@ -627,7 +643,7 @@ func (c *Commander) handleSetFile(name, content string, isSystem bool) string {
 
 // handleBootstrap creates default agent.md and prompt.md.
 func (c *Commander) handleBootstrap(force bool) string {
-	systemPath, promptPath := c.handlers.bootstrapPaths()
+	systemPath, promptPath := c.rt.BootstrapPaths()
 	results, err := createBootstrapFiles(systemPath, promptPath, force)
 	if err != nil {
 		return "error: " + err.Error()
@@ -670,14 +686,14 @@ func (c *Commander) handleUpdatePrompt(body string) (reply, sessionID string) {
 
 	// Write the system / prompt content if provided.
 	if systemContent != "" {
-		_, promptPath := c.handlers.bootstrapPaths()
+		_, promptPath := c.rt.BootstrapPaths()
 		if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
 			_ = os.WriteFile(promptPath, []byte(systemContent+"\n"), 0644)
 		}
 	} else if userContent == "" {
 		// No sections — treat the whole body as prompt content.
 		if body != "" {
-			_, promptPath := c.handlers.bootstrapPaths()
+			_, promptPath := c.rt.BootstrapPaths()
 			if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err == nil {
 				_ = os.WriteFile(promptPath, []byte(body+"\n"), 0644)
 			}
@@ -695,7 +711,7 @@ func (c *Commander) handleUpdatePrompt(body string) (reply, sessionID string) {
 	}
 
 	// Start an agent session with the User section.
-	sid, err := c.agentStarter().StartAgent(userContent, "commander")
+	sid, err := c.rt.AgentStarter().StartAgent(userContent, "commander")
 	if err != nil {
 		return fmt.Sprintf("ok wrote prompt.md (%d bytes); error starting session: %v", len(systemContent), err), ""
 	}
@@ -742,11 +758,6 @@ func parseSystemUser(body string) (system, user string) {
 		}
 	}
 	return strings.TrimSpace(sysBuf.String()), strings.TrimSpace(userBuf.String())
-}
-
-// agentStarter returns an AgentStarterAdapter for starting agent sessions.
-func (c *Commander) agentStarter() *AgentStarterAdapter {
-	return NewAgentStarterAdapter(c.handlers)
 }
 
 // handleMemory dispatches /memory subcommands.
