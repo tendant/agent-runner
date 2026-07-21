@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 )
 
 // AgentStarter is the interface used by bots to start and poll agent sessions.
@@ -28,7 +29,7 @@ func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error)
 
 	// Fail fast on a missing CLI binary rather than burning workspace setup,
 	// planning, and iteration retries on a session that can't run at all.
-	if err := PreflightAgentConfig(h.config.Agent.CLI); err != nil {
+	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
 		return "", err
 	}
 
@@ -50,7 +51,7 @@ func (a *AgentStarterAdapter) StartAgent(message, source string) (string, error)
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning
 	// instead of letting the user wait for an opaque failure deep in the run.
-	for _, w := range BootstrapWarnings(resolveCLI(h.config.Agent.CLI), h.config.Agent.Provider) {
+	for _, w := range clisetup.BootstrapWarnings(clisetup.ResolveCLI(h.config.Agent.CLI), h.config.Agent.Provider) {
 		session.AddWarning(w)
 	}
 

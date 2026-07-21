@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/api"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
@@ -51,7 +52,7 @@ func main() {
 		// model (not "model") whenever it wasn't set.
 		slog.Info("agent configured", "cli", cfg.Agent.CLI, "model", cfg.Agent.Model, "fast_model", cfg.Agent.FastModel)
 	}
-	for _, w := range api.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
+	for _, w := range clisetup.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
 		slog.Warn("startup warning", "msg", w)
 	}
 	if cfg.Agent.PromptFile != "" {

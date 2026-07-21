@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
@@ -174,8 +175,8 @@ func (s *Server) Start() error {
 	if cli == "" {
 		cli = "opencode"
 	}
-	if !CLIInstalled(cli) {
-		slog.Warn("agent CLI not found in PATH — run /install-cli or /bootstrap to install", "cli", cli, "install", cliInstallHint(cli))
+	if !clisetup.CLIInstalled(cli) {
+		slog.Warn("agent CLI not found in PATH — run /install-cli or /bootstrap to install", "cli", cli, "install", clisetup.InstallHint(cli))
 	}
 
 	// Startup cleanup

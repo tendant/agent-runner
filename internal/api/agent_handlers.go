@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
@@ -80,7 +81,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Fail fast on a missing CLI binary rather than queueing a session that
 	// can only fail after workspace setup and retries.
-	if err := PreflightAgentConfig(h.config.Agent.CLI); err != nil {
+	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
 		h.writeError(w, http.StatusPreconditionFailed, err.Error())
 		return
 	}
@@ -105,7 +106,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning
 	// instead of letting the caller wait for an opaque failure deep in the run.
-	warnings := BootstrapWarnings(resolveCLI(h.config.Agent.CLI), h.config.Agent.Provider)
+	warnings := clisetup.BootstrapWarnings(clisetup.ResolveCLI(h.config.Agent.CLI), h.config.Agent.Provider)
 	for _, w := range warnings {
 		session.AddWarning(w)
 	}
@@ -226,7 +227,7 @@ func (h *Handlers) handleAuthStream(w http.ResponseWriter, r *http.Request, mess
 		flusher.Flush()
 	}
 
-	authErr := runCLIAuthFlowCtx(ctx, cli, sendLine)
+	authErr := clisetup.RunAuthFlow(ctx, cli, sendLine)
 
 	status := "completed"
 	if authErr != nil {

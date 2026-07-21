@@ -16,6 +16,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
@@ -206,7 +207,7 @@ func (c *Commander) validateAuth(cli string) (string, error) {
 	if cli != "claude" && cli != "codex" {
 		return "", fmt.Errorf("/auth only supports 'claude' and 'codex' (got %q)", cli)
 	}
-	if !CLIInstalled(cli) {
+	if !clisetup.CLIInstalled(cli) {
 		return "", fmt.Errorf("%s is not installed — run /install-cli %s first", cli, cli)
 	}
 	return cli, nil
@@ -241,7 +242,7 @@ func (c *Commander) startAuthFlow(cli string, send func(string)) (string, error)
 	}
 	go func() {
 		defer c.releaseAuthCancel()
-		if err := runCLIAuthFlowCtx(ctx, cli, send); err != nil && ctx.Err() == nil {
+		if err := clisetup.RunAuthFlow(ctx, cli, send); err != nil && ctx.Err() == nil {
 			send("auth failed: " + err.Error())
 		}
 	}()
@@ -314,7 +315,7 @@ func (c *Commander) handleStatus() string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	if CLIInstalled(cli) {
+	if clisetup.CLIInstalled(cli) {
 		fmt.Fprintf(&b, "**cli:** %s ✓\n", cli)
 	} else {
 		fmt.Fprintf(&b, "**cli:** %s ✗ (not installed — /install-cli)\n", cli)
@@ -330,7 +331,7 @@ func (c *Commander) handleStatus() string {
 	}
 
 	// Issues
-	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := clisetup.BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("**ready:** ✓")
 	} else {
@@ -495,11 +496,11 @@ func (c *Commander) handleConfig() string {
 	}
 
 	b.WriteString("**Configuration**\n\n")
-	if v, err := cliVersion(cli); err != nil {
+	if v, err := clisetup.CLIVersion(cli); err != nil {
 		fmt.Fprintf(&b, "**cli:** %s (installed, version check failed: %s)\n", cli, err)
 	} else if v != "" {
 		fmt.Fprintf(&b, "**cli:** %s %s (installed)\n", cli, v)
-	} else if CLIInstalled(cli) {
+	} else if clisetup.CLIInstalled(cli) {
 		fmt.Fprintf(&b, "**cli:** %s (installed)\n", cli)
 	} else {
 		fmt.Fprintf(&b, "**cli:** %s (not installed — /install-cli)\n", cli)
@@ -544,7 +545,7 @@ func (c *Commander) handleConfig() string {
 	fmt.Fprintf(&b, "**prompt.md:** %s\n", fileState(promptPath))
 
 	// Ready = no credential warnings.
-	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := clisetup.BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("**ready:** ✓")
 	} else {
@@ -597,15 +598,15 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	if !force && CLIInstalled(cli) {
-		if v, err := cliVersion(cli); err != nil {
+	if !force && clisetup.CLIInstalled(cli) {
+		if v, err := clisetup.CLIVersion(cli); err != nil {
 			return fmt.Sprintf("ok %s already installed (version check failed: %s)", cli, err)
 		} else if v != "" {
 			return fmt.Sprintf("ok %s already installed (%s)", cli, v)
 		}
 		return fmt.Sprintf("ok %s already installed", cli)
 	}
-	out, err := installCLI(cli)
+	out, err := clisetup.InstallCLI(cli)
 	out = strings.TrimSpace(out)
 	if err != nil {
 		if out != "" {
@@ -613,7 +614,7 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 		}
 		return fmt.Sprintf("error installing %s: %v", cli, err)
 	}
-	if v, err := cliVersion(cli); err != nil {
+	if v, err := clisetup.CLIVersion(cli); err != nil {
 		return fmt.Sprintf("ok installed %s (version check failed: %s)\n%s", cli, err, out)
 	} else if v != "" {
 		return fmt.Sprintf("ok installed %s (%s)\n%s", cli, v, out)
@@ -644,17 +645,17 @@ func (c *Commander) handleSetFile(name, content string, isSystem bool) string {
 // handleBootstrap creates default agent.md and prompt.md.
 func (c *Commander) handleBootstrap(force bool) string {
 	systemPath, promptPath := c.rt.BootstrapPaths()
-	results, err := createBootstrapFiles(systemPath, promptPath, force)
+	results, err := clisetup.CreateBootstrapFiles(systemPath, promptPath, force)
 	if err != nil {
 		return "error: " + err.Error()
 	}
 
 	var b strings.Builder
 	for _, r := range results {
-		if r.created {
-			fmt.Fprintf(&b, "created %s\n", r.path)
+		if r.Created {
+			fmt.Fprintf(&b, "created %s\n", r.Path)
 		} else {
-			fmt.Fprintf(&b, "skipped %s (already exists)\n", r.path)
+			fmt.Fprintf(&b, "skipped %s (already exists)\n", r.Path)
 		}
 	}
 
@@ -662,7 +663,7 @@ func (c *Commander) handleBootstrap(force bool) string {
 	if cli == "" {
 		cli = "opencode"
 	}
-	warnings := BootstrapWarnings(cli, c.cfg.Agent.Provider)
+	warnings := clisetup.BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {
 		b.WriteString("ready=true")
 	} else {
