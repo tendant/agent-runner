@@ -48,6 +48,10 @@ type Engine struct {
 	// NewReporter builds the per-session progress reporter for PollAndReport.
 	NewReporter func(id string) Reporter
 
+	// Welcome configures the one-time first-contact greeting
+	// (see WelcomeIfNeeded); zero value disables it.
+	Welcome Welcome
+
 	WG *sync.WaitGroup
 }
 

@@ -97,6 +97,11 @@ type Config struct {
 	JobRetentionSeconds     int
 	StartupCleanupStaleJobs bool
 	LogRetentionDays        int // Delete log files older than this many days (0 = keep forever)
+
+	// WelcomeEnabled sends a one-time intro message on a conversation's first
+	// contact with any bot (WELCOME_ENABLED, default: true). Text overridable
+	// via MEMORY_DIR/WELCOME.md.
+	WelcomeEnabled bool
 }
 
 // AgentConfig contains agent mode settings
@@ -255,6 +260,7 @@ func defaultConfigForDataDir(data string) *Config {
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
 		LogRetentionDays:        30,
+		WelcomeEnabled:          true,
 	}
 }
 
@@ -496,6 +502,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
 	cfg.LogRetentionDays = envIntOrDefault("LOG_RETENTION_DAYS", cfg.LogRetentionDays)
+	cfg.WelcomeEnabled = envBoolOrDefault("WELCOME_ENABLED", cfg.WelcomeEnabled)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -573,6 +580,7 @@ func (c *Config) copyFrom(n *Config) {
 	c.JobRetentionSeconds = n.JobRetentionSeconds
 	c.StartupCleanupStaleJobs = n.StartupCleanupStaleJobs
 	c.LogRetentionDays = n.LogRetentionDays
+	c.WelcomeEnabled = n.WelcomeEnabled
 }
 
 // splitProviderModel splits a combined "provider/model" string on the first

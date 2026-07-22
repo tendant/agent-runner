@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
@@ -127,6 +128,21 @@ func NewServer(cfg *config.Config) *Server {
 	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, gateway)
 	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, gateway)
 	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, gateway)
+
+	// One-time first-contact greeting, shared by every bot. Markers live
+	// under TmpRoot: losing them only repeats the greeting once.
+	welcome := botcommon.Welcome{
+		Enabled:  cfg.WelcomeEnabled,
+		Text:     botcommon.LoadWelcomeText(cfg.MemoryDir),
+		StateDir: filepath.Join(cfg.TmpRoot, "welcomed"),
+	}
+	if telegramBot != nil {
+		telegramBot.SetWelcome(welcome)
+	}
+	if streamBot != nil {
+		streamBot.SetWelcome(welcome)
+	}
+	wechatBot.SetWelcome(welcome)
 
 	// Wire MultiNotifier: fan out background notifications to all active bots.
 	// Chat-initiated sessions (stream/telegram/wechat) skip notifySessionResult

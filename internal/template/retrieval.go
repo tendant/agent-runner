@@ -66,6 +66,7 @@ func Retrieve(memoryDir string) Retrieval {
 		"agent.md":     {},
 		"prompt.md":    {},
 		"HEARTBEAT.md": {},
+		"WELCOME.md":   {},
 	}
 
 	for _, entry := range entries {

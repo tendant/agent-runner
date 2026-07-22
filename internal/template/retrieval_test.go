@@ -190,3 +190,19 @@ func TestRetrieve_WellKnownBeforeExtra(t *testing.T) {
 		t.Errorf("expected Extra notes second, got %q", r.Files[1].Name)
 	}
 }
+
+func TestRetrieve_SkipsWelcomeFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "WELCOME.md"), []byte("greeting text"), 0644)
+	os.WriteFile(filepath.Join(dir, "decisions.md"), []byte("a decision"), 0644)
+
+	r := Retrieve(dir)
+	for _, f := range r.Files {
+		if f.Filename == "WELCOME.md" {
+			t.Error("WELCOME.md must not be injected into prompts")
+		}
+	}
+	if len(r.Files) != 1 {
+		t.Errorf("expected only decisions.md, got %d files", len(r.Files))
+	}
+}

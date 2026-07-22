@@ -124,6 +124,11 @@ func (s *streamSender) Final(ctx context.Context, id, text string) {
 	(*Bot)(s).emitFinal(ctx, id, text)
 }
 
+// SetWelcome configures the one-time first-contact greeting.
+func (b *Bot) SetWelcome(w botcommon.Welcome) {
+	b.engine.Welcome = w
+}
+
 // Start begins listening on all configured conversations. Non-blocking.
 func (b *Bot) Start(ctx context.Context) error {
 	if len(b.convIDs) == 0 {
@@ -698,6 +703,8 @@ func isImageContent(contentType string) bool {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
+	b.engine.WelcomeIfNeeded(ctx, convID)
+
 	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if text == "/wechat-login" {
 		b.handleWeChatLogin(ctx, convID)

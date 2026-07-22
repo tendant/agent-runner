@@ -94,7 +94,7 @@ Key variables:
 |----------|---------|-------------|
 | `API_BIND` | `127.0.0.1:8080` | API listen address |
 | `API_KEY` | | Authentication key (optional) |
-| `DATA_DIR` | CWD | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
+| `DATA_DIR` | `~/.agent-runner` | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
 | `INSTANCE` | | Instance name — loads `.env.<instance>`, scopes the default `DATA_DIR` |
 | `AGENT_CLI` | `opencode` | Agent CLI backend (`opencode`, `claude`, or `codex`) |
 | `AGENT_MODEL` | `deepseek/deepseek-v4-pro` | The model doing real work at the agent CLI, as `provider/model` |
@@ -113,6 +113,8 @@ Key variables:
 ### Memory & learning loop
 
 The agent evolves across sessions through markdown files in `MEMORY_DIR` (git-synced, human-editable). Each prompt is composed from `agent.md` + `prompt.md` + curated memory files (`user_preferences.md`, `decisions.md`, `lessons.md`, ...) + a **Recent Sessions** digest of the last `AGENT_MEMORY_DAYS` days of session logs, all bounded by `AGENT_MEMORY_CHAR_CAP`. The agent writes to its own memory files during sessions; after each session the runner appends an outcome log (including reviewer findings), and — with `AGENT_MEMORY_CURATION_ENABLED=true` — a cheap LLM pass distills durable lessons into `lessons.md` and compacts files that outgrow their budget. See DESIGN.md ("Memory & Prompt Composition") for the full pipeline and safety rails.
+
+New chat conversations get a one-time welcome message explaining what the agent does and pointing at `/help` (`WELCOME_ENABLED`, default on; customize via `MEMORY_DIR/WELCOME.md`).
 
 ## Connecting to Agent Stream
 

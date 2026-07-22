@@ -103,6 +103,11 @@ func parseChatID(id string) int64 {
 	return n
 }
 
+// SetWelcome configures the one-time first-contact greeting.
+func (b *Bot) SetWelcome(w botcommon.Welcome) {
+	b.engine.Welcome = w
+}
+
 // Start connects to the Telegram API and begins long-polling. Non-blocking.
 // Returns an error if the bot token is invalid.
 func (b *Bot) Start(ctx context.Context) error {
@@ -163,6 +168,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	tgChatID := msg.Chat.ID
 	chatID := strconv.FormatInt(tgChatID, 10)
+
+	b.engine.WelcomeIfNeeded(context.Background(), chatID)
 
 	// Handle /start command
 	if msg.IsCommand() && msg.Command() == "start" {

@@ -107,6 +107,11 @@ func (s *wechatSender) Final(_ context.Context, id, text string) {
 	(*Bot)(s).sendText(context.Background(), id, text)
 }
 
+// SetWelcome configures the one-time first-contact greeting.
+func (b *Bot) SetWelcome(w botcommon.Welcome) {
+	b.engine.Welcome = w
+}
+
 // Reload updates the bot's credentials at runtime and restarts the poll loop
 // with the new token. Always cancels any existing loop so stale long-polls
 // using the old token are dropped immediately.
@@ -333,6 +338,8 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 
 	userID := msg.FromUserID
 	chatID := userID // use WeChat user ID as conversation key
+
+	b.engine.WelcomeIfNeeded(context.Background(), chatID)
 
 	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if strings.EqualFold(strings.TrimSpace(content), "/wechat-login") {
