@@ -4,7 +4,7 @@
 
 Agent Runner is a Go HTTP server that wraps Claude Code CLI for autonomous, iterative task execution against Git repositories. It supports two execution modes (one-shot jobs and agent sessions), conversational bot interfaces (Telegram and agent-stream), and optional planning/review sub-agents.
 
-The system is local-first, stateless (in-memory state, Markdown audit logs), and designed for trusted users with direct Git push access.
+The system is local-first and mostly in-memory, with durable edges: Markdown audit logs, a session journal for restart recovery (queued sessions are re-enqueued, interrupted ones failed with a chat notification), persisted conversations, and the git-synced memory dir. Designed for trusted users with direct Git push access.
 
 ---
 

@@ -153,6 +153,14 @@ hand into `user_preferences.md` / `project_summary.md` / `decisions.md` /
 
 ---
 
+## New in v0.1.x: restart recovery
+
+Sessions are journaled to `STATE_ROOT/sessions` (default
+`DATA_DIR/state`). After a restart: chat conversations that were mid-task
+un-wedge immediately; sessions that were running are marked failed and their
+conversation gets an "interrupted by restart — resend to retry" notice;
+sessions still queued are re-enqueued automatically. No configuration needed.
+
 ## Verifying an upgrade
 
 1. Start the server and read the log: each legacy variable in use logs one
