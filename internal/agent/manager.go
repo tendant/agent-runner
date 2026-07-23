@@ -157,13 +157,19 @@ func (m *Manager) drainQueue() {
 
 // Enqueue adds a session to the dispatch queue. Returns an error if the queue is full.
 func (m *Manager) Enqueue(session *Session, startFunc func(*Session)) error {
+	// Journal before the channel send: once the item is in the queue the
+	// dispatch loop may pop it and record "running" immediately — writing
+	// "queued" afterwards would overwrite the newer state.
+	if m.journal != nil {
+		m.journal.RecordQueued(session.Snapshot())
+	}
 	select {
 	case m.queue <- &queueItem{session: session, startFunc: startFunc}:
-		if m.journal != nil {
-			m.journal.RecordQueued(session.Snapshot())
-		}
 		return nil
 	default:
+		if m.journal != nil {
+			m.journal.Remove(session.ID)
+		}
 		return fmt.Errorf("agent queue is full")
 	}
 }
