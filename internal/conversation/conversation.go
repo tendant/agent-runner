@@ -301,6 +301,14 @@ func (m *Manager) loadAll() {
 		if conv.ChatID == "" {
 			continue
 		}
+		// A conversation persisted as executing belonged to a session that
+		// died with the previous process — left as-is it would queue every
+		// new message forever ("Message queued…"). Downgrade so the chat
+		// accepts input again; session recovery notifies the user separately.
+		if conv.State == StateExecuting {
+			slog.Info("conversation: resetting executing conversation from previous run", "chat_id", conv.ChatID)
+			conv.State = StateGathering
+		}
 		m.conversations[conv.ChatID] = &conv
 		loaded++
 	}

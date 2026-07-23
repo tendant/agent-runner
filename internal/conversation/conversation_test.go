@@ -4,6 +4,53 @@ import (
 	"testing"
 )
 
+func TestLoadAll_ResetsExecutingConversations(t *testing.T) {
+	dir := t.TempDir()
+
+	m1 := NewManager(dir)
+	conv := m1.GetOrCreate("chat-1")
+	conv.AddMessage("user", "long task")
+	conv.SetState(StateExecuting)
+	m1.saveAll() // synchronous flush (Stop's flush is async in the background loop)
+	m1.Stop()
+
+	// Simulate a restart: a fresh manager over the same directory.
+	m2 := NewManager(dir)
+	defer m2.Stop()
+	reloaded := m2.GetOrCreate("chat-1")
+
+	if got := reloaded.GetState(); got != StateGathering {
+		t.Errorf("executing conversation must reset to gathering on load, got %v", got)
+	}
+	// History survives — only the wedged state is cleared.
+	if len(reloaded.GetMessages()) == 0 {
+		t.Error("expected message history to survive the reload")
+	}
+}
+
+func TestLoadAll_ConfirmingConversationsSurvive(t *testing.T) {
+	dir := t.TempDir()
+
+	m1 := NewManager(dir)
+	conv := m1.GetOrCreate("chat-2")
+	conv.AddMessage("user", "do a thing")
+	conv.SetPlan("1. step one")
+	conv.SetState(StateConfirming)
+	m1.saveAll()
+	m1.Stop()
+
+	m2 := NewManager(dir)
+	defer m2.Stop()
+	reloaded := m2.GetOrCreate("chat-2")
+
+	if got := reloaded.GetState(); got != StateConfirming {
+		t.Errorf("confirming conversation should load unchanged, got %v", got)
+	}
+	if reloaded.GetPlan() == "" {
+		t.Error("expected the plan to survive the reload")
+	}
+}
+
 func TestNewManager(t *testing.T) {
 	m := NewManager("")
 	if m == nil {
