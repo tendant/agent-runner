@@ -87,6 +87,13 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 		e.Sender.Reply(ctx, id, fmt.Sprintf(e.SessionStartedFormat, sessionID))
 	}
 
+	e.watchSession(ctx, id, sessionID, conv)
+}
+
+// watchSession follows a running session in the background: reports progress
+// until it ends, folds outputs back into the conversation, post-processes,
+// and drains input that queued up during execution.
+func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *conversation.Conversation) {
 	e.WG.Go(func() {
 		PollAndReport(e.Starter, sessionID, e.NewReporter(id))
 
@@ -128,6 +135,16 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 			}
 		}
 	})
+}
+
+// ResumeSession re-attaches a watcher to an already-queued session — used by
+// restart recovery for sessions that were re-enqueued from the journal, whose
+// original watcher died with the previous process. The conversation is put
+// back into executing so new input queues behind the recovered run.
+func (e *Engine) ResumeSession(ctx context.Context, id, sessionID string) {
+	conv := e.ConvManager.GetOrCreate(id)
+	conv.SetState(conversation.StateExecuting)
+	e.watchSession(ctx, id, sessionID, conv)
 }
 
 // HandleAnalysis routes the conversation through the intent analyzer and

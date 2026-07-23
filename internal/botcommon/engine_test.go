@@ -395,3 +395,38 @@ func TestHandleAnalysis_AnalyzerTimeoutSendsApology(t *testing.T) {
 		t.Error("timeout must not start an agent")
 	}
 }
+
+// --- ResumeSession ---
+
+func TestResumeSession_ReattachesWatcher(t *testing.T) {
+	f := newEngineFixture(t, "")
+	f.conv.AddMessage("user", "recovered task")
+
+	f.engine.ResumeSession(context.Background(), "conv-1", "sess-1")
+
+	// Conversation goes back to executing while the recovered run finishes.
+	if f.conv.GetState() != conversation.StateExecuting {
+		t.Errorf("expected executing during resume, got %v", f.conv.GetState())
+	}
+
+	f.engine.WG.Wait()
+
+	// The scripted session completes: outputs folded in, state cleared.
+	var sawOutput bool
+	for _, m := range f.conv.GetMessages() {
+		if m.Role == "assistant" && m.Content == "iteration output" {
+			sawOutput = true
+		}
+	}
+	if !sawOutput {
+		t.Error("expected recovered session output in the conversation")
+	}
+	if f.conv.GetState() == conversation.StateExecuting {
+		t.Error("state should clear after the recovered session ends")
+	}
+	// Resume must not start a new agent.
+	calls, _ := f.starter.counts()
+	if calls != 0 {
+		t.Errorf("resume must not call StartAgent, got %d calls", calls)
+	}
+}

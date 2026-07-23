@@ -107,6 +107,17 @@ func (s *wechatSender) Final(_ context.Context, id, text string) {
 	(*Bot)(s).sendText(context.Background(), id, text)
 }
 
+// NotifyConversation sends a message to a specific conversation. Used by
+// restart recovery to reach the session's originating chat.
+func (b *Bot) NotifyConversation(ctx context.Context, convID, text string) {
+	b.engine.Sender.Final(ctx, convID, text)
+}
+
+// ResumeSession re-attaches a result watcher to a recovered session.
+func (b *Bot) ResumeSession(convID, sessionID string) {
+	b.engine.ResumeSession(context.Background(), convID, sessionID)
+}
+
 // SetWelcome configures the one-time first-contact greeting.
 func (b *Bot) SetWelcome(w botcommon.Welcome) {
 	b.engine.Welcome = w
