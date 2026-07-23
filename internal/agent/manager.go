@@ -10,6 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// Journal persists queued/running sessions so a restarted server can recover
+// them. Implemented by sessionjournal; nil-safe (no journal = no persistence).
+// Hooks receive snapshots — safe to read without the session lock.
+type Journal interface {
+	RecordQueued(snapshot *Session)
+	RecordRunning(snapshot *Session)
+	Remove(sessionID string)
+}
+
 // queueItem pairs a session with the function to start it.
 type queueItem struct {
 	session   *Session
@@ -26,6 +35,7 @@ type Manager struct {
 	cancel                  context.CancelFunc
 	queue                   chan *queueItem
 	queueSize               int
+	journal                 Journal // optional; see SetJournal
 }
 
 // NewManager creates a new agent session manager.
@@ -48,6 +58,11 @@ func NewManager(sessionRetentionSeconds, maxQueueSize int) *Manager {
 	go m.cleanupLoop()
 	go m.dispatchLoop()
 	return m
+}
+
+// SetJournal wires the session journal. Call before any session is enqueued.
+func (m *Manager) SetJournal(j Journal) {
+	m.journal = j
 }
 
 // Context returns the manager's context, which is cancelled on Stop().
@@ -115,6 +130,9 @@ func (m *Manager) dispatchLoop() {
 				item.session.StartedAt = time.Now()
 			}
 			item.session.mu.Unlock()
+			if m.journal != nil {
+				m.journal.RecordRunning(item.session.Snapshot())
+			}
 
 			// Run synchronously — blocks until done, then next item dequeues
 			item.startFunc(item.session)
@@ -128,6 +146,9 @@ func (m *Manager) drainQueue() {
 		select {
 		case item := <-m.queue:
 			item.session.Fail("agent queue shut down")
+			if m.journal != nil {
+				m.journal.Remove(item.session.ID)
+			}
 		default:
 			return
 		}
@@ -138,6 +159,9 @@ func (m *Manager) drainQueue() {
 func (m *Manager) Enqueue(session *Session, startFunc func(*Session)) error {
 	select {
 	case m.queue <- &queueItem{session: session, startFunc: startFunc}:
+		if m.journal != nil {
+			m.journal.RecordQueued(session.Snapshot())
+		}
 		return nil
 	default:
 		return fmt.Errorf("agent queue is full")
@@ -257,6 +281,9 @@ func (m *Manager) CompleteSession(sessionID string) {
 	}
 
 	session.Complete()
+	if m.journal != nil {
+		m.journal.Remove(sessionID)
+	}
 }
 
 // FailSession marks a session as failed
@@ -270,6 +297,9 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 	}
 
 	session.Fail(errMsg)
+	if m.journal != nil {
+		m.journal.Remove(sessionID)
+	}
 }
 
 // MarkSessionStopped marks a session as stopped at the user's request —
@@ -284,6 +314,9 @@ func (m *Manager) MarkSessionStopped(sessionID, reason string) {
 	}
 
 	session.Stop(reason)
+	if m.journal != nil {
+		m.journal.Remove(sessionID)
+	}
 }
 
 // GetSessionDirect returns the live session pointer (for the executor loop to mutate)

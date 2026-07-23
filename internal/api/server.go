@@ -27,6 +27,7 @@ import (
 	// Import metrics package to register prometheus collectors.
 	_ "github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
+	"github.com/agent-runner/agent-runner/internal/sessionjournal"
 	"github.com/agent-runner/agent-runner/internal/stream"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/wechat"
@@ -45,6 +46,7 @@ type Server struct {
 	agentManager *agent.Manager
 	convManager  *conversation.Manager
 	scheduler    *scheduler.Scheduler
+	journal      *sessionjournal.Journal
 }
 
 // NewServer creates a new API server
@@ -52,6 +54,17 @@ func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize)
+
+	// Session journal: persists queued/running sessions so a restart can
+	// recover them (recoverSessions in Start). Failure to open is non-fatal —
+	// the server runs without persistence.
+	var journal *sessionjournal.Journal
+	if j, err := sessionjournal.New(filepath.Join(cfg.StateRoot, "sessions")); err != nil {
+		slog.Warn("session journal disabled", "error", err)
+	} else {
+		journal = j
+		agentManager.SetJournal(sessionjournal.ForManager(j))
+	}
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	gitOps.Token = cfg.GitToken
 	// Level 3: agent CLI executor — uses reasoning model/provider (or CLI default if unset).
@@ -177,6 +190,7 @@ func NewServer(cfg *config.Config) *Server {
 		jobManager:   jobManager,
 		agentManager: agentManager,
 		convManager:  convManager,
+		journal:      journal,
 	}
 }
 

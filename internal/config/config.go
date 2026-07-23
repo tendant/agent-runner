@@ -50,6 +50,7 @@ type Config struct {
 	RepoCacheRoot string
 	LogsRoot      string
 	TmpRoot       string
+	StateRoot     string // durable runner state (session journal); survives restarts unlike TmpRoot
 	OutputsRoot   string // persistent storage for _send/ files across sessions
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
 	MemoryDir     string // Convention: ./memory (seeded defaults + daily logs + curated memory)
@@ -209,6 +210,7 @@ func DefaultConfig() *Config {
 func defaultConfigForDataDir(data string) *Config {
 	return &Config{
 		RepoCacheRoot:            filepath.Join(data, "repo-cache"),
+		StateRoot:                filepath.Join(data, "state"),
 		LogsRoot:                 filepath.Join(data, "logs"),
 		TmpRoot:                  filepath.Join(data, "tmp"),
 		OutputsRoot:              filepath.Join(data, "outputs"),
@@ -338,6 +340,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.ProjectDir = cwd
 
 	cfg.RepoCacheRoot = envOrDefault("REPO_CACHE_ROOT", cfg.RepoCacheRoot)
+	cfg.StateRoot = envOrDefault("STATE_ROOT", cfg.StateRoot)
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
@@ -555,6 +558,7 @@ func (c *Config) ReloadFromEnv() error {
 func (c *Config) copyFrom(n *Config) {
 	c.ProjectDir = n.ProjectDir
 	c.RepoCacheRoot = n.RepoCacheRoot
+	c.StateRoot = n.StateRoot
 	c.LogsRoot = n.LogsRoot
 	c.TmpRoot = n.TmpRoot
 	c.OutputsRoot = n.OutputsRoot
