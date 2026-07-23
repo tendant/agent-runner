@@ -17,7 +17,7 @@ type trackingStarter struct {
 	called atomic.Bool
 }
 
-func (s *trackingStarter) StartAgent(_, _ string) (string, error) {
+func (s *trackingStarter) StartAgent(_, _, _ string) (string, error) {
 	s.called.Store(true)
 	return "session-123", nil
 }

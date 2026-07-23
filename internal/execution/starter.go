@@ -9,8 +9,10 @@ import (
 
 // StartAgent validates config, creates an agent session, and starts the
 // background loop. Together with GetAgentSession it makes the Engine satisfy
-// botcommon.AgentStarter.
-func (h *Engine) StartAgent(message, source string) (string, error) {
+// botcommon.AgentStarter. convID is the originating conversation key ("" for
+// non-chat callers) — recorded on the session so restart recovery can notify
+// the right conversation.
+func (h *Engine) StartAgent(message, source, convID string) (string, error) {
 	// Fail fast on a missing CLI binary rather than burning workspace setup,
 	// planning, and iteration retries on a session that can't run at all.
 	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
@@ -31,6 +33,7 @@ func (h *Engine) StartAgent(message, source string) (string, error) {
 		return "", err
 	}
 	session.Source = source
+	session.ConvID = convID
 
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning

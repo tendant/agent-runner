@@ -712,7 +712,7 @@ func (c *Commander) handleUpdatePrompt(body string) (reply, sessionID string) {
 	}
 
 	// Start an agent session with the User section.
-	sid, err := c.rt.AgentStarter().StartAgent(userContent, "commander")
+	sid, err := c.rt.AgentStarter().StartAgent(userContent, "commander", "")
 	if err != nil {
 		return fmt.Sprintf("ok wrote prompt.md (%d bytes); error starting session: %v", len(systemContent), err), ""
 	}

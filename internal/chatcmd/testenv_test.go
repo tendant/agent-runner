@@ -45,7 +45,9 @@ func (r *fakeRuntime) AgentStarter() botcommon.AgentStarter {
 // fakeStarter satisfies botcommon.AgentStarter for command-initiated sessions.
 type fakeStarter struct{}
 
-func (fakeStarter) StartAgent(message, source string) (string, error) { return "agent-test-fake", nil }
+func (fakeStarter) StartAgent(message, source, _ string) (string, error) {
+	return "agent-test-fake", nil
+}
 func (fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	return nil, false
 }

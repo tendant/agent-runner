@@ -15,7 +15,7 @@ import (
 
 // AgentStarter is the interface bots use to start and poll agent sessions.
 type AgentStarter interface {
-	StartAgent(message, source string) (sessionID string, err error)
+	StartAgent(message, source, convID string) (sessionID string, err error)
 	GetAgentSession(sessionID string) (*agent.Session, bool)
 }
 

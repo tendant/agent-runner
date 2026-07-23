@@ -35,7 +35,7 @@ type fakeStarter struct {
 	missing bool // if true, GetAgentSession always reports not-found
 }
 
-func (f *fakeStarter) StartAgent(message, source string) (string, error) { return "", nil }
+func (f *fakeStarter) StartAgent(message, source, _ string) (string, error) { return "", nil }
 
 func (f *fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	f.mu.Lock()

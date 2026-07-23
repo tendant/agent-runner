@@ -49,15 +49,17 @@ type engineStarter struct {
 	startErr   error
 	startCalls int
 	messages   []string // captured StartAgent messages
+	convIDs    []string // captured StartAgent conversation ids
 	session    *agent.Session
 	gate       chan struct{} // when non-nil, GetAgentSession blocks until closed
 }
 
-func (f *engineStarter) StartAgent(message, source string) (string, error) {
+func (f *engineStarter) StartAgent(message, source, convID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startCalls++
 	f.messages = append(f.messages, message)
+	f.convIDs = append(f.convIDs, convID)
 	if f.startErr != nil {
 		return "", f.startErr
 	}
@@ -168,6 +170,13 @@ func TestHandleConfirmation_HappyPath(t *testing.T) {
 	statuses, replies, _ := f.sender.snapshot()
 	if len(statuses) != 1 || statuses[0] != "Starting agent..." {
 		t.Errorf("expected start status, got %v", statuses)
+	}
+
+	f.starter.mu.Lock()
+	convIDs := append([]string(nil), f.starter.convIDs...)
+	f.starter.mu.Unlock()
+	if len(convIDs) != 1 || convIDs[0] != "conv-1" {
+		t.Errorf("expected conversation id passed to StartAgent, got %v", convIDs)
 	}
 	if len(replies) != 1 || replies[0] != "Agent session started: sess-1" {
 		t.Errorf("expected session-started note, got %v", replies)

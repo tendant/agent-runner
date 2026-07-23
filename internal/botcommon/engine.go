@@ -75,7 +75,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
 	}
 
-	sessionID, err := e.Starter.StartAgent(message, e.Source)
+	sessionID, err := e.Starter.StartAgent(message, e.Source, id)
 	if err != nil {
 		conv.SetState(conversation.StateGathering)
 		e.Sender.Final(ctx, id, fmt.Sprintf("Failed to start agent: %s", err))
