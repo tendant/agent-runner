@@ -331,6 +331,10 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Recover sessions interrupted by the previous shutdown — after the bots
+	// are up so notifications can reach the originating conversations.
+	s.recoverSessions()
+
 	if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}

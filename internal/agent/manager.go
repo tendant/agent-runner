@@ -244,6 +244,29 @@ func (m *Manager) CreateSession(message string, paths []string, author, commitPr
 	return session, nil
 }
 
+// RestoreSession registers a session rebuilt from the journal under its
+// original ID (so links/messages shown to the user before the restart stay
+// valid). Errors if the ID is already registered. Initializes the notify
+// channel — restored sessions must be SSE-subscribable like any other.
+func (m *Manager) RestoreSession(session *Session) error {
+	if session.ID == "" {
+		return fmt.Errorf("restore: session ID is required")
+	}
+	if session.notify == nil {
+		session.notify = make(chan struct{}, 1)
+	}
+	if session.Iterations == nil {
+		session.Iterations = []IterationResult{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.sessions[session.ID]; exists {
+		return fmt.Errorf("restore: session %s already exists", session.ID)
+	}
+	m.sessions[session.ID] = session
+	return nil
+}
+
 // GetSession returns a snapshot of a session by ID
 func (m *Manager) GetSession(sessionID string) (*Session, bool) {
 	m.mu.RLock()
