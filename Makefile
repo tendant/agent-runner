@@ -14,7 +14,7 @@ INTEGRATION_CLI      ?= opencode
 INTEGRATION_MODEL    ?=
 INTEGRATION_PROVIDER ?=
 
-IMAGE                ?= agent-runner
+IMAGE                ?= wang/agent-runner
 TAG                  ?= latest
 DOCKER_CLI           ?= none    # agent CLI baked into the Docker image; none = skip
 AGENT_CLI_INSTALL_CMD ?=
@@ -73,11 +73,13 @@ release:
 	MINOR=$$(echo $$LAST | cut -d. -f2); \
 	PATCH=$$(echo $$LAST | cut -d. -f3); \
 	NEXT=v$$MAJOR.$$MINOR.$$((PATCH+1)); \
-	echo $$NEXT > VERSION; \
 	echo "Releasing $$NEXT → $(IMAGE)"; \
 	docker buildx build --platform linux/amd64,linux/arm64 \
 	  --build-arg AGENT_CLI=$(DOCKER_CLI) $(_INSTALL_CMD_ARG) \
-	  -t $(IMAGE):$$NEXT -t $(IMAGE):latest --push .
+	  -t $(IMAGE):$$NEXT -t $(IMAGE):latest --push . && \
+	echo $$NEXT > VERSION && \
+	git add VERSION && git commit -m "Release $$NEXT" && \
+	git tag $$NEXT && git push && git push origin $$NEXT
 
 clean:
 	rm -f $(BINARY) $(CLI_BINARY) $(WECHAT_LOGIN_BINARY)
@@ -118,8 +120,8 @@ help:
 	@echo "  release             Auto-increment patch, git tag, push versioned + latest"
 	@echo ""
 	@echo "  Examples:"
-	@echo "    make release IMAGE=wang/agent-runner"
-	@echo "    make release IMAGE=wang/agent-runner DOCKER_CLI=opencode"
+	@echo "    make release                          # defaults to IMAGE=wang/agent-runner"
+	@echo "    make release DOCKER_CLI=opencode"
 	@echo "    make docker-release IMAGE=ghcr.io/myorg/agent-runner TAG=v1.2.3 DOCKER_CLI=opencode"
 	@echo "    make docker-release-multiarch IMAGE=ghcr.io/myorg/agent-runner TAG=latest"
 	@echo ""
