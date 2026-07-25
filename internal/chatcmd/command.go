@@ -16,6 +16,7 @@ import (
 	"strconv"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
@@ -651,6 +652,23 @@ func (c *Commander) handleInstallMCP(arg string) string {
 			return fmt.Sprintf("error: %q is not declared in mcp.json (declared: %s)", arg, strings.Join(names, ", "))
 		}
 		cfg = &mcpsetup.Config{Servers: map[string]mcpsetup.Server{arg: srv}}
+	}
+
+	// Isolated runners have exactly one config universe: agent-home. The
+	// filtered declaration still comes from mcp.json, so chat can only ever
+	// select among declared servers.
+	if c.cfg.Agent.Isolated {
+		results, err := agenthome.Provision()
+		if err != nil {
+			return fmt.Sprintf("error: %v", err)
+		}
+		var lines []string
+		for _, res := range results {
+			if arg == "" || res.Name == arg {
+				lines = append(lines, res.String())
+			}
+		}
+		return "ok (agent-home)\n" + strings.Join(lines, "\n")
 	}
 
 	cli := clisetup.ResolveCLI(c.cfg.Agent.CLI)
