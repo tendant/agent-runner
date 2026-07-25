@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/mcpsetup"
-	"github.com/agent-runner/agent-runner/internal/profile"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
@@ -58,27 +58,25 @@ func main() {
 		slog.Warn("startup warning", "msg", w)
 	}
 
-	// Provision the configured executor profile so its config universe
-	// (MCP servers, skills, credentials) exists before the first job.
-	if cfg.Agent.Profile != "" {
-		results, err := profile.Provision(cfg.Agent.Profile)
+	// Materialize the agent's config universe. Isolated: everything —
+	// mcp.json servers, skills/, seeded credentials — goes into agent-home/,
+	// which spawned executors are redirected into. Legacy: reconcile mcp.json
+	// into the host CLI config as before.
+	if cfg.Agent.Isolated {
+		results, err := agenthome.Provision()
 		if err != nil {
-			slog.Warn("profile provisioning failed", "profile", cfg.Agent.Profile, "error", err)
+			slog.Warn("agent-home provisioning failed", "error", err)
 		} else {
 			for _, res := range results {
 				if res.Err != nil {
-					slog.Warn("profile mcp", "profile", cfg.Agent.Profile, "server", res.Name, "cli", res.CLI, "error", res.Err)
+					slog.Warn("agent-home mcp", "server", res.Name, "cli", res.CLI, "error", res.Err)
 				} else {
-					slog.Info("profile mcp", "profile", cfg.Agent.Profile, "server", res.Name, "cli", res.CLI, "action", res.Action)
+					slog.Info("agent-home mcp", "server", res.Name, "cli", res.CLI, "action", res.Action)
 				}
 			}
-			slog.Info("executor profile provisioned", "profile", cfg.Agent.Profile)
+			slog.Info("agent-home provisioned; executors run isolated")
 		}
-	}
-
-	// Reconcile declared MCP servers (mcp.json) into the active CLI's config
-	// so a fresh host or container converges on boot.
-	if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
+	} else if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
 		slog.Warn("mcp declaration invalid", "path", mcpsetup.DefaultPath, "error", err)
 	} else if mcpCfg != nil {
 		for _, res := range mcpsetup.Ensure(clisetup.ResolveCLI(cfg.Agent.CLI), mcpCfg) {

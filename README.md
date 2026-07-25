@@ -11,30 +11,22 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
 - Git configured with credentials for your remote
 
-## Executor isolation profiles
+## Agent isolation
 
-A profile gives spawned agents a self-contained config universe — which MCP
-servers, skills, and credentials they see — by redirecting each CLI's config
-directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`)
-into `profiles/<name>/`:
+Set `AGENT_ISOLATED=true` and spawned agents run inside `agent-home/` — a
+self-contained config universe in the runner directory. The runner
+provisions it at startup from what's already there: `mcp.json` (the agent's
+MCP servers), `skills/` (synced into the claude skills dir), and copies of
+the host CLIs' credentials. Executors are redirected into it via
+`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `XDG_CONFIG_HOME`, so agents see
+exactly the declared tools — nothing inherited from the host user's own CLI
+configs.
 
-```
-profiles/work/
-  mcp.json        MCP servers this profile's agents get (mcpsetup format)
-  profile.env     extra env: API keys, tool modes; SEED_AUTH=true copies the
-                  host CLIs' OAuth credentials in at provision time
-  skills/         synced into the profile's claude skills directory
-```
-
-Activate with `AGENT_PROFILE=work`; the runner provisions the profile at
-startup and spawns every executor inside it. Two runners (or containers)
-with different profiles cannot see each other's tools or credentials.
-`/profile list` and `/profile provision <name>` manage them from chat;
-profiles are operator-owned — chat can provision, never define.
-
-Note: profiles isolate the tool surface, not the filesystem — a shell-capable
-agent still runs as the host user. For enforcement, run one profile per
-container; the profile directory maps 1:1 onto container volumes.
+One runner = one agent = one universe. For multiple agents (e.g. different
+mail accounts), run multiple runner directories or containers — no profile
+management. Isolation covers the tool surface, not the filesystem; for
+enforcement run the runner in a container (agent-home lives in the runner
+directory, so the volume contract is unchanged).
 
 ## MCP servers for spawned agents
 

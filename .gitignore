@@ -42,5 +42,5 @@ cmd/server/server
 
 prompt.md
 
-# Executor isolation profiles: contain per-profile credentials and CLI state
-profiles/
+# Agent config universe: contains seeded credentials and CLI state
+agent-home/

@@ -22,7 +22,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/mcpsetup"
-	"github.com/agent-runner/agent-runner/internal/profile"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
@@ -117,7 +116,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		"/bootstrap":     "usage: /bootstrap [force]",
 		"/install-cli":   "usage: /install-cli [claude|codex|opencode] [force]",
 		"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
-		"/profile":       "usage: /profile [list|provision <name>]",
 		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 		"/auth":          "usage: /auth [claude|codex] — only available via chat",
@@ -150,9 +148,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == "/install-mcp" || strings.HasPrefix(lower, "/install-mcp "):
 		arg := strings.TrimSpace(text[len("/install-mcp"):])
 		return r(c.handleInstallMCP(arg))
-	case lower == "/profile" || strings.HasPrefix(lower, "/profile "):
-		arg := strings.TrimSpace(text[len("/profile"):])
-		return r(c.handleProfile(arg))
 	case strings.HasPrefix(lower, cmdSetAgent+" ") || lower == cmdSetAgent:
 		content := strings.TrimSpace(text[len(cmdSetAgent):])
 		return r(c.handleSetFile("agent.md", content, true))
@@ -664,45 +659,6 @@ func (c *Commander) handleInstallMCP(arg string) string {
 		lines = append(lines, res.String())
 	}
 	return "ok\n" + strings.Join(lines, "\n")
-}
-
-// handleProfile lists or provisions executor isolation profiles. Profiles
-// are operator-owned directories (profiles/<name>); chat can provision an
-// existing declaration but never define one.
-func (c *Commander) handleProfile(arg string) string {
-	fields := strings.Fields(arg)
-	switch {
-	case arg == "" || arg == "list":
-		names := profile.List()
-		active := c.cfg.Agent.Profile
-		if len(names) == 0 {
-			return "no profiles (create profiles/<name>/ with mcp.json, profile.env, skills/)"
-		}
-		var lines []string
-		for _, name := range names {
-			marker := ""
-			if name == active {
-				marker = " (active)"
-			}
-			lines = append(lines, "  "+name+marker)
-		}
-		return "profiles:\n" + strings.Join(lines, "\n")
-	case fields[0] == "provision" && len(fields) == 2:
-		results, err := profile.Provision(fields[1])
-		if err != nil {
-			return fmt.Sprintf("error: %v", err)
-		}
-		if len(results) == 0 {
-			return fmt.Sprintf("ok provisioned %s (no MCP servers declared)", fields[1])
-		}
-		var lines []string
-		for _, res := range results {
-			lines = append(lines, res.String())
-		}
-		return "ok provisioned " + fields[1] + "\n" + strings.Join(lines, "\n")
-	default:
-		return "usage: /profile [list|provision <name>]"
-	}
 }
 
 // handleSetFile writes content to the given prompt file (agent.md or prompt.md).
@@ -1288,7 +1244,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode); add **force** to reinstall even if already present
 **/install-mcp** _[name]_ — register MCP servers declared in mcp.json into the active CLI (all declared servers when no name given)
-**/profile** _[list|provision \<name\>]_ — executor isolation profiles (config-dir redirection; set AGENT\_PROFILE to activate)
+
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files

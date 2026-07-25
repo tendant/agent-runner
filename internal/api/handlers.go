@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
@@ -23,7 +24,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
-	"github.com/agent-runner/agent-runner/internal/profile"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
@@ -197,26 +197,26 @@ func (h *Handlers) UpdateExecutor() {
 	defer h.execMu.Unlock()
 	cfg := h.config.Agent
 	h.executor = executor.NewExecutor(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
-	applyProfile(h.executor, cfg.Profile)
+	applyIsolation(h.executor, cfg.Isolated)
 }
 
-// applyProfile overlays the isolation profile's environment (config-dir
-// redirections + profile.env) onto the executor. An empty profile keeps the
-// legacy inherit-everything behavior.
-func applyProfile(exec executor.Executor, name string) {
-	if name == "" {
+// applyIsolation spawns executors inside agent-home/ (config-dir
+// redirection) when AGENT_ISOLATED is set; otherwise the legacy
+// inherit-everything behavior applies.
+func applyIsolation(exec executor.Executor, isolated bool) {
+	if !isolated {
 		return
 	}
-	env, err := profile.Env(name)
+	env, err := agenthome.Env()
 	if err != nil {
-		slog.Warn("agent profile unavailable; executor runs without isolation", "profile", name, "error", err)
+		slog.Warn("agent home unavailable; executor runs without isolation", "error", err)
 		return
 	}
 	if es, ok := exec.(executor.EnvSetter); ok {
 		es.SetExtraEnv(env)
-		slog.Info("executor profile applied", "profile", name)
+		slog.Info("executor isolated in agent-home")
 	} else {
-		slog.Warn("executor does not support environment overlay; profile ignored", "profile", name)
+		slog.Warn("executor does not support environment overlay; isolation ignored")
 	}
 }
 
