@@ -124,9 +124,13 @@ func Ensure(cli string, cfg *Config) []Result {
 
 // --- claude: delegate to the claude CLI, which owns ~/.claude.json ---
 
-// runCommand is swapped in tests.
-var runCommand = func(name string, args ...string) ([]byte, error) {
+// runCommand is swapped in tests. extraEnv entries overlay the inherited
+// environment (used to redirect CLAUDE_CONFIG_DIR into a profile).
+var runCommand = func(extraEnv []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -135,15 +139,76 @@ var runCommand = func(name string, args ...string) ([]byte, error) {
 }
 
 func ensureClaude(name string, srv Server) (string, error) {
+	return ensureClaudeIn("", name, srv)
+}
+
+// ensureClaudeIn registers via the claude CLI, optionally redirected into a
+// profile's config dir. The CLI owns its config file in both cases.
+func ensureClaudeIn(configDir, name string, srv Server) (string, error) {
+	var env []string
+	if configDir != "" {
+		env = []string{"CLAUDE_CONFIG_DIR=" + configDir}
+	}
 	// `claude mcp get <name>` exits non-zero when the server is unknown.
-	if _, err := runCommand("claude", "mcp", "get", name); err == nil {
+	if _, err := runCommand(env, "claude", "mcp", "get", name); err == nil {
 		return "present", nil
 	}
-	out, err := runCommand("claude", claudeAddArgs(name, srv)...)
+	out, err := runCommand(env, "claude", claudeAddArgs(name, srv)...)
 	if err != nil {
 		return "", fmt.Errorf("claude mcp add: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return "registered", nil
+}
+
+// Paths targets Ensure at a profile's config universe instead of the host
+// defaults. Zero fields fall back to the host locations.
+type Paths struct {
+	ClaudeConfigDir string
+	CodexConfig     string
+	OpencodeConfig  string
+}
+
+// EnsureAll converges every supported client on the declaration, targeted at
+// the given paths — used when provisioning an isolated executor profile.
+func EnsureAll(cfg *Config, paths Paths) []Result {
+	if cfg == nil || len(cfg.Servers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Servers))
+	for name := range cfg.Servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	codexPath := paths.CodexConfig
+	if codexPath == "" {
+		codexPath = codexConfigPath()
+	}
+	opencodePath := paths.OpencodeConfig
+	if opencodePath == "" {
+		opencodePath = opencodeConfigPath()
+	}
+
+	var results []Result
+	for _, name := range names {
+		srv := cfg.Servers[name]
+		for _, entry := range []struct {
+			cli string
+			fn  func() (string, error)
+		}{
+			{"claude", func() (string, error) { return ensureClaudeIn(paths.ClaudeConfigDir, name, srv) }},
+			{"codex", func() (string, error) { return ensureCodexAt(codexPath, name, srv) }},
+			{"opencode", func() (string, error) { return ensureOpencodeAt(opencodePath, name, srv) }},
+		} {
+			action, err := entry.fn()
+			if err != nil {
+				results = append(results, Result{CLI: entry.cli, Name: name, Action: "error", Err: err})
+				continue
+			}
+			results = append(results, Result{CLI: entry.cli, Name: name, Action: action})
+		}
+	}
+	return results
 }
 
 // claudeAddArgs builds the `claude mcp add` invocation for a declaration.

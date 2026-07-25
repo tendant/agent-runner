@@ -11,6 +11,31 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
 - Git configured with credentials for your remote
 
+## Executor isolation profiles
+
+A profile gives spawned agents a self-contained config universe — which MCP
+servers, skills, and credentials they see — by redirecting each CLI's config
+directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME`/`XDG_DATA_HOME`)
+into `profiles/<name>/`:
+
+```
+profiles/work/
+  mcp.json        MCP servers this profile's agents get (mcpsetup format)
+  profile.env     extra env: API keys, tool modes; SEED_AUTH=true copies the
+                  host CLIs' OAuth credentials in at provision time
+  skills/         synced into the profile's claude skills directory
+```
+
+Activate with `AGENT_PROFILE=work`; the runner provisions the profile at
+startup and spawns every executor inside it. Two runners (or containers)
+with different profiles cannot see each other's tools or credentials.
+`/profile list` and `/profile provision <name>` manage them from chat;
+profiles are operator-owned — chat can provision, never define.
+
+Note: profiles isolate the tool surface, not the filesystem — a shell-capable
+agent still runs as the host user. For enforcement, run one profile per
+container; the profile directory maps 1:1 onto container volumes.
+
 ## MCP servers for spawned agents
 
 Declare MCP servers the agent CLIs should have in `mcp.json` next to the

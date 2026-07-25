@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,6 +14,13 @@ import (
 )
 
 // Executor is the interface for CLI execution backends.
+// EnvSetter is implemented by executors that support an environment overlay
+// (e.g. an isolation profile's config-dir redirections). Optional so mocks
+// and third-party executors stay source-compatible.
+type EnvSetter interface {
+	SetExtraEnv(env []string)
+}
+
 type Executor interface {
 	Execute(ctx context.Context, workspacePath, instruction string) (*ExecutionResult, error)
 	ExecuteWithSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, error)
@@ -48,6 +56,8 @@ func firstLines(s string, n int) string {
 
 // ClaudeExecutor handles Claude Code CLI execution
 type ClaudeExecutor struct {
+	// ExtraEnv overlays the inherited environment for spawned processes.
+	ExtraEnv []string
 	Model    string
 	MaxTurns int
 }
@@ -97,6 +107,9 @@ func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspaceP
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workspacePath
+	if len(e.ExtraEnv) > 0 {
+		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	}
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -166,3 +179,6 @@ func (e *ClaudeExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, work
 
 	return result, executionLog, err
 }
+
+// SetExtraEnv sets an environment overlay applied to spawned processes.
+func (e *ClaudeExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }

@@ -130,8 +130,8 @@ func TestEnsureClaude(t *testing.T) {
 	var calls [][]string
 	registered := false
 	orig := runCommand
-	runCommand = func(name string, args ...string) ([]byte, error) {
-		calls = append(calls, append([]string{name}, args...))
+	runCommand = func(extraEnv []string, name string, args ...string) ([]byte, error) {
+		calls = append(calls, append(append([]string{}, extraEnv...), append([]string{name}, args...)...))
 		if len(args) >= 2 && args[0] == "mcp" && args[1] == "get" {
 			if registered {
 				return nil, nil

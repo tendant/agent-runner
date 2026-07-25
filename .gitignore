@@ -41,3 +41,6 @@ cmd/server/server
 .DS_Store
 
 prompt.md
+
+# Executor isolation profiles: contain per-profile credentials and CLI state
+profiles/

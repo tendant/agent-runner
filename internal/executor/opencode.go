@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -16,6 +17,8 @@ import (
 // opencode is invoked as: opencode run "<instruction>" --format json
 // Output is a newline-delimited JSON (NDJSON) event stream.
 type OpencodeExecutor struct {
+	// ExtraEnv overlays the inherited environment for spawned processes.
+	ExtraEnv []string
 	Model    string
 	MaxTurns int // stored for interface compatibility; opencode has no max-turns flag
 }
@@ -46,6 +49,9 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 
 	cmd := exec.CommandContext(ctx, "opencode", args...)
 	cmd.Dir = workspacePath
+	if len(e.ExtraEnv) > 0 {
+		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	}
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -184,3 +190,6 @@ func parseOpencodeOutput(data []byte) (string, float64, error) {
 	}
 	return "", 0, fmt.Errorf("opencode produced no output events (check version and auth)")
 }
+
+// SetExtraEnv sets an environment overlay applied to spawned processes.
+func (e *OpencodeExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }

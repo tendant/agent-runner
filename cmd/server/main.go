@@ -11,6 +11,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/mcpsetup"
+	"github.com/agent-runner/agent-runner/internal/profile"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
@@ -55,6 +56,24 @@ func main() {
 	}
 	for _, w := range clisetup.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
 		slog.Warn("startup warning", "msg", w)
+	}
+
+	// Provision the configured executor profile so its config universe
+	// (MCP servers, skills, credentials) exists before the first job.
+	if cfg.Agent.Profile != "" {
+		results, err := profile.Provision(cfg.Agent.Profile)
+		if err != nil {
+			slog.Warn("profile provisioning failed", "profile", cfg.Agent.Profile, "error", err)
+		} else {
+			for _, res := range results {
+				if res.Err != nil {
+					slog.Warn("profile mcp", "profile", cfg.Agent.Profile, "server", res.Name, "cli", res.CLI, "error", res.Err)
+				} else {
+					slog.Info("profile mcp", "profile", cfg.Agent.Profile, "server", res.Name, "cli", res.CLI, "action", res.Action)
+				}
+			}
+			slog.Info("executor profile provisioned", "profile", cfg.Agent.Profile)
+		}
 	}
 
 	// Reconcile declared MCP servers (mcp.json) into the active CLI's config

@@ -11,7 +11,9 @@ import (
 
 // CodexExecutor handles OpenAI Codex CLI execution.
 type CodexExecutor struct {
-	Model string
+	// ExtraEnv overlays the inherited environment for spawned processes.
+	ExtraEnv []string
+	Model    string
 }
 
 // NewCodexExecutor creates a new Codex CLI executor.
@@ -54,6 +56,9 @@ func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePa
 
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = workspacePath
+	if len(e.ExtraEnv) > 0 {
+		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 
 	var stdout, stderr bytes.Buffer
@@ -107,3 +112,6 @@ func (e *CodexExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, works
 
 	return result, executionLog, err
 }
+
+// SetExtraEnv sets an environment overlay applied to spawned processes.
+func (e *CodexExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }

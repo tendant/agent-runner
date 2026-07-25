@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/profile"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
@@ -195,6 +197,27 @@ func (h *Handlers) UpdateExecutor() {
 	defer h.execMu.Unlock()
 	cfg := h.config.Agent
 	h.executor = executor.NewExecutor(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
+	applyProfile(h.executor, cfg.Profile)
+}
+
+// applyProfile overlays the isolation profile's environment (config-dir
+// redirections + profile.env) onto the executor. An empty profile keeps the
+// legacy inherit-everything behavior.
+func applyProfile(exec executor.Executor, name string) {
+	if name == "" {
+		return
+	}
+	env, err := profile.Env(name)
+	if err != nil {
+		slog.Warn("agent profile unavailable; executor runs without isolation", "profile", name, "error", err)
+		return
+	}
+	if es, ok := exec.(executor.EnvSetter); ok {
+		es.SetExtraEnv(env)
+		slog.Info("executor profile applied", "profile", name)
+	} else {
+		slog.Warn("executor does not support environment overlay; profile ignored", "profile", name)
+	}
 }
 
 // RefreshRuntime rebuilds everything derived from config: the executor and

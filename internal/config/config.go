@@ -121,6 +121,7 @@ type AgentConfig struct {
 	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
+	Profile             string   // AGENT_PROFILE — executor isolation profile (profiles/<name>)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
@@ -396,6 +397,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxTotalSeconds = envIntOrDefault("AGENT_MAX_TOTAL_SECONDS", cfg.Agent.MaxTotalSeconds)
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
+	cfg.Agent.Profile = envOrDefault("AGENT_PROFILE", cfg.Agent.Profile)
 	// opencode requires an explicit model; ship a two-tier default pair
 	// (pro for real work, flash for the fast tier).
 	if cfg.Agent.CLI == "opencode" || cfg.Agent.CLI == "" {
