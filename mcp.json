@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "maildirx": {
+      "command": "~/go/bin/maildirx",
+      "args": ["mcp"],
+      "env": {
+        "MAIL_ROOT": "~/Mail",
+        "MAILDIRX_MCP_MODE": "read-only"
+      }
+    }
+  }
+}

@@ -11,6 +11,30 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
 - Git configured with credentials for your remote
 
+## MCP servers for spawned agents
+
+Declare MCP servers the agent CLIs should have in `mcp.json` next to the
+runner (operator-owned; chat users can install declared servers but never
+supply commands):
+
+```json
+{
+  "servers": {
+    "maildirx": {
+      "command": "~/go/bin/maildirx",
+      "args": ["mcp"],
+      "env": { "MAIL_ROOT": "~/Mail", "MAILDIRX_MCP_MODE": "read-only" }
+    }
+  }
+}
+```
+
+On startup the runner reconciles the declaration into the active CLI's own
+config (via `claude mcp add`, `~/.codex/config.toml`, or
+`~/.config/opencode/opencode.json`) — idempotently, so a fresh host or
+container converges on boot. `/install-mcp [name]` triggers the same
+reconciliation from chat.
+
 ### opencode on Linux (Ubuntu/Debian)
 
 opencode is distributed as an [AppImage](https://appimage.org/) on Linux. Because it is built on Electron, it requires a display even for basic operations. On a headless server, install `xvfb` so agent-runner can run version checks (and opencode itself) without a physical display:

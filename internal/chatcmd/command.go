@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/mcpsetup"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
@@ -113,6 +115,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
 		"/bootstrap":     "usage: /bootstrap [force]",
 		"/install-cli":   "usage: /install-cli [claude|codex|opencode] [force]",
+		"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
 		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 		"/auth":          "usage: /auth [claude|codex] — only available via chat",
@@ -142,6 +145,9 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		force := strings.Contains(strings.ToLower(arg), "force")
 		arg = strings.TrimSpace(strings.ReplaceAll(strings.ToLower(arg), "force", ""))
 		return r(c.handleInstallCLI(arg, force))
+	case lower == "/install-mcp" || strings.HasPrefix(lower, "/install-mcp "):
+		arg := strings.TrimSpace(text[len("/install-mcp"):])
+		return r(c.handleInstallMCP(arg))
 	case strings.HasPrefix(lower, cmdSetAgent+" ") || lower == cmdSetAgent:
 		content := strings.TrimSpace(text[len(cmdSetAgent):])
 		return r(c.handleSetFile("agent.md", content, true))
@@ -620,6 +626,39 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 		return fmt.Sprintf("ok installed %s (%s)\n%s", cli, v, out)
 	}
 	return fmt.Sprintf("ok installed %s\n%s", cli, out)
+}
+
+// handleInstallMCP registers MCP servers declared in mcp.json into the
+// active CLI's configuration. Only declared servers can be installed — chat
+// input selects among them but never supplies a command.
+func (c *Commander) handleInstallMCP(arg string) string {
+	cfg, err := mcpsetup.Load(mcpsetup.DefaultPath)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	if cfg == nil || len(cfg.Servers) == 0 {
+		return "no MCP servers declared — create mcp.json (see docs) with the servers agents should have"
+	}
+
+	if arg != "" {
+		srv, ok := cfg.Servers[arg]
+		if !ok {
+			names := make([]string, 0, len(cfg.Servers))
+			for name := range cfg.Servers {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			return fmt.Sprintf("error: %q is not declared in mcp.json (declared: %s)", arg, strings.Join(names, ", "))
+		}
+		cfg = &mcpsetup.Config{Servers: map[string]mcpsetup.Server{arg: srv}}
+	}
+
+	cli := clisetup.ResolveCLI(c.cfg.Agent.CLI)
+	var lines []string
+	for _, res := range mcpsetup.Ensure(cli, cfg) {
+		lines = append(lines, res.String())
+	}
+	return "ok\n" + strings.Join(lines, "\n")
 }
 
 // handleSetFile writes content to the given prompt file (agent.md or prompt.md).
@@ -1204,6 +1243,7 @@ const helpText = `**Agent Runner Commands**
 Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEEPSEEK\_API\_KEY \<key\>
 
 **/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode); add **force** to reinstall even if already present
+**/install-mcp** _[name]_ — register MCP servers declared in mcp.json into the active CLI (all declared servers when no name given)
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files

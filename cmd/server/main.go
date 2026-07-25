@@ -10,6 +10,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/mcpsetup"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	simpleworkflow "github.com/tendant/simple-workflow"
@@ -54,6 +55,20 @@ func main() {
 	}
 	for _, w := range clisetup.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
 		slog.Warn("startup warning", "msg", w)
+	}
+
+	// Reconcile declared MCP servers (mcp.json) into the active CLI's config
+	// so a fresh host or container converges on boot.
+	if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
+		slog.Warn("mcp declaration invalid", "path", mcpsetup.DefaultPath, "error", err)
+	} else if mcpCfg != nil {
+		for _, res := range mcpsetup.Ensure(clisetup.ResolveCLI(cfg.Agent.CLI), mcpCfg) {
+			if res.Err != nil {
+				slog.Warn("mcp setup", "server", res.Name, "cli", res.CLI, "error", res.Err)
+			} else {
+				slog.Info("mcp setup", "server", res.Name, "cli", res.CLI, "action", res.Action)
+			}
+		}
 	}
 	if cfg.Agent.PromptFile != "" {
 		slog.Info("agent prompt file", "path", cfg.Agent.PromptFile)
