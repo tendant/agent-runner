@@ -202,10 +202,23 @@ func (h *Handlers) UpdateExecutor() {
 
 // applyIsolation spawns executors inside agent-home/ (config-dir
 // redirection) when AGENT_ISOLATED is set; otherwise the legacy
-// inherit-everything behavior applies.
+// inherit-everything behavior applies. Provisioning runs here — not only at
+// startup — so `/set AGENT_ISOLATED true` takes effect without a restart.
 func applyIsolation(exec executor.Executor, isolated bool) {
 	if !isolated {
 		return
+	}
+	results, err := agenthome.Provision()
+	if err != nil {
+		slog.Warn("agent-home provisioning failed; executor runs without isolation", "error", err)
+		return
+	}
+	for _, res := range results {
+		if res.Err != nil {
+			slog.Warn("agent-home mcp", "server", res.Name, "cli", res.CLI, "error", res.Err)
+		} else {
+			slog.Info("agent-home mcp", "server", res.Name, "cli", res.CLI, "action", res.Action)
+		}
 	}
 	env, err := agenthome.Env()
 	if err != nil {

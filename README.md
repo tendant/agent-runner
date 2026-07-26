@@ -11,6 +11,22 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
 - Git configured with credentials for your remote
 
+## Creating an agent
+
+One directory is one agent. From an empty directory:
+
+```bash
+mkdir my-agent && cd my-agent
+agent-runner            # start; then from chat:
+```
+
+`/bootstrap` creates the agent's identity: `agent.md`, `prompt.md`,
+`mcp.json.example` (rename to `mcp.json` and declare the agent's MCP
+servers), and `.env` with `AGENT_ISOLATED=true`. `/config` always shows the
+agent's directory, isolation state, and declared servers; `/install-mcp`
+(or a restart) materializes declarations into `agent-home/`. `/set
+AGENT_ISOLATED true|false` applies live — no restart needed.
+
 ## Agent isolation
 
 Set `AGENT_ISOLATED=true` and spawned agents run inside `agent-home/` — a

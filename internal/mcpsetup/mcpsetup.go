@@ -40,6 +40,22 @@ type Config struct {
 // working directory.
 const DefaultPath = "mcp.json"
 
+// Example is a ready-to-edit declaration template written by /bootstrap as
+// mcp.json.example.
+const Example = `{
+  "servers": {
+    "maildirx": {
+      "command": "~/go/bin/maildirx",
+      "args": ["mcp"],
+      "env": {
+        "MAIL_ROOT": "~/Mail",
+        "MAILDIRX_MCP_MODE": "no-send"
+      }
+    }
+  }
+}
+`
+
 // Load reads a declaration file. A missing file returns (nil, nil) — no
 // declaration is a normal state. "~" in commands and env values expands to
 // the home directory so declarations stay portable.

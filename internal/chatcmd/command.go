@@ -503,6 +503,32 @@ func (c *Commander) handleConfig() string {
 	}
 
 	b.WriteString("**Configuration**\n\n")
+
+	// Identity first: one runner directory is one agent.
+	if dir, err := os.Getwd(); err == nil {
+		fmt.Fprintf(&b, "**agent:** %s (%s)\n", filepath.Base(dir), dir)
+	}
+	if c.cfg.Agent.Isolated {
+		state := "agent-home not provisioned yet"
+		if _, err := os.Stat(filepath.Join(agenthome.Dir, "claude")); err == nil {
+			state = "agent-home provisioned"
+		}
+		fmt.Fprintf(&b, "**isolated:** true (%s)\n", state)
+	} else {
+		b.WriteString("**isolated:** false (executors inherit host CLI configs — /set AGENT_ISOLATED true)\n")
+	}
+	if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
+		fmt.Fprintf(&b, "**mcp:** mcp.json invalid: %v\n", err)
+	} else if mcpCfg == nil || len(mcpCfg.Servers) == 0 {
+		b.WriteString("**mcp:** none declared (/bootstrap creates mcp.json.example)\n")
+	} else {
+		names := make([]string, 0, len(mcpCfg.Servers))
+		for name := range mcpCfg.Servers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(&b, "**mcp:** %s\n", strings.Join(names, ", "))
+	}
 	if v, err := clisetup.CLIVersion(cli); err != nil {
 		fmt.Fprintf(&b, "**cli:** %s (installed, version check failed: %s)\n", cli, err)
 	} else if v != "" {
@@ -638,7 +664,9 @@ func (c *Commander) handleInstallMCP(arg string) string {
 		return fmt.Sprintf("error: %v", err)
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
-		return "no MCP servers declared — create mcp.json (see docs) with the servers agents should have"
+		path, _ := filepath.Abs(mcpsetup.DefaultPath)
+		return fmt.Sprintf("no MCP servers declared in %s\n"+
+			"Run /bootstrap to create mcp.json.example next to it, rename to mcp.json, edit, then /install-mcp again.", path)
 	}
 
 	if arg != "" {
@@ -713,6 +741,22 @@ func (c *Commander) handleBootstrap(force bool) string {
 			fmt.Fprintf(&b, "created %s\n", r.Path)
 		} else {
 			fmt.Fprintf(&b, "skipped %s (already exists)\n", r.Path)
+		}
+	}
+
+	// A new agent directory also needs its tool declaration and isolation
+	// switch; templates only — never overwrite operator files.
+	if _, err := os.Stat("mcp.json"); os.IsNotExist(err) {
+		if err := os.WriteFile("mcp.json.example", []byte(mcpsetup.Example), 0644); err == nil {
+			b.WriteString("created mcp.json.example (rename to mcp.json and edit — the agent's MCP servers)\n")
+		}
+	}
+	if _, err := os.Stat(".env"); os.IsNotExist(err) {
+		envTemplate := "# This directory is one agent. Executors run isolated in agent-home/\n" +
+			"# with only the MCP servers declared in mcp.json.\n" +
+			"AGENT_ISOLATED=true\n"
+		if err := os.WriteFile(".env", []byte(envTemplate), 0644); err == nil {
+			b.WriteString("created .env (AGENT_ISOLATED=true — /set AGENT_ISOLATED false to disable)\n")
 		}
 	}
 

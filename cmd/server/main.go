@@ -4,10 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/api"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
@@ -58,32 +58,27 @@ func main() {
 		slog.Warn("startup warning", "msg", w)
 	}
 
-	// Materialize the agent's config universe. Isolated: everything —
-	// mcp.json servers, skills/, seeded credentials — goes into agent-home/,
-	// which spawned executors are redirected into. Legacy: reconcile mcp.json
-	// into the host CLI config as before.
-	if cfg.Agent.Isolated {
-		results, err := agenthome.Provision()
-		if err != nil {
-			slog.Warn("agent-home provisioning failed", "error", err)
-		} else {
-			for _, res := range results {
+	// Who am I: one runner directory is one agent. Logged first so multiple
+	// runners (and their chats) are distinguishable at a glance.
+	slog.Info("agent identity",
+		"dir", cfg.ProjectDir,
+		"agent", filepath.Base(cfg.ProjectDir),
+		"isolated", cfg.Agent.Isolated,
+	)
+
+	// Isolated runners provision agent-home when the executor is built
+	// (applyIsolation); legacy runners reconcile mcp.json into the host CLI
+	// config here.
+	if !cfg.Agent.Isolated {
+		if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
+			slog.Warn("mcp declaration invalid", "path", mcpsetup.DefaultPath, "error", err)
+		} else if mcpCfg != nil {
+			for _, res := range mcpsetup.Ensure(clisetup.ResolveCLI(cfg.Agent.CLI), mcpCfg) {
 				if res.Err != nil {
-					slog.Warn("agent-home mcp", "server", res.Name, "cli", res.CLI, "error", res.Err)
+					slog.Warn("mcp setup", "server", res.Name, "cli", res.CLI, "error", res.Err)
 				} else {
-					slog.Info("agent-home mcp", "server", res.Name, "cli", res.CLI, "action", res.Action)
+					slog.Info("mcp setup", "server", res.Name, "cli", res.CLI, "action", res.Action)
 				}
-			}
-			slog.Info("agent-home provisioned; executors run isolated")
-		}
-	} else if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
-		slog.Warn("mcp declaration invalid", "path", mcpsetup.DefaultPath, "error", err)
-	} else if mcpCfg != nil {
-		for _, res := range mcpsetup.Ensure(clisetup.ResolveCLI(cfg.Agent.CLI), mcpCfg) {
-			if res.Err != nil {
-				slog.Warn("mcp setup", "server", res.Name, "cli", res.CLI, "error", res.Err)
-			} else {
-				slog.Info("mcp setup", "server", res.Name, "cli", res.CLI, "action", res.Action)
 			}
 		}
 	}
