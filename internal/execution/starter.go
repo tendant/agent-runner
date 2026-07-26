@@ -55,3 +55,19 @@ func (h *Engine) StartAgent(message, source, convID string) (string, error) {
 func (h *Engine) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	return h.agentManager.GetSession(sessionID)
 }
+
+// Steer injects a user message into a running session's live executor
+// session. Fails when the session isn't running or its backend doesn't
+// support steering (one-shot CLIs) — callers fall back to queueing the
+// message for a follow-up run.
+func (h *Engine) Steer(sessionID, text string) error {
+	v, ok := h.liveControls.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("session %s has no live executor session", sessionID)
+	}
+	sess := v.(*agentSession).session()
+	if sess == nil {
+		return fmt.Errorf("session %s has no live executor session", sessionID)
+	}
+	return sess.Steer(text)
+}

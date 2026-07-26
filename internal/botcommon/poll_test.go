@@ -1,6 +1,7 @@
 package botcommon
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,8 @@ func (f *fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	f.calls++
 	return f.states[idx], true
 }
+
+func (f *fakeStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 // recordingReporter implements Reporter and records every callback it
 // receives, guarded by a mutex since PollAndReport runs on its own goroutine

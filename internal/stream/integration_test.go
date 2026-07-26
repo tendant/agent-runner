@@ -3,6 +3,7 @@
 package stream
 
 import (
+	"errors"
 	"context"
 	"os"
 	"testing"
@@ -40,6 +41,8 @@ func (m *mockStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 		},
 	}, true
 }
+
+func (m *mockStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 func TestIntegration_BotConnects(t *testing.T) {
 	serverURL, token, convID := integrationEnv(t)

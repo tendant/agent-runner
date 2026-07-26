@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -378,6 +379,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	defer as.Close()
 
+	// Register for live steering (chat messages during the run).
+	h.liveControls.Store(sessionID, as)
+	defer h.liveControls.Delete(sessionID)
+
 	promptBuilder, stopReason, completed, blockedOrStuck, aborted := h.runIterationLoop(
 		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan, as)
 	if aborted {
@@ -539,7 +544,7 @@ func (h *Engine) runIterationLoop(
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		liveSession.BeginIteration(i)
-		result, died := h.executePrompt(ctx, as.sess, req, i, deadline, liveSession)
+		result, died := h.executePrompt(ctx, as.session(), req, i, deadline, liveSession)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		iterationsRun = i
@@ -692,7 +697,7 @@ func (h *Engine) runReviewerPhase(
 		// Corrective iterations reuse the run's session; on a persistent
 		// backend the correction lands in the same conversation. A dead
 		// session surfaces as an error result, which stops the loop below.
-		result, _ := h.executePrompt(ctx, as.sess, executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
+		result, _ := h.executePrompt(ctx, as.session(), executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
 		result.Prompt = systemPrompt
 		result.Retry = true
 		liveSession.AddIteration(result)
@@ -871,13 +876,25 @@ func (h *Engine) resolvePrompt(message string) (string, error) {
 }
 
 // agentSession owns the run-scoped executor session, allowing one mid-run
-// restart after a backend process death.
+// restart after a backend process death. The session handle is mutex-guarded
+// because Steer reaches it from chat goroutines while the run goroutine may
+// be swapping it during a restart.
 type agentSession struct {
-	backend   executor.Backend
-	sess      executor.Session
-	onEvent   func(executor.Event) // forwards session progress events; may be nil
+	backend executor.Backend
+	onEvent func(executor.Event) // forwards session progress events; may be nil
+
+	mu   sync.RWMutex
+	sess executor.Session
+
+	// restarted/forceFull are touched only by the run goroutine.
 	restarted bool
 	forceFull bool // rebuild the full prompt after a restart (context was lost)
+}
+
+func (as *agentSession) session() executor.Session {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+	return as.sess
 }
 
 func (as *agentSession) start(ctx context.Context, workspace string) error {
@@ -885,7 +902,9 @@ func (as *agentSession) start(ctx context.Context, workspace string) error {
 	if err != nil {
 		return err
 	}
+	as.mu.Lock()
 	as.sess = sess
+	as.mu.Unlock()
 	if as.onEvent != nil {
 		// The forwarder exits when the session's event channel closes
 		// (process death or Close).
@@ -899,9 +918,8 @@ func (as *agentSession) start(ctx context.Context, workspace string) error {
 }
 
 func (as *agentSession) restart(ctx context.Context, workspace string) error {
-	if as.sess != nil {
-		_ = as.sess.Close()
-		as.sess = nil
+	if sess := as.session(); sess != nil {
+		_ = sess.Close()
 	}
 	if err := as.start(ctx, workspace); err != nil {
 		return err
@@ -912,8 +930,8 @@ func (as *agentSession) restart(ctx context.Context, workspace string) error {
 }
 
 func (as *agentSession) Close() {
-	if as.sess != nil {
-		_ = as.sess.Close()
+	if sess := as.session(); sess != nil {
+		_ = sess.Close()
 	}
 }
 

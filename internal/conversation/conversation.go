@@ -39,6 +39,10 @@ type Conversation struct {
 	Messages     []Message
 	Plan         string // generated plan text
 	pendingInput bool   // true if user sent messages during execution
+
+	// activeSessionID is the agent session currently executing for this
+	// conversation ("" when idle) — used to steer the live run.
+	activeSessionID string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -171,6 +175,21 @@ func (c *Conversation) Reset() {
 	c.UpdatedAt = time.Now()
 }
 
+// SetActiveSession records the agent session executing for this
+// conversation; pass "" when the run ends.
+func (c *Conversation) SetActiveSession(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activeSessionID = sessionID
+}
+
+// ActiveSessionID returns the executing agent session ID, or "".
+func (c *Conversation) ActiveSessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.activeSessionID
+}
+
 // ClearPendingInput atomically checks and clears the pending input flag.
 // Returns true if user messages were queued during execution.
 func (c *Conversation) ClearPendingInput() bool {
@@ -216,7 +235,8 @@ type Manager struct {
 	conversations map[string]*Conversation
 	nextID        int
 	stopCh        chan struct{}
-	dir           string // persistence directory; "" = disabled
+	doneCh        chan struct{} // closed when the cleanup loop has exited
+	dir           string        // persistence directory; "" = disabled
 }
 
 // NewManager creates a new conversation manager. dir is the directory used to
@@ -225,6 +245,7 @@ func NewManager(dir string) *Manager {
 	m := &Manager{
 		conversations: make(map[string]*Conversation),
 		stopCh:        make(chan struct{}),
+		doneCh:        make(chan struct{}),
 		dir:           dir,
 	}
 	if dir != "" {
@@ -262,7 +283,22 @@ func (m *Manager) persist(conv *Conversation) {
 		slog.Warn("conversation: persist failed to create dir", "dir", m.dir, "error", err)
 		return
 	}
-	if err := os.WriteFile(m.convFilePath(conv.ChatID), data, 0600); err != nil {
+	// Write-then-rename so concurrent writers (saveAll + background loop)
+	// and restart-time readers never see a truncated file.
+	tmp, err := os.CreateTemp(m.dir, "conv-*.tmp")
+	if err != nil {
+		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+		return
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+		return
+	}
+	tmp.Close()
+	if err := os.Rename(tmp.Name(), m.convFilePath(conv.ChatID)); err != nil {
+		os.Remove(tmp.Name())
 		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
 	}
 }
@@ -333,17 +369,21 @@ func (m *Manager) saveAll() {
 	}
 }
 
-// Stop stops the cleanup loop. Safe to call multiple times.
+// Stop stops the cleanup loop and waits for its shutdown flush to finish,
+// so no background write races whatever the caller does next (e.g. removing
+// the persistence dir). Safe to call multiple times.
 func (m *Manager) Stop() {
 	select {
 	case <-m.stopCh:
 	default:
 		close(m.stopCh)
 	}
+	<-m.doneCh
 }
 
 // cleanupLoop periodically evicts stale conversations and saves active ones.
 func (m *Manager) cleanupLoop() {
+	defer close(m.doneCh)
 	evictTicker := time.NewTicker(time.Minute)
 	saveTicker := time.NewTicker(30 * time.Second)
 	defer evictTicker.Stop()

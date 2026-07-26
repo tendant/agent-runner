@@ -738,7 +738,7 @@ func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
 	state := conv.GetState()
 
 	if state == conversation.StateExecuting {
-		b.emitFinal(ctx, convID, "Message queued — I'll process it after the current task finishes.")
+		b.engine.HandleExecuting(ctx, convID, conv, text)
 		return
 	}
 

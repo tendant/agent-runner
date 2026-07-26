@@ -13,10 +13,15 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
-// AgentStarter is the interface bots use to start and poll agent sessions.
+// AgentStarter is the interface bots use to start, poll, and steer agent
+// sessions.
 type AgentStarter interface {
 	StartAgent(message, source, convID string) (sessionID string, err error)
 	GetAgentSession(sessionID string) (*agent.Session, bool)
+	// Steer injects a user message into a running session's live executor
+	// session. Returns an error when the session isn't running or the
+	// backend can't steer (one-shot CLIs) — callers fall back to queueing.
+	Steer(sessionID, text string) error
 }
 
 // Gateway routes incoming messages through command dispatch before any

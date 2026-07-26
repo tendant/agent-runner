@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
@@ -79,6 +80,10 @@ type Engine struct {
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
 	deps             Deps
+
+	// liveControls maps running session IDs to their run-scoped executor
+	// sessions, for live steering from chat channels.
+	liveControls sync.Map
 }
 
 // New creates an Engine.

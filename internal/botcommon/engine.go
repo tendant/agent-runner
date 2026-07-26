@@ -81,6 +81,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 		e.Sender.Final(ctx, id, fmt.Sprintf("Failed to start agent: %s", err))
 		return
 	}
+	conv.SetActiveSession(sessionID)
 
 	slog.Info(e.Label+": agent session started", "id", id, "session_id", sessionID)
 	if e.SessionStartedFormat != "" {
@@ -96,6 +97,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *conversation.Conversation) {
 	e.WG.Go(func() {
 		PollAndReport(e.Starter, sessionID, e.NewReporter(id))
+		conv.SetActiveSession("")
 
 		// The result has been reported. Collect session data and check for
 		// pending messages before touching conversation state.
@@ -144,7 +146,29 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *c
 func (e *Engine) ResumeSession(ctx context.Context, id, sessionID string) {
 	conv := e.ConvManager.GetOrCreate(id)
 	conv.SetState(conversation.StateExecuting)
+	conv.SetActiveSession(sessionID)
 	e.watchSession(ctx, id, sessionID, conv)
+}
+
+// HandleExecuting processes a user message that arrived while a session is
+// running. It first tries to steer the live session — persistent backends
+// (pi) deliver the message into the running conversation immediately. When
+// the backend can't steer (one-shot CLIs) or the run just ended, the message
+// stays queued (pendingInput, already set by AddMessage) and is replayed as
+// a follow-up run — the long-standing fallback behavior.
+func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *conversation.Conversation, text string) {
+	if sessionID := conv.ActiveSessionID(); sessionID != "" {
+		if err := e.Starter.Steer(sessionID, text); err == nil {
+			// Delivered live: don't replay it as a new session afterwards.
+			conv.ClearPendingInput()
+			slog.Info(e.Label+": steered running session", "id", id, "session_id", sessionID)
+			e.Sender.Reply(ctx, id, "Message passed to the running agent.")
+			return
+		} else {
+			slog.Debug(e.Label+": steer unavailable, queueing message", "id", id, "session_id", sessionID, "error", err)
+		}
+	}
+	e.Sender.Reply(ctx, id, "Message queued — I'll process it after the current task finishes.")
 }
 
 // HandleAnalysis routes the conversation through the intent analyzer and

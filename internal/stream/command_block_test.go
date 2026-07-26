@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"errors"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,8 @@ func (s *trackingStarter) StartAgent(_, _, _ string) (string, error) {
 func (s *trackingStarter) GetAgentSession(id string) (*agent.Session, bool) {
 	return &agent.Session{ID: id, Status: agent.SessionStatusCompleted}, true
 }
+
+func (s *trackingStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 // fakeGateway handles "/set X Y", blocks other slash commands, and passes
 // regular messages through — matching the behaviour of api.MessageGateway.

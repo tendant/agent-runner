@@ -375,7 +375,7 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	slog.Info("wechat: conversation state", "user_id", userID, "state", state)
 
 	if state == conversation.StateExecuting {
-		b.sendText(ctx, userID, "Message queued — I'll process it after the current task finishes.")
+		b.engine.HandleExecuting(ctx, userID, conv, content)
 		return
 	}
 

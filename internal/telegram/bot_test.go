@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -147,6 +148,8 @@ func (m *mockStarter) StartAgent(message, source, _ string) (string, error) {
 func (m *mockStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	return nil, false
 }
+
+func (m *mockStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 func TestHandleMessage_UnauthorizedChat(t *testing.T) {
 	bot := &Bot{

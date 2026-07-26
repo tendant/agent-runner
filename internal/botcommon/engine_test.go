@@ -1,6 +1,7 @@
 package botcommon
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"strings"
@@ -52,6 +53,8 @@ type engineStarter struct {
 	convIDs    []string // captured StartAgent conversation ids
 	session    *agent.Session
 	gate       chan struct{} // when non-nil, GetAgentSession blocks until closed
+	steerErr   error         // returned by Steer; nil = steering succeeds
+	steered    []string      // captured Steer calls ("sessionID: text")
 }
 
 func (f *engineStarter) StartAgent(message, source, convID string) (string, error) {
@@ -73,6 +76,13 @@ func (f *engineStarter) GetAgentSession(sessionID string) (*agent.Session, bool)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.session, f.session != nil
+}
+
+func (f *engineStarter) Steer(sessionID, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.steered = append(f.steered, sessionID+": "+text)
+	return f.steerErr
 }
 
 func (f *engineStarter) counts() (int, []string) {
@@ -428,5 +438,50 @@ func TestResumeSession_ReattachesWatcher(t *testing.T) {
 	calls, _ := f.starter.counts()
 	if calls != 0 {
 		t.Errorf("resume must not call StartAgent, got %d calls", calls)
+	}
+}
+
+// --- HandleExecuting: live steer with queue fallback ---
+
+func TestHandleExecuting_SteersLiveSession(t *testing.T) {
+	f := newEngineFixture(t, "")
+	f.conv.SetState(conversation.StateExecuting)
+	f.conv.SetActiveSession("sess-42")
+	f.conv.AddMessage("user", "focus on the tests") // sets pendingInput
+
+	f.engine.HandleExecuting(context.Background(), "conv-1", f.conv, "focus on the tests")
+
+	f.starter.mu.Lock()
+	steered := append([]string(nil), f.starter.steered...)
+	f.starter.mu.Unlock()
+	if len(steered) != 1 || steered[0] != "sess-42: focus on the tests" {
+		t.Fatalf("steered = %v, want one call for sess-42", steered)
+	}
+	// Delivered live — must not be replayed as a follow-up session.
+	if f.conv.ClearPendingInput() {
+		t.Error("pendingInput should be cleared after a successful steer")
+	}
+	_, replies, _ := f.sender.snapshot()
+	if len(replies) == 0 || !strings.Contains(replies[len(replies)-1], "passed to the running agent") {
+		t.Errorf("expected steer confirmation reply, got %v", replies)
+	}
+}
+
+func TestHandleExecuting_FallsBackToQueue(t *testing.T) {
+	f := newEngineFixture(t, "")
+	f.starter.steerErr = errors.New("operation not supported by this backend")
+	f.conv.SetState(conversation.StateExecuting)
+	f.conv.SetActiveSession("sess-42")
+	f.conv.AddMessage("user", "another thing")
+
+	f.engine.HandleExecuting(context.Background(), "conv-1", f.conv, "another thing")
+
+	// Message stays queued for the post-run replay.
+	if !f.conv.ClearPendingInput() {
+		t.Error("pendingInput must survive a failed steer")
+	}
+	_, replies, _ := f.sender.snapshot()
+	if len(replies) == 0 || !strings.Contains(replies[len(replies)-1], "queued") {
+		t.Errorf("expected queued reply, got %v", replies)
 	}
 }

@@ -211,7 +211,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	// If currently executing, queue the message
 	if state == conversation.StateExecuting {
-		b.send(tgChatID, "Message queued — I'll process it after the current task finishes.")
+		b.engine.HandleExecuting(context.Background(), chatID, conv, content)
 		return
 	}
 

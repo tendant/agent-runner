@@ -1,6 +1,7 @@
 package chatcmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,6 +52,8 @@ func (fakeStarter) StartAgent(message, source, _ string) (string, error) {
 func (fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	return nil, false
 }
+
+func (fakeStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 func setupTestEnv(t *testing.T) *cmdTestEnv {
 	t.Helper()
