@@ -20,12 +20,10 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.TmpRoot != filepath.Join(data, "tmp") {
 		t.Errorf("expected TmpRoot under data dir, got %s", cfg.TmpRoot)
 	}
-	// Default data dir is ~/.agent-runner (absolute), falling back to "." only
-	// when the home directory cannot be resolved.
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if !strings.HasPrefix(cfg.RepoCacheRoot, filepath.Join(home, ".agent-runner")) {
-			t.Errorf("expected RepoCacheRoot under ~/.agent-runner, got %s", cfg.RepoCacheRoot)
-		}
+	// Default data dir is the working directory: one runner directory is one
+	// agent, and its state lives with it.
+	if data != "." {
+		t.Errorf("expected default data dir \".\", got %s", data)
 	}
 	if cfg.MaxRuntimeSeconds != 300 {
 		t.Errorf("expected MaxRuntimeSeconds 300, got %d", cfg.MaxRuntimeSeconds)
@@ -80,7 +78,7 @@ func TestLoadFromEnv_LegacyLayoutFallsBackToCWD(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnv_CleanDirDefaultsToHome(t *testing.T) {
+func TestLoadFromEnv_CleanDirDefaultsToCWD(t *testing.T) {
 	defer chtempdir(t)()
 	t.Setenv("DATA_DIR", "")
 	t.Setenv("INSTANCE", "")
@@ -89,12 +87,12 @@ func TestLoadFromEnv_CleanDirDefaultsToHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	home, herr := os.UserHomeDir()
-	if herr != nil || home == "" {
-		t.Skip("no home dir available")
+	if !strings.HasPrefix(cfg.RepoCacheRoot, filepath.Join(".", "repo-cache")) {
+		t.Errorf("clean CWD should root state in the agent directory, got %s", cfg.RepoCacheRoot)
 	}
-	if !strings.HasPrefix(cfg.RepoCacheRoot, filepath.Join(home, ".agent-runner")) {
-		t.Errorf("clean CWD should default DATA_DIR to ~/.agent-runner, got %s", cfg.RepoCacheRoot)
+	home, herr := os.UserHomeDir()
+	if herr == nil && home != "" && strings.HasPrefix(cfg.RepoCacheRoot, home) {
+		t.Errorf("state must not default to the home directory, got %s", cfg.RepoCacheRoot)
 	}
 }
 

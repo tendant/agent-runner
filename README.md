@@ -20,6 +20,10 @@ mkdir my-agent && cd my-agent
 agent-runner            # start; then from chat:
 ```
 
+All runner state — logs, memory, workspaces, repo cache, `agent-home/` —
+lives in the agent directory by default (`DATA_DIR` overrides; a notice
+points at `~/.agent-runner` if state from the old default exists there).
+
 `/bootstrap` creates the agent's identity: `agent.md`, `prompt.md`,
 `mcp.json.example` (rename to `mcp.json` and declare the agent's MCP
 servers), and `.env` with `AGENT_ISOLATED=true`. `/config` always shows the

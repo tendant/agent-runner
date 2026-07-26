@@ -14,26 +14,22 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// defaultDataDir returns the default base directory for all mutable agent-runner
-// data: ~/.agent-runner. Keeping state out of the working directory means repo
-// checkouts, logs, and caches don't pollute the process CWD (which is often a
-// source tree). Falls back to "." when the home directory can't be resolved.
+// defaultDataDir returns the default base directory for all mutable
+// agent-runner data: the process working directory. One runner directory is
+// one agent — its identity (mcp.json, prompts, .env) and its state (logs,
+// memory, workspaces, agent-home) belong together, so two agents never share
+// state. Set DATA_DIR to override.
 func defaultDataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "."
-	}
-	return filepath.Join(home, ".agent-runner")
+	return "."
 }
 
 // legacyLayoutWarned suppresses repeat legacy-layout warnings when the
 // config is reloaded (/set re-runs LoadFromEnv).
 var legacyLayoutWarned bool
 
-// hasLegacyDataLayout reports whether dir contains state from the old
-// default layout (DATA_DIR = process CWD): a non-empty repo-cache/, runs/,
-// or workspaces/ directory.
-func hasLegacyDataLayout(dir string) bool {
+// hasDataLayout reports whether dir contains runner state: a non-empty
+// repo-cache/, runs/, or workspaces/ directory.
+func hasDataLayout(dir string) bool {
 	for _, name := range []string{"repo-cache", "runs", "workspaces"} {
 		entries, err := os.ReadDir(filepath.Join(dir, name))
 		if err == nil && len(entries) > 0 {
@@ -275,8 +271,9 @@ func defaultConfigForDataDir(data string) *Config {
 //  3. .env.<instance>     — instance-specific overrides (when INSTANCE is set)
 //  4. .env                — base config; committed as a template
 //
-// When INSTANCE is set (e.g. INSTANCE=prod), the app loads .env.prod and
-// defaults DATA_DIR to the process working directory, isolating each instance's data.
+// When INSTANCE is set (e.g. INSTANCE=prod), the app loads .env.prod.
+// DATA_DIR defaults to the process working directory — one runner directory
+// is one agent, and its state lives with it.
 func LoadFromEnv() (*Config, error) {
 	// Determine instance name. Drives the default data dir and instance env file.
 	instance := os.Getenv("INSTANCE")
@@ -298,22 +295,20 @@ func LoadFromEnv() (*Config, error) {
 		dataDir = merged["DATA_DIR"]
 	}
 	if dataDir == "" {
-		// Migration guard: the default used to be the process CWD. If state
-		// from that layout is present here, keep using it for this run so
-		// existing deployments survive the default change unattended.
-		if hasLegacyDataLayout(".") {
-			if !legacyLayoutWarned {
-				legacyLayoutWarned = true
-				slog.Warn("config: found legacy data layout in the working directory; using it for this run — " +
-					"set DATA_DIR=. to keep state here permanently, or move repo-cache/, runs/, workspaces/ etc. to ~/.agent-runner")
-			}
-			dataDir = "."
-		} else {
-			base := defaultDataDir()
+		dataDir = defaultDataDir()
+		// Migration notice: an earlier default kept state under
+		// ~/.agent-runner. If state exists there but not here, say so once —
+		// the run proceeds in the agent directory either way.
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			legacy := filepath.Join(home, ".agent-runner")
 			if instance != "" {
-				dataDir = filepath.Join(base, instance)
-			} else {
-				dataDir = base
+				legacy = filepath.Join(legacy, instance)
+			}
+			if !hasDataLayout(dataDir) && hasDataLayout(legacy) && !legacyLayoutWarned {
+				legacyLayoutWarned = true
+				slog.Warn("config: found existing runner state under "+legacy+
+					"; state now defaults to the agent directory — set DATA_DIR="+legacy+
+					" to keep using it, or move its contents here", "data_dir", dataDir)
 			}
 		}
 	}
