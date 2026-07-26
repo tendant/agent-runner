@@ -208,11 +208,11 @@ func (c *Commander) ValidateAuth(cli string) (string, error) {
 	if cli == "" {
 		cli = c.cfg.Agent.CLI
 	}
-	if cli == "" || cli == "opencode" {
-		return "", fmt.Errorf("opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead")
+	if cli == "" || cli == "pi" {
+		return "", fmt.Errorf("pi authenticates via provider API keys (or models.json) — use /set <PROVIDER>_API_KEY <key> instead")
 	}
-	if cli == "pi" {
-		return "", fmt.Errorf("pi authenticates via provider API keys — use /set <PROVIDER>_API_KEY <key> instead")
+	if cli == "opencode" {
+		return "", fmt.Errorf("opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead")
 	}
 	if cli != "claude" && cli != "codex" {
 		return "", fmt.Errorf("/auth only supports 'claude' and 'codex' (got %q)", cli)
@@ -323,7 +323,7 @@ func (c *Commander) handleStatus() string {
 	// CLI
 	cli := c.cfg.Agent.CLI
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	if clisetup.CLIInstalled(cli) {
 		fmt.Fprintf(&b, "**cli:** %s ✓\n", cli)
@@ -502,7 +502,7 @@ func (c *Commander) handleConfig() string {
 	// CLI always shown — has default.
 	cli := c.cfg.Agent.CLI
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 
 	b.WriteString("**Configuration**\n\n")
@@ -632,7 +632,7 @@ func (c *Commander) handleInstallCLI(arg string, force bool) string {
 		cli = c.cfg.Agent.CLI
 	}
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	if !force && clisetup.CLIInstalled(cli) {
 		if v, err := clisetup.CLIVersion(cli); err != nil {
@@ -765,7 +765,7 @@ func (c *Commander) handleBootstrap(force bool) string {
 
 	cli := c.cfg.Agent.CLI
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	warnings := clisetup.BootstrapWarnings(cli, c.cfg.Agent.Provider)
 	if len(warnings) == 0 {

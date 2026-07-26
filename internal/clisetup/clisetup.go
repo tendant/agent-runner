@@ -203,7 +203,7 @@ func CreateBootstrapFiles(systemPromptPath, promptFilePath string, force bool) (
 // CLIInstalled reports whether the given CLI binary is present in PATH.
 func CLIInstalled(cli string) bool {
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	_, err := exec.LookPath(cli)
 	return err == nil
@@ -234,7 +234,7 @@ fi
 // or an empty string if it cannot be determined.
 func CLIVersion(cli string) (string, error) {
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	// Resolve to the full path so the version call uses the same binary
 	// that CLIInstalled() found, regardless of PATH ordering.

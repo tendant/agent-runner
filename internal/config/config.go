@@ -116,7 +116,7 @@ type AgentConfig struct {
 	FastProvider        string   // provider for the fast tier (AGENT_FAST_PROVIDER, or first segment of AGENT_FAST_MODEL)
 	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
-	CLI                 string   // CLI backend: "claude" (default), "codex", "opencode", or "pi"
+	CLI                 string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
@@ -239,7 +239,7 @@ func defaultConfigForDataDir(data string) *Config {
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,
-			CLI:                 "opencode",
+			CLI:                 "pi",
 			PlannerEnabled:      true,
 			MaxQueueSize:        10,
 			MemoryDays:          7,
@@ -394,8 +394,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.Isolated = envOrDefault("AGENT_ISOLATED", "") == "true"
 	// opencode requires an explicit model; ship a two-tier default pair
-	// (pro for real work, flash for the fast tier).
-	if cfg.Agent.CLI == "opencode" || cfg.Agent.CLI == "" {
+	// (pro for real work, flash for the fast tier). pi needs no forced pair:
+	// it selects a default model from its own provider catalog.
+	if cfg.Agent.CLI == "opencode" {
 		cfg.Agent.Provider = "deepseek"
 		cfg.Agent.Model = "deepseek-v4-pro"
 		cfg.Agent.FastProvider = "deepseek"

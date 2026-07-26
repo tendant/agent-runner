@@ -66,7 +66,7 @@ func (h *Handlers) HandleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 	cli := h.config.Agent.CLI
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	resp.Config = BootstrapConfig{
 		CLI:      cli,

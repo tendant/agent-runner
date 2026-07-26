@@ -86,8 +86,8 @@ func TestCommander_Config_ShowsCLIDefault(t *testing.T) {
 	c := NewCommander(env.cfg, env.rt)
 
 	reply, _, _ := c.Handle("/config", nil)
-	if !strings.Contains(reply, "opencode") {
-		t.Errorf("expected opencode in config when CLI is empty, got:\n%s", reply)
+	if !strings.Contains(reply, "pi") {
+		t.Errorf("expected pi (the default CLI) in config when CLI is empty, got:\n%s", reply)
 	}
 }
 
@@ -430,7 +430,7 @@ func TestCommander_InstallCLI_AlreadyInstalled_ShowsVersion(t *testing.T) {
 
 func TestCommander_InstallCLI_DefaultCLI_ShowsVersion(t *testing.T) {
 	env := setupTestEnv(t)
-	binDir := fakeCLIBin(t, "opencode", "v1.2.3")
+	binDir := fakeCLIBin(t, "pi", "v1.2.3")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	env.cfg.Agent.CLI = ""
 	c := NewCommander(env.cfg, env.rt)

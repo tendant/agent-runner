@@ -109,13 +109,30 @@ func chtempdir(t *testing.T) (restore func()) {
 	return func() { os.Chdir(orig) } //nolint:errcheck
 }
 
-func TestLoad_OpenCodeModelDefaults(t *testing.T) {
-	// opencode (the default CLI) ships a two-tier default pair:
-	// pro does the real work, flash is the fast tier.
-	cfg, _ := LoadFromEnv()
-	if cfg.Agent.CLI != "opencode" {
-		t.Skipf("AGENT_CLI=%s, skipping opencode default test", cfg.Agent.CLI)
+func TestLoad_DefaultCLIIsPi(t *testing.T) {
+	t.Setenv("AGENT_CLI", "")
+	t.Setenv("AGENT_PROVIDER", "")
+	t.Setenv("AGENT_MODEL", "")
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	if cfg.Agent.CLI != "pi" {
+		t.Errorf("default CLI = %q, want pi", cfg.Agent.CLI)
+	}
+	// pi selects its own default model; no forced provider/model pair.
+	if cfg.Agent.Provider != "" || cfg.Agent.Model != "" {
+		t.Errorf("pi default should not force provider/model, got %q/%q", cfg.Agent.Provider, cfg.Agent.Model)
+	}
+}
+
+func TestLoad_OpenCodeModelDefaults(t *testing.T) {
+	// opencode ships a two-tier default pair:
+	// pro does the real work, flash is the fast tier.
+	t.Setenv("AGENT_CLI", "opencode")
+	t.Setenv("AGENT_MODEL", "")
+	t.Setenv("AGENT_FAST_MODEL", "")
+	cfg, _ := LoadFromEnv()
 	if cfg.Agent.Model != "deepseek-v4-pro" {
 		t.Errorf("expected work model deepseek-v4-pro, got %s", cfg.Agent.Model)
 	}

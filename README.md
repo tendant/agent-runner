@@ -6,10 +6,10 @@ An autonomous AI agent that executes tasks iteratively against Git repositories.
 
 - Go 1.25+
 - At least one supported agent CLI installed and on `$PATH`:
-  - [opencode](https://github.com/sst/opencode) (default — pairs with DeepSeek, Anthropic, or any OpenAI-compatible provider)
+  - [Pi](https://pi.dev) (default — runs via pi's RPC mode as a persistent session, authenticates with provider API keys or `~/.pi/agent/models.json`, uses skills instead of MCP)
+  - [opencode](https://github.com/sst/opencode) (set `AGENT_CLI=opencode`; pairs with DeepSeek, Anthropic, or any OpenAI-compatible provider)
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (set `AGENT_CLI=claude`)
   - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
-  - [Pi](https://pi.dev) (set `AGENT_CLI=pi`; runs via pi's RPC mode, authenticates with provider API keys, uses skills instead of MCP)
 - Git configured with credentials for your remote
 
 ## Creating an agent
@@ -104,7 +104,7 @@ curl -X POST http://localhost:8080/bootstrap   # installs the CLI if missing, se
 ```bash
 DEEPSEEK_API_KEY=sk-...
 ```
-(opencode is the default `AGENT_CLI`, and already defaults to `deepseek-v4-pro` for real work with `deepseek-v4-flash` as the fast tier — only set `AGENT_MODEL`/`AGENT_FAST_MODEL` if you want different models.)
+(pi is the default `AGENT_CLI` and picks a default model from its own provider catalog — set `AGENT_PROVIDER`/`AGENT_MODEL` to pin one. With `AGENT_CLI=opencode`, `deepseek-v4-pro`/`deepseek-v4-flash` are the default work/fast pair.)
 
 **Minimum config — Claude Code** (if already installed and `claude login` done):
 ```bash
@@ -158,7 +158,7 @@ Key variables:
 | `API_KEY` | | Authentication key (optional) |
 | `DATA_DIR` | `~/.agent-runner` | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
 | `INSTANCE` | | Instance name — loads `.env.<instance>`, scopes the default `DATA_DIR` |
-| `AGENT_CLI` | `opencode` | Agent CLI backend (`opencode`, `claude`, `codex`, or `pi`) |
+| `AGENT_CLI` | `pi` | Agent CLI backend (`pi`, `opencode`, `claude`, or `codex`) |
 | `AGENT_MODEL` | `deepseek/deepseek-v4-pro` | The model doing real work at the agent CLI, as `provider/model` |
 | `AGENT_FAST_MODEL` | `deepseek/deepseek-v4-flash` | Optional cheap tier for planning/routing/curation (defaults to `AGENT_MODEL`) |
 | `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |

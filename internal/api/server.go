@@ -205,7 +205,7 @@ func (s *Server) Start() error {
 	// Warn if the configured agent CLI is not installed.
 	cli := s.config.Agent.CLI
 	if cli == "" {
-		cli = "opencode"
+		cli = "pi"
 	}
 	if !clisetup.CLIInstalled(cli) {
 		slog.Warn("agent CLI not found in PATH — run /install-cli or /bootstrap to install", "cli", cli, "install", clisetup.InstallHint(cli))
