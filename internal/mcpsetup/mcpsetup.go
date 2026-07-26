@@ -126,6 +126,9 @@ func Ensure(cli string, cfg *Config) []Result {
 			action, err = ensureCodexAt(codexConfigPath(), name, srv)
 		case "opencode":
 			action, err = ensureOpencodeAt(opencodeConfigPath(), name, srv)
+		case "pi":
+			// pi has no MCP support by design; it consumes skills instead.
+			action = "skipped (pi has no MCP support; use skills)"
 		default:
 			err = fmt.Errorf("unknown CLI %q", cli)
 		}
@@ -186,6 +189,8 @@ type Paths struct {
 
 // EnsureAll converges every supported client on the declaration, targeted at
 // the given paths — used when provisioning an isolated executor profile.
+// pi is intentionally absent: it has no MCP support (skills are its
+// integration surface, synced separately by agenthome).
 func EnsureAll(cfg *Config, paths Paths) []Result {
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return nil

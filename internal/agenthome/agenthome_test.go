@@ -65,6 +65,9 @@ func TestProvisionAndEnv(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "claude", "skills", "triage", "SKILL.md")); err != nil {
 		t.Errorf("skill not synced: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(home, "pi", "agent", "skills", "triage", "SKILL.md")); err != nil {
+		t.Errorf("skill not synced for pi: %v", err)
+	}
 
 	env, err := Env()
 	if err != nil {
@@ -76,6 +79,8 @@ func TestProvisionAndEnv(t *testing.T) {
 		"CODEX_HOME=" + filepath.Join(home, "codex"),
 		"XDG_CONFIG_HOME=" + filepath.Join(home, "xdg"),
 		"XDG_DATA_HOME=" + filepath.Join(home, "xdg-data"),
+		"PI_CODING_AGENT_DIR=" + filepath.Join(home, "pi", "agent"),
+		"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(home, "pi", "sessions"),
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("env missing %q:\n%s", want, joined)

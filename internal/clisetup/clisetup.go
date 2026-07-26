@@ -47,6 +47,9 @@ func RunAuthFlow(parent context.Context, cli string, send func(string)) error {
 		// Device code grant (RFC 8628): CLI prints user_code + verification_uri;
 		// no browser redirect or local callback server required.
 		args = []string{"login", "--device-auth"}
+	case "pi":
+		send("pi authenticates via provider API keys (ANTHROPIC_API_KEY etc.); /auth is not available")
+		return fmt.Errorf("unsupported cli: %s", cli)
 	default:
 		send(fmt.Sprintf("error: /auth only supports 'claude' and 'codex' (got %q)", cli))
 		return fmt.Errorf("unsupported cli: %s", cli)
@@ -365,6 +368,9 @@ echo "installed to $INSTALL_DIR/opencode"`
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "codex":
 		cmd = exec.CommandContext(ctx, "sh", "-c", ensureNodeScript+"npm install -g @openai/codex")
+	case "pi":
+		// --ignore-scripts per pi's own install instructions.
+		cmd = exec.CommandContext(ctx, "sh", "-c", ensureNodeScript+"npm install -g --ignore-scripts @earendil-works/pi-coding-agent")
 	default: // claude
 		cmd = exec.CommandContext(ctx, "sh", "-c", ensureNodeScript+"npm install -g @anthropic-ai/claude-code")
 	}
@@ -382,6 +388,8 @@ func InstallHint(cli string) string {
 		return "github.com/sst/opencode (latest binary, linux/macos)"
 	case "codex":
 		return "npm install -g @openai/codex (auto-installs Node.js if needed)"
+	case "pi":
+		return "npm install -g --ignore-scripts @earendil-works/pi-coding-agent (auto-installs Node.js if needed)"
 	default:
 		return "npm install -g @anthropic-ai/claude-code (auto-installs Node.js if needed)"
 	}
@@ -401,10 +409,10 @@ func BootstrapWarnings(cli, provider string) []string {
 		if os.Getenv("OPENAI_API_KEY") == "" && !codexHasOAuthCredentials() {
 			w = append(w, "codex backend requires OPENAI_API_KEY or /auth codex")
 		}
-	case "opencode":
+	case "opencode", "pi":
 		key := providerEnvKey(p)
 		if key != "" && os.Getenv(key) == "" {
-			w = append(w, "opencode/"+p+" requires "+key)
+			w = append(w, cli+"/"+p+" requires "+key)
 		} else if p == "" {
 			// No provider set — opencode will use its own default; warn if no common key is set.
 			if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
@@ -416,10 +424,10 @@ func BootstrapWarnings(cli, provider string) []string {
 }
 
 // ResolveCLI mirrors executor.NewExecutor's own default resolution: anything
-// other than "codex"/"opencode" (including "") runs the claude backend. Kept
-// in sync with that switch so preflight checks reflect what will actually run.
+// other than "codex"/"opencode"/"pi" (including "") runs the claude backend.
+// Kept in sync with that switch so preflight checks reflect what will actually run.
 func ResolveCLI(cli string) string {
-	if cli == "codex" || cli == "opencode" {
+	if cli == "codex" || cli == "opencode" || cli == "pi" {
 		return cli
 	}
 	return "claude"

@@ -115,7 +115,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		"/sessions":      "usage: /sessions",
 		"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
 		"/bootstrap":     "usage: /bootstrap [force]",
-		"/install-cli":   "usage: /install-cli [claude|codex|opencode] [force]",
+		"/install-cli":   "usage: /install-cli [claude|codex|opencode|pi] [force]",
 		"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
 		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
@@ -210,6 +210,9 @@ func (c *Commander) ValidateAuth(cli string) (string, error) {
 	}
 	if cli == "" || cli == "opencode" {
 		return "", fmt.Errorf("opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead")
+	}
+	if cli == "pi" {
+		return "", fmt.Errorf("pi authenticates via provider API keys — use /set <PROVIDER>_API_KEY <key> instead")
 	}
 	if cli != "claude" && cli != "codex" {
 		return "", fmt.Errorf("/auth only supports 'claude' and 'codex' (got %q)", cli)
@@ -1304,14 +1307,14 @@ const helpText = `**Agent Runner Commands**
 **/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
 Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEEPSEEK\_API\_KEY \<key\>
 
-**/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode); add **force** to reinstall even if already present
+**/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode / pi); add **force** to reinstall even if already present
 **/install-mcp** _[name]_ — register MCP servers declared in mcp.json into the active CLI (all declared servers when no name given)
 
 
 **/bootstrap** — create default agent.md and prompt.md
 **/bootstrap force** — overwrite existing files
 
-**/auth** _[cli]_ — start OAuth login flow via chat (claude or codex)
+**/auth** _[cli]_ — start OAuth login flow via chat (claude or codex; pi uses provider API keys)
 **/auth cancel** — stop an in-progress auth flow
 
 **/set-agent** _\<content\>_ — overwrite agent.md

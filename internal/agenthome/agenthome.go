@@ -44,6 +44,8 @@ func Env() ([]string, error) {
 		"CODEX_HOME=" + filepath.Join(dir, "codex"),
 		"XDG_CONFIG_HOME=" + filepath.Join(dir, "xdg"),
 		"XDG_DATA_HOME=" + filepath.Join(dir, "xdg-data"),
+		"PI_CODING_AGENT_DIR=" + filepath.Join(dir, "pi", "agent"),
+		"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(dir, "pi", "sessions"),
 	}, nil
 }
 
@@ -55,7 +57,7 @@ func Provision() ([]mcpsetup.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, sub := range []string{"claude", "codex", "xdg/opencode", "xdg-data"} {
+	for _, sub := range []string{"claude", "codex", "xdg/opencode", "xdg-data", "pi/agent", "pi/sessions"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0700); err != nil {
 			return nil, err
 		}
@@ -108,13 +110,26 @@ func seedAuth(dir string) {
 	}
 }
 
-// syncSkills copies skills/ into the claude config dir's skills directory.
+// syncSkills copies skills/ into each CLI's skills directory: claude's
+// config dir and pi's agent dir (pi consumes Agent-Skills-standard skills
+// instead of MCP servers).
 func syncSkills(dir string) error {
 	src := SkillsDir
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return nil
 	}
-	dst := filepath.Join(dir, "claude", "skills")
+	for _, dst := range []string{
+		filepath.Join(dir, "claude", "skills"),
+		filepath.Join(dir, "pi", "agent", "skills"),
+	} {
+		if err := copyTree(src, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyTree(src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

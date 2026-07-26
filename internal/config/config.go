@@ -116,7 +116,7 @@ type AgentConfig struct {
 	FastProvider        string   // provider for the fast tier (AGENT_FAST_PROVIDER, or first segment of AGENT_FAST_MODEL)
 	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
-	CLI                 string   // CLI backend: "claude" (default), "codex", or "opencode"
+	CLI                 string   // CLI backend: "claude" (default), "codex", "opencode", or "pi"
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace

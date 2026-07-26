@@ -167,6 +167,15 @@ func TestEnsureUnknownCLI(t *testing.T) {
 	}
 }
 
+func TestEnsurePiSkipped(t *testing.T) {
+	// pi has no MCP support; declarations must be skipped, not errored.
+	cfg := &Config{Servers: map[string]Server{"x": {Command: "/bin/x"}}}
+	results := Ensure("pi", cfg)
+	if len(results) != 1 || results[0].Err != nil || !strings.Contains(results[0].Action, "skipped") {
+		t.Fatalf("expected skipped result, got %+v", results)
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

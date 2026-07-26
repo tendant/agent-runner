@@ -37,3 +37,26 @@ func TestBootstrapWarnings_OpencodeWithProviderKey(t *testing.T) {
 		t.Errorf("expected no warnings with DEEPSEEK_API_KEY set, got: %v", warns)
 	}
 }
+
+func TestBootstrapWarnings_PiNoKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	warns := BootstrapWarnings("pi", "anthropic")
+	if len(warns) == 0 {
+		t.Error("expected warning when ANTHROPIC_API_KEY is missing for pi/anthropic")
+	}
+}
+
+func TestResolveCLI(t *testing.T) {
+	for cli, want := range map[string]string{
+		"":         "claude",
+		"claude":   "claude",
+		"codex":    "codex",
+		"opencode": "opencode",
+		"pi":       "pi",
+		"vim":      "claude",
+	} {
+		if got := ResolveCLI(cli); got != want {
+			t.Errorf("ResolveCLI(%q) = %q, want %q", cli, got, want)
+		}
+	}
+}
