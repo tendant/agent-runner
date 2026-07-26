@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -364,13 +365,24 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
+	// Start the run-scoped executor session. Persistent backends (pi) spawn
+	// one live process here that serves every iteration; one-shot backends
+	// keep spawning one CLI process per prompt. The backend is captured once
+	// per run — a /set AGENT_CLI change applies to the next run.
+	as := &agentSession{backend: h.deps.Backend()}
+	if err := as.start(ctx, checkoutPath); err != nil {
+		h.FailSession(sessionID, "agent session start failed: "+err.Error())
+		return
+	}
+	defer as.Close()
+
 	promptBuilder, stopReason, completed, blockedOrStuck, aborted := h.runIterationLoop(
-		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan)
+		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan, as)
 	if aborted {
 		return
 	}
 
-	h.runReviewerPhase(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck)
+	h.runReviewerPhase(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck, as)
 	h.finalizeAgentOutputs(ctx, sessionID, liveSession, checkoutPath)
 	h.determineFinalStatus(ctx, sessionID, liveSession, completed, blockedOrStuck, stopReason)
 }
@@ -444,7 +456,7 @@ func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *
 func (h *Engine) runIterationLoop(
 	ctx context.Context, sessionID, source string, liveSession *agent.Session,
 	checkoutPath, preamble, message string, maxIter, maxSeconds int, startTime, deadline time.Time,
-	plan *subagent.PlanResult,
+	plan *subagent.PlanResult, as *agentSession,
 ) (promptBuilder *subagent.PromptBuilder, stopReason string, completed, blockedOrStuck, aborted bool) {
 	promptBuilder = subagent.NewPromptBuilder(preamble)
 	iterReason := "first iteration"
@@ -504,17 +516,28 @@ func (h *Engine) runIterationLoop(
 			errorContext = buildErrorContext(iterNum, errMsg, partialOut)
 		}
 
-		// Build prompt: dynamic (with plan/state) or static (backward compat)
+		// Build the prompt. On a persistent session after the first
+		// iteration the process retains the conversation, so send only an
+		// incremental continuation; otherwise (one-shot backends, first
+		// iteration, or after a session restart) rebuild the full prompt.
+		var req executor.PromptRequest
 		var systemPrompt string
-		if h.config.Agent.PlannerEnabled {
-			systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, i, message, errorContext)
+		if as.persistent() && i > 1 && !as.forceFull {
+			req.Message = promptBuilder.BuildIncremental(checkoutPath, plan, i, errorContext)
+			systemPrompt = req.Message // recorded as the iteration's prompt in the audit log
 		} else {
-			systemPrompt = promptBuilder.BuildStatic(message, errorContext)
+			if h.config.Agent.PlannerEnabled {
+				systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, i, message, errorContext)
+			} else {
+				systemPrompt = promptBuilder.BuildStatic(message, errorContext)
+			}
+			req = executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}
+			as.forceFull = false
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		liveSession.BeginIteration(i)
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, i, deadline, h.deps.Executor())
+		result, died := h.executePrompt(ctx, as.sess, req, i, deadline, liveSession)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		iterationsRun = i
@@ -531,6 +554,18 @@ func (h *Engine) runIterationLoop(
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
 			h.FailSession(sessionID, result.Error)
 			return promptBuilder, stopReason, completed, blockedOrStuck, true
+		}
+
+		// A dead session process (persistent backends) gets one restart with
+		// a full context rebuild; a second death feeds the normal
+		// consecutive-failure abort.
+		if died && !as.restarted && !liveSession.StopRequested() && ctx.Err() == nil {
+			slog.Warn("agent session process died; restarting once", "session_id", sessionID, "iteration", i)
+			if err := as.restart(ctx, checkoutPath); err != nil {
+				h.FailSession(sessionID, "agent session restart failed: "+err.Error())
+				return promptBuilder, stopReason, completed, blockedOrStuck, true
+			}
+			liveSession.AddWarning("agent session process died; restarted with full context rebuild")
 		}
 
 		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
@@ -603,6 +638,7 @@ func (h *Engine) runReviewerPhase(
 	ctx context.Context, sessionID, source string, liveSession *agent.Session,
 	checkoutPath, message string, deadline time.Time,
 	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, blockedOrStuck bool,
+	as *agentSession,
 ) {
 	if !h.config.Agent.ReviewerEnabled || blockedOrStuck {
 		return
@@ -651,7 +687,10 @@ func (h *Engine) runReviewerPhase(
 		slog.Info("running corrective iteration", "session_id", sessionID,
 			"iteration", iterNum, "issues", len(review.Issues))
 
-		result := h.executeIteration(ctx, checkoutPath, systemPrompt, message, iterNum, deadline, h.deps.Executor())
+		// Corrective iterations reuse the run's session; on a persistent
+		// backend the correction lands in the same conversation. A dead
+		// session surfaces as an error result, which stops the loop below.
+		result, _ := h.executePrompt(ctx, as.sess, executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
 		result.Prompt = systemPrompt
 		result.Retry = true
 		liveSession.AddIteration(result)
@@ -829,15 +868,57 @@ func (h *Engine) resolvePrompt(message string) (string, error) {
 	return tmpl.Compile(input), nil
 }
 
-// executeIteration runs a single iteration of the agent loop.
-// It just runs Claude and records success or error — no git operations.
-func (h *Engine) executeIteration(
+// agentSession owns the run-scoped executor session, allowing one mid-run
+// restart after a backend process death.
+type agentSession struct {
+	backend   executor.Backend
+	sess      executor.Session
+	restarted bool
+	forceFull bool // rebuild the full prompt after a restart (context was lost)
+}
+
+func (as *agentSession) start(ctx context.Context, workspace string) error {
+	sess, err := as.backend.Start(ctx, workspace, executor.SessionOptions{})
+	if err != nil {
+		return err
+	}
+	as.sess = sess
+	return nil
+}
+
+func (as *agentSession) restart(ctx context.Context, workspace string) error {
+	if as.sess != nil {
+		_ = as.sess.Close()
+		as.sess = nil
+	}
+	if err := as.start(ctx, workspace); err != nil {
+		return err
+	}
+	as.restarted = true
+	as.forceFull = true
+	return nil
+}
+
+func (as *agentSession) Close() {
+	if as.sess != nil {
+		_ = as.sess.Close()
+	}
+}
+
+func (as *agentSession) persistent() bool { return as.backend.Persistent() }
+
+// executePrompt runs a single prompt of the agent loop on the run's session.
+// It records success or error — no git operations. A user stop aborts the
+// in-flight prompt live instead of waiting the iteration out. died reports
+// that the session's process ended mid-prompt (persistent backends).
+func (h *Engine) executePrompt(
 	ctx context.Context,
-	workspacePath, systemPrompt, userMessage string,
+	sess executor.Session,
+	req executor.PromptRequest,
 	iteration int,
 	deadline time.Time,
-	exec executor.Executor,
-) (result agent.IterationResult) {
+	live *agent.Session,
+) (result agent.IterationResult, died bool) {
 	iterStart := time.Now()
 
 	result = agent.IterationResult{
@@ -857,17 +938,28 @@ func (h *Engine) executeIteration(
 	if iterTimeout <= 0 {
 		result.Status = agent.IterationStatusError
 		result.Error = "time limit reached"
-		return result
+		return result, false
 	}
 
 	iterCtx, cancel := context.WithTimeout(ctx, iterTimeout)
 	defer cancel()
 
-	// Execute the configured agent CLI with system prompt + user message.
-	execResult, _, execErr := exec.ExecuteWithLogAndSystemPrompt(iterCtx, workspacePath, systemPrompt, userMessage)
+	promptDone := make(chan struct{})
+	defer close(promptDone)
+	go func() {
+		select {
+		case <-live.StopChan():
+			_ = sess.Abort()
+		case <-promptDone:
+		case <-iterCtx.Done():
+		}
+	}()
+
+	execResult, execErr := sess.Prompt(iterCtx, req)
 	if execErr != nil {
+		died = errors.Is(execErr, executor.ErrSessionDead)
 		result.Status = agent.IterationStatusError
-		result.Error = fmt.Sprintf("agent execution failed: %v", execErr)
+		result.Error = fmt.Sprintf("agent execution failed: %v", normalizePromptError(iterCtx, execErr))
 		if execResult != nil {
 			// Prefer structured output; fall back to raw terminal output so the
 			// full CLI error appears in the audit log's details block.
@@ -878,7 +970,7 @@ func (h *Engine) executeIteration(
 			}
 			result.CostUSD = execResult.CostUSD
 		}
-		return result
+		return result, died
 	}
 
 	if execResult != nil {
@@ -886,7 +978,21 @@ func (h *Engine) executeIteration(
 		result.CostUSD = execResult.CostUSD
 	}
 	result.Status = agent.IterationStatusSuccess
-	return result
+	return result, false
+}
+
+// normalizePromptError maps raw context errors (from session backends that
+// pass them through) to the executor error strings the rest of the engine
+// and its logs already understand. One-shot executors normalize these
+// themselves; their errors pass through unchanged.
+func normalizePromptError(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded:
+		return errors.New("TIMEOUT: execution exceeded timeout")
+	case errors.Is(err, context.Canceled):
+		return errors.New("execution was canceled")
+	}
+	return err
 }
 
 const (

@@ -65,6 +65,7 @@ type Handlers struct {
 	gitOps           *git.Operations
 	execMu           sync.RWMutex
 	executor         executor.Executor
+	backend          executor.Backend
 	plannerClient    llm.Client             // direct LLM API for fast planning (tier 2)
 	curatorClient    llm.Client             // cheap LLM for post-session memory curation; nil = curation disabled
 	analyzer         *conversation.Analyzer // intent router for POST /agent (ask/plan/execute); nil = always execute
@@ -96,6 +97,7 @@ func NewHandlers(
 		agentManager:     agentManager,
 		gitOps:           gitOps,
 		executor:         exec,
+		backend:          executor.NewBackend(cfg.Agent.CLI, cfg.Agent.Provider, cfg.Agent.Model, cfg.Agent.MaxTurns),
 		validator:        validator,
 		workspaceManager: workspaceManager,
 		runLogger:        runLogger,
@@ -110,6 +112,7 @@ func NewHandlers(
 // (SetNotifier/SetWorkflowClient) are always visible to running sessions.
 
 func (h *Handlers) Executor() executor.Executor                 { return h.getExecutor() }
+func (h *Handlers) Backend() executor.Backend                   { return h.getBackend() }
 func (h *Handlers) PlannerClient() llm.Client                   { return h.plannerClient }
 func (h *Handlers) CuratorClient() llm.Client                   { return h.curatorClient }
 func (h *Handlers) Notifier() execution.Notifier                { return h.notifier }
@@ -190,21 +193,33 @@ func (h *Handlers) getExecutor() executor.Executor {
 	return h.executor
 }
 
-// UpdateExecutor recreates the executor from the current config. Called after
-// AGENT_CLI / AGENT_MODEL / AGENT_PROVIDER are changed at runtime.
+// getBackend returns the current session backend, safe for concurrent use.
+func (h *Handlers) getBackend() executor.Backend {
+	h.execMu.RLock()
+	defer h.execMu.RUnlock()
+	return h.backend
+}
+
+// UpdateExecutor recreates the executor and the session backend from the
+// current config. Called after AGENT_CLI / AGENT_MODEL / AGENT_PROVIDER are
+// changed at runtime. Running sessions keep the backend they started with;
+// the new one applies to the next run.
 func (h *Handlers) UpdateExecutor() {
 	h.execMu.Lock()
 	defer h.execMu.Unlock()
 	cfg := h.config.Agent
 	h.executor = executor.NewExecutor(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
-	applyIsolation(h.executor, cfg.Isolated)
+	h.backend = executor.NewBackend(cfg.CLI, cfg.Provider, cfg.Model, cfg.MaxTurns)
+	applyIsolation(cfg.Isolated, h.executor, h.backend)
 }
 
 // applyIsolation spawns executors inside agent-home/ (config-dir
 // redirection) when AGENT_ISOLATED is set; otherwise the legacy
 // inherit-everything behavior applies. Provisioning runs here — not only at
 // startup — so `/set AGENT_ISOLATED true` takes effect without a restart.
-func applyIsolation(exec executor.Executor, isolated bool) {
+// targets is any mix of executors and backends; each one supporting an
+// environment overlay gets the agent-home redirections.
+func applyIsolation(isolated bool, targets ...any) {
 	if !isolated {
 		return
 	}
@@ -225,8 +240,14 @@ func applyIsolation(exec executor.Executor, isolated bool) {
 		slog.Warn("agent home unavailable; executor runs without isolation", "error", err)
 		return
 	}
-	if es, ok := exec.(executor.EnvSetter); ok {
-		es.SetExtraEnv(env)
+	applied := false
+	for _, t := range targets {
+		if es, ok := t.(executor.EnvSetter); ok {
+			es.SetExtraEnv(env)
+			applied = true
+		}
+	}
+	if applied {
 		slog.Info("executor isolated in agent-home")
 	} else {
 		slog.Warn("executor does not support environment overlay; isolation ignored")

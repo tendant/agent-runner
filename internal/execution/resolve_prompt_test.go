@@ -16,6 +16,7 @@ import (
 type promptDeps struct{ cfg *config.Config }
 
 func (d promptDeps) Executor() executor.Executor       { return nil }
+func (d promptDeps) Backend() executor.Backend         { return nil }
 func (d promptDeps) PlannerClient() llm.Client         { return nil }
 func (d promptDeps) CuratorClient() llm.Client         { return nil }
 func (d promptDeps) Notifier() Notifier                { return nil }

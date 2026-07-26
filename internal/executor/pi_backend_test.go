@@ -12,6 +12,7 @@ import (
 // line, then settles each prompt with a fixed assistant message.
 const fakePiScript = `#!/bin/sh
 printf '%s\n' "$@" > "$CAPTURE_ARGS_PATH"
+[ -n "$CAPTURE_PID_PATH" ] && echo $$ >> "$CAPTURE_PID_PATH"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$CAPTURE_STDIN_PATH"
   case "$line" in
@@ -70,6 +71,48 @@ func TestPiExecutor(t *testing.T) {
 	// The system prompt is prepended to the instruction in the prompt message.
 	if !strings.Contains(string(stdin), `system says\n\ndo the thing`) {
 		t.Errorf("prompt message missing concatenated system prompt:\n%s", stdin)
+	}
+}
+
+// A PiBackend session keeps one process alive across prompts.
+func TestPiBackendSessionReusesProcess(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "pi")
+	if err := os.WriteFile(scriptPath, []byte(fakePiScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE_ARGS_PATH", filepath.Join(tmpDir, "args.txt"))
+	t.Setenv("CAPTURE_STDIN_PATH", filepath.Join(tmpDir, "stdin.txt"))
+	pidPath := filepath.Join(tmpDir, "pids.txt")
+	t.Setenv("CAPTURE_PID_PATH", pidPath)
+
+	b := NewPiBackend("", "")
+	sess, err := b.Start(context.Background(), tmpDir, SessionOptions{})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer sess.Close()
+	if !b.Persistent() {
+		t.Error("pi backend must report persistent")
+	}
+
+	for i := 0; i < 2; i++ {
+		res, err := sess.Prompt(context.Background(), PromptRequest{Message: "go"})
+		if err != nil {
+			t.Fatalf("prompt %d: %v", i+1, err)
+		}
+		if res.Output != "pi says hi" {
+			t.Errorf("prompt %d output = %q", i+1, res.Output)
+		}
+	}
+
+	pids, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Fields(string(pids))); n != 1 {
+		t.Errorf("pi started %d processes across 2 prompts, want 1", n)
 	}
 }
 

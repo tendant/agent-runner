@@ -122,6 +122,42 @@ func (pb *PromptBuilder) Build(ctx context.Context, workspacePath string, plan *
 	return sb.String()
 }
 
+// BuildIncremental creates a continuation prompt for persistent sessions:
+// the executor process retains the conversation, so the preamble, workspace
+// state, and original message are not re-sent — only refreshed plan
+// progress, error context, and the standing instructions.
+func (pb *PromptBuilder) BuildIncremental(workspacePath string, plan *PlanResult, iteration int, errorContext string) string {
+	var sb strings.Builder
+	sb.WriteString("Continue working on the task from the previous messages.\n\n")
+
+	if plan != nil && len(plan.Steps) > 0 {
+		progress := ReadProgress(workspacePath)
+		completedSet := make(map[string]bool, len(progress.CompletedSteps))
+		for _, id := range progress.CompletedSteps {
+			completedSet[id] = true
+		}
+		sb.WriteString("## Plan progress\n\n")
+		for _, step := range plan.Steps {
+			check := " "
+			if step.Done || completedSet[step.ID] {
+				check = "x"
+			}
+			sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", check, step.ID, step.Description))
+		}
+		sb.WriteString("\nAfter completing a plan step, update `_progress.json` in the workspace root with: `{\"completed_steps\": [\"1\", \"2\"]}` listing all completed step IDs.\n\n")
+	}
+
+	if errorContext != "" {
+		sb.WriteString(errorContext)
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n\n", iteration))
+	sb.WriteString(doneInstruction)
+	sb.WriteString("\n")
+	return sb.String()
+}
+
 // BuildStatic returns the preamble with the done instruction appended,
 // optionally with error context. Used when the planner is disabled.
 func (pb *PromptBuilder) BuildStatic(message string, errorContext string) string {

@@ -81,6 +81,7 @@ type Session struct {
 	ReviewJSON           any               `json:"-"`
 
 	stopRequested bool
+	stopCh        chan struct{} // closed on RequestStop; created lazily by StopChan
 
 	// LogLines holds streaming output lines (e.g. auth flow progress).
 	// Not included in API responses; delivered to SSE subscribers as output events.
@@ -119,15 +120,36 @@ func (s *Session) BeginIteration(n int) {
 	s.notifyUpdate()
 }
 
-// RequestStop sets the stop flag so the loop exits after the current iteration
+// RequestStop sets the stop flag so the loop exits after the current
+// iteration, and closes the stop channel so an in-flight prompt can be
+// aborted immediately.
 func (s *Session) RequestStop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stopRequested = true
+	if !s.stopRequested {
+		s.stopRequested = true
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
+	}
 	if s.Status == SessionStatusRunning {
 		s.Status = SessionStatusStopping
 	}
 	s.notifyUpdate()
+}
+
+// StopChan returns a channel closed when a stop is requested, for live
+// abort of in-flight work. Created lazily so test-constructed sessions work.
+func (s *Session) StopChan() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopCh == nil {
+		s.stopCh = make(chan struct{})
+		if s.stopRequested {
+			close(s.stopCh)
+		}
+	}
+	return s.stopCh
 }
 
 // StopRequested returns true if a stop has been requested

@@ -24,10 +24,17 @@ type engineTestEnv struct {
 type engineShim struct {
 	*Engine
 	executor     executor.Executor
+	backend      executor.Backend // optional; nil wraps executor as one-shot
 	agentManager *agent.Manager
 }
 
-func (s *engineShim) Executor() executor.Executor       { return s.executor }
+func (s *engineShim) Executor() executor.Executor { return s.executor }
+func (s *engineShim) Backend() executor.Backend {
+	if s.backend != nil {
+		return s.backend
+	}
+	return executor.WrapOneShot(s.executor)
+}
 func (s *engineShim) PlannerClient() llm.Client         { return nil }
 func (s *engineShim) CuratorClient() llm.Client         { return nil }
 func (s *engineShim) Notifier() Notifier                { return nil }

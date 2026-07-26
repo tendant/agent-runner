@@ -59,6 +59,10 @@ const scheduleFileName = "_schedule.json"
 // construction.
 type Deps interface {
 	Executor() executor.Executor
+	// Backend is the session-based execution surface for the iteration
+	// loop. The backend is captured once per run at session start, so a
+	// /set AGENT_CLI change applies to the next run, not a running one.
+	Backend() executor.Backend
 	PlannerClient() llm.Client
 	CuratorClient() llm.Client
 	Notifier() Notifier
