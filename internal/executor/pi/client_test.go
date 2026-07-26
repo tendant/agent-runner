@@ -31,7 +31,7 @@ func fakePi() {
 	settle := func() {
 		emit(`{"type":"tool_execution_start","toolName":"bash"}`)
 		emit(`{"type":"tool_execution_end","toolName":"bash"}`)
-		emit(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"fallback text"}]},"usage":{"cost":0.05}}`)
+		emit(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"fallback text"}],"usage":{"input":982,"output":15,"cost":{"input":0.0003,"output":0.00002,"total":0.05}}}}`)
 		emit(`{"type":"agent_settled"}`)
 	}
 

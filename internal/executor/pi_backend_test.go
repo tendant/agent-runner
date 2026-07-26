@@ -19,7 +19,7 @@ while IFS= read -r line; do
   *'"type":"prompt"'*)
     id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
     printf '{"type":"response","id":"%s","command":"prompt","success":true}\n' "$id"
-    printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"pi says hi"}]},"usage":{"cost":0.02}}\n'
+    printf '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"pi says hi"}],"usage":{"cost":{"total":0.02}}}}\n'
     printf '{"type":"agent_settled"}\n'
     ;;
   *'"type":"get_last_assistant_text"'*)

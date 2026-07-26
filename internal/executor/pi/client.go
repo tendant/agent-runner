@@ -343,12 +343,16 @@ func (c *Client) dispatch(l *line) {
 			close(settled)
 		}
 	case "message_end":
-		role, text := extractMessageText(l.Message)
+		role, text, usage := extractMessage(l.Message)
+		cost := extractCost(usage)
+		if cost == 0 {
+			cost = extractCost(l.Usage)
+		}
 		c.mu.Lock()
 		if role == "assistant" && text != "" {
 			c.text = text
 		}
-		if cost := extractCost(l.Usage); cost > 0 {
+		if cost > 0 {
 			c.cost += cost
 		}
 		c.mu.Unlock()

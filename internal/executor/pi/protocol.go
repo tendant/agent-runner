@@ -75,22 +75,25 @@ func extractText(raw json.RawMessage) string {
 	return ""
 }
 
-// extractMessageText pulls role and concatenated text content out of a
-// message payload. Content may be a bare string or a list of typed blocks.
-func extractMessageText(raw json.RawMessage) (role, text string) {
+// extractMessage pulls role, concatenated text content, and the usage
+// payload out of a message object. Content may be a bare string or a list
+// of typed blocks; usage (token counts + computed cost) is nested inside
+// the message on message_end events.
+func extractMessage(raw json.RawMessage) (role, text string, usage json.RawMessage) {
 	if len(raw) == 0 {
-		return "", ""
+		return "", "", nil
 	}
 	var msg struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
+		Usage   json.RawMessage `json:"usage"`
 	}
 	if json.Unmarshal(raw, &msg) != nil {
-		return "", ""
+		return "", "", nil
 	}
 	var s string
 	if json.Unmarshal(msg.Content, &s) == nil {
-		return msg.Role, s
+		return msg.Role, s, msg.Usage
 	}
 	var blocks []struct {
 		Type string `json:"type"`
@@ -103,24 +106,38 @@ func extractMessageText(raw json.RawMessage) (role, text string) {
 			}
 		}
 	}
-	return msg.Role, text
+	return msg.Role, text, msg.Usage
 }
 
-// extractCost pulls a dollar cost out of a usage payload, trying the field
-// names pi might use. Returns 0 when absent — cost is best-effort.
+// extractCost pulls a dollar cost out of a usage payload. pi reports cost
+// as an object of per-category rates with a "total" (computed from the
+// model's models.json cost config); a bare number is also accepted.
+// Returns 0 when absent — cost is best-effort.
 func extractCost(raw json.RawMessage) float64 {
 	if len(raw) == 0 {
 		return 0
 	}
 	var u struct {
-		Cost      float64 `json:"cost"`
-		CostUSD   float64 `json:"costUSD"`
-		TotalCost float64 `json:"totalCost"`
+		Cost      json.RawMessage `json:"cost"`
+		CostUSD   float64         `json:"costUSD"`
+		TotalCost float64         `json:"totalCost"`
 	}
 	if json.Unmarshal(raw, &u) != nil {
 		return 0
 	}
-	for _, c := range []float64{u.Cost, u.CostUSD, u.TotalCost} {
+	if len(u.Cost) > 0 {
+		var f float64
+		if json.Unmarshal(u.Cost, &f) == nil && f > 0 {
+			return f
+		}
+		var obj struct {
+			Total float64 `json:"total"`
+		}
+		if json.Unmarshal(u.Cost, &obj) == nil && obj.Total > 0 {
+			return obj.Total
+		}
+	}
+	for _, c := range []float64{u.CostUSD, u.TotalCost} {
 		if c > 0 {
 			return c
 		}
