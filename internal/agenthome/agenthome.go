@@ -83,9 +83,12 @@ func Provision() ([]mcpsetup.Result, error) {
 	}), nil
 }
 
-// seedAuth copies the host CLIs' credential files into the agent home so
-// agents can authenticate. Best-effort: missing sources are skipped and
-// existing copies kept (API keys via env work without any of this).
+// seedAuth copies the host CLIs' credential and provider-config files into
+// the agent home so agents can authenticate. For pi that includes
+// models.json — custom providers (base URL + API key reference) live there,
+// and without it an isolated pi agent can't reach any non-builtin endpoint.
+// Best-effort: missing sources are skipped and existing copies kept (API
+// keys via env work without any of this).
 func seedAuth(dir string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -95,6 +98,8 @@ func seedAuth(dir string) {
 		{filepath.Join(home, ".claude", ".credentials.json"), filepath.Join(dir, "claude", ".credentials.json")},
 		{filepath.Join(home, ".codex", "auth.json"), filepath.Join(dir, "codex", "auth.json")},
 		{filepath.Join(home, ".local", "share", "opencode", "auth.json"), filepath.Join(dir, "xdg-data", "opencode", "auth.json")},
+		{filepath.Join(home, ".pi", "agent", "auth.json"), filepath.Join(dir, "pi", "agent", "auth.json")},
+		{filepath.Join(home, ".pi", "agent", "models.json"), filepath.Join(dir, "pi", "agent", "models.json")},
 	}
 	for _, p := range pairs {
 		src, dst := p[0], p[1]

@@ -93,6 +93,48 @@ func TestProvisionAndEnv(t *testing.T) {
 	}
 }
 
+func TestProvisionSeedsPiConfig(t *testing.T) {
+	dir := chdir(t)
+
+	// Fake host home with pi provider config + credentials.
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	piDir := filepath.Join(fakeHome, ".pi", "agent")
+	if err := os.MkdirAll(piDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	models := `{"providers":{"ledgergate":{"baseUrl":"https://llm.example.com/v1","api":"openai-completions","apiKey":"$OPENAI_API_KEY","models":[{"id":"deepseek-v4-pro"}]}}}`
+	if err := os.WriteFile(filepath.Join(piDir, "models.json"), []byte(models), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "auth.json"), []byte(`{"anthropic":{"type":"api_key"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Provision(); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+
+	home := filepath.Join(dir, Dir)
+	if data, err := os.ReadFile(filepath.Join(home, "pi", "agent", "models.json")); err != nil || string(data) != models {
+		t.Errorf("pi models.json not seeded: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "pi", "agent", "auth.json")); err != nil {
+		t.Errorf("pi auth.json not seeded: %v", err)
+	}
+
+	// An existing copy is kept, not overwritten.
+	if err := os.WriteFile(filepath.Join(home, "pi", "agent", "models.json"), []byte(`{"local":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Provision(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, "pi", "agent", "models.json")); string(data) != `{"local":true}` {
+		t.Error("existing agent-home models.json should not be overwritten")
+	}
+}
+
 func TestProvisionWithoutDeclaration(t *testing.T) {
 	chdir(t)
 	results, err := Provision()
