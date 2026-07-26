@@ -27,6 +27,19 @@ const (
 	IterationStatusError      IterationStatus = "error"
 )
 
+// ExecEvent is a normalized executor progress event (tool execution, retry,
+// compaction, warning...) retained on the session for streaming.
+type ExecEvent struct {
+	Seq  uint64    `json:"seq"`
+	Kind string    `json:"kind"`
+	Text string    `json:"text,omitempty"`
+	At   time.Time `json:"at"`
+}
+
+// maxExecEvents bounds the per-session event ring; older events are dropped
+// but Seq keeps increasing so streaming cursors stay valid.
+const maxExecEvents = 1000
+
 // OutputFile represents a file the agent wants to send back to the user.
 type OutputFile struct {
 	Name        string `json:"name"`
@@ -83,6 +96,11 @@ type Session struct {
 	stopRequested bool
 	stopCh        chan struct{} // closed on RequestStop; created lazily by StopChan
 
+	// AgentEvents is the executor progress event ring (newest last).
+	// Delivered to SSE subscribers as agent_event frames.
+	AgentEvents  []ExecEvent `json:"-"`
+	execEventSeq uint64
+
 	// LogLines holds streaming output lines (e.g. auth flow progress).
 	// Not included in API responses; delivered to SSE subscribers as output events.
 	LogLines []string
@@ -92,6 +110,19 @@ type Session struct {
 func (s *Session) AppendLog(line string) {
 	s.mu.Lock()
 	s.LogLines = append(s.LogLines, line)
+	s.mu.Unlock()
+	s.notifyUpdate()
+}
+
+// AppendExecEvent adds an executor progress event, assigning a session-wide
+// sequence number, and notifies SSE subscribers.
+func (s *Session) AppendExecEvent(kind, text string, at time.Time) {
+	s.mu.Lock()
+	s.execEventSeq++
+	s.AgentEvents = append(s.AgentEvents, ExecEvent{Seq: s.execEventSeq, Kind: kind, Text: text, At: at})
+	if len(s.AgentEvents) > maxExecEvents {
+		s.AgentEvents = s.AgentEvents[len(s.AgentEvents)-maxExecEvents:]
+	}
 	s.mu.Unlock()
 	s.notifyUpdate()
 }
@@ -312,6 +343,7 @@ func (s *Session) Snapshot() *Session {
 		PlanJSON:             s.PlanJSON,
 		ReviewJSON:           s.ReviewJSON,
 		LogLines:             append([]string{}, s.LogLines...),
+		AgentEvents:          append([]ExecEvent{}, s.AgentEvents...),
 	}
 	copy(snap.Iterations, s.Iterations)
 

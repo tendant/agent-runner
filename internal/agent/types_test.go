@@ -205,3 +205,46 @@ func TestToResponse_OmitsEmptyWarnings(t *testing.T) {
 		t.Error("expected warnings to be omitted when empty")
 	}
 }
+
+func TestAppendExecEvent_RingKeepsSeqMonotonic(t *testing.T) {
+	s := &Session{notify: make(chan struct{}, 1)}
+	for i := 0; i < maxExecEvents+50; i++ {
+		s.AppendExecEvent("tool_start", "bash", time.Now())
+	}
+	snap := s.Snapshot()
+	if len(snap.AgentEvents) != maxExecEvents {
+		t.Fatalf("ring length = %d, want %d", len(snap.AgentEvents), maxExecEvents)
+	}
+	first, last := snap.AgentEvents[0], snap.AgentEvents[len(snap.AgentEvents)-1]
+	if first.Seq != 51 {
+		t.Errorf("oldest retained seq = %d, want 51 (50 dropped)", first.Seq)
+	}
+	if last.Seq != maxExecEvents+50 {
+		t.Errorf("newest seq = %d, want %d", last.Seq, maxExecEvents+50)
+	}
+}
+
+func TestStopChan_ClosedOnRequestStop(t *testing.T) {
+	s := &Session{notify: make(chan struct{}, 1)}
+	ch := s.StopChan()
+	select {
+	case <-ch:
+		t.Fatal("stop channel closed before RequestStop")
+	default:
+	}
+	s.RequestStop()
+	s.RequestStop() // idempotent — must not double-close
+	select {
+	case <-ch:
+	default:
+		t.Fatal("stop channel not closed after RequestStop")
+	}
+	// Lazily-created channel after the fact is already closed.
+	s2 := &Session{notify: make(chan struct{}, 1)}
+	s2.RequestStop()
+	select {
+	case <-s2.StopChan():
+	default:
+		t.Fatal("StopChan created after stop should be closed")
+	}
+}

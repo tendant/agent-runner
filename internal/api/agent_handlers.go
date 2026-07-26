@@ -285,6 +285,7 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 
 	lastSentCount := 0
 	lastLogCount := 0
+	var lastEventSeq uint64
 
 	emit := func() (done bool) {
 		snap := liveSession.Snapshot()
@@ -297,6 +298,22 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		lastLogCount = len(snap.LogLines)
+
+		// emit new executor progress events (tool executions, retries...).
+		// Cursor on Seq, not slice length — the ring drops old entries.
+		for _, ev := range snap.AgentEvents {
+			if ev.Seq <= lastEventSeq {
+				continue
+			}
+			sendEvent("agent_event", map[string]any{
+				"session_id": snap.ID,
+				"seq":        ev.Seq,
+				"kind":       ev.Kind,
+				"text":       ev.Text,
+				"at":         ev.At,
+			})
+			lastEventSeq = ev.Seq
+		}
 
 		// emit any newly completed iterations
 		for _, iter := range snap.Iterations[lastSentCount:] {

@@ -41,6 +41,12 @@ func (s *scriptedSession) Prompt(ctx context.Context, req executor.PromptRequest
 	n := len(s.prompts)
 	s.mu.Unlock()
 
+	// Emit a progress event per prompt so engine-side forwarding is covered.
+	select {
+	case s.events <- executor.Event{Seq: uint64(n), Kind: executor.EventToolStart, Text: "fake-tool", At: time.Now()}:
+	default:
+	}
+
 	if s.blockOn == n {
 		select {
 		case <-ctx.Done():
@@ -151,6 +157,27 @@ func TestPersistentSession_IncrementalPrompts(t *testing.T) {
 	}
 	if second.SystemPrompt != "" || !strings.Contains(second.Message, "Continue working") {
 		t.Errorf("second prompt should be incremental: sys=%q msg=%q", second.SystemPrompt, second.Message)
+	}
+
+	// Session progress events are forwarded onto the agent session for SSE.
+	// The forwarder goroutine races run completion, so poll briefly.
+	deadline := time.After(5 * time.Second)
+	for {
+		events := session.Snapshot().AgentEvents
+		if len(events) >= 2 {
+			if events[0].Kind != string(executor.EventToolStart) || events[0].Text != "fake-tool" {
+				t.Errorf("unexpected first event: %+v", events[0])
+			}
+			if events[0].Seq >= events[1].Seq {
+				t.Errorf("event seqs not monotonic: %d, %d", events[0].Seq, events[1].Seq)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected 2 forwarded events, got %+v", events)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

@@ -369,7 +369,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// one live process here that serves every iteration; one-shot backends
 	// keep spawning one CLI process per prompt. The backend is captured once
 	// per run — a /set AGENT_CLI change applies to the next run.
-	as := &agentSession{backend: h.deps.Backend()}
+	as := &agentSession{backend: h.deps.Backend(), onEvent: func(ev executor.Event) {
+		liveSession.AppendExecEvent(string(ev.Kind), ev.Text, ev.At)
+	}}
 	if err := as.start(ctx, checkoutPath); err != nil {
 		h.FailSession(sessionID, "agent session start failed: "+err.Error())
 		return
@@ -873,6 +875,7 @@ func (h *Engine) resolvePrompt(message string) (string, error) {
 type agentSession struct {
 	backend   executor.Backend
 	sess      executor.Session
+	onEvent   func(executor.Event) // forwards session progress events; may be nil
 	restarted bool
 	forceFull bool // rebuild the full prompt after a restart (context was lost)
 }
@@ -883,6 +886,15 @@ func (as *agentSession) start(ctx context.Context, workspace string) error {
 		return err
 	}
 	as.sess = sess
+	if as.onEvent != nil {
+		// The forwarder exits when the session's event channel closes
+		// (process death or Close).
+		go func(sess executor.Session) {
+			for ev := range sess.Events() {
+				as.onEvent(ev)
+			}
+		}(sess)
+	}
 	return nil
 }
 
