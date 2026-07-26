@@ -158,6 +158,42 @@ func (h *Handlers) HandleGetAgent(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, session.ToResponse())
 }
 
+// HandleSteerAgent handles POST /agent/{id}/steer — inject a user message
+// into the running session's live executor session (persistent backends
+// only). 409 when the session isn't running or the backend can't steer;
+// callers should then wait and send a follow-up task instead.
+func (h *Handlers) HandleSteerAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/agent/")
+	sessionID := strings.TrimSuffix(path, "/steer")
+	if sessionID == "" {
+		h.writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Message) == "" {
+		h.writeError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+
+	if err := h.execEngine.Steer(sessionID, req.Message); err != nil {
+		h.writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"session_id": sessionID,
+		"status":     "steered",
+	})
+}
+
 // HandleStopAgent handles POST /agent/{id}/stop — graceful stop
 func (h *Handlers) HandleStopAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

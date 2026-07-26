@@ -95,6 +95,8 @@ func NewServer(cfg *config.Config) *Server {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/stop"):
 			handlers.HandleStopAgent(w, r)
+		case strings.HasSuffix(r.URL.Path, "/steer"):
+			handlers.HandleSteerAgent(w, r)
 		case strings.HasSuffix(r.URL.Path, "/stream"):
 			handlers.HandleStreamAgent(w, r)
 		default:

@@ -207,6 +207,11 @@ curl -X POST http://localhost:8080/agent \
 # Poll status
 curl http://localhost:8080/agent/{session_id}
 
+# Steer a running session (persistent backends like pi): inject a message
+# into the live run; 409 if the backend can't steer — send a new task instead
+curl -X POST http://localhost:8080/agent/{session_id}/steer \
+  -H 'Content-Type: application/json' -d '{"message": "focus on the tests first"}'
+
 # Stop
 curl -X POST http://localhost:8080/agent/{session_id}/stop
 ```
