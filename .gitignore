@@ -44,3 +44,14 @@ prompt.md
 
 # Agent config universe: contains seeded credentials and CLI state
 agent-home/
+
+# --- SOPS-managed secrets ---
+# The plaintext copy never leaves this machine; the encrypted copy is committed.
+.env
+.env.bak
+.env.tmp
+.env.local
+.env.sops.tmp
+.env.sops.bak
+!.env.sops
+!.env.example
