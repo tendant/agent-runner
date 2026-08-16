@@ -1,0 +1,8 @@
+creation_rules:
+  - path_regex: \.env\.sops$
+    age:
+      - age1xzdh6mgqr5ac2wp0pjjqnj5erdg23ymaw3xhj8hy46hr0gmefeuq07rtnf
+      - age10sp5g4zpx4fyse7r7grkp7yyn2wnc9v2sat5wys3lzc2fcqqd5lqytv7q4
+    # Encrypt only values carrying a "# sops:encrypt" comment. Everything else
+    # stays readable so configuration changes remain reviewable in a diff.
+    encrypted_comment_regex: 'sops:encrypt'
