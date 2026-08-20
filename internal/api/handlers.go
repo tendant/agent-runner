@@ -23,6 +23,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/llm"
+	"github.com/agent-runner/agent-runner/internal/locks"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
@@ -78,7 +79,11 @@ type Handlers struct {
 	commander        *chatcmd.Commander
 	gateway          *chatcmd.MessageGateway
 	execEngine       *execution.Engine
+	lockManager      *locks.Manager
 }
+
+// LockManager returns the advisory lock manager backing POST /lock.
+func (h *Handlers) LockManager() *locks.Manager { return h.lockManager }
 
 // NewHandlers creates a new handlers instance
 func NewHandlers(
@@ -101,8 +106,10 @@ func NewHandlers(
 		validator:        validator,
 		workspaceManager: workspaceManager,
 		runLogger:        runLogger,
+		lockManager:      locks.NewManager(),
 	}
 	h.execEngine = execution.New(cfg, agentManager, workspaceManager, runLogger, h)
+	h.execEngine.SetLockManager(h.lockManager)
 	return h
 }
 

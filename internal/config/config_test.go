@@ -282,6 +282,14 @@ func TestValidate_NegativeMaxRuntime(t *testing.T) {
 	}
 }
 
+func TestValidate_ZeroAgentMaxConcurrent(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Agent.MaxConcurrent = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for zero Agent.MaxConcurrent")
+	}
+}
+
 func TestValidate_ZeroMaxConcurrentJobs(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxConcurrentJobs = 0
@@ -347,6 +355,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "CLEANUP_STALE_JOBS",
+		"AGENT_MAX_CONCURRENT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -363,6 +372,7 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 		"AGENT_MODEL", "AGENT_MAX_TURNS",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 		"JOB_RETENTION_SECONDS", "CLEANUP_STALE_JOBS",
+		"AGENT_MAX_CONCURRENT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -377,6 +387,10 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	}
 	if cfg.MaxConcurrentJobs != 5 {
 		t.Errorf("expected default MaxConcurrentJobs 5, got %d", cfg.MaxConcurrentJobs)
+	}
+	// Agent sessions stay serial unless AGENT_MAX_CONCURRENT is set.
+	if cfg.Agent.MaxConcurrent != 1 {
+		t.Errorf("expected default Agent.MaxConcurrent 1, got %d", cfg.Agent.MaxConcurrent)
 	}
 	if cfg.API.Bind != "127.0.0.1:8080" {
 		t.Errorf("expected default Bind, got %s", cfg.API.Bind)
@@ -435,6 +449,7 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	t.Setenv("AGENT_COMMIT_PREFIX", "[auto]")
 	t.Setenv("AGENT_MODEL", "qwen3-coder:30b")
 	t.Setenv("AGENT_MAX_TURNS", "100")
+	t.Setenv("AGENT_MAX_CONCURRENT", "4")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
@@ -449,6 +464,9 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	}
 	if cfg.MaxConcurrentJobs != 10 {
 		t.Errorf("expected 10, got %d", cfg.MaxConcurrentJobs)
+	}
+	if cfg.Agent.MaxConcurrent != 4 {
+		t.Errorf("expected Agent.MaxConcurrent 4, got %d", cfg.Agent.MaxConcurrent)
 	}
 	if cfg.API.Bind != "0.0.0.0:9090" {
 		t.Errorf("expected 0.0.0.0:9090, got %s", cfg.API.Bind)

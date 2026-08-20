@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"regexp"
@@ -204,10 +205,19 @@ func injectToken(remote, token string) string {
 	return remote
 }
 
-// Push pushes to origin with retry logic
+// Push pushes to origin with retry logic.
+//
+// A non-fast-forward rejection means the remote moved while this session was
+// working — the common case once more than one session runs at a time. It is
+// recoverable: rebase onto the new remote head and push again. Returning the
+// conflict straight to the caller loses work, because the agent path deletes
+// the session workspace immediately afterwards (internal/execution/engine.go
+// cleanup), taking the unpushed commits with it. The rebase is attempted at
+// most once per Push call; a conflict that survives it needs a human.
 func (o *Operations) Push(ctx context.Context, repoPath string) error {
 	var lastErr error
 	pushTarget := o.resolveRemote(ctx, repoPath)
+	rebaseAttempted := false
 
 	for i := range o.PushRetries {
 		if i > 0 {
@@ -225,7 +235,25 @@ func (o *Operations) Push(ctx context.Context, repoPath string) error {
 		// Check for non-retryable errors
 		if strings.Contains(errStr, "non-fast-forward") ||
 			strings.Contains(errStr, "rejected") {
-			return fmt.Errorf("GIT_PUSH_CONFLICT: %w", err)
+			if rebaseAttempted {
+				return fmt.Errorf("GIT_PUSH_CONFLICT: %w", err)
+			}
+			rebaseAttempted = true
+
+			if rebaseErr := o.PullRebase(ctx, repoPath); rebaseErr != nil {
+				// Leave the repo in a usable state rather than mid-rebase, so a
+				// later retry or manual inspection isn't blocked by REBASE_HEAD.
+				if abortErr := o.runGitCommand(ctx, repoPath, "rebase", "--abort"); abortErr != nil {
+					slog.Debug("git: rebase --abort after failed pull", "repo", repoPath, "error", abortErr)
+				}
+				return fmt.Errorf("GIT_PUSH_CONFLICT: %w (rebase onto remote failed: %v)", err, rebaseErr)
+			}
+
+			if retryErr := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD"); retryErr != nil {
+				lastErr = retryErr
+				return fmt.Errorf("GIT_PUSH_CONFLICT: push after rebase failed: %w", retryErr)
+			}
+			return nil
 		}
 		if strings.Contains(errStr, "Authentication failed") ||
 			strings.Contains(errStr, "Permission denied") {

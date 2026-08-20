@@ -13,6 +13,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/llm"
+	"github.com/agent-runner/agent-runner/internal/locks"
 	"github.com/agent-runner/agent-runner/internal/logging"
 )
 
@@ -84,7 +85,15 @@ type Engine struct {
 	// liveControls maps running session IDs to their run-scoped executor
 	// sessions, for live steering from chat channels.
 	liveControls sync.Map
+
+	// locks holds the advisory leases sessions take out on each other. Optional:
+	// nil disables the auto-release sweep at session end. See SetLockManager.
+	locks *locks.Manager
 }
+
+// SetLockManager wires the advisory lock manager, so leases a session took out
+// are released when it finishes however it finishes. Call before any session runs.
+func (e *Engine) SetLockManager(m *locks.Manager) { e.locks = m }
 
 // New creates an Engine.
 func New(cfg *config.Config, mgr *agent.Manager, wm *executor.WorkspaceManager, rl *logging.RunLogger, deps Deps) *Engine {

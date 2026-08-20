@@ -64,7 +64,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentManager := agent.NewManager(3600, 10)
+	agentManager := agent.NewManager(3600, 10, 1)
 	t.Cleanup(agentManager.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("claude", "", "", 0)
@@ -182,7 +182,7 @@ func TestHandleRun_ProjectNotAllowed(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600, 10)
+	agentMgr := agent.NewManager(3600, 10, 1)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("claude", "", "", 0)
@@ -306,7 +306,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600, 10)
+	agentMgr := agent.NewManager(3600, 10, 1)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("claude", "", "", 0)
@@ -493,7 +493,7 @@ func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600, 10)
+	agentMgr := agent.NewManager(3600, 10, 1)
 	t.Cleanup(agentMgr.Stop)
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
 	exec := executor.NewExecutor("claude", "", "", 0)

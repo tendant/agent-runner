@@ -8,7 +8,7 @@ import (
 
 func newTestManager(t *testing.T, retentionSeconds int) *Manager {
 	t.Helper()
-	mgr := NewManager(retentionSeconds, 10)
+	mgr := NewManager(retentionSeconds, 10, 1)
 	t.Cleanup(mgr.Stop)
 	return mgr
 }
@@ -273,7 +273,7 @@ func TestCleanupExpiredSessions(t *testing.T) {
 }
 
 func TestStop_Idempotent(t *testing.T) {
-	mgr := NewManager(3600, 10)
+	mgr := NewManager(3600, 10, 1)
 
 	// Should not panic when called multiple times
 	mgr.Stop()
@@ -282,7 +282,7 @@ func TestStop_Idempotent(t *testing.T) {
 }
 
 func TestContext_CancelledAfterStop(t *testing.T) {
-	mgr := NewManager(3600, 10)
+	mgr := NewManager(3600, 10, 1)
 
 	ctx := mgr.Context()
 	if ctx.Err() != nil {
@@ -327,7 +327,7 @@ func TestEnqueue_DispatchesAndRuns(t *testing.T) {
 }
 
 func TestEnqueue_QueueFull(t *testing.T) {
-	mgr := NewManager(3600, 1)
+	mgr := NewManager(3600, 1, 1)
 	defer mgr.Stop()
 
 	// Block the dispatch loop by filling the queue with a long-running item
@@ -361,7 +361,7 @@ func TestEnqueue_QueueFull(t *testing.T) {
 }
 
 func TestStop_DrainsQueue(t *testing.T) {
-	mgr := NewManager(3600, 10)
+	mgr := NewManager(3600, 10, 1)
 
 	// Block dispatch so items stay queued
 	blocker := make(chan struct{})
@@ -399,7 +399,7 @@ func TestStop_DrainsQueue(t *testing.T) {
 }
 
 func TestQueueLength(t *testing.T) {
-	mgr := NewManager(3600, 10)
+	mgr := NewManager(3600, 10, 1)
 	defer mgr.Stop()
 
 	if mgr.QueueLength() != 0 {

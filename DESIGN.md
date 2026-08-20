@@ -108,7 +108,9 @@ After every session (in order, inside the executor's completion defer):
 2. **Curation** (opt-in: `AGENT_MEMORY_CURATION_ENABLED`, default false) — a cheap LLM call (uses the fast-LLM slot (`FAST_LLM_*`)) distills the session outcome into at most 2 durable lessons appended to `lessons.md`, and compacts allowlisted memory files that exceed their per-file budget. Safety rails (internal/curator): may only write `lessons.md` and rewrite the well-known files; rewrites only when over budget and only if strictly smaller; never touches `agent.md`, `prompt.md`, or daily logs; all failures are non-fatal (`AGENT_MEMORY_CURATION_TIMEOUT_SECONDS`, default 60, bounds the call).
 3. **Git push** — `CommitAndPushMemory` (3 retries) persists everything above in one commit; git history is the undo mechanism for curation.
 
-The agent also self-edits memory directly during sessions — the default `agent.md` instructs it to write preferences/decisions/summaries to the well-known files and workflow changes to `prompt.md`. Sessions are strictly serialized (one at a time), so memory writes never race.
+The agent also self-edits memory directly during sessions — the default `agent.md` instructs it to write preferences/decisions/summaries to the well-known files and workflow changes to `prompt.md`.
+
+Memory writes made by the runner (daily log, curation, pull/commit/push) are serialized by a package-level mutex in `internal/template`, and `WriteMemoryFile` writes via temp+rename so a reader never sees a truncated file. The mutex covers this process only: the agent CLI edits memory files from a subprocess, which no in-process lock can cover. With `AGENT_MAX_CONCURRENT > 1` two agents can therefore still overwrite each other's in-session memory edits; the git-backed memory history is the undo mechanism.
 
 ---
 
@@ -203,18 +205,40 @@ Runs after the iteration loop. Evaluates the agent's work against the original r
 
 ---
 
-## Project Locking
+## Locking
 
-Per-project mutex prevents concurrent Git operations. Shared between jobs and agent sessions via `jobs.Manager.AcquireProjectLock/ReleaseProjectLock`.
+### Project locks (one-shot jobs)
 
-- Lock acquired at session/job start
-- Released on completion, failure, or timeout
+Per-project mutex prevents concurrent Git operations on the same project directory, via `jobs.Manager` (`internal/jobs/manager.go`).
+
+- Lock acquired in `CreateJob`, keyed by the `project` field
+- Released when the job reaches a terminal status
 - Concurrent requests return `409 Conflict`
+
+This applies to `POST /run` only. Agent sessions have no project field and do not take it — each gets a private workspace instead.
+
+### Advisory locks (agent sessions)
+
+`internal/locks` provides named leases that sessions take out on each other over HTTP: `POST /lock`, `DELETE /lock/{name}`, `GET /locks`.
+
+The runner cannot tell which two tasks conflict — that depends on what the task touches, not on anything the runner knows — so the **agent chooses the name**. The canonical case is new-site creation: the next site ID is derived by listing `base/sites/` in the agent's own copy of the shared config repo, so two concurrent sessions allocate the same ID unless one waits (see `prompt.md`).
+
+- Advisory: nothing stops a session that never asks
+- `wait_seconds` blocks for the current holder; `0` makes it a try-lock returning `409`
+- `ttl_seconds` bounds how long a name can be wedged (capped at `locks.MaxTTL`)
+- Released automatically when the holding session ends, however it ends
+- In-memory and process-local; a restart clears them
+
+### Shared-resource locks (internal)
+
+- Memory dir — package mutex in `internal/template`, shared with the `/memory` chat commands
+- Repo cache write-back — per-repo-name mutex in `internal/executor`, plus randomised temp paths so a concurrent swap cannot clobber an in-flight copy
 
 ---
 
 ## State Management
 
+- Agent sessions are dispatched by a worker pool of `AGENT_MAX_CONCURRENT` goroutines (default 1 = serial)
 - All state is in-memory (lost on restart)
 - `Session` uses `sync.RWMutex` for thread-safe field updates
 - `Snapshot()` returns deep copies for safe concurrent reading
@@ -239,6 +263,16 @@ Per-project mutex prevents concurrent Git operations. Shared between jobs and ag
 | `/agent/{id}` | GET | Poll session status |
 | `/agent/{id}/stop` | POST | Request graceful stop |
 
+### Advisory Locks
+
+Called by the running agent, not by operators — see "Locking" above.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/lock` | POST | Acquire a named lease (`name`, `ttl_seconds`, `wait_seconds`) |
+| `/lock/{name}` | DELETE | Release a lease |
+| `/locks` | GET | List currently held leases |
+
 ### Management
 
 | Endpoint | Method | Description |
@@ -254,7 +288,7 @@ All configuration via environment variables. See `.env.example` for the full lis
 
 Key groups:
 - **Git**: `GIT_HOST`, `GIT_ORG`
-- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_SHARED_REPOS`, iteration/time limits, planner/reviewer toggles
+- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_SHARED_REPOS`, `AGENT_MAX_CONCURRENT`, iteration/time limits, planner/reviewer toggles
 - **API**: `API_BIND`, `API_KEY`
 - **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CONVERSATION_IDS`
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`

@@ -74,7 +74,7 @@ func setupTestEnv(t *testing.T) *cmdTestEnv {
 	// isolated memory dir.
 	cfg.MemoryDir = "memory"
 
-	mgr := agent.NewManager(3600, 10)
+	mgr := agent.NewManager(3600, 10, 1)
 	t.Cleanup(mgr.Stop)
 
 	rt := &fakeRuntime{cfg: cfg, mgr: mgr, starter: fakeStarter{}}

@@ -167,10 +167,45 @@ Key variables:
 | `AGENT_SKILLS_DIR` | | Directory of agent skills pre-populated in every workspace |
 | `AGENT_PLANNER_ENABLED` | `true` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
+| `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
 | `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
 | `STREAM_SERVER_URL` | | Agent Stream server URL |
+
+### Running sessions in parallel
+
+By default one agent session runs at a time. `AGENT_MAX_CONCURRENT=N` starts N
+dispatch workers instead, so N sessions can overlap. Requires a restart — the
+pool is sized at startup.
+
+Each session already gets an isolated workspace, and the runner guards the state
+they share: the memory dir (mutex in `internal/template`) and the repo cache
+(per-repo lock in `internal/executor`). What it cannot guard is anything outside
+the process — a shared config repo, a sequential ID derived by listing a
+directory, a remote branch. Whether two tasks collide there depends on what the
+tasks are, so the agent decides, using a named lock:
+
+```bash
+# Acquire; blocks up to wait_seconds for the current holder.
+curl -X POST "$RUNNER_URL/lock" -H "X-API-Key: $API_KEY" \
+  -H "X-Session-ID: $SESSION_ID" -H "Content-Type: application/json" \
+  -d '{"name":"sites-config","ttl_seconds":900,"wait_seconds":600}'
+
+# Release
+curl -X DELETE "$RUNNER_URL/lock/sites-config" \
+  -H "X-API-Key: $API_KEY" -H "X-Session-ID: $SESSION_ID"
+
+# Inspect
+curl "$RUNNER_URL/locks" -H "X-API-Key: $API_KEY"
+```
+
+`200` acquired, `409` held by someone else (the body names the holder and when
+their lease expires). Locks are released automatically when the holding session
+ends and expire after their TTL regardless, so a crashed agent cannot wedge a
+name. Every prompt gets `{{RUNNER_URL}}`, `{{API_KEY}}` and `{{SESSION_ID}}`
+substituted in, so the agent can call this without extra configuration —
+`prompt.md` shows the pattern.
 
 ### Memory & learning loop
 

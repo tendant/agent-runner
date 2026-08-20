@@ -135,8 +135,16 @@ func (c *Curator) Curate(ctx context.Context, in Input) (Summary, error) {
 			slog.Warn("curator: rejected compaction that does not shrink the file", "file", item.File)
 			continue
 		}
-		if err := tmpl.WriteMemoryFile(c.cfg.MemoryDir, item.File, content+"\n"); err != nil {
+		// orig was read before the LLM call above, which can take a minute.
+		// Write only if the file still holds it, so a compaction never
+		// discards what another writer appended in the meantime.
+		written, err := tmpl.WriteMemoryFileIfUnchanged(c.cfg.MemoryDir, item.File, orig, content+"\n")
+		if err != nil {
 			slog.Warn("curator: compaction write failed", "file", item.File, "error", err)
+			continue
+		}
+		if !written {
+			slog.Info("curator: skipped compaction, file changed since it was read", "file", item.File)
 			continue
 		}
 		summary.FilesCompacted = append(summary.FilesCompacted, item.File)
@@ -220,14 +228,16 @@ func (c *Curator) buildPrompt(in Input, overBudget map[string]string) string {
 }
 
 // appendLesson appends a dated lesson entry to lessons.md.
+//
+// Read and write happen under one lock (UpdateMemoryFile): a separate
+// ReadMemoryFile/WriteMemoryFile pair loses one lesson whenever two sessions
+// curate at the same time.
 func (c *Curator) appendLesson(lesson string) error {
-	existing, _ := tmpl.ReadMemoryFile(c.cfg.MemoryDir, LessonsFile)
 	entry := fmt.Sprintf("### %s\n%s\n", time.Now().Format("2006-01-02"), lesson)
-	var content string
-	if strings.TrimSpace(existing) == "" {
-		content = "# Lessons\n\n" + entry
-	} else {
-		content = strings.TrimRight(existing, "\n") + "\n\n" + entry
-	}
-	return tmpl.WriteMemoryFile(c.cfg.MemoryDir, LessonsFile, content)
+	return tmpl.UpdateMemoryFile(c.cfg.MemoryDir, LessonsFile, func(existing string) (string, error) {
+		if strings.TrimSpace(existing) == "" {
+			return "# Lessons\n\n" + entry, nil
+		}
+		return strings.TrimRight(existing, "\n") + "\n\n" + entry, nil
+	})
 }
