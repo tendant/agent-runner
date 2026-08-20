@@ -36,4 +36,9 @@ var (
 		Name: "agent_queue_depth",
 		Help: "Current number of agent sessions waiting in the queue.",
 	})
+
+	MaxConcurrentSessions = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "agent_max_concurrent_sessions",
+		Help: "Configured ceiling on simultaneously running agent sessions (AGENT_MAX_CONCURRENT).",
+	})
 )

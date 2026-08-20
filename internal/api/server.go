@@ -53,7 +53,7 @@ type Server struct {
 func NewServer(cfg *config.Config) *Server {
 	// Initialize components
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize)
+	agentManager := agent.NewManager(cfg.JobRetentionSeconds, cfg.Agent.MaxQueueSize, cfg.Agent.MaxConcurrent)
 
 	// Session journal: persists queued/running sessions so a restart can
 	// recover them (recoverSessions in Start). Failure to open is non-fatal —
@@ -104,6 +104,9 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	})
 	mux.HandleFunc("/sessions", handlers.HandleListSessions)
+	mux.HandleFunc("/lock", handlers.HandleLock)
+	mux.HandleFunc("/lock/", handlers.HandleUnlock)
+	mux.HandleFunc("/locks", handlers.HandleListLocks)
 
 	// Apply middleware
 	var handler http.Handler = mux

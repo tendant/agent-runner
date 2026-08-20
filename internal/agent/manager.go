@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/agent-runner/agent-runner/internal/metrics"
 )
 
 // Journal persists queued/running sessions so a restarted server can recover
@@ -35,15 +38,29 @@ type Manager struct {
 	cancel                  context.CancelFunc
 	queue                   chan *queueItem
 	queueSize               int
+	maxConcurrent           int
 	journal                 Journal // optional; see SetJournal
+
+	workers   sync.WaitGroup // dispatch goroutines, so Stop can wait for them
+	drainOnce sync.Once      // only one worker drains the queue on shutdown
+	running   atomic.Int64   // sessions currently inside startFunc
 }
 
 // NewManager creates a new agent session manager.
 // sessionRetentionSeconds controls how long completed sessions are kept before cleanup.
 // maxQueueSize controls the bounded queue for agent sessions.
-func NewManager(sessionRetentionSeconds, maxQueueSize int) *Manager {
+// maxConcurrent controls how many sessions may run at once; 1 (the default,
+// AGENT_MAX_CONCURRENT) dispatches them strictly one at a time.
+//
+// Anything a session touches outside its own workspace has to tolerate
+// maxConcurrent > 1 — see internal/template for the memory-dir lock and
+// internal/executor for repo-cache write-back.
+func NewManager(sessionRetentionSeconds, maxQueueSize, maxConcurrent int) *Manager {
 	if maxQueueSize <= 0 {
 		maxQueueSize = 10
+	}
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
@@ -54,9 +71,14 @@ func NewManager(sessionRetentionSeconds, maxQueueSize int) *Manager {
 		cancel:                  cancel,
 		queue:                   make(chan *queueItem, maxQueueSize),
 		queueSize:               maxQueueSize,
+		maxConcurrent:           maxConcurrent,
 	}
+	metrics.MaxConcurrentSessions.Set(float64(maxConcurrent))
 	go m.cleanupLoop()
-	go m.dispatchLoop()
+	m.workers.Add(maxConcurrent)
+	for range maxConcurrent {
+		go m.dispatchLoop()
+	}
 	return m
 }
 
@@ -73,6 +95,11 @@ func (m *Manager) Context() context.Context {
 // Stop cancels the manager context, stops the cleanup and dispatch loops,
 // and drains any queued sessions.
 // Safe to call multiple times.
+//
+// It does not wait for in-flight sessions: the context cancel above is what
+// unblocks them, and the server caps its own shutdown separately
+// (internal/api/server.go). Use StopAndWait when the caller needs the workers
+// to have returned.
 func (m *Manager) Stop() {
 	m.cancel()
 	select {
@@ -81,6 +108,33 @@ func (m *Manager) Stop() {
 	default:
 		close(m.stopCh)
 	}
+}
+
+// StopAndWait stops the manager and blocks until every dispatch worker has
+// returned, or until timeout elapses. Reports whether the workers finished.
+func (m *Manager) StopAndWait(timeout time.Duration) bool {
+	m.Stop()
+	done := make(chan struct{})
+	go func() {
+		m.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// RunningCount returns the number of sessions currently executing.
+func (m *Manager) RunningCount() int {
+	return int(m.running.Load())
+}
+
+// MaxConcurrent returns the configured ceiling on simultaneous sessions.
+func (m *Manager) MaxConcurrent() int {
+	return m.maxConcurrent
 }
 
 func (m *Manager) cleanupLoop() {
@@ -114,13 +168,19 @@ func (m *Manager) cleanupExpiredSessions() {
 	}
 }
 
-// dispatchLoop reads items from the queue one at a time and runs them
-// synchronously, ensuring only one agent runs at a time.
+// dispatchLoop is one worker: it pulls an item off the queue and runs it
+// synchronously, so each worker holds at most one session at a time. NewManager
+// starts maxConcurrent of these, which is what bounds concurrency — the queue
+// itself is just a buffer.
 func (m *Manager) dispatchLoop() {
+	defer m.workers.Done()
 	for {
 		select {
 		case <-m.stopCh:
-			m.drainQueue()
+			// Exactly one worker drains; the rest return immediately. Without
+			// the guard, several workers race to pop the same remaining items
+			// and can Fail an already-failed session.
+			m.drainOnce.Do(m.drainQueue)
 			return
 		case item := <-m.queue:
 			// Transition from queued to running
@@ -134,8 +194,10 @@ func (m *Manager) dispatchLoop() {
 				m.journal.RecordRunning(item.session.Snapshot())
 			}
 
-			// Run synchronously — blocks until done, then next item dequeues
+			// Run synchronously — this worker takes nothing else until it returns
+			m.running.Add(1)
 			item.startFunc(item.session)
+			m.running.Add(-1)
 		}
 	}
 }
@@ -165,6 +227,9 @@ func (m *Manager) Enqueue(session *Session, startFunc func(*Session)) error {
 	}
 	select {
 	case m.queue <- &queueItem{session: session, startFunc: startFunc}:
+		// Refresh here too: the execution engine only sets this when a session
+		// ends, so without it the gauge reads stale for a whole run.
+		metrics.QueueDepth.Set(float64(len(m.queue)))
 		return nil
 	default:
 		if m.journal != nil {

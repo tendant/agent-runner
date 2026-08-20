@@ -70,7 +70,7 @@ func setupTestEnv(t *testing.T) *engineTestEnv {
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")
 	os.MkdirAll(cfg.RepoCacheRoot, 0755)
 
-	mgr := agent.NewManager(3600, 10)
+	mgr := agent.NewManager(3600, 10, 1)
 	t.Cleanup(mgr.Stop)
 
 	shim := &engineShim{

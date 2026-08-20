@@ -180,6 +180,16 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		metrics.ActiveSessions.WithLabelValues(source).Dec()
 		metrics.QueueDepth.Set(float64(h.agentManager.QueueLength()))
 
+		// Free any advisory lock this session still holds. Agents are told to
+		// release explicitly, but a crash, a timeout or a /agent/{id}/stop
+		// would otherwise wedge the name until its TTL ran out.
+		if h.locks != nil {
+			if n := h.locks.ReleaseAll(sessionID); n > 0 {
+				slog.Info("agent: released locks still held at session end",
+					"session_id", sessionID, "count", n)
+			}
+		}
+
 		// [L13] Take a single snapshot here; the iteration loop is done so the
 		// session won't change further. Reuse it for metrics, logging, and daily log.
 		snap := liveSession.Snapshot()
@@ -348,7 +358,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		slog.Info("workflow prompt configured", "session_id", sessionID, "path", h.config.Agent.PromptFile)
 	}
 
-	preamble, err := h.resolvePrompt(message)
+	preamble, err := h.resolvePrompt(sessionID, message)
 	if err != nil {
 		h.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
 		return
@@ -802,7 +812,7 @@ func (h *Engine) determineFinalStatus(ctx context.Context, sessionID string, liv
 
 // resolvePrompt builds the combined system prompt using the new single-agent
 // memory architecture: system instructions → memory sections → current request.
-func (h *Engine) resolvePrompt(message string) (string, error) {
+func (h *Engine) resolvePrompt(sessionID, message string) (string, error) {
 	systemPromptPath, promptFilePath := h.deps.BootstrapPaths()
 
 	// Read system instructions (agent.md); empty string if file missing — no error.
@@ -859,6 +869,7 @@ func (h *Engine) resolvePrompt(message string) (string, error) {
 		tmpl.VarDate:       time.Now().Format("2006-01-02"),
 		tmpl.VarRunnerURL:  runnerURL,
 		tmpl.VarAPIKey:     h.config.API.APIKey,
+		tmpl.VarSessionID:  sessionID,
 		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
 		tmpl.VarProjectDir: h.config.ProjectDir,
 		tmpl.VarMemoryDir:  absMemoryDir,

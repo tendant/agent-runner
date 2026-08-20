@@ -49,7 +49,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestJournalHooks_QueuedRunningRemoved(t *testing.T) {
-	m := NewManager(60, 5)
+	m := NewManager(60, 5, 1)
 	defer m.Stop()
 	j := &recordingJournal{}
 	m.SetJournal(j)
@@ -77,7 +77,7 @@ func TestJournalHooks_QueuedRunningRemoved(t *testing.T) {
 }
 
 func TestJournalHooks_RemovedOnFailAndStop(t *testing.T) {
-	m := NewManager(60, 5)
+	m := NewManager(60, 5, 1)
 	defer m.Stop()
 	j := &recordingJournal{}
 	m.SetJournal(j)
@@ -120,7 +120,7 @@ func TestJournalHooks_DrainRemovesQueued(t *testing.T) {
 }
 
 func TestJournalHooks_NilJournalSafe(t *testing.T) {
-	m := NewManager(60, 5)
+	m := NewManager(60, 5, 1)
 	defer m.Stop()
 
 	session, _ := m.CreateSession("task", nil, "a", "", 1, 60)

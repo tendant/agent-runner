@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Package | Responsibility |
 |---------|---------------|
-| `agent/` | Session types, state management, serialized dispatch queue, thread-safe snapshots |
+| `agent/` | Session types, state management, bounded dispatch queue + worker pool, thread-safe snapshots |
 | `api/` | HTTP server, routing, handlers, runtime wiring |
 | `botcommon/` | Shared bot engine (conversation flow) and helpers (formatting, confirmation parsing, poll-and-report) |
 | `chatcmd/` | Chat command layer: /help, /set, /memory, /repo, ... dispatch and the message gateway |
@@ -25,6 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `git/` | Git operations (fetch, commit, push with retries) |
 | `jobs/` | One-shot job state, project locking (shared between jobs and agents) |
 | `llm/` | Minimal LLM client (anthropic/openai/deepseek + executor-CLI fallback) |
+| `locks/` | Named advisory leases agent sessions take out on each other (`POST /lock`) |
 | `logging/` | Markdown audit log writer |
 | `metrics/` | Prometheus metrics |
 | `scheduler/` | DB-backed workflow scheduler (cron/delayed tasks via simple-workflow) |
@@ -43,7 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - All mutable state roots under `DATA_DIR`.
 
 ### Key Patterns
-- Sessions are strictly serialized — `agent.Manager.dispatchLoop` runs one at a time; memory writes never race.
+- Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir mutex in `internal/template`, a per-repo lock around cache write-back in `internal/executor`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety.
 - Config load priority: OS env > `DATA_DIR/.env.local` > `.env.<instance>` > `.env`.
 - Agent workspace uses `workspace/` subdirectory as the agent's CWD; shared repos cached in `REPO_CACHE_ROOT` between sessions.

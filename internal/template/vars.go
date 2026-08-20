@@ -9,6 +9,7 @@ const (
 	VarProjectDir = "PROJECT_DIR"
 	VarMemoryDir  = "MEMORY_DIR"
 	VarRunnerURL  = "RUNNER_URL"
+	VarSessionID  = "SESSION_ID"
 	VarAPIKey     = "API_KEY"
 	VarRepos      = "REPOS"
 )

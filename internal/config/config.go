@@ -123,6 +123,7 @@ type AgentConfig struct {
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
+	MaxConcurrent       int      // AGENT_MAX_CONCURRENT — agent sessions allowed to run at once (1 = serial, the default)
 	MemoryDays          int      // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart   bool     // Pull memory from git before each session
 	MemoryCharCap       int      // Max characters in composed memory section (0 = no limit)
@@ -242,6 +243,7 @@ func defaultConfigForDataDir(data string) *Config {
 			CLI:                 "pi",
 			PlannerEnabled:      true,
 			MaxQueueSize:        10,
+			MaxConcurrent:       1,
 			MemoryDays:          7,
 			MemoryCharCap:       12000,
 			MemoryPullOnStart:   true,
@@ -455,6 +457,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
+	cfg.Agent.MaxConcurrent = envIntOrDefault("AGENT_MAX_CONCURRENT", cfg.Agent.MaxConcurrent)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
@@ -528,6 +531,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MaxConcurrentJobs <= 0 {
 		return fmt.Errorf("max_concurrent_jobs must be positive")
+	}
+	if c.Agent.MaxConcurrent <= 0 {
+		return fmt.Errorf("agent max_concurrent must be positive")
 	}
 	if c.API.Bind == "" {
 		return fmt.Errorf("api.bind is required")

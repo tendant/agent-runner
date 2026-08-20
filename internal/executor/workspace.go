@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,28 @@ func NewWorkspaceManager(tmpRoot string, maxRuntimeSeconds int) *WorkspaceManage
 		TmpRoot:           tmpRoot,
 		MaxRuntimeSeconds: maxRuntimeSeconds,
 	}
+}
+
+// repoCacheLocks serialises cache write-back per repo name. It is
+// package-level rather than a WorkspaceManager field because more than one
+// manager instance exists in a running server (internal/api/server.go builds a
+// second one for startup cleanup) and they share the same repo cache on disk.
+var (
+	repoCacheLocksMu sync.Mutex
+	repoCacheLocks   = map[string]*sync.Mutex{}
+)
+
+// repoCacheLock returns the mutex guarding cache writes for a single repo name,
+// creating it on first use.
+func repoCacheLock(repo string) *sync.Mutex {
+	repoCacheLocksMu.Lock()
+	defer repoCacheLocksMu.Unlock()
+	mu, ok := repoCacheLocks[repo]
+	if !ok {
+		mu = &sync.Mutex{}
+		repoCacheLocks[repo] = mu
+	}
+	return mu
 }
 
 // PrepareWorkspace copies a project to an isolated workspace
@@ -212,7 +235,13 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 		src := filepath.Join(agentDir, entry.Name())
 		dst := filepath.Join(repoCacheRoot, entry.Name())
 
-		if err := cacheRepoAtomic(src, dst); err != nil {
+		// Serialise per repo name: concurrent sessions writing the same cache
+		// entry would otherwise interleave the copy/rename swap below.
+		mu := repoCacheLock(entry.Name())
+		mu.Lock()
+		err := cacheRepoAtomic(src, dst)
+		mu.Unlock()
+		if err != nil {
 			slog.Warn("workspace: failed to cache repo back", "repo", entry.Name(), "error", err)
 			continue
 		}
@@ -223,22 +252,30 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 // cacheRepoAtomic copies src into dst without risking data loss if the copy
 // fails mid-way. It uses a two-rename swap:
 //
-//  1. Copy src → dst.tmp   (original dst untouched if this fails)
-//  2. Rename dst → dst.old (atomic; makes room for the new copy)
-//  3. Rename dst.tmp → dst (atomic; new copy is now live)
-//  4. Remove dst.old       (clean up; harmless if it lingers)
+//  1. Copy src → a private temp dir (original dst untouched if this fails)
+//  2. Rename dst → a private "old" dir (atomic; makes room for the new copy)
+//  3. Rename temp → dst (atomic; new copy is now live)
+//  4. Remove the old dir (clean up; harmless if it lingers)
 //
-// If step 3 fails we attempt to restore dst from dst.old before returning.
+// If step 3 fails we attempt to restore dst from the old dir before returning.
+//
+// Both intermediate paths carry a random suffix (os.MkdirTemp) rather than the
+// fixed dst+".tmp"/dst+".old" this used to use. Two concurrent write-backs of
+// the same repo would otherwise delete each other's in-flight copy and
+// interleave the renames, leaving the cache entry partial or missing. Callers
+// additionally hold repoCacheLock(repo); the random suffixes keep the swap safe
+// against a second agent-runner process sharing the same cache dir.
 func cacheRepoAtomic(src, dst string) error {
-	tmp := dst + ".tmp"
-	old := dst + ".old"
+	parent := filepath.Dir(dst)
+	base := filepath.Base(dst)
 
-	// Clean up any leftovers from a previous failed run.
-	if err := os.RemoveAll(tmp); err != nil {
-		slog.Warn("workspace: failed to remove leftover tmp dir", "path", tmp, "error", err)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return fmt.Errorf("create cache root: %w", err)
 	}
-	if err := os.RemoveAll(old); err != nil {
-		slog.Warn("workspace: failed to remove leftover old dir", "path", old, "error", err)
+
+	tmp, err := os.MkdirTemp(parent, base+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
 	}
 
 	// Step 1: copy into temp location — original dst is safe if this fails.
@@ -250,7 +287,22 @@ func cacheRepoAtomic(src, dst string) error {
 	}
 
 	// Step 2: move old cache out of the way (no-op if dst doesn't exist yet).
+	var old string
 	if _, err := os.Stat(dst); err == nil {
+		old, err = os.MkdirTemp(parent, base+".old-*")
+		if err != nil {
+			if rerr := os.RemoveAll(tmp); rerr != nil {
+				slog.Warn("workspace: failed to remove tmp dir after temp-dir failure", "path", tmp, "error", rerr)
+			}
+			return fmt.Errorf("create old dir: %w", err)
+		}
+		// MkdirTemp created the destination; Rename needs it gone.
+		if err := os.Remove(old); err != nil {
+			if rerr := os.RemoveAll(tmp); rerr != nil {
+				slog.Warn("workspace: failed to remove tmp dir after cleanup failure", "path", tmp, "error", rerr)
+			}
+			return fmt.Errorf("clear old dir: %w", err)
+		}
 		if err := os.Rename(dst, old); err != nil {
 			if rerr := os.RemoveAll(tmp); rerr != nil {
 				slog.Warn("workspace: failed to remove tmp dir after rename failure", "path", tmp, "error", rerr)
@@ -264,7 +316,7 @@ func cacheRepoAtomic(src, dst string) error {
 		// [C2] Attempt to restore the old cache. If the restore also fails,
 		// surface both errors so the operator knows the cache entry is gone
 		// and which path needs manual repair.
-		if _, statErr := os.Stat(old); statErr == nil {
+		if old != "" {
 			if restoreErr := os.Rename(old, dst); restoreErr != nil {
 				return fmt.Errorf("rename new cache into place: %w; restore of old cache also failed: %v (manual fix: rename %s to %s)", err, restoreErr, old, dst)
 			}
@@ -275,8 +327,10 @@ func cacheRepoAtomic(src, dst string) error {
 		return fmt.Errorf("rename new cache into place: %w", err)
 	}
 
-	// Step 4: remove old cache (best-effort; a lingering .old is harmless).
-	os.RemoveAll(old) //nolint:errcheck
+	// Step 4: remove old cache (best-effort; a lingering .old-* is harmless).
+	if old != "" {
+		os.RemoveAll(old) //nolint:errcheck
+	}
 	return nil
 }
 
