@@ -84,6 +84,7 @@ type Session struct {
 	Error                string            `json:"error,omitempty"`
 	Warnings             []string          `json:"warnings,omitempty"`
 	CallbackURL          string            `json:"callback_url,omitempty"` // webhook POSTed the final session on terminal status
+	TraceID              string            `json:"trace_id,omitempty"`     // OpenTelemetry trace id of the run, when tracing is enabled
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	TotalCostUSD         float64           `json:"total_cost_usd,omitempty"`
@@ -248,6 +249,13 @@ func (s *Session) Stop(reason string) {
 }
 
 // AddWarning appends a non-fatal warning to the session (e.g. memory sync failure).
+// SetTraceID records the run's OpenTelemetry trace id.
+func (s *Session) SetTraceID(id string) {
+	s.mu.Lock()
+	s.TraceID = id
+	s.mu.Unlock()
+}
+
 func (s *Session) AddWarning(msg string) {
 	s.mu.Lock()
 	s.Warnings = append(s.Warnings, msg)
@@ -338,6 +346,7 @@ func (s *Session) Snapshot() *Session {
 		Error:                s.Error,
 		Warnings:             append([]string{}, s.Warnings...),
 		CallbackURL:          s.CallbackURL,
+		TraceID:              s.TraceID,
 		TotalCostUSD:         s.TotalCostUSD,
 		ElapsedSeconds:       int(time.Since(s.StartedAt).Seconds()),
 		CompletedSteps:       append([]string{}, s.CompletedSteps...),
@@ -394,6 +403,9 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if len(s.Warnings) > 0 {
 		resp["warnings"] = s.Warnings
+	}
+	if s.TraceID != "" {
+		resp["trace_id"] = s.TraceID
 	}
 	// What the agent is doing right now — lets a fleet view over
 	// GET /sessions show activity without one SSE connection per session.

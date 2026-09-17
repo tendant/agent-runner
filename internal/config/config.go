@@ -95,6 +95,9 @@ type Config struct {
 	StartupCleanupStaleJobs bool
 	LogRetentionDays        int // Delete log files older than this many days (0 = keep forever)
 
+	// Tracing settings
+	Tracing TracingConfig
+
 	// WelcomeEnabled sends a one-time intro message on a conversation's first
 	// contact with any bot (WELCOME_ENABLED, default: true). Text overridable
 	// via MEMORY_DIR/WELCOME.md.
@@ -261,6 +264,7 @@ func defaultConfigForDataDir(data string) *Config {
 		JobRetentionSeconds:     3600,
 		StartupCleanupStaleJobs: true,
 		LogRetentionDays:        30,
+		Tracing:                 TracingConfig{ServiceName: "agent-runner"},
 		WelcomeEnabled:          true,
 	}
 }
@@ -506,6 +510,10 @@ func LoadFromEnv() (*Config, error) {
 	cfg.JobRetentionSeconds = envIntOrDefault("JOB_RETENTION_SECONDS", cfg.JobRetentionSeconds)
 	cfg.StartupCleanupStaleJobs = envBoolOrDefault("CLEANUP_STALE_JOBS", cfg.StartupCleanupStaleJobs)
 	cfg.LogRetentionDays = envIntOrDefault("LOG_RETENTION_DAYS", cfg.LogRetentionDays)
+
+	cfg.Tracing.Enabled = envBoolOrDefault("TRACING_ENABLED", cfg.Tracing.Enabled)
+	cfg.Tracing.ServiceName = envOrDefault("OTEL_SERVICE_NAME", cfg.Tracing.ServiceName)
+	cfg.Tracing.Protocol = envOrDefault("OTEL_EXPORTER_OTLP_PROTOCOL", cfg.Tracing.Protocol)
 	cfg.WelcomeEnabled = envBoolOrDefault("WELCOME_ENABLED", cfg.WelcomeEnabled)
 
 	if err := cfg.Validate(); err != nil {
@@ -588,7 +596,17 @@ func (c *Config) copyFrom(n *Config) {
 	c.JobRetentionSeconds = n.JobRetentionSeconds
 	c.StartupCleanupStaleJobs = n.StartupCleanupStaleJobs
 	c.LogRetentionDays = n.LogRetentionDays
+	c.Tracing = n.Tracing
 	c.WelcomeEnabled = n.WelcomeEnabled
+}
+
+// TracingConfig enables OpenTelemetry span export. The OTLP endpoint and
+// headers come from the standard OTEL_EXPORTER_OTLP_* env vars, which the
+// exporter reads itself.
+type TracingConfig struct {
+	Enabled     bool   // TRACING_ENABLED
+	ServiceName string // OTEL_SERVICE_NAME (default agent-runner)
+	Protocol    string // OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf (default) or grpc
 }
 
 // splitProviderModel splits a combined "provider/model" string on the first

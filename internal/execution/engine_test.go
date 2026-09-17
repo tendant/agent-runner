@@ -16,6 +16,9 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/executor"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestBuildErrorContext_Basic(t *testing.T) {
@@ -547,4 +550,102 @@ func TestCallback_DeliveredOnTerminalStatus(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("callback never delivered")
 	}
+}
+
+// --- tracing ---
+
+// streamingStub implements executor.StreamingExecutor so the engine sees
+// tool events without a real CLI.
+type streamingStub struct{}
+
+func (streamingStub) Execute(_ context.Context, _, _ string) (*executor.ExecutionResult, error) {
+	return &executor.ExecutionResult{Output: "done"}, nil
+}
+func (s streamingStub) ExecuteWithSystemPrompt(ctx context.Context, w, sp, in string) (*executor.ExecutionResult, error) {
+	return s.ExecuteStreaming(ctx, w, sp, in, nil)
+}
+func (s streamingStub) ExecuteWithLog(ctx context.Context, w, in string) (*executor.ExecutionResult, string, error) {
+	r, err := s.Execute(ctx, w, in)
+	return r, "", err
+}
+func (s streamingStub) ExecuteWithLogAndSystemPrompt(ctx context.Context, w, sp, in string) (*executor.ExecutionResult, string, error) {
+	r, err := s.ExecuteStreaming(ctx, w, sp, in, nil)
+	return r, "", err
+}
+func (streamingStub) ExecuteStreaming(_ context.Context, _, _, _ string, onEvent func(executor.EventKind, string)) (*executor.ExecutionResult, error) {
+	if onEvent != nil {
+		onEvent(executor.EventToolStart, "Bash: go test ./...")
+		onEvent(executor.EventToolEnd, "Bash ok")
+		onEvent(executor.EventToolStart, "Read: main.go")
+		onEvent(executor.EventToolEnd, "Read error: missing")
+	}
+	return &executor.ExecutionResult{Output: "done", CostUSD: 0.02}, nil
+}
+
+func TestTracing_SessionSpanTree(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev); tp.Shutdown(context.Background()) })
+
+	env := setupTestEnv(t)
+	env.handlers.executor = streamingStub{}
+
+	session, err := env.handlers.agentManager.CreateSession("do something", nil, "test", "", 1, 30)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	env.handlers.ExecuteAgent(session)
+
+	snap := session.Snapshot()
+	if snap.TraceID == "" {
+		t.Fatal("session should carry the trace id")
+	}
+	if snap.ToResponse()["trace_id"] != snap.TraceID {
+		t.Error("trace_id should be in the API response")
+	}
+
+	byName := map[string][]sdktrace.ReadOnlySpan{}
+	for _, s := range rec.Ended() {
+		byName[s.Name()] = append(byName[s.Name()], s)
+	}
+	for _, want := range []string{"agent.session", "agent.prompt.resolve", "agent.workspace.prepare", "agent.planner", "agent.iteration", "agent.review", "agent.finalize"} {
+		if len(byName[want]) == 0 {
+			t.Fatalf("missing span %q; got %v (session status=%s error=%s)", want, keys(byName), snap.Status, snap.Error)
+		}
+	}
+	if got := len(byName["agent.tool"]); got != 2 {
+		t.Errorf("expected 2 tool spans, got %d", got)
+	}
+	root := byName["agent.session"][0]
+	if root.SpanContext().TraceID().String() != snap.TraceID {
+		t.Error("root span trace id should match the session's")
+	}
+	iter := byName["agent.iteration"][0]
+	if iter.Parent().SpanID() != root.SpanContext().SpanID() {
+		t.Error("iteration should be a child of the session span")
+	}
+	for _, tool := range byName["agent.tool"] {
+		if tool.Parent().SpanID() != iter.SpanContext().SpanID() {
+			t.Error("tool span should be a child of the iteration span")
+		}
+	}
+	var sawStatus bool
+	for _, a := range root.Attributes() {
+		if a.Key == "session.status" {
+			sawStatus = true
+		}
+	}
+	if !sawStatus {
+		t.Error("session span should record the final status")
+	}
+}
+
+func keys(m map[string][]sdktrace.ReadOnlySpan) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

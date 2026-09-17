@@ -14,6 +14,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/mcpsetup"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
+	"github.com/agent-runner/agent-runner/internal/tracing"
 	simpleworkflow "github.com/tendant/simple-workflow"
 )
 
@@ -105,6 +106,24 @@ func main() {
 		}
 	}
 
+	// Tracing: no-op unless TRACING_ENABLED=true; spans go to the OTLP
+	// collector named by OTEL_EXPORTER_OTLP_ENDPOINT.
+	shutdownTracing, err := tracing.Init(context.Background(), tracing.Config{
+		Enabled:     cfg.Tracing.Enabled,
+		ServiceName: cfg.Tracing.ServiceName,
+		Protocol:    cfg.Tracing.Protocol,
+		Version:     buildTime,
+	})
+	if err != nil {
+		slog.Error("failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			slog.Warn("tracing shutdown", "error", err)
+		}
+	}()
+
 	// Create and start server
 	server := api.NewServer(cfg)
 
@@ -153,6 +172,7 @@ func main() {
 
 	if err := server.Start(); err != nil {
 		slog.Error("server error", "error", err)
+		shutdownTracing(context.Background())
 		os.Exit(1)
 	}
 }
