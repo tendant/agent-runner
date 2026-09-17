@@ -41,4 +41,9 @@ var (
 		Name: "agent_max_concurrent_sessions",
 		Help: "Configured ceiling on simultaneously running agent sessions (AGENT_MAX_CONCURRENT).",
 	})
+
+	ToolCallsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "agent_tool_calls_total",
+		Help: "Tool invocations made by agents, by tool name and outcome (ok/error).",
+	}, []string{"tool", "outcome"})
 )

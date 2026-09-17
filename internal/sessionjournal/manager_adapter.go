@@ -29,6 +29,7 @@ func (m *ManagerJournal) record(snap *agent.Session, status string) {
 		CommitPrefix:    snap.CommitMessagePrefix,
 		MaxIterations:   snap.MaxIterations,
 		MaxTotalSeconds: snap.MaxTotalSeconds,
+		CallbackURL:     snap.CallbackURL,
 		Status:          status,
 		CreatedAt:       snap.StartedAt,
 	}

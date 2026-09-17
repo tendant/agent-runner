@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/llm"
@@ -85,6 +86,10 @@ type Engine struct {
 	// liveControls maps running session IDs to their run-scoped executor
 	// sessions, for live steering from chat channels.
 	liveControls sync.Map
+
+	// callbacks delivers terminal results to a session's CallbackURL; nil
+	// disables webhooks.
+	callbacks *callback.Dispatcher
 
 	// locks holds the advisory leases sessions take out on each other. Optional:
 	// nil disables the auto-release sweep at session end. See SetLockManager.

@@ -2,14 +2,19 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/executor"
 )
 
@@ -499,5 +504,47 @@ func TestDetermineFinalStatus(t *testing.T) {
 				t.Errorf("error = %q, want prefix %q", snap.Error, tt.wantErrPrefix)
 			}
 		})
+	}
+}
+
+// --- callback webhook ---
+
+func TestCallback_DeliveredOnTerminalStatus(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.executor = panicExecutor{} // fastest route to a terminal status
+
+	got := make(chan map[string]any, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		got <- body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	env.handlers.SetCallbacks(callback.New())
+
+	session, err := env.handlers.agentManager.CreateSession("do something", nil, "test", "", 1, 10)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	session.CallbackURL = srv.URL
+	env.handlers.ExecuteAgent(session)
+
+	select {
+	case body := <-got:
+		if body["event"] != "session.failed" {
+			t.Errorf("expected event session.failed, got %v", body["event"])
+		}
+		if body["session_id"] != session.ID {
+			t.Errorf("session_id mismatch: %v", body["session_id"])
+		}
+		if errText, _ := body["error"].(string); !strings.Contains(errText, "panic") {
+			t.Errorf("payload error should carry the failure: %v", body["error"])
+		}
+		if lf, _ := body["log_file"].(string); lf == "" {
+			t.Errorf("payload should name the audit log file")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback never delivered")
 	}
 }
