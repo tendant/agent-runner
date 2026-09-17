@@ -267,7 +267,7 @@ event: agent_event
 data: {"session_id":"agent-…","seq":8,"kind":"tool_end","text":"Bash error: FAIL pkg …","at":"…"}
 ```
 
-Kinds: `prompt_start`, `text` (assistant prose, truncated), `tool_start`, `tool_end`, `retry`, `compaction`, `warning`, `settled`. `GET /sessions` and `GET /agent/{id}` also carry `last_event`, so a fleet view can show what every parallel session is doing right now without holding N SSE connections.
+Kinds: `prompt_start`, `text` (assistant prose, truncated), `tool_start`, `tool_end`, `retry`, `compaction`, `warning`, `settled`. `GET /sessions` and `GET /agent/{id}` also carry `last_event` and `events` (the most recent 50), so a fleet view can show what every parallel session is doing right now without holding N SSE connections, and a polling client still sees tool errors and warnings that happened between polls.
 
 **Webhook** — pass `callback_url` when starting a session and agent-runner POSTs the final session JSON (same shape as `GET /agent/{id}`, plus `"event": "session.completed|failed|stopped"` and `log_file`) once it reaches a terminal status. Delivery retries three times (1s/4s/16s) on 5xx or network errors; 4xx is treated as the receiver rejecting it. Sessions interrupted by a server restart are also reported this way after recovery.
 

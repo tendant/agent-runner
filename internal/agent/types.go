@@ -40,6 +40,10 @@ type ExecEvent struct {
 // but Seq keeps increasing so streaming cursors stay valid.
 const maxExecEvents = 1000
 
+// maxResponseEvents is how much of the ring ToResponse includes; the full
+// ring reaches SSE subscribers, pollers get the recent tail.
+const maxResponseEvents = 50
+
 // OutputFile represents a file the agent wants to send back to the user.
 type OutputFile struct {
 	Name        string `json:"name"`
@@ -408,9 +412,12 @@ func (s *Session) ToResponse() map[string]any {
 		resp["trace_id"] = s.TraceID
 	}
 	// What the agent is doing right now — lets a fleet view over
-	// GET /sessions show activity without one SSE connection per session.
+	// GET /sessions show activity without one SSE connection per session —
+	// plus the recent ring so a polling client still sees tool errors and
+	// warnings that happened between polls.
 	if n := len(s.AgentEvents); n > 0 {
 		resp["last_event"] = s.AgentEvents[n-1]
+		resp["events"] = s.AgentEvents[max(0, n-maxResponseEvents):]
 	}
 	if len(s.Iterations) > 0 {
 		resp["iterations"] = s.Iterations
