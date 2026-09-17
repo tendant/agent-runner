@@ -3,7 +3,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,12 +27,16 @@ type Executor interface {
 	ExecuteWithLogAndSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, string, error)
 }
 
-// ClaudeOutput represents the JSON output from Claude Code CLI
+// ClaudeOutput represents the final "result" object from Claude Code CLI.
+// Kept for callers that parse --output-format json themselves; the
+// executor itself reads stream-json via streamParser.
 type ClaudeOutput struct {
-	Result     string  `json:"result,omitempty"`
-	Error      string  `json:"error,omitempty"`
-	CostUSD    float64 `json:"cost_usd,omitempty"`
-	DurationMS int     `json:"duration_ms,omitempty"`
+	Result       string  `json:"result,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	IsError      bool    `json:"is_error,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`       // older CLIs
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"` // current CLIs
+	DurationMS   int     `json:"duration_ms,omitempty"`
 }
 
 // ExecutionResult contains the result of CLI execution
@@ -96,7 +99,17 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, workspacePath, instruction
 // ExecuteWithSystemPrompt runs Claude Code CLI with separate system and user prompts.
 // If systemPrompt is empty, only the user prompt (instruction) is sent.
 func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, error) {
-	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "json"}
+	return e.ExecuteStreaming(ctx, workspacePath, systemPrompt, instruction, nil)
+}
+
+// ExecuteStreaming runs Claude Code with --output-format stream-json and
+// reports each tool call and assistant message through onEvent as it
+// happens. onEvent may be nil. RawOutput carries a compact transcript of
+// those events plus stderr, which is what the audit log wants rather than
+// the raw NDJSON.
+func (e *ClaudeExecutor) ExecuteStreaming(ctx context.Context, workspacePath, systemPrompt, instruction string, onEvent func(EventKind, string)) (*ExecutionResult, error) {
+	// --verbose is required by the CLI for stream-json in --print mode.
+	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"}
 	if e.Model != "" {
 		args = append(args, "--model", e.Model)
 	}
@@ -124,15 +137,25 @@ func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspaceP
 	// Allow up to 10s for pipes to drain after kill before Wait() forces return.
 	cmd.WaitDelay = 10 * time.Second
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-
-	result := &ExecutionResult{
-		RawOutput: stdout.String() + stderr.String(),
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("CLAUDE_ERROR: stdout pipe: %w", err)
 	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("CLAUDE_ERROR: %w", err)
+	}
+
+	parser := newStreamParser(onEvent)
+	readErr := parser.consume(stdout)
+	err = cmd.Wait()
+
+	result, complete := parser.result()
+	if result == nil {
+		result = &ExecutionResult{}
+	}
+	result.RawOutput = parser.transcript.String() + parser.plain.String() + stderr.String()
 
 	if err != nil {
 		// Check if it's a context timeout
@@ -143,23 +166,26 @@ func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspaceP
 			return nil, fmt.Errorf("execution was canceled")
 		}
 
-		// Try to parse error from output
-		result.Error = fmt.Errorf("CLAUDE_ERROR: %v - %s", err, stderr.String())
+		// Non-zero exit: prefer the CLI's own result-line error (it names
+		// the API status / subtype); otherwise fall back to stderr.
+		if result.Error == nil {
+			result.Error = fmt.Errorf("CLAUDE_ERROR: %v - %s", err, strings.TrimSpace(stderr.String()))
+		}
 		return result, result.Error
 	}
-
-	// Try to parse JSON output
-	var claudeOut ClaudeOutput
-	if err := json.Unmarshal(stdout.Bytes(), &claudeOut); err == nil {
-		result.Output = claudeOut.Result
-		result.CostUSD = claudeOut.CostUSD
-		result.DurationMS = claudeOut.DurationMS
-		if claudeOut.Error != "" {
-			result.Error = fmt.Errorf("CLAUDE_ERROR: %s", claudeOut.Error)
+	if readErr != nil {
+		result.Error = fmt.Errorf("CLAUDE_ERROR: reading output: %v", readErr)
+		return result, result.Error
+	}
+	if !complete {
+		// Exit 0 with no result line: not stream-json at all (an old CLI,
+		// or a wrapper script). Hand back whatever it printed.
+		if !parser.sawLine {
+			result.Output = strings.TrimSpace(parser.plain.String())
+			return result, nil
 		}
-	} else {
-		// Non-JSON output, use raw stdout
-		result.Output = stdout.String()
+		result.Error = fmt.Errorf("CLAUDE_ERROR: stream ended without a result line - %s", strings.TrimSpace(stderr.String()))
+		return result, result.Error
 	}
 
 	return result, nil

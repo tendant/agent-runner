@@ -253,6 +253,38 @@ curl -X POST http://localhost:8080/agent/{session_id}/stop
 
 One-shot jobs: `POST /run` → poll `GET /job/{id}`
 
+### Observability
+
+You don't have to poll. Three ways to see what a session is doing and how it ended:
+
+**Live stream** — `GET /agent/{id}/stream` is Server-Sent Events. Alongside `iteration_done` frames you get an `agent_event` per tool call as the agent works (all backends, including claude — it runs `--output-format stream-json` and parses as it goes):
+
+```
+event: agent_event
+data: {"session_id":"agent-…","seq":7,"kind":"tool_start","text":"Bash: go test ./...","at":"…"}
+
+event: agent_event
+data: {"session_id":"agent-…","seq":8,"kind":"tool_end","text":"Bash error: FAIL pkg …","at":"…"}
+```
+
+Kinds: `prompt_start`, `text` (assistant prose, truncated), `tool_start`, `tool_end`, `retry`, `compaction`, `warning`, `settled`. `GET /sessions` and `GET /agent/{id}` also carry `last_event`, so a fleet view can show what every parallel session is doing right now without holding N SSE connections.
+
+**Webhook** — pass `callback_url` when starting a session and agent-runner POSTs the final session JSON (same shape as `GET /agent/{id}`, plus `"event": "session.completed|failed|stopped"` and `log_file`) once it reaches a terminal status. Delivery retries three times (1s/4s/16s) on 5xx or network errors; 4xx is treated as the receiver rejecting it. Sessions interrupted by a server restart are also reported this way after recovery.
+
+```bash
+curl -X POST http://localhost:8080/agent -H 'Content-Type: application/json' \
+  -d '{"message": "fix the flaky test", "callback_url": "https://ci.example.com/hooks/agent"}'
+```
+
+**Audit logs over HTTP** — every session writes a markdown audit log with each iteration's full prompt, output, error and cost (plus planner/review JSON) to `LOGS_ROOT`. These survive restarts and are now reachable without SSH:
+
+```bash
+curl http://localhost:8080/logs?limit=20         # recent sessions: status, error, cost, duration
+curl http://localhost:8080/logs/{session_id}     # the full log as text/markdown (unique prefix ok)
+```
+
+**Metrics** — `GET /metrics` (Prometheus): `agent_sessions_total{status,source}`, `agent_iterations_total{status,source}`, `agent_active_sessions`, `agent_queue_depth`, `agent_cost_usd_total`, `agent_iteration_duration_seconds`, and `agent_tool_calls_total{tool,outcome}` for where the time goes. `rate(agent_sessions_total{status="failed"}[15m]) > 0` is the one alert to start with.
+
 ### Error handling
 
 `POST /agent` checks that the configured `AGENT_CLI` binary is actually installed before queueing a session — if it's missing, you get a `412` immediately instead of a session that fails minutes later after workspace setup:

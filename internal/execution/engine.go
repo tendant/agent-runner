@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/curator"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
@@ -128,6 +129,42 @@ func friendlyError(raw string) string {
 	return raw
 }
 
+// recordToolMetric counts tool calls off the executor event stream. The
+// event text is "<Tool>: <detail>" on start and "<Tool> ok" / "<Tool>
+// error: …" on end, so the tool name is the leading token either way.
+func recordToolMetric(ev executor.Event) {
+	if ev.Kind != executor.EventToolEnd {
+		return
+	}
+	name, rest, _ := strings.Cut(ev.Text, " ")
+	name = strings.TrimSuffix(name, ":")
+	if name == "" {
+		return
+	}
+	outcome := "ok"
+	if strings.HasPrefix(rest, "error") {
+		outcome = "error"
+	}
+	metrics.ToolCallsTotal.WithLabelValues(name, outcome).Inc()
+}
+
+// SetCallbacks installs the webhook dispatcher used for sessions that carry
+// a CallbackURL. nil disables delivery.
+func (h *Engine) SetCallbacks(d *callback.Dispatcher) { h.callbacks = d }
+
+// CallbackPayload is the body POSTed to a session's CallbackURL: the same
+// object GET /agent/{id} returns, plus an "event" discriminator and the
+// audit log path when one was written. Shared with the restart-recovery
+// path so both producers emit the same shape.
+func CallbackPayload(snap *agent.Session, logFile string) map[string]any {
+	payload := snap.ToResponse()
+	payload["event"] = "session." + string(snap.Status)
+	if logFile != "" {
+		payload["log_file"] = logFile
+	}
+	return payload
+}
+
 // FailSession fails a session via friendlyError, so every FailSession call
 // site in this package gets the same plain-language rewrite for known
 // misconfiguration signatures without having to remember to apply it
@@ -149,6 +186,8 @@ func (h *Engine) ExecuteAgent(session *agent.Session) {
 // The CLI handles workspace changes through the prompt; the loop manages
 // planning, retries, completion criteria, and session bookkeeping.
 func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Session) {
+	// Outer safety net: only reached if a panic escapes before the
+	// finalization defer below is registered, or from inside it.
 	defer func() {
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic in agent executor: %v", r)
@@ -177,6 +216,15 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	var plannerPromptText string
 
 	defer func() {
+		// Recover here, not only in the outer defer, so the session is
+		// already failed when the audit log, chat notification and webhook
+		// below read its status.
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("panic in agent executor: %v", r)
+			slog.Error("agent goroutine panicked", "session_id", sessionID, "panic", r)
+			h.FailSession(sessionID, msg)
+		}
+
 		metrics.ActiveSessions.WithLabelValues(source).Dec()
 		metrics.QueueDepth.Set(float64(h.agentManager.QueueLength()))
 
@@ -235,7 +283,8 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 				logData.Review = string(data)
 			}
 		}
-		if logFile, err := h.runLogger.WriteAgentLog(logData); err != nil {
+		logFile, err := h.runLogger.WriteAgentLog(logData)
+		if err != nil {
 			slog.Error("failed to write agent log", "session_id", sessionID, "error", err)
 		} else {
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
@@ -332,6 +381,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		// Send notification to connected chat channels
 		h.notifySessionResult(liveSession.Snapshot())
 
+		// Webhook for API callers that asked for one. After the audit log so
+		// the receiver can fetch GET /logs/{id} immediately.
+		if snap.CallbackURL != "" && h.callbacks != nil {
+			h.callbacks.Deliver(sessionID, snap.CallbackURL, CallbackPayload(liveSession.Snapshot(), logFile))
+		}
+
 		// Cleanup workspace after cache-back and logging are done
 		if liveSession.WorkspacePath != "" {
 			if err := h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath); err != nil {
@@ -382,6 +437,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// per run — a /set AGENT_CLI change applies to the next run.
 	as := &agentSession{backend: h.deps.Backend(), onEvent: func(ev executor.Event) {
 		liveSession.AppendExecEvent(string(ev.Kind), ev.Text, ev.At)
+		recordToolMetric(ev)
 	}}
 	if err := as.start(ctx, checkoutPath); err != nil {
 		h.FailSession(sessionID, "agent session start failed: "+err.Error())

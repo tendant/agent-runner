@@ -15,6 +15,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
+	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/conversation"
@@ -80,6 +81,7 @@ type Handlers struct {
 	gateway          *chatcmd.MessageGateway
 	execEngine       *execution.Engine
 	lockManager      *locks.Manager
+	callbacks        *callback.Dispatcher
 }
 
 // LockManager returns the advisory lock manager backing POST /lock.
@@ -108,7 +110,9 @@ func NewHandlers(
 		runLogger:        runLogger,
 		lockManager:      locks.NewManager(),
 	}
+	h.callbacks = callback.New()
 	h.execEngine = execution.New(cfg, agentManager, workspaceManager, runLogger, h)
+	h.execEngine.SetCallbacks(h.callbacks)
 	h.execEngine.SetLockManager(h.lockManager)
 	return h
 }

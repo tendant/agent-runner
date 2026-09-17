@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/textutil"
@@ -17,6 +18,10 @@ import (
 // AgentRequest represents the POST /agent request body
 type AgentRequest struct {
 	Message string `json:"message"`
+	// CallbackURL, when set, receives a POST with the final session JSON
+	// (same shape as GET /agent/{id}, plus "event") once the session reaches
+	// a terminal status — completed, failed or stopped.
+	CallbackURL string `json:"callback_url,omitempty"`
 }
 
 // HandleStartAgent handles POST /agent — start a new agent session
@@ -35,6 +40,12 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Message == "" {
 		h.writeError(w, http.StatusBadRequest, "message is required")
 		return
+	}
+	if req.CallbackURL != "" {
+		if err := callback.ValidateURL(req.CallbackURL); err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// /auth needs a streaming session so the URL reaches the caller via SSE.
@@ -102,6 +113,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.Source = "api"
+	session.CallbackURL = req.CallbackURL
 
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning

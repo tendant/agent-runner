@@ -104,6 +104,8 @@ func NewServer(cfg *config.Config) *Server {
 		}
 	})
 	mux.HandleFunc("/sessions", handlers.HandleListSessions)
+	mux.HandleFunc("/logs", handlers.HandleListLogs)
+	mux.HandleFunc("/logs/", handlers.HandleGetLog)
 	mux.HandleFunc("/lock", handlers.HandleLock)
 	mux.HandleFunc("/lock/", handlers.HandleUnlock)
 	mux.HandleFunc("/locks", handlers.HandleListLocks)

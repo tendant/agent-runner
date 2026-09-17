@@ -83,6 +83,7 @@ type Session struct {
 	CompletedAt          *time.Time        `json:"completed_at,omitempty"`
 	Error                string            `json:"error,omitempty"`
 	Warnings             []string          `json:"warnings,omitempty"`
+	CallbackURL          string            `json:"callback_url,omitempty"` // webhook POSTed the final session on terminal status
 	WorkspacePath        string            `json:"-"`
 	ElapsedSeconds       int               `json:"elapsed_seconds"`
 	TotalCostUSD         float64           `json:"total_cost_usd,omitempty"`
@@ -336,6 +337,7 @@ func (s *Session) Snapshot() *Session {
 		CompletedAt:          s.CompletedAt,
 		Error:                s.Error,
 		Warnings:             append([]string{}, s.Warnings...),
+		CallbackURL:          s.CallbackURL,
 		TotalCostUSD:         s.TotalCostUSD,
 		ElapsedSeconds:       int(time.Since(s.StartedAt).Seconds()),
 		CompletedSteps:       append([]string{}, s.CompletedSteps...),
@@ -392,6 +394,11 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if len(s.Warnings) > 0 {
 		resp["warnings"] = s.Warnings
+	}
+	// What the agent is doing right now — lets a fleet view over
+	// GET /sessions show activity without one SSE connection per session.
+	if n := len(s.AgentEvents); n > 0 {
+		resp["last_event"] = s.AgentEvents[n-1]
 	}
 	if len(s.Iterations) > 0 {
 		resp["iterations"] = s.Iterations

@@ -28,6 +28,7 @@ type Entry struct {
 	CommitPrefix    string    `json:"commit_prefix,omitempty"`
 	MaxIterations   int       `json:"max_iterations"`
 	MaxTotalSeconds int       `json:"max_total_seconds"`
+	CallbackURL     string    `json:"callback_url,omitempty"`
 	Status          string    `json:"status"` // "queued" | "running"
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

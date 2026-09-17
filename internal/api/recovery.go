@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/sessionjournal"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
@@ -87,6 +88,9 @@ func (s *Server) recoverInterrupted(ctx context.Context, entry sessionjournal.En
 	s.journal.Remove(entry.SessionID)
 
 	slog.Info("session recovery: interrupted session failed", "session_id", entry.SessionID, "source", entry.Source)
+	if session.CallbackURL != "" {
+		s.handlers.callbacks.Deliver(session.ID, session.CallbackURL, execution.CallbackPayload(session, ""))
+	}
 	s.notifyRecovery(ctx, entry, hooks, fmt.Sprintf(
 		"⚠️ The task %q was interrupted by a server restart. Resend it to retry.",
 		textutil.Truncate(entry.Message, 80)))
@@ -146,6 +150,7 @@ func restoredSession(entry sessionjournal.Entry) *agent.Session {
 		MaxTotalSeconds:     entry.MaxTotalSeconds,
 		Source:              entry.Source,
 		ConvID:              entry.ConvID,
+		CallbackURL:         entry.CallbackURL,
 		StartedAt:           entry.CreatedAt,
 	}
 }

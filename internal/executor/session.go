@@ -42,7 +42,17 @@ const (
 	EventCompaction  EventKind = "compaction"
 	EventSettled     EventKind = "settled"
 	EventWarning     EventKind = "warning"
+	// EventText is assistant prose between tool calls ("Now I'll run the
+	// tests…"), truncated; one-shot backends that stream emit it.
+	EventText EventKind = "text"
 )
+
+// StreamingExecutor is implemented by one-shot executors that can report
+// progress while a prompt runs. oneShotSession prefers it over
+// ExecuteWithLogAndSystemPrompt so tool calls reach SSE subscribers live.
+type StreamingExecutor interface {
+	ExecuteStreaming(ctx context.Context, workspacePath, systemPrompt, instruction string, onEvent func(EventKind, string)) (*ExecutionResult, error)
+}
 
 // Event is a normalized progress event from a session.
 type Event struct {
@@ -146,7 +156,13 @@ func (s *oneShotSession) Prompt(ctx context.Context, req PromptRequest) (*Execut
 	}()
 
 	s.emit(EventPromptStart, "")
-	result, _, err := s.exec.ExecuteWithLogAndSystemPrompt(pctx, s.workspace, req.SystemPrompt, req.Message)
+	var result *ExecutionResult
+	var err error
+	if se, ok := s.exec.(StreamingExecutor); ok {
+		result, err = se.ExecuteStreaming(pctx, s.workspace, req.SystemPrompt, req.Message, s.emit)
+	} else {
+		result, _, err = s.exec.ExecuteWithLogAndSystemPrompt(pctx, s.workspace, req.SystemPrompt, req.Message)
+	}
 	s.emit(EventSettled, "")
 	return result, err
 }
