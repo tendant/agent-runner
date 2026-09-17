@@ -283,6 +283,23 @@ curl http://localhost:8080/logs?limit=20         # recent sessions: status, erro
 curl http://localhost:8080/logs/{session_id}     # the full log as text/markdown (unique prefix ok)
 ```
 
+**Traces** — set `TRACING_ENABLED=true` plus the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` if your collector isn't on HTTP) and every run becomes one trace, exported over OTLP to Tempo, Jaeger, Honeycomb, Datadog, etc.:
+
+```
+agent.session            session.id, source, cli, model, status, cost_usd, iterations
+├── agent.prompt.resolve
+├── agent.workspace.prepare
+├── agent.planner        planner.steps
+├── agent.iteration      iteration.number, status, cost_usd, duration_s, commit, retry
+│   ├── agent.tool       tool.name, tool.input, tool.error
+│   └── agent.tool
+├── agent.iteration
+├── agent.review         review.score, review.issues
+└── agent.finalize
+```
+
+Failed sessions, errored iterations and errored tool calls carry error status, so "show me every trace where a `Bash` span failed inside a retry iteration" is a query, not a log grep. The trace id is returned as `trace_id` on `GET /agent/{id}`, in the webhook payload, and logged as `session trace` at start so you can jump from any of them into the trace backend. Off by default; when off the span calls are the SDK's no-ops.
+
 **Metrics** — `GET /metrics` (Prometheus): `agent_sessions_total{status,source}`, `agent_iterations_total{status,source}`, `agent_active_sessions`, `agent_queue_depth`, `agent_cost_usd_total`, `agent_iteration_duration_seconds`, and `agent_tool_calls_total{tool,outcome}` for where the time goes. `rate(agent_sessions_total{status="failed"}[15m]) > 0` is the one alert to start with.
 
 ### Error handling

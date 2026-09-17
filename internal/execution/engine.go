@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ import (
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"github.com/agent-runner/agent-runner/internal/textutil"
+	"github.com/agent-runner/agent-runner/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -215,13 +218,31 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 
+	// Root span for the run; every phase below is a child. The trace id is
+	// stored on the session so API responses and logs can be joined to it.
+	ctx, sessionSpan := tracing.Start(ctx, "agent.session",
+		attribute.String("session.id", sessionID),
+		attribute.String("session.source", source),
+		attribute.String("session.message", textutil.Truncate(message, 200)),
+		attribute.Int("session.max_iterations", maxIter),
+		attribute.Int("session.max_seconds", maxSeconds),
+		attribute.String("agent.cli", h.config.Agent.CLI),
+		attribute.String("agent.model", h.config.Agent.Model),
+	)
+	if tid := tracing.TraceID(ctx); tid != "" {
+		liveSession.SetTraceID(tid)
+		slog.Info("session trace", "session_id", sessionID, "trace_id", tid)
+	}
+	toolSpans := tracing.NewToolSpans(ctx)
+	defer toolSpans.Close()
+
 	defer func() {
 		// Recover here, not only in the outer defer, so the session is
 		// already failed when the audit log, chat notification and webhook
 		// below read its status.
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic in agent executor: %v", r)
-			slog.Error("agent goroutine panicked", "session_id", sessionID, "panic", r)
+			slog.Error("agent goroutine panicked", "session_id", sessionID, "panic", r, "stack", string(debug.Stack()))
 			h.FailSession(sessionID, msg)
 		}
 
@@ -393,6 +414,18 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 				slog.Warn("failed to cleanup workspace", "path", liveSession.WorkspacePath, "error", err)
 			}
 		}
+
+		sessionSpan.SetAttributes(
+			attribute.String("session.status", string(snap.Status)),
+			attribute.Int("session.iterations", len(snap.Iterations)),
+			attribute.Int("session.successful_iterations", snap.SuccessfulIterations),
+			attribute.Float64("session.cost_usd", snap.TotalCostUSD),
+			attribute.Int("session.warnings", len(snap.Warnings)),
+		)
+		if snap.Status == agent.SessionStatusFailed {
+			tracing.Fail(sessionSpan, snap.Error)
+		}
+		sessionSpan.End()
 	}()
 
 	// Auto-pull memory from git before resolving prompt (optional)
@@ -413,20 +446,35 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		slog.Info("workflow prompt configured", "session_id", sessionID, "path", h.config.Agent.PromptFile)
 	}
 
+	_, promptSpan := tracing.Start(ctx, "agent.prompt.resolve")
 	preamble, err := h.resolvePrompt(sessionID, message)
+	tracing.End(promptSpan, err)
 	if err != nil {
 		h.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
 		return
 	}
 
+	_, wsSpan := tracing.Start(ctx, "agent.workspace.prepare", attribute.StringSlice("session.paths", liveSession.Paths))
 	checkoutPath, aborted := h.prepareWorkspace(sessionID, liveSession)
+	if aborted {
+		tracing.Fail(wsSpan, "workspace preparation failed")
+	}
+	wsSpan.End()
 	if aborted {
 		return
 	}
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
-	plan, plannerText, aborted := h.runPlanner(ctx, sessionID, liveSession, checkoutPath, preamble, message)
+	planCtx, planSpan := tracing.Start(ctx, "agent.planner", attribute.Bool("planner.enabled", h.config.Agent.PlannerEnabled))
+	plan, plannerText, aborted := h.runPlanner(planCtx, sessionID, liveSession, checkoutPath, preamble, message)
 	plannerPromptText = plannerText
+	if plan != nil {
+		planSpan.SetAttributes(attribute.Int("planner.steps", len(plan.Steps)))
+	}
+	if aborted {
+		tracing.Fail(planSpan, "planner failed")
+	}
+	planSpan.End()
 	if aborted {
 		return
 	}
@@ -438,7 +486,13 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	as := &agentSession{backend: h.deps.Backend(), onEvent: func(ev executor.Event) {
 		liveSession.AppendExecEvent(string(ev.Kind), ev.Text, ev.At)
 		recordToolMetric(ev)
-	}}
+		switch ev.Kind {
+		case executor.EventToolStart:
+			toolSpans.Start(ev.Text)
+		case executor.EventToolEnd:
+			toolSpans.End(ev.Text)
+		}
+	}, toolSpans: toolSpans}
 	if err := as.start(ctx, checkoutPath); err != nil {
 		h.FailSession(sessionID, "agent session start failed: "+err.Error())
 		return
@@ -455,8 +509,17 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	h.runReviewerPhase(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck, as)
-	h.finalizeAgentOutputs(ctx, sessionID, liveSession, checkoutPath)
+	reviewCtx, reviewSpan := tracing.Start(ctx, "agent.review", attribute.Bool("reviewer.enabled", h.config.Agent.ReviewerEnabled))
+	h.runReviewerPhase(reviewCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck, as)
+	if rr, ok := liveSession.Snapshot().ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
+		reviewSpan.SetAttributes(attribute.Int("review.score", rr.Score), attribute.Int("review.issues", len(rr.Issues)))
+	}
+	reviewSpan.End()
+
+	finCtx, finSpan := tracing.Start(ctx, "agent.finalize")
+	h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
+	finSpan.End()
+
 	h.determineFinalStatus(ctx, sessionID, liveSession, completed, blockedOrStuck, stopReason)
 }
 
@@ -495,6 +558,11 @@ func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) 
 // h.FailSession and returns aborted=true.
 func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath, preamble, message string) (plan *subagent.PlanResult, plannerPromptText string, aborted bool) {
 	if !h.config.Agent.PlannerEnabled {
+		return nil, "", false
+	}
+	if h.deps.PlannerClient() == nil {
+		slog.Warn("planner enabled but no LLM client configured; skipping", "session_id", sessionID)
+		liveSession.AddWarning("planner skipped: no LLM client configured")
 		return nil, "", false
 	}
 	slog.Info("running planner", "session_id", sessionID)
@@ -610,10 +678,31 @@ func (h *Engine) runIterationLoop(
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))
 
 		liveSession.BeginIteration(i)
-		result, died := h.executePrompt(ctx, as.session(), req, i, deadline, liveSession)
+		iterCtx, iterSpan := tracing.Start(ctx, "agent.iteration",
+			attribute.Int("iteration.number", i),
+			attribute.Bool("iteration.retry", errorContext != ""),
+			attribute.Int("iteration.prompt_chars", len(systemPrompt)),
+			attribute.Bool("session.persistent", as.persistent()),
+		)
+		if as.toolSpans != nil {
+			as.toolSpans.SetParent(iterCtx)
+		}
+		result, died := h.executePrompt(iterCtx, as.session(), req, i, deadline, liveSession)
 		result.Prompt = systemPrompt
 		result.Retry = errorContext != ""
 		iterationsRun = i
+		iterSpan.SetAttributes(
+			attribute.String("iteration.status", string(result.Status)),
+			attribute.Float64("iteration.cost_usd", result.CostUSD),
+			attribute.Int("iteration.duration_s", result.DurationSecs),
+			attribute.Int("iteration.changed_files", len(result.ChangedFiles)),
+			attribute.String("iteration.commit", result.Commit),
+			attribute.Bool("iteration.process_died", died),
+		)
+		if result.Error != "" {
+			tracing.Fail(iterSpan, result.Error)
+		}
+		iterSpan.End()
 
 		// Check if the agent signalled task completion; strip the marker from output.
 		taskDone := false
@@ -947,8 +1036,9 @@ func (h *Engine) resolvePrompt(sessionID, message string) (string, error) {
 // because Steer reaches it from chat goroutines while the run goroutine may
 // be swapping it during a restart.
 type agentSession struct {
-	backend executor.Backend
-	onEvent func(executor.Event) // forwards session progress events; may be nil
+	backend   executor.Backend
+	onEvent   func(executor.Event) // forwards session progress events; may be nil
+	toolSpans *tracing.ToolSpans   // tool_start/tool_end → child spans of the current iteration; may be nil
 
 	mu   sync.RWMutex
 	sess executor.Session
