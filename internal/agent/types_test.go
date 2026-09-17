@@ -248,3 +248,31 @@ func TestStopChan_ClosedOnRequestStop(t *testing.T) {
 		t.Fatal("StopChan created after stop should be closed")
 	}
 }
+
+func TestToResponse_IncludesEvents(t *testing.T) {
+	s := &Session{ID: "agent-x", Status: SessionStatusRunning, StartedAt: time.Now()}
+	if _, ok := s.ToResponse()["events"]; ok {
+		t.Error("no events → no events key")
+	}
+	s.AppendExecEvent("tool_start", "Bash: go test", time.Now())
+	s.AppendExecEvent("tool_end", "Bash error: FAIL", time.Now())
+	resp := s.Snapshot().ToResponse()
+	events, _ := resp["events"].([]ExecEvent)
+	if len(events) != 2 || events[1].Text != "Bash error: FAIL" {
+		t.Errorf("events should carry the ring in order: %v", resp["events"])
+	}
+	if last, _ := resp["last_event"].(ExecEvent); last.Seq != 2 {
+		t.Errorf("last_event should be the newest: %+v", resp["last_event"])
+	}
+
+	for i := 0; i < maxResponseEvents+10; i++ {
+		s.AppendExecEvent("text", "x", time.Now())
+	}
+	events, _ = s.Snapshot().ToResponse()["events"].([]ExecEvent)
+	if len(events) != maxResponseEvents {
+		t.Errorf("response should cap at %d events, got %d", maxResponseEvents, len(events))
+	}
+	if events[len(events)-1].Seq != uint64(maxResponseEvents+12) {
+		t.Errorf("cap should keep the newest tail, last seq=%d", events[len(events)-1].Seq)
+	}
+}
