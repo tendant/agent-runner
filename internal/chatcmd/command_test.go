@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 )
 
 func withTempCWD(t *testing.T) (restore func()) {
@@ -156,6 +157,9 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	for _, k := range []string{"ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"} {
 		t.Setenv(k, "")
 	}
+	origHostAuth := clisetup.ClaudeHasHostAuth
+	clisetup.ClaudeHasHostAuth = func() bool { return false }
+	t.Cleanup(func() { clisetup.ClaudeHasHostAuth = origHostAuth })
 	env := setupTestEnv(t)
 	env.cfg.Agent.CLI = "claude"
 	env.cfg.Agent.Provider = ""
@@ -804,6 +808,9 @@ func TestCommander_Status_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	for _, k := range []string{"ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"} {
 		t.Setenv(k, "")
 	}
+	origHostAuth := clisetup.ClaudeHasHostAuth
+	clisetup.ClaudeHasHostAuth = func() bool { return false }
+	t.Cleanup(func() { clisetup.ClaudeHasHostAuth = origHostAuth })
 	env := setupTestEnv(t)
 	env.cfg.Agent.CLI = "claude"
 	env.cfg.Agent.Provider = ""
