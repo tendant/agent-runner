@@ -6,16 +6,22 @@ import (
 	"testing"
 )
 
-// noHostAuth points HOME at an empty dir and stubs the keychain probe so the
-// developer's own `claude login` doesn't leak into the test.
+// noHostAuth stubs the host-auth probe so the developer's own `claude login`
+// doesn't leak into the test.
 func noHostAuth(t *testing.T) {
+	t.Helper()
+	orig := ClaudeHasHostAuth
+	ClaudeHasHostAuth = func() bool { return false }
+	t.Cleanup(func() { ClaudeHasHostAuth = orig })
+}
+
+// fileHostAuth exercises the real probe against an empty HOME, minus the
+// keychain (which is per-user, not per-HOME).
+func fileHostAuth(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	orig := claudeKeychainHasCredentials
-	claudeKeychainHasCredentials = func() bool { return false }
-	t.Cleanup(func() { claudeKeychainHasCredentials = orig })
 }
 
 func TestBootstrapWarnings_ClaudeNoKey(t *testing.T) {
@@ -29,7 +35,7 @@ func TestBootstrapWarnings_ClaudeNoKey(t *testing.T) {
 }
 
 func TestBootstrapWarnings_ClaudeHostLogin(t *testing.T) {
-	noHostAuth(t)
+	fileHostAuth(t)
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	home := os.Getenv("HOME")
@@ -42,7 +48,7 @@ func TestBootstrapWarnings_ClaudeHostLogin(t *testing.T) {
 }
 
 func TestBootstrapWarnings_ClaudeCredentialsFile(t *testing.T) {
-	noHostAuth(t)
+	fileHostAuth(t)
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	dir := t.TempDir()

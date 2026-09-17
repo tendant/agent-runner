@@ -402,7 +402,7 @@ func BootstrapWarnings(cli, provider string) []string {
 
 	switch cli {
 	case "claude":
-		if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("ANTHROPIC_BASE_URL") == "" && !claudeHasHostAuth() {
+		if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("ANTHROPIC_BASE_URL") == "" && !ClaudeHasHostAuth() {
 			w = append(w, "claude backend requires ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (local models), or a `claude login` on this host")
 		}
 	case "codex":
@@ -462,11 +462,12 @@ func codexHasOAuthCredentials() bool {
 	return err == nil
 }
 
-// claudeHasHostAuth returns true if Claude Code can authenticate without an
+// ClaudeHasHostAuth returns true if Claude Code can authenticate without an
 // API key env var: a CLAUDE_CODE_OAUTH_TOKEN, or a prior `claude login` whose
 // credentials live in the config dir (.credentials.json on Linux, the login
 // keychain on macOS) with the account recorded in ~/.claude.json.
-func claudeHasHostAuth() bool {
+// A var so tests on a developer's logged-in machine can stub it out.
+var ClaudeHasHostAuth = func() bool {
 	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
 		return true
 	}
@@ -488,8 +489,8 @@ func claudeHasHostAuth() bool {
 }
 
 // claudeKeychainHasCredentials probes the macOS login keychain for the item
-// `claude login` stores there. A var so tests can stub it out.
-var claudeKeychainHasCredentials = func() bool {
+// `claude login` stores there.
+func claudeKeychainHasCredentials() bool {
 	if _, err := exec.LookPath("security"); err != nil {
 		return false
 	}
