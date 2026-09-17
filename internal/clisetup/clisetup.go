@@ -402,8 +402,8 @@ func BootstrapWarnings(cli, provider string) []string {
 
 	switch cli {
 	case "claude":
-		if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("ANTHROPIC_BASE_URL") == "" {
-			w = append(w, "claude backend requires ANTHROPIC_API_KEY (or ANTHROPIC_BASE_URL for local models)")
+		if os.Getenv("ANTHROPIC_API_KEY") == "" && os.Getenv("ANTHROPIC_BASE_URL") == "" && !claudeHasHostAuth() {
+			w = append(w, "claude backend requires ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (local models), or a `claude login` on this host")
 		}
 	case "codex":
 		if os.Getenv("OPENAI_API_KEY") == "" && !codexHasOAuthCredentials() {
@@ -460,6 +460,42 @@ func codexHasOAuthCredentials() bool {
 	}
 	_, err = os.Stat(filepath.Join(home, ".codex", "auth.json"))
 	return err == nil
+}
+
+// claudeHasHostAuth returns true if Claude Code can authenticate without an
+// API key env var: a CLAUDE_CODE_OAUTH_TOKEN, or a prior `claude login` whose
+// credentials live in the config dir (.credentials.json on Linux, the login
+// keychain on macOS) with the account recorded in ~/.claude.json.
+func claudeHasHostAuth() bool {
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	configDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if configDir == "" {
+		configDir = filepath.Join(home, ".claude")
+	}
+	if _, err := os.Stat(filepath.Join(configDir, ".credentials.json")); err == nil {
+		return true
+	}
+	if b, err := os.ReadFile(filepath.Join(home, ".claude.json")); err == nil && bytes.Contains(b, []byte(`"oauthAccount"`)) {
+		return true
+	}
+	return claudeKeychainHasCredentials()
+}
+
+// claudeKeychainHasCredentials probes the macOS login keychain for the item
+// `claude login` stores there. A var so tests can stub it out.
+var claudeKeychainHasCredentials = func() bool {
+	if _, err := exec.LookPath("security"); err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "security", "find-generic-password", "-s", "Claude Code-credentials").Run() == nil
 }
 
 // providerEnvKey returns the expected API key env var for a known opencode provider.

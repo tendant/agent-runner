@@ -1,15 +1,57 @@
 package clisetup
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
+// noHostAuth points HOME at an empty dir and stubs the keychain probe so the
+// developer's own `claude login` doesn't leak into the test.
+func noHostAuth(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	orig := claudeKeychainHasCredentials
+	claudeKeychainHasCredentials = func() bool { return false }
+	t.Cleanup(func() { claudeKeychainHasCredentials = orig })
+}
+
 func TestBootstrapWarnings_ClaudeNoKey(t *testing.T) {
+	noHostAuth(t)
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	warns := BootstrapWarnings("claude", "")
 	if len(warns) == 0 {
 		t.Error("expected warning when ANTHROPIC_API_KEY is missing for claude")
+	}
+}
+
+func TestBootstrapWarnings_ClaudeHostLogin(t *testing.T) {
+	noHostAuth(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	home := os.Getenv("HOME")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"oauthAccount":{"emailAddress":"x@y"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if warns := BootstrapWarnings("claude", ""); len(warns) != 0 {
+		t.Errorf("expected no warnings with host claude login, got: %v", warns)
+	}
+}
+
+func TestBootstrapWarnings_ClaudeCredentialsFile(t *testing.T) {
+	noHostAuth(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if warns := BootstrapWarnings("claude", ""); len(warns) != 0 {
+		t.Errorf("expected no warnings with .credentials.json present, got: %v", warns)
 	}
 }
 

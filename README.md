@@ -261,10 +261,10 @@ One-shot jobs: `POST /run` → poll `GET /job/{id}`
 {"error": "codex CLI is not installed — install it (npm install -g @openai/codex ...) or run POST /bootstrap to auto-install"}
 ```
 
-Missing credentials (e.g. no `ANTHROPIC_API_KEY`) don't block the request — some setups authenticate outside an API key env var — but are surfaced as a non-fatal `warnings` array on the `202` response and on the session itself:
+Missing credentials (e.g. no `ANTHROPIC_API_KEY` and no host `claude login`) don't block the request — some setups authenticate outside an API key env var — but are surfaced as a non-fatal `warnings` array on the `202` response and on the session itself:
 
 ```json
-{"session_id": "agent-...", "status": "queued", "warnings": ["claude backend requires ANTHROPIC_API_KEY (or ANTHROPIC_BASE_URL for local models)"]}
+{"session_id": "agent-...", "status": "queued", "warnings": ["claude backend requires ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (local models), or a `claude login` on this host"]}
 ```
 
 If a session does fail on a recognized misconfiguration (bad/expired key, quota exceeded, CLI missing, unknown model), `GET /agent/{id}`'s `error` field is a short actionable message with the raw CLI/API error preserved underneath, e.g. `"authentication with the LLM provider failed — check credentials with /status, or re-run /auth\n\nDetails: ..."`. These same messages reach chat clients (Telegram, Stream, WeChat) too. Check overall readiness anytime with `/status` or `POST /bootstrap`.
