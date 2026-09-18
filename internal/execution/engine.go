@@ -516,6 +516,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	reviewSpan.End()
 
+	syncCtx, syncSpan := tracing.Start(ctx, "agent.git.sync")
+	h.syncWorkspaceRepos(syncCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as)
+	syncSpan.End()
+
 	finCtx, finSpan := tracing.Start(ctx, "agent.finalize")
 	h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
 	finSpan.End()
@@ -881,17 +885,12 @@ func (h *Engine) runReviewerPhase(
 	}
 }
 
-// finalizeAgentOutputs runs post-loop bookkeeping: pushing any unpushed
-// commits, collecting _send/ output files, and submitting any scheduled
-// tasks from _schedule.json. Non-fatal — failures are recorded as session
-// warnings or logged, never abort the session.
+// finalizeAgentOutputs runs post-loop bookkeeping: collecting _send/
+// output files and submitting any scheduled tasks from _schedule.json.
+// Pushing is syncWorkspaceRepos' job, which runs just before this.
+// Non-fatal — failures are recorded as session warnings or logged, never
+// abort the session.
 func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath string) {
-	// If the agent committed but didn't push, try to push now and warn on failure.
-	if pushWarn := pushUnpushedCommits(ctx, checkoutPath, h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds); pushWarn != "" {
-		slog.Warn("unpushed commits after agent completed", "session_id", sessionID, "warning", pushWarn)
-		liveSession.AddWarning(pushWarn)
-	}
-
 	// Collect output files from _send/ after all phases (including reviewer corrections).
 	sendDir := filepath.Join(checkoutPath, "_send")
 	if outputFiles, err := collectOutputFiles(sendDir); err != nil {
@@ -1379,20 +1378,14 @@ func buildReviewerContext(review *subagent.ReviewResult) string {
 
 const maxPartialOutputChars = 2000
 
-// pushUnpushedCommits checks whether the workspace has commits that haven't
-// been pushed to origin (i.e. the agent committed but forgot to push). If any
-// are found it attempts a push and returns a warning string on failure.
-// Returns "" when everything is in sync or when there is no upstream tracking
-// branch (in which case a push wouldn't be meaningful).
+// pushUnpushedCommits pushes one repo's commits that are ahead of upstream
+// and returns a warning string on failure; "" when in sync or when there is
+// no upstream. The engine goes through syncWorkspaceRepos (multi-repo, with
+// conflict resolution); this remains for callers that want the plain form.
 func pushUnpushedCommits(ctx context.Context, repoPath string, retries, retryDelay int) string {
-	// git log @{u}..HEAD lists commits ahead of the upstream tracking branch.
-	// An error here means no upstream is configured — nothing to do.
-	cmd := gitCmd(ctx, repoPath, "log", "@{u}..HEAD", "--oneline")
-	out, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
+	if !hasUnpushedCommits(ctx, repoPath) {
 		return ""
 	}
-	// There are unpushed commits — try to push.
 	ops := gitpkg.NewOperations(retries, retryDelay)
 	if err := ops.Push(ctx, repoPath); err != nil {
 		return fmt.Sprintf("agent committed but git push failed: %v", err)

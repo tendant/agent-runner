@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -205,63 +206,161 @@ func injectToken(remote, token string) string {
 	return remote
 }
 
-// Push pushes to origin with retry logic.
+// RebaseConflictError reports that integrating the remote's new commits
+// stopped on merge conflicts. The rebase is left in progress — conflict
+// markers in the working tree, REBASE_HEAD set — so the agent can resolve
+// it the way a person would: fix the files, git add, git rebase --continue,
+// push. AbortRebase restores the pre-rebase state if nobody does.
+type RebaseConflictError struct {
+	RepoPath string
+	Branch   string
+	Files    []string
+	Err      error
+}
+
+func (e *RebaseConflictError) Error() string {
+	return fmt.Sprintf("GIT_REBASE_CONFLICT: remote %s moved and rebasing onto it conflicts in %s", e.Branch, strings.Join(e.Files, ", "))
+}
+
+func (e *RebaseConflictError) Unwrap() error { return e.Err }
+
+// Push pushes HEAD to its same-named branch on origin, retrying.
 //
 // A non-fast-forward rejection means the remote moved while this session was
-// working — the common case once more than one session runs at a time. It is
-// recoverable: rebase onto the new remote head and push again. Returning the
-// conflict straight to the caller loses work, because the agent path deletes
-// the session workspace immediately afterwards (internal/execution/engine.go
-// cleanup), taking the unpushed commits with it. The rebase is attempted at
-// most once per Push call; a conflict that survives it needs a human.
+// working — routine once several sessions run at once. It is recoverable:
+// rebase onto the new remote head and push again, as many times as the
+// retry budget allows, since with N writers the remote can move between the
+// rebase and the push. A rebase that stops on conflicts returns a
+// *RebaseConflictError with the rebase left in progress for the caller to
+// resolve; other rebase failures abort the rebase and return
+// GIT_PUSH_CONFLICT. Returning a rejection to the caller without this would
+// lose work: the agent path deletes the session workspace afterwards
+// (internal/execution/engine.go cleanup), taking unpushed commits with it.
 func (o *Operations) Push(ctx context.Context, repoPath string) error {
 	var lastErr error
 	pushTarget := o.resolveRemote(ctx, repoPath)
-	rebaseAttempted := false
+	branch, _ := o.GetCurrentBranch(ctx, repoPath)
+	if branch == "" || branch == "HEAD" {
+		branch = "HEAD"
+	}
+	rejected := false
 
 	for i := range o.PushRetries {
-		if i > 0 {
+		if i > 0 && !rejected {
 			time.Sleep(time.Duration(o.PushRetryDelaySeconds) * time.Second)
 		}
+		rejected = false
 
 		err := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD")
 		if err == nil {
 			return nil
 		}
-
 		lastErr = err
 		errStr := err.Error()
 
-		// Check for non-retryable errors
-		if strings.Contains(errStr, "non-fast-forward") ||
-			strings.Contains(errStr, "rejected") {
-			if rebaseAttempted {
-				return fmt.Errorf("GIT_PUSH_CONFLICT: %w", err)
-			}
-			rebaseAttempted = true
-
-			if rebaseErr := o.PullRebase(ctx, repoPath); rebaseErr != nil {
+		switch {
+		case strings.Contains(errStr, "non-fast-forward") || strings.Contains(errStr, "rejected"):
+			rejected = true
+			if rebaseErr := o.pullRebase(ctx, repoPath, pushTarget, branch); rebaseErr != nil {
+				if files := o.ConflictedFiles(ctx, repoPath); len(files) > 0 {
+					return &RebaseConflictError{RepoPath: repoPath, Branch: branch, Files: files, Err: rebaseErr}
+				}
 				// Leave the repo in a usable state rather than mid-rebase, so a
 				// later retry or manual inspection isn't blocked by REBASE_HEAD.
-				if abortErr := o.runGitCommand(ctx, repoPath, "rebase", "--abort"); abortErr != nil {
+				if abortErr := o.AbortRebase(ctx, repoPath); abortErr != nil {
 					slog.Debug("git: rebase --abort after failed pull", "repo", repoPath, "error", abortErr)
 				}
 				return fmt.Errorf("GIT_PUSH_CONFLICT: %w (rebase onto remote failed: %v)", err, rebaseErr)
 			}
-
-			if retryErr := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD"); retryErr != nil {
-				lastErr = retryErr
-				return fmt.Errorf("GIT_PUSH_CONFLICT: push after rebase failed: %w", retryErr)
-			}
-			return nil
-		}
-		if strings.Contains(errStr, "Authentication failed") ||
-			strings.Contains(errStr, "Permission denied") {
+			slog.Info("git: rebased onto moved remote, pushing again", "repo", repoPath, "branch", branch, "attempt", i+1)
+			// Loop straight into the next push, no delay.
+		case strings.Contains(errStr, "Authentication failed") || strings.Contains(errStr, "Permission denied"):
 			return fmt.Errorf("GIT_AUTH_FAILURE: %w", err)
 		}
 	}
 
+	if rejected {
+		return fmt.Errorf("GIT_PUSH_CONFLICT: remote kept moving; push rejected after %d attempts: %w", o.PushRetries, lastErr)
+	}
 	return fmt.Errorf("GIT_NETWORK_ERROR: push failed after %d retries: %w", o.PushRetries, lastErr)
+}
+
+// PushToBranch pushes HEAD to a differently named branch on origin, for
+// parking work that couldn't be merged onto its own branch.
+func (o *Operations) PushToBranch(ctx context.Context, repoPath, branch string) error {
+	pushTarget := o.resolveRemote(ctx, repoPath)
+	if err := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD:refs/heads/"+branch); err != nil {
+		return fmt.Errorf("git push to %s failed: %w", branch, err)
+	}
+	return nil
+}
+
+// ConflictedFiles lists paths with unresolved merge conflicts.
+func (o *Operations) ConflictedFiles(ctx context.Context, repoPath string) []string {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			files = append(files, l)
+		}
+	}
+	return files
+}
+
+// RebaseInProgress reports whether repoPath is mid-rebase.
+func (o *Operations) RebaseInProgress(ctx context.Context, repoPath string) bool {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", dir)
+		cmd.Dir = repoPath
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		path := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repoPath, path)
+		}
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ContinueRebase resumes a rebase whose conflicts have been staged,
+// accepting the original commit messages.
+func (o *Operations) ContinueRebase(ctx context.Context, repoPath string) error {
+	return o.runGitCommandEnv(ctx, repoPath, []string{"GIT_EDITOR=true"}, "rebase", "--continue")
+}
+
+// RebaseHeadName returns the branch a rebase in progress is rewriting.
+func (o *Operations) RebaseHeadName(ctx context.Context, repoPath string) (string, error) {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", dir+"/head-name")
+		cmd.Dir = repoPath
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		path := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repoPath, path)
+		}
+		if b, err := os.ReadFile(path); err == nil {
+			return strings.TrimPrefix(strings.TrimSpace(string(b)), "refs/heads/"), nil
+		}
+	}
+	return "", fmt.Errorf("no rebase in progress")
+}
+
+// AbortRebase restores the branch to its pre-rebase state.
+func (o *Operations) AbortRebase(ctx context.Context, repoPath string) error {
+	return o.runGitCommand(ctx, repoPath, "rebase", "--abort")
 }
 
 // GetCurrentBranch returns the current branch name
@@ -288,9 +387,20 @@ func (o *Operations) RevertChanges(ctx context.Context, repoPath string) error {
 	return nil
 }
 
-// PullRebase pulls from origin with rebase strategy
+// PullRebase rebases the current branch onto its same-named branch on origin.
 func (o *Operations) PullRebase(ctx context.Context, repoPath string) error {
-	if err := o.runGitCommand(ctx, repoPath, "pull", "--rebase", "origin", "HEAD"); err != nil {
+	branch, _ := o.GetCurrentBranch(ctx, repoPath)
+	if branch == "" || branch == "HEAD" {
+		branch = "HEAD"
+	}
+	return o.pullRebase(ctx, repoPath, o.resolveRemote(ctx, repoPath), branch)
+}
+
+// pullRebase is PullRebase with the remote and branch already resolved.
+// The branch is named explicitly: `pull origin HEAD` would rebase onto the
+// remote's default branch, which is wrong for any other branch.
+func (o *Operations) pullRebase(ctx context.Context, repoPath, remote, branch string) error {
+	if err := o.runGitCommand(ctx, repoPath, "pull", "--rebase", remote, branch); err != nil {
 		return fmt.Errorf("git pull --rebase failed: %w", err)
 	}
 	return nil
