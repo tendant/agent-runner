@@ -181,10 +181,28 @@ pool is sized at startup.
 
 Each session already gets an isolated workspace, and the runner guards the state
 they share: the memory dir (mutex in `internal/template`) and the repo cache
-(per-repo lock in `internal/executor`). What it cannot guard is anything outside
-the process — a shared config repo, a sequential ID derived by listing a
-directory, a remote branch. Whether two tasks collide there depends on what the
-tasks are, so the agent decides, using a named lock:
+(per-repo lock in `internal/executor`).
+
+**Git is handled without locks.** Two sessions pushing to the same branch is the
+normal case, and it resolves the way it does for people:
+
+1. A rejected push is rebased onto the moved remote and pushed again, up to
+   `GIT_PUSH_RETRIES` times (the remote can move again in between).
+2. If the rebase conflicts, the rebase is left in progress and the agent gets a
+   corrective iteration naming the repo, branch and conflicted files, with the
+   exact steps (resolve markers → `git add` → `git rebase --continue` → push).
+   Up to two such iterations.
+3. If it still can't be merged, the runner aborts the rebase and pushes the
+   session's commits to `agent-rescue/<session-id>` so nothing is lost when the
+   workspace is deleted, and the session carries a warning naming that branch.
+
+The default `agent.md` tells the agent the same for pushes it does itself
+mid-task. Every git repo in the workspace is handled, not just the first.
+
+What the runner cannot resolve is state outside git — a sequential ID derived by
+listing a directory, a deploy slot, a shared config file. That's what the
+optional named lock is for; use it only when a task genuinely needs exclusive
+access to something like that:
 
 ```bash
 # Acquire; blocks up to wait_seconds for the current holder.
