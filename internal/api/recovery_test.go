@@ -48,7 +48,7 @@ func recoveryServer(t *testing.T) *Server {
 		t.Fatal("expected the journal to be constructed")
 	}
 	t.Cleanup(srv.agentManager.Stop)
-	t.Cleanup(srv.convManager.Stop)
+	t.Cleanup(srv.threadManager.Stop)
 	return srv
 }
 

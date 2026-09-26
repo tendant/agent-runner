@@ -27,12 +27,12 @@ func TestEmitEvent_Success(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-token")
 	payload := json.RawMessage(`{"key":"value"}`)
-	err := c.EmitEvent(context.Background(), "conv-123", "status_update", payload)
+	err := c.EmitEvent(context.Background(), "m_123", "status_update", payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if gotPath != "/v1/conversations/conv-123/events" {
+	if gotPath != "/v2/threads/m_123/events" {
 		t.Errorf("unexpected path: %s", gotPath)
 	}
 	if gotAuth != "Bearer test-token" {
@@ -77,7 +77,7 @@ func TestUploadFile_Success(t *testing.T) {
 		}
 
 		// Verify path
-		if r.URL.Path != "/v1/conversations/conv-1/files" {
+		if r.URL.Path != "/v2/channels/c_1/files" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 
@@ -104,7 +104,7 @@ func TestUploadFile_Success(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "tok")
-	fileID, err := c.UploadFile(context.Background(), "conv-1", "test.txt", "text/plain", []byte("file content"))
+	fileID, err := c.UploadFile(context.Background(), "c_1", "test.txt", "text/plain", []byte("file content"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestSendMessage_WithoutFileIDs(t *testing.T) {
 	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/conversations/conv-1/messages" {
+		if r.URL.Path != "/v2/threads/m_1/messages" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		json.NewDecoder(r.Body).Decode(&gotBody)
@@ -129,7 +129,7 @@ func TestSendMessage_WithoutFileIDs(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "tok")
-	err := c.SendMessage(context.Background(), "conv-1", "hello world", nil)
+	err := c.SendMessage(context.Background(), "m_1", "hello world", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestSendMessage_ServerError(t *testing.T) {
 
 func TestDownloadFile_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/files/file-xyz" {
+		if r.URL.Path != "/v2/files/file-xyz" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer tok" {
@@ -255,7 +255,7 @@ func TestStreamEvents_ParsesSSE(t *testing.T) {
 	event2 := Event{Seq: 2, Type: "output", Payload: json.RawMessage(`{"text":"hello"}`)}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/conversations/conv-1/events/stream" {
+		if r.URL.Path != "/v2/channels/c_1/events/stream" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("after_seq") != "0" {
@@ -288,7 +288,7 @@ func TestStreamEvents_ParsesSSE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ch, err := c.StreamEvents(ctx, "conv-1", 0)
+	ch, err := c.StreamEvents(ctx, "c_1", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

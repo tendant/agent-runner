@@ -1,8 +1,8 @@
 package botcommon
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // engineSender records every send, mutex-guarded because the engine's
@@ -135,8 +135,8 @@ type engineFixture struct {
 	engine  *Engine
 	sender  *engineSender
 	starter *engineStarter
-	conv    *conversation.Conversation
-	mgr     *conversation.Manager
+	conv    *thread.Thread
+	mgr     *thread.Manager
 }
 
 func newEngineFixture(t *testing.T, analyzerOutput string) *engineFixture {
@@ -145,16 +145,16 @@ func newEngineFixture(t *testing.T, analyzerOutput string) *engineFixture {
 
 	sender := &engineSender{}
 	starter := &engineStarter{session: completedSession("iteration output")}
-	mgr := conversation.NewManager(t.TempDir())
+	mgr := thread.NewManager(t.TempDir())
 
-	var analyzer *conversation.Analyzer
+	var analyzer *thread.Analyzer
 	if analyzerOutput != "" {
-		analyzer = conversation.NewAnalyzer(&fakeAnalyzerClient{output: analyzerOutput})
+		analyzer = thread.NewAnalyzer(&fakeAnalyzerClient{output: analyzerOutput})
 	}
 
 	e := &Engine{
 		Starter:              starter,
-		ConvManager:          mgr,
+		ThreadManager:        mgr,
 		Analyzer:             analyzer,
 		Sender:               sender,
 		Source:               "test",
@@ -204,7 +204,7 @@ func TestHandleConfirmation_HappyPath(t *testing.T) {
 	}
 
 	// No pending input: conversation completed (state cleared via manager).
-	if st := f.conv.GetState(); st == conversation.StateExecuting {
+	if st := f.conv.GetState(); st == thread.StateExecuting {
 		t.Errorf("state should not remain executing, got %v", st)
 	}
 }
@@ -220,7 +220,7 @@ func TestHandleConfirmation_StartFailure(t *testing.T) {
 	if len(finals) != 1 || !strings.Contains(finals[0], "Failed to start agent: queue is full") {
 		t.Errorf("expected failure final, got %v", finals)
 	}
-	if f.conv.GetState() != conversation.StateGathering {
+	if f.conv.GetState() != thread.StateGathering {
 		t.Errorf("state should reset to gathering, got %v", f.conv.GetState())
 	}
 }
@@ -390,7 +390,7 @@ func TestHandleAnalysis_UnknownActionTreatedAsAsk(t *testing.T) {
 
 func TestHandleAnalysis_AnalyzerTimeoutSendsApology(t *testing.T) {
 	f := newEngineFixture(t, "unused")
-	f.engine.Analyzer = conversation.NewAnalyzer(&fakeAnalyzerClient{delay: time.Second, output: "late"})
+	f.engine.Analyzer = thread.NewAnalyzer(&fakeAnalyzerClient{delay: time.Second, output: "late"})
 	f.engine.Analyzer.SetTimeout(10 * time.Millisecond)
 	f.conv.AddMessage("user", "task")
 
@@ -415,7 +415,7 @@ func TestResumeSession_ReattachesWatcher(t *testing.T) {
 	f.engine.ResumeSession(context.Background(), "conv-1", "sess-1")
 
 	// Conversation goes back to executing while the recovered run finishes.
-	if f.conv.GetState() != conversation.StateExecuting {
+	if f.conv.GetState() != thread.StateExecuting {
 		t.Errorf("expected executing during resume, got %v", f.conv.GetState())
 	}
 
@@ -431,7 +431,7 @@ func TestResumeSession_ReattachesWatcher(t *testing.T) {
 	if !sawOutput {
 		t.Error("expected recovered session output in the conversation")
 	}
-	if f.conv.GetState() == conversation.StateExecuting {
+	if f.conv.GetState() == thread.StateExecuting {
 		t.Error("state should clear after the recovered session ends")
 	}
 	// Resume must not start a new agent.
@@ -445,7 +445,7 @@ func TestResumeSession_ReattachesWatcher(t *testing.T) {
 
 func TestHandleExecuting_SteersLiveSession(t *testing.T) {
 	f := newEngineFixture(t, "")
-	f.conv.SetState(conversation.StateExecuting)
+	f.conv.SetState(thread.StateExecuting)
 	f.conv.SetActiveSession("sess-42")
 	f.conv.AddMessage("user", "focus on the tests") // sets pendingInput
 
@@ -470,7 +470,7 @@ func TestHandleExecuting_SteersLiveSession(t *testing.T) {
 func TestHandleExecuting_FallsBackToQueue(t *testing.T) {
 	f := newEngineFixture(t, "")
 	f.starter.steerErr = errors.New("operation not supported by this backend")
-	f.conv.SetState(conversation.StateExecuting)
+	f.conv.SetState(thread.StateExecuting)
 	f.conv.SetActiveSession("sess-42")
 	f.conv.AddMessage("user", "another thing")
 

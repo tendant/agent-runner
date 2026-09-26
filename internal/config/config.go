@@ -149,7 +149,7 @@ type TelegramConfig struct {
 type StreamConfig struct {
 	ServerURL         string        // STREAM_SERVER_URL
 	BotToken          string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
-	ConversationIDs   []string      // STREAM_CONVERSATION_IDS
+	ChannelIDs        []string      // STREAM_CHANNEL_IDS (STREAM_CONVERSATION_IDS still read)
 	PollInterval      time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
 	StateDir          string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
 	MaxCatchUpBacklog int           // STREAM_MAX_CATCHUP_BACKLOG — cap on messages reacted to after a reconnect gap; older ones in the burst are skipped, not replayed (default: 100)
@@ -473,7 +473,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.Stream.ServerURL = envOrDefault("STREAM_SERVER_URL", "")
 	cfg.Stream.BotToken = envOrDefault("STREAM_BOT_TOKEN", "")
-	cfg.Stream.ConversationIDs = envSliceOrDefault("STREAM_CONVERSATION_IDS", nil)
+	cfg.Stream.ChannelIDs = envSliceOrDefault("STREAM_CHANNEL_IDS", envSliceOrDefault("STREAM_CONVERSATION_IDS", nil))
 	if v := os.Getenv("STREAM_POLL_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.Stream.PollInterval = d

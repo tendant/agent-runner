@@ -18,7 +18,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -27,6 +26,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/locks"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/textutil"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // Notifier can send messages to configured chat channels; canonical type in
@@ -68,9 +68,9 @@ type Handlers struct {
 	execMu           sync.RWMutex
 	executor         executor.Executor
 	backend          executor.Backend
-	plannerClient    llm.Client             // direct LLM API for fast planning (tier 2)
-	curatorClient    llm.Client             // cheap LLM for post-session memory curation; nil = curation disabled
-	analyzer         *conversation.Analyzer // intent router for POST /agent (ask/plan/execute); nil = always execute
+	plannerClient    llm.Client       // direct LLM API for fast planning (tier 2)
+	curatorClient    llm.Client       // cheap LLM for post-session memory curation; nil = curation disabled
+	analyzer         *thread.Analyzer // intent router for POST /agent (ask/plan/execute); nil = always execute
 	validator        *executor.Validator
 	workspaceManager *executor.WorkspaceManager
 	runLogger        *logging.RunLogger
@@ -147,7 +147,7 @@ func (h *Handlers) SetCuratorClient(c llm.Client) {
 // SetAnalyzer sets the conversation analyzer used to route POST /agent
 // messages (ask/plan/execute) before starting a session — the same analyzer
 // already used by the Telegram/Stream/WeChat bots.
-func (h *Handlers) SetAnalyzer(a *conversation.Analyzer) {
+func (h *Handlers) SetAnalyzer(a *thread.Analyzer) {
 	h.analyzer = a
 }
 

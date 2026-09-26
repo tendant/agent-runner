@@ -14,7 +14,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // AgentStarter is the interface for starting and polling agent sessions.
@@ -32,8 +32,8 @@ type Bot struct {
 	starter    AgentStarter
 	gateway    Gateway
 
-	convManager *conversation.Manager
-	analyzer    *conversation.Analyzer
+	threadManager *thread.Manager
+	analyzer      *thread.Analyzer
 
 	// contextTokens maps fromUserID → most-recently-received context_token.
 	// The token must be echoed in replies so the iLink server can route them.
@@ -58,21 +58,21 @@ type Bot struct {
 // New creates a new WeChat bot. Always returns a non-nil bot; if no token is
 // configured the bot starts in a dormant state and becomes active after
 // Reload is called with a valid token.
-func New(cfg config.WeChatConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, gateway Gateway) *Bot {
+func New(cfg config.WeChatConfig, starter AgentStarter, threadMgr *thread.Manager, analyzer *thread.Analyzer, gateway Gateway) *Bot {
 	mediaDir := filepath.Join(cfg.StateDir, "wechat-media")
 	b := &Bot{
 		client:        NewClient(cfg.BaseURL, cfg.Token, cfg.StateDir),
 		downloader:    NewDownloader(cfg.CDNBaseURL, mediaDir),
 		starter:       starter,
 		gateway:       gateway,
-		convManager:   convMgr,
+		threadManager: threadMgr,
 		analyzer:      analyzer,
 		ctxTokens:     make(map[string]string),
 		ctxTokenTimes: make(map[string]time.Time),
 	}
 	b.engine = &botcommon.Engine{
 		Starter:              starter,
-		ConvManager:          convMgr,
+		ThreadManager:        threadMgr,
 		Analyzer:             analyzer,
 		Sender:               (*wechatSender)(b),
 		Source:               "wechat",
@@ -361,31 +361,31 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 	// Route all other messages through the unified gateway.
 	if b.gateway != nil {
 		asyncSend := func(msg string) { b.sendText(context.Background(), userID, msg) }
-		reset := func() { b.convManager.Complete(chatID) }
+		reset := func() { b.threadManager.Complete(chatID) }
 		if reply, _, ok := b.gateway.Handle(content, asyncSend, reset); ok {
 			b.sendText(ctx, userID, reply)
 			return
 		}
 	}
 
-	conv := b.convManager.GetOrCreate(chatID)
+	conv := b.threadManager.GetOrCreate(chatID)
 	conv.AddMessage("user", content)
 
 	state := conv.GetState()
 	slog.Info("wechat: conversation state", "user_id", userID, "state", state)
 
-	if state == conversation.StateExecuting {
+	if state == thread.StateExecuting {
 		b.engine.HandleExecuting(ctx, userID, conv, content)
 		return
 	}
 
-	if state == conversation.StateConfirming {
+	if state == thread.StateConfirming {
 		if botcommon.IsConfirmation(content) {
 			b.engine.HandleConfirmation(context.Background(), chatID, conv)
 			return
 		}
 		if botcommon.IsDenial(content) {
-			conv.SetState(conversation.StateGathering)
+			conv.SetState(thread.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
 			b.sendText(ctx, userID, "OK, what would you like to change?")
 			return

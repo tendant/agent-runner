@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Event represents a server-sent event from agent-stream.
+// Event represents a server-sent event from an agent-stream channel.
 type Event struct {
 	Seq     int64           `json:"seq"`
 	Type    string          `json:"type"`
@@ -30,6 +30,17 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// targetPath returns the agent-stream /v2 resource a send is addressed to.
+// Thread keys are thread root message IDs; channel IDs (c_...) address the
+// channel itself, which is how channel-level sends and state recorded before
+// threads existed keep working.
+func (c *Client) targetPath(key string) string {
+	if strings.HasPrefix(key, "c_") {
+		return c.serverURL + "/v2/channels/" + key
+	}
+	return c.serverURL + "/v2/threads/" + key
+}
+
 // NewClient creates a new agent-stream API client.
 func NewClient(serverURL, botToken string) *Client {
 	return &Client{
@@ -41,8 +52,8 @@ func NewClient(serverURL, botToken string) *Client {
 	}
 }
 
-// EmitEvent sends an event to a conversation.
-func (c *Client) EmitEvent(ctx context.Context, conversationID, eventType string, payload json.RawMessage) error {
+// EmitEvent sends a run event to a thread (or, for a c_ key, a channel).
+func (c *Client) EmitEvent(ctx context.Context, key, eventType string, payload json.RawMessage) error {
 	body := map[string]any{
 		"type":    eventType,
 		"payload": json.RawMessage(payload),
@@ -52,7 +63,7 @@ func (c *Client) EmitEvent(ctx context.Context, conversationID, eventType string
 		return fmt.Errorf("marshal event: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/conversations/%s/events", c.serverURL, conversationID)
+	url := c.targetPath(key) + "/events"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -83,7 +94,7 @@ type DownloadedFile struct {
 
 // DownloadFile downloads a file by ID, returning its content, filename, and content type.
 func (c *Client) DownloadFile(ctx context.Context, fileID string) (*DownloadedFile, error) {
-	url := fmt.Sprintf("%s/v1/files/%s", c.serverURL, fileID)
+	url := fmt.Sprintf("%s/v2/files/%s", c.serverURL, fileID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -124,8 +135,9 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) (*DownloadedFi
 	}, nil
 }
 
-// UploadFile uploads a file to a conversation and returns the file ID.
-func (c *Client) UploadFile(ctx context.Context, conversationID, filename, contentType string, data []byte) (string, error) {
+// UploadFile uploads a file into a thread's channel (or, for a c_ key, a
+// channel) and returns the file ID.
+func (c *Client) UploadFile(ctx context.Context, key, filename, contentType string, data []byte) (string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -147,7 +159,7 @@ func (c *Client) UploadFile(ctx context.Context, conversationID, filename, conte
 		return "", fmt.Errorf("close multipart: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/conversations/%s/files", c.serverURL, conversationID)
+	url := c.targetPath(key) + "/files"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -176,8 +188,9 @@ func (c *Client) UploadFile(ctx context.Context, conversationID, filename, conte
 	return result.ID, nil
 }
 
-// SendMessage sends a message to a conversation, optionally with file attachments.
-func (c *Client) SendMessage(ctx context.Context, conversationID, content string, fileIDs []string) error {
+// SendMessage posts a reply in a thread (or, for a c_ key, a new thread root
+// in a channel), optionally with file attachments.
+func (c *Client) SendMessage(ctx context.Context, key, content string, fileIDs []string) error {
 	body := map[string]any{
 		"content": content,
 	}
@@ -190,7 +203,7 @@ func (c *Client) SendMessage(ctx context.Context, conversationID, content string
 		return fmt.Errorf("marshal message: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/conversations/%s/messages", c.serverURL, conversationID)
+	url := c.targetPath(key) + "/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -212,15 +225,16 @@ func (c *Client) SendMessage(ctx context.Context, conversationID, content string
 	return nil
 }
 
-// ErrNotFound is returned by PollEvents when the server responds with 404.
+// ErrNotFound is returned by PollEvents when the server has no polling
+// endpoint (404, or 405 because only POST is routed on that path).
 // Callers can use errors.Is to detect this and fall back to SSE catch-up.
 var ErrNotFound = fmt.Errorf("not found")
 
 // PollEvents fetches events after afterSeq in a single HTTP request (no SSE required).
 // Returns all new events sorted by seq. Suitable for polling loops.
 // Returns ErrNotFound if the server responds with 404 (endpoint not supported).
-func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq int64) ([]Event, error) {
-	url := fmt.Sprintf("%s/v1/conversations/%s/events?after_seq=%d", c.serverURL, conversationID, afterSeq)
+func (c *Client) PollEvents(ctx context.Context, channelID string, afterSeq int64) ([]Event, error) {
+	url := fmt.Sprintf("%s/v2/channels/%s/events?after_seq=%d", c.serverURL, channelID, afterSeq)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create poll request: %w", err)
@@ -233,7 +247,7 @@ func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, ErrNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -250,8 +264,8 @@ func (c *Client) PollEvents(ctx context.Context, conversationID string, afterSeq
 
 // StreamEvents opens an SSE connection and returns a channel of events.
 // The channel is closed when the context is cancelled or the connection drops.
-func (c *Client) StreamEvents(ctx context.Context, conversationID string, afterSeq int64) (<-chan Event, error) {
-	url := fmt.Sprintf("%s/v1/conversations/%s/events/stream?after_seq=%d", c.serverURL, conversationID, afterSeq)
+func (c *Client) StreamEvents(ctx context.Context, channelID string, afterSeq int64) (<-chan Event, error) {
+	url := fmt.Sprintf("%s/v2/channels/%s/events/stream?after_seq=%d", c.serverURL, channelID, afterSeq)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create SSE request: %w", err)

@@ -241,12 +241,14 @@ To connect agent-runner, you need three values from the app:
 
 2. **`STREAM_BOT_TOKEN`** — create a bot in the app under Menu → Bots → tap `+`. The token is shown once after creation — copy it immediately.
 
-3. **`STREAM_CONVERSATION_IDS`** — create a conversation in the app (tap `+` on the conversation list). The conversation ID starts with `c_` and is visible in the conversation detail.
+3. **`STREAM_CHANNEL_IDS`** — create a channel in the app (tap `+` on the channel list). The channel ID starts with `c_` and is visible in the channel detail. (`STREAM_CONVERSATION_IDS` is still read as a fallback.)
+
+Each top-level message in a channel starts a Thread, and the bot keeps separate context, plan and agent session for every thread. Replies inside a thread continue that thread's work, so several tasks can run side by side in one channel.
 
 ```bash
 STREAM_SERVER_URL=https://your-agent-stream-server
 STREAM_BOT_TOKEN=your-bot-jwt
-STREAM_CONVERSATION_IDS=c_your_conversation_id
+STREAM_CHANNEL_IDS=c_your_channel_id
 ```
 
 ## API

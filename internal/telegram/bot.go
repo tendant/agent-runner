@@ -16,7 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -35,9 +35,9 @@ type Bot struct {
 	starter  AgentStarter
 	gateway  Gateway
 
-	convManager *conversation.Manager
-	analyzer    *conversation.Analyzer
-	engine      *botcommon.Engine
+	threadManager *thread.Manager
+	analyzer      *thread.Analyzer
+	engine        *botcommon.Engine
 
 	api    *tgbotapi.BotAPI
 	cancel context.CancelFunc
@@ -47,23 +47,23 @@ type Bot struct {
 // New creates a new Telegram bot. Returns nil if the token is empty.
 // tmpRoot is the base directory for downloaded media files.
 // The actual API connection is deferred to Start().
-func New(cfg config.TelegramConfig, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, tmpRoot string, gateway Gateway) *Bot {
+func New(cfg config.TelegramConfig, starter AgentStarter, threadMgr *thread.Manager, analyzer *thread.Analyzer, tmpRoot string, gateway Gateway) *Bot {
 	if cfg.BotToken == "" {
 		return nil
 	}
 
 	b := &Bot{
-		token:       cfg.BotToken,
-		chatID:      cfg.ChatID,
-		mediaDir:    filepath.Join(tmpRoot, "telegram-media"),
-		starter:     starter,
-		gateway:     gateway,
-		convManager: convMgr,
-		analyzer:    analyzer,
+		token:         cfg.BotToken,
+		chatID:        cfg.ChatID,
+		mediaDir:      filepath.Join(tmpRoot, "telegram-media"),
+		starter:       starter,
+		gateway:       gateway,
+		threadManager: threadMgr,
+		analyzer:      analyzer,
 	}
 	b.engine = &botcommon.Engine{
 		Starter:              starter,
-		ConvManager:          convMgr,
+		ThreadManager:        threadMgr,
 		Analyzer:             analyzer,
 		Sender:               (*telegramSender)(b),
 		Source:               "telegram",
@@ -196,7 +196,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Route through the unified gateway: /cancel, commands, slash-block.
 	if b.gateway != nil {
 		asyncSend := func(msg string) { b.send(tgChatID, msg) }
-		reset := func() { b.convManager.Complete(chatID) }
+		reset := func() { b.threadManager.Complete(chatID) }
 		if reply, _, ok := b.gateway.Handle(content, asyncSend, reset); ok {
 			b.send(tgChatID, reply)
 			return
@@ -204,25 +204,25 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Get or create conversation
-	conv := b.convManager.GetOrCreate(chatID)
+	conv := b.threadManager.GetOrCreate(chatID)
 	conv.AddMessage("user", content)
 
 	state := conv.GetState()
 
 	// If currently executing, queue the message
-	if state == conversation.StateExecuting {
+	if state == thread.StateExecuting {
 		b.engine.HandleExecuting(context.Background(), chatID, conv, content)
 		return
 	}
 
 	// If confirming, check for yes/no
-	if state == conversation.StateConfirming {
+	if state == thread.StateConfirming {
 		if botcommon.IsConfirmation(content) {
 			b.engine.HandleConfirmation(context.Background(), chatID, conv)
 			return
 		}
 		if botcommon.IsDenial(content) {
-			conv.SetState(conversation.StateGathering)
+			conv.SetState(thread.StateGathering)
 			conv.AddMessage("assistant", "OK, what would you like to change?")
 			b.send(tgChatID, "OK, what would you like to change?")
 			return
