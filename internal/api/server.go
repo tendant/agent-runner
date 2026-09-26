@@ -19,11 +19,11 @@ import (
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/thread"
 	// Import metrics package to register prometheus collectors.
 	_ "github.com/agent-runner/agent-runner/internal/metrics"
 	"github.com/agent-runner/agent-runner/internal/scheduler"
@@ -36,17 +36,17 @@ import (
 
 // Server represents the HTTP API server
 type Server struct {
-	config       *config.Config
-	httpServer   *http.Server
-	handlers     *Handlers
-	telegramBot  *telegram.Bot
-	streamBot    *stream.Bot
-	wechatBot    *wechat.Bot
-	jobManager   *jobs.Manager
-	agentManager *agent.Manager
-	convManager  *conversation.Manager
-	scheduler    *scheduler.Scheduler
-	journal      *sessionjournal.Journal
+	config        *config.Config
+	httpServer    *http.Server
+	handlers      *Handlers
+	telegramBot   *telegram.Bot
+	streamBot     *stream.Bot
+	wechatBot     *wechat.Bot
+	jobManager    *jobs.Manager
+	agentManager  *agent.Manager
+	threadManager *thread.Manager
+	scheduler     *scheduler.Scheduler
+	journal       *sessionjournal.Journal
 }
 
 // NewServer creates a new API server
@@ -125,8 +125,8 @@ func NewServer(cfg *config.Config) *Server {
 	// Conversation analyzer — its inner LLM client (and the planner/curator
 	// clients) are built by RefreshRuntime below, which is also re-run after
 	// /set so runtime config changes apply without a restart.
-	convManager := conversation.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
-	analyzer := conversation.NewAnalyzer(nil)
+	threadManager := thread.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
+	analyzer := thread.NewAnalyzer(nil)
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
 			analyzer.SetAgentContext(string(data))
@@ -146,9 +146,9 @@ func NewServer(cfg *config.Config) *Server {
 	handlers.SetCommander(commander) // also builds handlers.gateway
 	gateway := handlers.Gateway()
 	agentStarter := handlers.AgentStarter()
-	telegramBot := telegram.New(cfg.Telegram, agentStarter, convManager, analyzer, cfg.TmpRoot, gateway)
-	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, convManager, analyzer, gateway)
-	wechatBot := wechat.New(cfg.WeChat, agentStarter, convManager, analyzer, gateway)
+	telegramBot := telegram.New(cfg.Telegram, agentStarter, threadManager, analyzer, cfg.TmpRoot, gateway)
+	streamBot := stream.New(cfg.Stream, cfg.UploadsRoot, agentStarter, threadManager, analyzer, gateway)
+	wechatBot := wechat.New(cfg.WeChat, agentStarter, threadManager, analyzer, gateway)
 
 	// One-time first-contact greeting, shared by every bot. Markers live
 	// under TmpRoot: losing them only repeats the greeting once.
@@ -191,14 +191,14 @@ func NewServer(cfg *config.Config) *Server {
 			WriteTimeout: writeTimeout(cfg),
 			IdleTimeout:  60 * time.Second,
 		},
-		handlers:     handlers,
-		telegramBot:  telegramBot,
-		streamBot:    streamBot,
-		wechatBot:    wechatBot,
-		jobManager:   jobManager,
-		agentManager: agentManager,
-		convManager:  convManager,
-		journal:      journal,
+		handlers:      handlers,
+		telegramBot:   telegramBot,
+		streamBot:     streamBot,
+		wechatBot:     wechatBot,
+		jobManager:    jobManager,
+		agentManager:  agentManager,
+		threadManager: threadManager,
+		journal:       journal,
 	}
 }
 
@@ -284,7 +284,7 @@ func (s *Server) Start() error {
 					s.telegramBot.Stop()
 				}
 			},
-			s.convManager.Stop,
+			s.threadManager.Stop,
 		} {
 			botWg.Add(1)
 			go func(f func()) {

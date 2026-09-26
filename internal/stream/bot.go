@@ -21,7 +21,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 	"github.com/agent-runner/agent-runner/internal/wechat"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -33,14 +33,21 @@ type AgentStarter = botcommon.AgentStarter
 // conversation or agent logic. It is the single entry point for all messages.
 type Gateway = botcommon.Gateway
 
-// Bot bridges agent-stream conversations to the agent runner.
+// Bot bridges agent-stream channels to the agent runner. It listens on each
+// configured channel, and every agent-stream thread is its own thread.Thread:
+// state machine, history and agent session are all keyed by thread ID, so
+// several threads in one channel run independently.
+//
+// The engine's id is a thread key: a thread root message ID (m_...) or, for
+// channel-level sends such as the welcome and notifications, a channel ID
+// (c_...). Client methods route on that prefix.
 type Bot struct {
 	client            *Client
 	starter           AgentStarter
 	gateway           Gateway
-	convManager       *conversation.Manager
-	analyzer          *conversation.Analyzer
-	convIDs           []string
+	threadManager     *thread.Manager
+	analyzer          *thread.Analyzer
+	channelIDs        []string
 	botUserID         string
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
@@ -64,7 +71,7 @@ func (b *Bot) SetWeChatReloader(fn func(token, baseURL string), baseURL string) 
 }
 
 // New creates a new stream bot. Returns nil if ServerURL or BotToken is empty.
-func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convMgr *conversation.Manager, analyzer *conversation.Analyzer, gateway Gateway) *Bot {
+func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threadMgr *thread.Manager, analyzer *thread.Analyzer, gateway Gateway) *Bot {
 	if cfg.ServerURL == "" || cfg.BotToken == "" {
 		return nil
 	}
@@ -78,9 +85,9 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		client:            NewClient(cfg.ServerURL, cfg.BotToken),
 		starter:           starter,
 		gateway:           gateway,
-		convManager:       convMgr,
+		threadManager:     threadMgr,
 		analyzer:          analyzer,
-		convIDs:           cfg.ConversationIDs,
+		channelIDs:        cfg.ChannelIDs,
 		uploadsDir:        uploadsDir,
 		botUserID:         extractBotUserID(cfg.BotToken),
 		pollInterval:      cfg.PollInterval,
@@ -88,13 +95,13 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 		maxCatchUpBacklog: maxCatchUpBacklog,
 	}
 	b.engine = &botcommon.Engine{
-		Starter:     starter,
-		ConvManager: convMgr,
-		Analyzer:    analyzer,
-		Sender:      (*streamSender)(b),
-		Source:      "stream",
-		Label:       "stream bot",
-		StartText:   "Working on it...",
+		Starter:       starter,
+		ThreadManager: threadMgr,
+		Analyzer:      analyzer,
+		Sender:        (*streamSender)(b),
+		Source:        "stream",
+		Label:         "stream bot",
+		StartText:     "Working on it...",
 		// The session-started note is logged, not sent — streaming clients
 		// see progress through thinking/delta events instead.
 		SessionStartedFormat: "",
@@ -103,7 +110,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, convM
 			b.uploadOutputFiles(ctx, id, session)
 		},
 		NewReporter: func(id string) botcommon.Reporter {
-			return &streamReporter{bot: b, ctx: context.Background(), convID: id}
+			return &streamReporter{bot: b, ctx: context.Background(), key: id}
 		},
 		WG: &b.wg,
 	}
@@ -126,13 +133,13 @@ func (s *streamSender) Final(ctx context.Context, id, text string) {
 
 // NotifyConversation sends a message to a specific conversation. Used by
 // restart recovery to reach the session's originating chat.
-func (b *Bot) NotifyConversation(ctx context.Context, convID, text string) {
-	b.engine.Sender.Final(ctx, convID, text)
+func (b *Bot) NotifyConversation(ctx context.Context, key, text string) {
+	b.engine.Sender.Final(ctx, key, text)
 }
 
 // ResumeSession re-attaches a result watcher to a recovered session.
-func (b *Bot) ResumeSession(convID, sessionID string) {
-	b.engine.ResumeSession(context.Background(), convID, sessionID)
+func (b *Bot) ResumeSession(key, sessionID string) {
+	b.engine.ResumeSession(context.Background(), key, sessionID)
 }
 
 // SetWelcome configures the one-time first-contact greeting.
@@ -142,23 +149,23 @@ func (b *Bot) SetWelcome(w botcommon.Welcome) {
 
 // Start begins listening on all configured conversations. Non-blocking.
 func (b *Bot) Start(ctx context.Context) error {
-	if len(b.convIDs) == 0 {
+	if len(b.channelIDs) == 0 {
 		slog.Info("stream bot: no conversation IDs configured, not starting")
 		return nil
 	}
 
 	ctx, b.cancel = context.WithCancel(ctx)
 
-	for _, convID := range b.convIDs {
-		convID := convID // capture for goroutine
+	for _, channelID := range b.channelIDs {
+		channelID := channelID // capture for goroutine
 		b.wg.Add(1)
 		go func() {
 			defer b.wg.Done()
-			b.listenConversation(ctx, convID)
+			b.listenConversation(ctx, channelID)
 		}()
 	}
 
-	slog.Info("stream bot started", "conversations", b.convIDs)
+	slog.Info("stream bot started", "conversations", b.channelIDs)
 	return nil
 }
 
@@ -166,9 +173,9 @@ func (b *Bot) Start(ctx context.Context) error {
 // Intended for external systems (monitoring, cron jobs, etc.) to post messages.
 func (b *Bot) SendNotification(ctx context.Context, message string) error {
 	var lastErr error
-	for _, convID := range b.convIDs {
-		if err := b.client.SendMessage(ctx, convID, message, nil); err != nil {
-			slog.Error("stream bot: failed to notify", "conversation_id", convID, "error", err)
+	for _, channelID := range b.channelIDs {
+		if err := b.client.SendMessage(ctx, channelID, message, nil); err != nil {
+			slog.Error("stream bot: failed to notify", "channel_id", channelID, "error", err)
 			lastErr = err
 		}
 	}
@@ -186,24 +193,24 @@ func (b *Bot) Stop() {
 
 // listenConversation receives events for a single conversation.
 // Uses polling (GET /events?after_seq=N) when b.pollInterval > 0, otherwise SSE.
-func (b *Bot) listenConversation(ctx context.Context, convID string) {
+func (b *Bot) listenConversation(ctx context.Context, channelID string) {
 	// Resume from the last persisted cursor if we have one, instead of
 	// re-downloading the whole conversation history on every restart. Only
 	// fall back to the full catch-up scan when there's genuinely no saved
 	// cursor yet (first run, or the state dir was cleared).
-	afterSeq, ok := b.loadCursor(convID)
+	afterSeq, ok := b.loadCursor(channelID)
 	if ok {
-		slog.Info("stream bot resumed from saved cursor", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
+		slog.Info("stream bot resumed from saved cursor", "channel_id", channelID, "after_seq", afterSeq, "mode", b.mode())
 	} else {
-		afterSeq = b.catchUpSeq(ctx, convID)
-		slog.Info("stream bot caught up", "conversation_id", convID, "after_seq", afterSeq, "mode", b.mode())
-		b.saveCursor(convID, afterSeq)
+		afterSeq = b.catchUpSeq(ctx, channelID)
+		slog.Info("stream bot caught up", "channel_id", channelID, "after_seq", afterSeq, "mode", b.mode())
+		b.saveCursor(channelID, afterSeq)
 	}
 
 	if b.pollInterval > 0 {
-		b.listenPoll(ctx, convID, afterSeq)
+		b.listenPoll(ctx, channelID, afterSeq)
 	} else {
-		b.listenSSE(ctx, convID, afterSeq)
+		b.listenSSE(ctx, channelID, afterSeq)
 	}
 }
 
@@ -217,8 +224,8 @@ func (b *Bot) mode() string {
 // listenPoll polls GET /events?after_seq=N on a fixed interval.
 // Events are sorted by seq before processing so out-of-order delivery from the
 // server doesn't cause gaps. afterSeq advances after each event is handled.
-func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
-	slog.Info("stream bot: polling started", "conversation_id", convID, "interval", b.pollInterval, "after_seq", afterSeq)
+func (b *Bot) listenPoll(ctx context.Context, channelID string, afterSeq int64) {
+	slog.Info("stream bot: polling started", "channel_id", channelID, "interval", b.pollInterval, "after_seq", afterSeq)
 	ticker := time.NewTicker(b.pollInterval)
 	defer ticker.Stop()
 
@@ -229,20 +236,20 @@ func (b *Bot) listenPoll(ctx context.Context, convID string, afterSeq int64) {
 		case <-ticker.C:
 		}
 
-		events, err := b.client.PollEvents(ctx, convID, afterSeq)
+		events, err := b.client.PollEvents(ctx, channelID, afterSeq)
 		if err != nil {
-			slog.Error("stream bot poll error", "conversation_id", convID, "error", err)
+			slog.Error("stream bot poll error", "channel_id", channelID, "error", err)
 			continue
 		}
 
 		sortBySeq(events)
-		afterSeq = b.processEventBatch(ctx, convID, events, afterSeq)
+		afterSeq = b.processEventBatch(ctx, channelID, events, afterSeq)
 	}
 }
 
 // listenSSE connects to the SSE stream and processes events until the connection
 // drops, then reconnects. afterSeq acts as the deduplication cursor.
-func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
+func (b *Bot) listenSSE(ctx context.Context, channelID string, afterSeq int64) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -250,13 +257,13 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 		default:
 		}
 
-		events, err := b.client.StreamEvents(ctx, convID, afterSeq)
+		events, err := b.client.StreamEvents(ctx, channelID, afterSeq)
 		if err != nil {
-			slog.Error("stream bot: SSE connect error", "conversation_id", convID, "error", err)
+			slog.Error("stream bot: SSE connect error", "channel_id", channelID, "error", err)
 			// Permanent errors (auth failure, not found) will never recover —
 			// stop retrying immediately so the log isn't flooded.
 			if isPermanentSSEError(err) {
-				slog.Error("stream bot: permanent error, stopping SSE listener", "conversation_id", convID, "error", err)
+				slog.Error("stream bot: permanent error, stopping SSE listener", "channel_id", channelID, "error", err)
 				return
 			}
 			select {
@@ -266,16 +273,16 @@ func (b *Bot) listenSSE(ctx context.Context, convID string, afterSeq int64) {
 				continue
 			}
 		}
-		slog.Info("stream bot: SSE connected", "conversation_id", convID, "after_seq", afterSeq)
+		slog.Info("stream bot: SSE connected", "channel_id", channelID, "after_seq", afterSeq)
 
 		var received int
-		afterSeq, received = b.consumeSSEStream(ctx, convID, events, afterSeq)
+		afterSeq, received = b.consumeSSEStream(ctx, channelID, events, afterSeq)
 
 		delay := 2 * time.Second
 		if received == 0 {
 			delay = 15 * time.Second
 		}
-		slog.Info("stream bot SSE connection closed, reconnecting", "conversation_id", convID, "events_received", received, "delay", delay)
+		slog.Info("stream bot SSE connection closed, reconnecting", "channel_id", channelID, "events_received", received, "delay", delay)
 		select {
 		case <-ctx.Done():
 			return
@@ -301,7 +308,7 @@ const backlogIdleWindow = 500 * time.Millisecond
 // processEventBatch), then processes subsequent live events one at a time as
 // they arrive. Returns the advanced cursor and the total number of events
 // received (used by the caller to size the reconnect delay).
-func (b *Bot) consumeSSEStream(ctx context.Context, convID string, events <-chan Event, afterSeq int64) (newAfterSeq int64, received int) {
+func (b *Bot) consumeSSEStream(ctx context.Context, channelID string, events <-chan Event, afterSeq int64) (newAfterSeq int64, received int) {
 	newAfterSeq = afterSeq
 
 	var burst []Event
@@ -313,7 +320,7 @@ burstLoop:
 		select {
 		case event, ok := <-events:
 			if !ok {
-				newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+				newAfterSeq = b.processEventBatch(ctx, channelID, burst, newAfterSeq)
 				return newAfterSeq, received
 			}
 			received++
@@ -328,12 +335,12 @@ burstLoop:
 		case <-idle.C:
 			break burstLoop
 		case <-ctx.Done():
-			newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+			newAfterSeq = b.processEventBatch(ctx, channelID, burst, newAfterSeq)
 			return newAfterSeq, received
 		}
 	}
 
-	newAfterSeq = b.processEventBatch(ctx, convID, burst, newAfterSeq)
+	newAfterSeq = b.processEventBatch(ctx, channelID, burst, newAfterSeq)
 
 	for event := range events {
 		received++
@@ -341,10 +348,10 @@ burstLoop:
 			continue // already processed (shouldn't happen, but guard it)
 		}
 		if event.Type == "message.created" {
-			b.handleMessageEvent(ctx, convID, event)
+			b.handleMessageEvent(ctx, channelID, event)
 		}
 		newAfterSeq = event.Seq // advance only after successful handling
-		b.saveCursor(convID, newAfterSeq)
+		b.saveCursor(channelID, newAfterSeq)
 	}
 
 	return newAfterSeq, received
@@ -356,7 +363,7 @@ burstLoop:
 // to a large pile of messages that piled up while it was disconnected. The
 // cursor still advances past skipped events so they aren't replayed on the
 // next reconnect. Returns the advanced cursor.
-func (b *Bot) processEventBatch(ctx context.Context, convID string, events []Event, afterSeq int64) int64 {
+func (b *Bot) processEventBatch(ctx context.Context, channelID string, events []Event, afterSeq int64) int64 {
 	if len(events) == 0 {
 		return afterSeq
 	}
@@ -382,16 +389,16 @@ func (b *Bot) processEventBatch(ctx context.Context, convID string, events []Eve
 			if seen < skipTarget {
 				skipped++
 			} else {
-				b.handleMessageEvent(ctx, convID, event)
+				b.handleMessageEvent(ctx, channelID, event)
 			}
 			seen++
 		}
 		afterSeq = event.Seq // advance only after successful handling
-		b.saveCursor(convID, afterSeq)
+		b.saveCursor(channelID, afterSeq)
 	}
 	if skipped > 0 {
 		slog.Warn("stream bot: skipped stale backlog messages after reconnect gap",
-			"conversation_id", convID, "skipped", skipped, "processed", total-skipped)
+			"channel_id", channelID, "skipped", skipped, "processed", total-skipped)
 	}
 	return afterSeq
 }
@@ -405,8 +412,8 @@ func (b *Bot) processEventBatch(ctx context.Context, convID string, events []Eve
 //     idle-drain: open the stream from seq=0 and close it once 500ms pass with
 //     no new events — the silence signals that the history burst is done.
 //     A hard cap of 10s prevents hanging on very large histories.
-func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
-	events, err := b.client.PollEvents(ctx, convID, 0)
+func (b *Bot) catchUpSeq(ctx context.Context, channelID string) int64 {
+	events, err := b.client.PollEvents(ctx, channelID, 0)
 	if err == nil {
 		var maxSeq int64
 		for _, e := range events {
@@ -418,27 +425,27 @@ func (b *Bot) catchUpSeq(ctx context.Context, convID string) int64 {
 	}
 
 	if err != ErrNotFound {
-		slog.Warn("stream bot catch-up failed", "conversation_id", convID, "error", err)
+		slog.Warn("stream bot catch-up failed", "channel_id", channelID, "error", err)
 		return 0
 	}
 
 	// Server doesn't support PollEvents — drain the SSE stream until idle.
-	slog.Debug("stream bot catch-up: poll endpoint not available, using SSE idle-drain", "conversation_id", convID)
-	return b.catchUpViaSSE(ctx, convID)
+	slog.Debug("stream bot catch-up: poll endpoint not available, using SSE idle-drain", "channel_id", channelID)
+	return b.catchUpViaSSE(ctx, channelID)
 }
 
 // catchUpViaSSE opens an SSE stream from seq=0 and returns the highest seq seen
 // once the stream has been idle (no events) for 500ms, or 10s have elapsed.
-func (b *Bot) catchUpViaSSE(ctx context.Context, convID string) int64 {
+func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) int64 {
 	const idleTimeout = 500 * time.Millisecond
 	const hardCap = 10 * time.Second
 
 	capCtx, cancel := context.WithTimeout(ctx, hardCap)
 	defer cancel()
 
-	ch, err := b.client.StreamEvents(capCtx, convID, 0)
+	ch, err := b.client.StreamEvents(capCtx, channelID, 0)
 	if err != nil {
-		slog.Warn("stream bot catch-up (SSE) failed", "conversation_id", convID, "error", err)
+		slog.Warn("stream bot catch-up (SSE) failed", "channel_id", channelID, "error", err)
 		return 0
 	}
 
@@ -477,25 +484,25 @@ func (b *Bot) catchUpViaSSE(ctx context.Context, convID string) int64 {
 }
 
 // cursorPath returns the persisted event-seq cursor file path for a conversation.
-func (b *Bot) cursorPath(convID string) string {
-	// Sanitise convID: keep alphanumeric, dash, underscore; replace rest with _.
+func (b *Bot) cursorPath(channelID string) string {
+	// Sanitise channelID: keep alphanumeric, dash, underscore; replace rest with _.
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
 			return r
 		}
 		return '_'
-	}, convID)
+	}, channelID)
 	return filepath.Join(b.stateDir, "stream-cursor-"+safe+".txt")
 }
 
 // loadCursor restores the last-persisted event-seq cursor for a conversation.
 // ok is false if no cursor has been saved yet (first run) or stateDir is
 // unset — callers should fall back to the full catch-up scan in that case.
-func (b *Bot) loadCursor(convID string) (seq int64, ok bool) {
+func (b *Bot) loadCursor(channelID string) (seq int64, ok bool) {
 	if b.stateDir == "" {
 		return 0, false
 	}
-	data, err := os.ReadFile(b.cursorPath(convID))
+	data, err := os.ReadFile(b.cursorPath(channelID))
 	if err != nil {
 		return 0, false
 	}
@@ -510,7 +517,7 @@ func (b *Bot) loadCursor(convID string) (seq int64, ok bool) {
 // resume without a full catch-up scan on the next restart. Best-effort —
 // failures are logged, not fatal, since the worst case is falling back to
 // catchUpSeq next time.
-func (b *Bot) saveCursor(convID string, seq int64) {
+func (b *Bot) saveCursor(channelID string, seq int64) {
 	if b.stateDir == "" {
 		return
 	}
@@ -518,8 +525,8 @@ func (b *Bot) saveCursor(convID string, seq int64) {
 		slog.Warn("stream bot: failed to create state dir", "dir", b.stateDir, "error", err)
 		return
 	}
-	if err := os.WriteFile(b.cursorPath(convID), []byte(strconv.FormatInt(seq, 10)), 0600); err != nil {
-		slog.Warn("stream bot: failed to persist cursor", "conversation_id", convID, "error", err)
+	if err := os.WriteFile(b.cursorPath(channelID), []byte(strconv.FormatInt(seq, 10)), 0600); err != nil {
+		slog.Warn("stream bot: failed to persist cursor", "channel_id", channelID, "error", err)
 	}
 }
 
@@ -535,13 +542,15 @@ func sortBySeq(events []Event) {
 
 // messagePayload is the shape of a message.created event payload.
 type messagePayload struct {
-	UserID   string            `json:"user_id"`
-	Content  string            `json:"content"`
-	FileIDs  []string          `json:"file_ids,omitempty"`
-	FileURLs map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
+	MessageID string            `json:"message_id"`
+	ThreadID  string            `json:"thread_id,omitempty"` // empty for a thread root
+	UserID    string            `json:"user_id"`
+	Content   string            `json:"content"`
+	FileIDs   []string          `json:"file_ids,omitempty"`
+	FileURLs  map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
 }
 
-func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event) {
+func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Event) {
 	var msg messagePayload
 	if err := json.Unmarshal(event.Payload, &msg); err != nil {
 		slog.Error("stream bot: failed to parse message payload", "error", err)
@@ -554,7 +563,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 	}
 
 	text := strings.TrimSpace(msg.Content)
-	slog.Info("stream bot: message received", "conversation_id", convID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
+	slog.Info("stream bot: message received", "channel_id", channelID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
 
 	// Download and inline any attached files
 	if len(msg.FileIDs) > 0 {
@@ -575,7 +584,20 @@ func (b *Bot) handleMessageEvent(ctx context.Context, convID string, event Event
 		return
 	}
 
-	b.handleMessage(ctx, convID, text)
+	b.handleMessage(ctx, channelID, threadKey(channelID, msg), text)
+}
+
+// threadKey returns the thread a message belongs to: its thread_id for a
+// reply, its own ID for a thread root, or the channel for servers that
+// predate threads.
+func threadKey(channelID string, msg messagePayload) string {
+	if msg.ThreadID != "" {
+		return msg.ThreadID
+	}
+	if msg.MessageID != "" {
+		return msg.MessageID
+	}
+	return channelID
 }
 
 // resolveFiles downloads files and returns their content formatted for the message.
@@ -713,69 +735,70 @@ func isImageContent(contentType string) bool {
 	return strings.HasPrefix(contentType, "image/")
 }
 
-func (b *Bot) handleMessage(ctx context.Context, convID, text string) {
-	b.engine.WelcomeIfNeeded(ctx, convID)
+// handleMessage routes one message into its thread's state machine.
+func (b *Bot) handleMessage(ctx context.Context, channelID, key, text string) {
+	b.engine.WelcomeIfNeeded(ctx, channelID)
 
 	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if text == "/wechat-login" {
-		b.handleWeChatLogin(ctx, convID)
+		b.handleWeChatLogin(ctx, key)
 		return
 	}
 
 	// Route all other messages through the unified gateway.
 	if b.gateway != nil {
-		asyncSend := func(msg string) { b.emitFinal(ctx, convID, msg) }
-		reset := func() { b.convManager.Complete(convID) }
+		asyncSend := func(msg string) { b.emitFinal(ctx, key, msg) }
+		reset := func() { b.threadManager.Complete(key) }
 		if reply, _, ok := b.gateway.Handle(text, asyncSend, reset); ok {
-			b.emitFinal(ctx, convID, reply)
+			b.emitFinal(ctx, key, reply)
 			return
 		}
 	}
 
-	conv := b.convManager.GetOrCreate(convID)
+	conv := b.threadManager.GetOrCreate(key)
 	conv.AddMessage("user", text)
 
 	state := conv.GetState()
 
-	if state == conversation.StateExecuting {
-		b.engine.HandleExecuting(ctx, convID, conv, text)
+	if state == thread.StateExecuting {
+		b.engine.HandleExecuting(ctx, key, conv, text)
 		return
 	}
 
-	if state == conversation.StateConfirming {
+	if state == thread.StateConfirming {
 		if botcommon.IsConfirmation(text) {
-			b.engine.HandleConfirmation(ctx, convID, conv)
+			b.engine.HandleConfirmation(ctx, key, conv)
 			return
 		}
 		if botcommon.IsDenial(text) {
-			conv.SetState(conversation.StateGathering)
+			conv.SetState(thread.StateGathering)
 			resp := "OK, what would you like to change?"
 			conv.AddMessage("assistant", resp)
-			b.emitFinal(ctx, convID, resp)
+			b.emitFinal(ctx, key, resp)
 			return
 		}
 	}
 
 	// If no analyzer is configured, skip analysis and execute directly
 	if b.analyzer == nil {
-		b.engine.HandleConfirmation(ctx, convID, conv)
+		b.engine.HandleConfirmation(ctx, key, conv)
 		return
 	}
 
-	b.engine.HandleAnalysis(ctx, convID, conv)
+	b.engine.HandleAnalysis(ctx, key, conv)
 }
 
 // uploadOutputFiles uploads output files from the agent session and sends them
 // as a message with file attachments. Files that fail to upload are reported
 // by name so the user knows they were generated but not delivered.
-func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *agent.Session) {
+func (b *Bot) uploadOutputFiles(ctx context.Context, key string, session *agent.Session) {
 	var fileIDs []string
 	var uploaded []string
 	var failed []string
 
 	for _, f := range session.OutputFiles {
 		slog.Info("stream bot: uploading file", "file", f.Name, "content_type", f.ContentType, "bytes", len(f.Data))
-		fileID, err := b.client.UploadFile(ctx, convID, f.Name, f.ContentType, f.Data)
+		fileID, err := b.client.UploadFile(ctx, key, f.Name, f.ContentType, f.Data)
 		if err != nil {
 			slog.Error("stream bot: failed to upload file", "file", f.Name, "bytes", len(f.Data), "error", err)
 			failed = append(failed, f.Name)
@@ -794,7 +817,7 @@ func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *age
 		parts = append(parts, fmt.Sprintf("Could not deliver %d file(s) (upload failed): %s", len(failed), strings.Join(failed, ", ")))
 	}
 	if len(parts) > 0 {
-		if err := b.client.SendMessage(ctx, convID, strings.Join(parts, "\n"), fileIDs); err != nil {
+		if err := b.client.SendMessage(ctx, key, strings.Join(parts, "\n"), fileIDs); err != nil {
 			slog.Error("stream bot: failed to send message with files", "error", err)
 		}
 	}
@@ -807,35 +830,35 @@ func (b *Bot) uploadOutputFiles(ctx context.Context, convID string, session *age
 // poll loop's previous behavior of not tying its sends to any parent
 // request's cancellation.
 type streamReporter struct {
-	bot    *Bot
-	ctx    context.Context
-	convID string
+	bot *Bot
+	ctx context.Context
+	key string
 }
 
 func (r *streamReporter) OnIterationComplete(iter agent.IterationResult) {}
 func (r *streamReporter) OnIterationStart(current, max int) {
-	r.bot.emitThinking(r.ctx, r.convID, fmt.Sprintf("Iteration %d/%d...", current, max))
+	r.bot.emitThinking(r.ctx, r.key, fmt.Sprintf("Iteration %d/%d...", current, max))
 }
 func (r *streamReporter) OnFinal(session *agent.Session) {
-	r.bot.emitFinal(r.ctx, r.convID, formatFinalResult(session))
+	r.bot.emitFinal(r.ctx, r.key, formatFinalResult(session))
 }
-func (r *streamReporter) OnNotFound() { r.bot.emitFinal(r.ctx, r.convID, "Session not found.") }
+func (r *streamReporter) OnNotFound() { r.bot.emitFinal(r.ctx, r.key, "Session not found.") }
 func (r *streamReporter) OnTimeout() {
-	r.bot.emitFinal(r.ctx, r.convID, "Session timed out waiting for a response.")
+	r.bot.emitFinal(r.ctx, r.key, "Session timed out waiting for a response.")
 }
 
 // Event emission helpers
 
-func (b *Bot) emitThinking(ctx context.Context, convID, msg string) {
-	b.emit(ctx, convID, "status.thinking", map[string]string{"message": msg})
+func (b *Bot) emitThinking(ctx context.Context, key, msg string) {
+	b.emit(ctx, key, "run.status", map[string]string{"message": msg})
 }
 
-func (b *Bot) emitDelta(ctx context.Context, convID, text string) {
-	b.emit(ctx, convID, "assistant.delta", map[string]string{"delta": text})
+func (b *Bot) emitDelta(ctx context.Context, key, text string) {
+	b.emit(ctx, key, "reply.delta", map[string]string{"delta": text})
 }
 
-func (b *Bot) emitFinal(ctx context.Context, convID, text string) {
-	b.emit(ctx, convID, "assistant.final", map[string]string{"content": text})
+func (b *Bot) emitFinal(ctx context.Context, key, text string) {
+	b.emit(ctx, key, "reply.final", map[string]string{"content": text})
 }
 
 // emitBackoffs is the inter-attempt delay schedule for emit retries.
@@ -846,7 +869,7 @@ var emitBackoffs = []time.Duration{
 	3 * time.Second,
 }
 
-func (b *Bot) emit(ctx context.Context, convID, eventType string, payload any) {
+func (b *Bot) emit(ctx context.Context, key, eventType string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("stream bot: marshal error", "error", err)
@@ -854,12 +877,12 @@ func (b *Bot) emit(ctx context.Context, convID, eventType string, payload any) {
 	}
 
 	// Retry transient emit failures (TLS handshake timeouts, connection
-	// resets, 5xx, etc.) so a Cloudflare hiccup doesn't drop assistant.final
+	// resets, 5xx, etc.) so a Cloudflare hiccup doesn't drop reply.final
 	// on the floor. Permanent errors (4xx other than 429, bad payload) fail fast.
 	maxAttempts := len(emitBackoffs) + 1
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		emitErr := b.client.EmitEvent(ctx, convID, eventType, data)
+		emitErr := b.client.EmitEvent(ctx, key, eventType, data)
 		if emitErr == nil {
 			if attempt > 1 {
 				slog.Info("stream bot: emit succeeded after retry",
@@ -958,18 +981,18 @@ func formatFinalResult(session *agent.Session) string {
 // handleWeChatLogin runs the iLink QR login flow in a background goroutine and
 // hot-reloads the WeChat bot on success. The QR code is sent as a tappable text
 // link (no CDN upload required from stream).
-func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
+func (b *Bot) handleWeChatLogin(ctx context.Context, key string) {
 	if b.wechatReloader == nil {
-		b.emitFinal(ctx, convID, "WeChat bot is not configured on this server.")
+		b.emitFinal(ctx, key, "WeChat bot is not configured on this server.")
 		return
 	}
 
 	if !b.wechatLoginMu.TryLock() {
-		b.emitFinal(ctx, convID, "A WeChat login is already in progress. Please wait.")
+		b.emitFinal(ctx, key, "A WeChat login is already in progress. Please wait.")
 		return
 	}
 
-	b.emitFinal(ctx, convID, "Starting WeChat login flow...")
+	b.emitFinal(ctx, key, "Starting WeChat login flow...")
 
 	b.wg.Add(1)
 	go func() {
@@ -977,7 +1000,7 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 		defer b.wechatLoginMu.Unlock()
 
 		send := func(msg string) {
-			b.emitFinal(ctx, convID, msg)
+			b.emitFinal(ctx, key, msg)
 		}
 		sendQR := func(qrCtx context.Context, qrContent string) {
 			pngBytes, err := qrcode.Encode(qrContent, qrcode.Medium, 256)
@@ -986,13 +1009,13 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 				send("Tap the link below in WeChat to authorize the bot login:\n\n" + qrContent)
 				return
 			}
-			fileID, err := b.client.UploadFile(qrCtx, convID, "qrcode.png", "image/png", pngBytes)
+			fileID, err := b.client.UploadFile(qrCtx, key, "qrcode.png", "image/png", pngBytes)
 			if err != nil {
 				slog.Error("stream: failed to upload qr code image", "error", err)
 				send("Tap the link below in WeChat to authorize the bot login:\n\n" + qrContent)
 				return
 			}
-			if err := b.client.SendMessage(qrCtx, convID, "Scan the QR code in WeChat to log in:", []string{fileID}); err != nil {
+			if err := b.client.SendMessage(qrCtx, key, "Scan the QR code in WeChat to log in:", []string{fileID}); err != nil {
 				slog.Error("stream: failed to send qr code message", "error", err)
 			}
 		}
@@ -1000,13 +1023,13 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 		result, err := wechat.RunLoginFlow(ctx, b.wechatBaseURL, send, sendQR)
 		if err != nil {
 			slog.Error("stream: wechat login flow failed", "error", err)
-			b.emitFinal(ctx, convID, "Login failed: "+err.Error())
+			b.emitFinal(ctx, key, "Login failed: "+err.Error())
 			return
 		}
 
 		if err := config.SetEnvLocal("WECHAT_TOKEN", result.Token); err != nil {
 			slog.Error("stream: failed to save wechat token to .env.local", "error", err)
-			b.emitFinal(ctx, convID, "Login succeeded but could not save token: "+err.Error())
+			b.emitFinal(ctx, key, "Login succeeded but could not save token: "+err.Error())
 			return
 		}
 		if result.BaseURL != "" {
@@ -1016,7 +1039,7 @@ func (b *Bot) handleWeChatLogin(ctx context.Context, convID string) {
 		}
 
 		b.wechatReloader(result.Token, result.BaseURL)
-		b.emitFinal(ctx, convID, "WeChat login successful! Bot is now active.")
+		b.emitFinal(ctx, key, "WeChat login successful! Bot is now active.")
 	}()
 }
 

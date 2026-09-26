@@ -1,4 +1,4 @@
-package conversation
+package thread
 
 import (
 	"testing"
@@ -146,7 +146,7 @@ func TestComplete(t *testing.T) {
 }
 
 func TestConversation_AddMessage(t *testing.T) {
-	conv := &Conversation{
+	conv := &Thread{
 		State:    StateGathering,
 		Messages: []Message{},
 	}
@@ -167,7 +167,7 @@ func TestConversation_AddMessage(t *testing.T) {
 }
 
 func TestConversation_GetMessages_IsCopy(t *testing.T) {
-	conv := &Conversation{
+	conv := &Thread{
 		State:    StateGathering,
 		Messages: []Message{},
 	}
@@ -183,7 +183,7 @@ func TestConversation_GetMessages_IsCopy(t *testing.T) {
 }
 
 func TestConversation_SetPlan(t *testing.T) {
-	conv := &Conversation{
+	conv := &Thread{
 		State:    StateGathering,
 		Messages: []Message{},
 	}

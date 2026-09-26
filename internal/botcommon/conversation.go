@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // minKeepRecent is the minimum number of recent messages SummarizeConversation
@@ -21,7 +21,7 @@ var summarizeTimeout = 30 * time.Second
 // summary via analyzer.Summarize, keeping at least minKeepRecent recent
 // messages verbatim. No-ops if there's nothing to summarize. label prefixes
 // the resulting slog messages (e.g. "telegram", "stream bot", "wechat").
-func SummarizeConversation(analyzer *conversation.Analyzer, conv *conversation.Conversation, label string) {
+func SummarizeConversation(analyzer *thread.Analyzer, conv *thread.Thread, label string) {
 	ctx, cancel := context.WithTimeout(context.Background(), summarizeTimeout)
 	defer cancel()
 

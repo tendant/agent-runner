@@ -10,7 +10,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // trackingStarter records whether StartAgent was called.
@@ -52,10 +52,10 @@ func (fakeGateway) Handle(text string, _ func(string), reset func()) (string, st
 
 func newTestBot(t *testing.T, starter AgentStarter, gw Gateway) *Bot {
 	t.Helper()
-	convMgr := conversation.NewManager("")
-	t.Cleanup(convMgr.Stop)
+	threadMgr := thread.NewManager("")
+	t.Cleanup(threadMgr.Stop)
 	// api is nil — send() is nil-safe so no panics during tests.
-	return New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, convMgr, nil, t.TempDir(), gw)
+	return New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, threadMgr, nil, t.TempDir(), gw)
 }
 
 func tgMsg(chatID int64, text string) *tgbotapi.Message {
@@ -117,12 +117,12 @@ func TestTelegramBot_RegularMessage_StartsAgent(t *testing.T) {
 
 func TestTelegramBot_GroupCancelWithBotSuffix_ResetsConversation(t *testing.T) {
 	starter := &trackingStarter{}
-	convMgr := conversation.NewManager("")
-	t.Cleanup(convMgr.Stop)
-	bot := New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, convMgr, nil, t.TempDir(), fakeGateway{})
+	threadMgr := thread.NewManager("")
+	t.Cleanup(threadMgr.Stop)
+	bot := New(config.TelegramConfig{BotToken: "test", ChatID: 42}, starter, threadMgr, nil, t.TempDir(), fakeGateway{})
 
 	// Seed a conversation so we can verify it gets reset.
-	conv := convMgr.GetOrCreate("42")
+	conv := threadMgr.GetOrCreate("42")
 	conv.AddMessage("user", "do something")
 
 	// Group-chat style: Telegram delivers "/cancel@AgentRunnerBot".
@@ -132,7 +132,7 @@ func TestTelegramBot_GroupCancelWithBotSuffix_ResetsConversation(t *testing.T) {
 		t.Error("StartAgent should not be called for /cancel")
 	}
 	// Conversation should be completed (reset).
-	if convMgr.GetOrCreate("42").GetState() != conversation.StateGathering {
+	if threadMgr.GetOrCreate("42").GetState() != thread.StateGathering {
 		t.Error("expected conversation to be reset after /cancel@BotName")
 	}
 }

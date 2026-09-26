@@ -3,23 +3,23 @@
 package stream
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
-func integrationEnv(t *testing.T) (serverURL, token, convID string) {
+func integrationEnv(t *testing.T) (serverURL, token, channelID string) {
 	t.Helper()
 	serverURL = os.Getenv("STREAM_SERVER_URL")
 	token = os.Getenv("STREAM_BOT_TOKEN")
-	convID = os.Getenv("STREAM_CONVERSATION_IDS")
-	if serverURL == "" || token == "" || convID == "" {
+	channelID = os.Getenv("STREAM_CONVERSATION_IDS")
+	if serverURL == "" || token == "" || channelID == "" {
 		t.Skip("STREAM_SERVER_URL, STREAM_BOT_TOKEN, and STREAM_CONVERSATION_IDS must be set for integration tests")
 	}
 	return
@@ -45,18 +45,18 @@ func (m *mockStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 func (m *mockStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
 func TestIntegration_BotConnects(t *testing.T) {
-	serverURL, token, convID := integrationEnv(t)
+	serverURL, token, channelID := integrationEnv(t)
 
 	cfg := config.StreamConfig{
-		ServerURL:       serverURL,
-		BotToken:        token,
-		ConversationIDs: []string{convID},
+		ServerURL:  serverURL,
+		BotToken:   token,
+		ChannelIDs: []string{channelID},
 	}
 
-	convMgr := conversation.NewManager("")
-	defer convMgr.Stop()
+	threadMgr := thread.NewManager("")
+	defer threadMgr.Stop()
 
-	bot := New(cfg, &mockStarter{}, convMgr, nil)
+	bot := New(cfg, &mockStarter{}, threadMgr, nil)
 	if bot == nil {
 		t.Fatal("expected non-nil bot")
 	}
@@ -74,38 +74,38 @@ func TestIntegration_BotConnects(t *testing.T) {
 }
 
 func TestIntegration_EmitEvent(t *testing.T) {
-	serverURL, token, convID := integrationEnv(t)
+	serverURL, token, channelID := integrationEnv(t)
 
 	client := NewClient(serverURL, token)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := client.EmitEvent(ctx, convID, "status.thinking", []byte(`{"message":"Integration test thinking..."}`)); err != nil {
+	if err := client.EmitEvent(ctx, channelID, "status.thinking", []byte(`{"message":"Integration test thinking..."}`)); err != nil {
 		t.Fatalf("emit thinking failed: %v", err)
 	}
 	t.Log("Emitted status.thinking")
 
-	if err := client.EmitEvent(ctx, convID, "assistant.delta", []byte(`{"delta":"Hello from "}`)); err != nil {
+	if err := client.EmitEvent(ctx, channelID, "assistant.delta", []byte(`{"delta":"Hello from "}`)); err != nil {
 		t.Fatalf("emit delta failed: %v", err)
 	}
 	t.Log("Emitted assistant.delta")
 
-	if err := client.EmitEvent(ctx, convID, "assistant.final", []byte(`{"content":"Hello from agent-runner integration test!"}`)); err != nil {
+	if err := client.EmitEvent(ctx, channelID, "assistant.final", []byte(`{"content":"Hello from agent-runner integration test!"}`)); err != nil {
 		t.Fatalf("emit final failed: %v", err)
 	}
 	t.Log("Emitted assistant.final")
 }
 
 func TestIntegration_SSEStream(t *testing.T) {
-	serverURL, token, convID := integrationEnv(t)
+	serverURL, token, channelID := integrationEnv(t)
 
 	client := NewClient(serverURL, token)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	events, err := client.StreamEvents(ctx, convID, 0)
+	events, err := client.StreamEvents(ctx, channelID, 0)
 	if err != nil {
 		t.Fatalf("stream events failed: %v", err)
 	}

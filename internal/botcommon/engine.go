@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // Sender abstracts a chat transport's outbound message primitives. id is the
-// conversation key used by conversation.Manager; each bot converts it to its
+// conversation key used by thread.Manager; each bot converts it to its
 // native address type (Telegram parses it back to an int64 chat ID, WeChat
 // uses it as the user ID, Stream as the conversation ID).
 type Sender interface {
@@ -31,12 +31,12 @@ type Sender interface {
 // Transport-specific behavior is injected via Sender, NewReporter, and
 // OnSessionDone; cosmetic differences via the announce options.
 type Engine struct {
-	Starter     AgentStarter
-	ConvManager *conversation.Manager
-	Analyzer    *conversation.Analyzer // nil = confirmation-only flow (no intent routing)
-	Sender      Sender
-	Source      string // session source tag, e.g. "telegram"
-	Label       string // log prefix, e.g. "telegram"
+	Starter       AgentStarter
+	ThreadManager *thread.Manager
+	Analyzer      *thread.Analyzer // nil = confirmation-only flow (no intent routing)
+	Sender        Sender
+	Source        string // session source tag, e.g. "telegram"
+	Label         string // log prefix, e.g. "telegram"
 
 	StartText            string // sent when an agent run begins, e.g. "Starting agent..."
 	SessionStartedFormat string // fmt string for the session-started note; "" = don't send
@@ -57,9 +57,9 @@ type Engine struct {
 
 // HandleConfirmation starts an agent session from the conversation's latest
 // user message (with history context) and reports progress until it ends.
-func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conversation.Conversation) {
+func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *thread.Thread) {
 	e.Sender.Status(ctx, id, e.StartText)
-	conv.SetState(conversation.StateExecuting)
+	conv.SetState(thread.StateExecuting)
 
 	// Build message: latest user message + conversation history for context.
 	messages := conv.GetMessages()
@@ -77,7 +77,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 
 	sessionID, err := e.Starter.StartAgent(message, e.Source, id)
 	if err != nil {
-		conv.SetState(conversation.StateGathering)
+		conv.SetState(thread.StateGathering)
 		e.Sender.Final(ctx, id, fmt.Sprintf("Failed to start agent: %s", err))
 		return
 	}
@@ -94,7 +94,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *conver
 // watchSession follows a running session in the background: reports progress
 // until it ends, folds outputs back into the conversation, post-processes,
 // and drains input that queued up during execution.
-func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *conversation.Conversation) {
+func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *thread.Thread) {
 	e.WG.Go(func() {
 		PollAndReport(e.Starter, sessionID, e.NewReporter(id))
 		conv.SetActiveSession("")
@@ -114,7 +114,7 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *c
 		// Clear StateExecuting before slow post-processing so new messages
 		// are accepted immediately instead of being queued.
 		if !hasPending {
-			e.ConvManager.Complete(id)
+			e.ThreadManager.Complete(id)
 		}
 
 		if sessionOk && len(session.OutputFiles) > 0 && e.OnSessionDone != nil {
@@ -126,7 +126,7 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *c
 
 		// Process messages that arrived during execution.
 		if hasPending {
-			conv.SetState(conversation.StateGathering)
+			conv.SetState(thread.StateGathering)
 			if e.AnnounceQueued {
 				e.Sender.Reply(ctx, id, "Processing queued messages...")
 			}
@@ -144,8 +144,8 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *c
 // original watcher died with the previous process. The conversation is put
 // back into executing so new input queues behind the recovered run.
 func (e *Engine) ResumeSession(ctx context.Context, id, sessionID string) {
-	conv := e.ConvManager.GetOrCreate(id)
-	conv.SetState(conversation.StateExecuting)
+	conv := e.ThreadManager.GetOrCreate(id)
+	conv.SetState(thread.StateExecuting)
 	conv.SetActiveSession(sessionID)
 	e.watchSession(ctx, id, sessionID, conv)
 }
@@ -156,7 +156,7 @@ func (e *Engine) ResumeSession(ctx context.Context, id, sessionID string) {
 // the backend can't steer (one-shot CLIs) or the run just ended, the message
 // stays queued (pendingInput, already set by AddMessage) and is replayed as
 // a follow-up run — the long-standing fallback behavior.
-func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *conversation.Conversation, text string) {
+func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *thread.Thread, text string) {
 	if sessionID := conv.ActiveSessionID(); sessionID != "" {
 		if err := e.Starter.Steer(sessionID, text); err == nil {
 			// Delivered live: don't replay it as a new session afterwards.
@@ -173,7 +173,7 @@ func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *conversat
 
 // HandleAnalysis routes the conversation through the intent analyzer and
 // dispatches on its decision (execute / ask / plan).
-func (e *Engine) HandleAnalysis(ctx context.Context, id string, conv *conversation.Conversation) {
+func (e *Engine) HandleAnalysis(ctx context.Context, id string, conv *thread.Thread) {
 	analysisCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 

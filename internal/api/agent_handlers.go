@@ -11,8 +11,8 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
-	"github.com/agent-runner/agent-runner/internal/conversation"
 	"github.com/agent-runner/agent-runner/internal/textutil"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // AgentRequest represents the POST /agent request body
@@ -82,7 +82,7 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	// so this never blocks a request — it can only skip a session that would
 	// otherwise have started.
 	if h.analyzer != nil {
-		conv := &conversation.Conversation{}
+		conv := &thread.Thread{}
 		conv.AddMessage("user", req.Message)
 		if result, err := h.analyzer.Analyze(r.Context(), conv); err == nil && result.Action != "execute" {
 			h.writeJSON(w, http.StatusOK, map[string]any{"reply": result.Message})

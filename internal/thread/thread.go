@@ -1,4 +1,4 @@
-package conversation
+package thread
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// State represents the current phase of a conversation.
+// State represents the current phase of a thread.
 type State string
 
 const (
@@ -22,15 +22,17 @@ const (
 	StateCompleted  State = "completed"
 )
 
-// Message is a single message in the conversation history.
+// Message is a single message in the thread history.
 type Message struct {
 	Role    string    `json:"role"` // "user" or "assistant"
 	Content string    `json:"content"`
 	Time    time.Time `json:"time"`
 }
 
-// Conversation tracks an ongoing chat with a user.
-type Conversation struct {
+// Thread tracks one unit of a user's work with the bot: its history, state
+// machine and active agent session. ChatID is the thread key: an agent-stream
+// thread ID, or a whole Telegram/WeChat chat (one thread per chat).
+type Thread struct {
 	mu sync.Mutex
 
 	ID           string
@@ -41,23 +43,23 @@ type Conversation struct {
 	pendingInput bool   // true if user sent messages during execution
 
 	// activeSessionID is the agent session currently executing for this
-	// conversation ("" when idle) — used to steer the live run.
+	// thread ("" when idle) — used to steer the live run.
 	activeSessionID string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 const maxMessages = 20
 
-// Summarizer can condense conversation history into a short summary.
+// Summarizer can condense thread history into a short summary.
 type Summarizer interface {
 	Summarize(ctx context.Context, messages []Message) (string, error)
 }
 
-// AddMessage appends a message to the conversation and updates the timestamp.
+// AddMessage appends a message to the thread and updates the timestamp.
 // When messages exceed maxMessages, old messages are compacted: if a Summarizer
 // is set, they are summarized; otherwise the oldest are dropped.
-func (c *Conversation) AddMessage(role, content string) {
+func (c *Thread) AddMessage(role, content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Messages = append(c.Messages, Message{
@@ -77,7 +79,7 @@ func (c *Conversation) AddMessage(role, content string) {
 // compact reduces messages when over the limit. If a summary already exists,
 // just drop the oldest non-summary messages. The actual summarization is
 // triggered externally via CompactWithSummary to avoid blocking AddMessage.
-func (c *Conversation) compact() {
+func (c *Thread) compact() {
 	if len(c.Messages) <= maxMessages {
 		return
 	}
@@ -85,9 +87,9 @@ func (c *Conversation) compact() {
 	c.Messages = c.Messages[len(c.Messages)-maxMessages:]
 }
 
-// NeedsCompaction returns true if the conversation has enough messages to
+// NeedsCompaction returns true if the thread has enough messages to
 // benefit from summarization (called before triggering async summarization).
-func (c *Conversation) NeedsCompaction() bool {
+func (c *Thread) NeedsCompaction() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.Messages) >= maxMessages-2 // trigger before we hit the hard cap
@@ -95,7 +97,7 @@ func (c *Conversation) NeedsCompaction() bool {
 
 // CompactWithSummary replaces old messages with a summary message, keeping
 // the most recent keepRecent messages intact. Thread-safe.
-func (c *Conversation) CompactWithSummary(summary string, keepRecent int) {
+func (c *Thread) CompactWithSummary(summary string, keepRecent int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.Messages) <= keepRecent+1 {
@@ -111,8 +113,8 @@ func (c *Conversation) CompactWithSummary(summary string, keepRecent int) {
 	c.Messages = append([]Message{summaryMsg}, recent...)
 }
 
-// SetState changes the conversation state.
-func (c *Conversation) SetState(state State) {
+// SetState changes the thread state.
+func (c *Thread) SetState(state State) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.State = state
@@ -120,14 +122,14 @@ func (c *Conversation) SetState(state State) {
 }
 
 // GetState returns the current state.
-func (c *Conversation) GetState() State {
+func (c *Thread) GetState() State {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.State
 }
 
 // GetMessages returns a copy of the message history.
-func (c *Conversation) GetMessages() []Message {
+func (c *Thread) GetMessages() []Message {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	msgs := make([]Message, len(c.Messages))
@@ -136,7 +138,7 @@ func (c *Conversation) GetMessages() []Message {
 }
 
 // SetPlan stores the generated plan text and transitions to confirming state.
-func (c *Conversation) SetPlan(plan string) {
+func (c *Thread) SetPlan(plan string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Plan = plan
@@ -145,14 +147,14 @@ func (c *Conversation) SetPlan(plan string) {
 }
 
 // GetPlan returns the stored plan text.
-func (c *Conversation) GetPlan() string {
+func (c *Thread) GetPlan() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.Plan
 }
 
-// GetUserMessage returns the concatenation of all user messages in the conversation.
-func (c *Conversation) GetUserMessage() string {
+// GetUserMessage returns the concatenation of all user messages in the thread.
+func (c *Thread) GetUserMessage() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var parts []string
@@ -164,9 +166,9 @@ func (c *Conversation) GetUserMessage() string {
 	return strings.Join(parts, "\n")
 }
 
-// Reset transitions a completed conversation back to gathering state,
+// Reset transitions a completed thread back to gathering state,
 // preserving message history while clearing the plan.
-func (c *Conversation) Reset() {
+func (c *Thread) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Plan = ""
@@ -176,15 +178,15 @@ func (c *Conversation) Reset() {
 }
 
 // SetActiveSession records the agent session executing for this
-// conversation; pass "" when the run ends.
-func (c *Conversation) SetActiveSession(sessionID string) {
+// thread; pass "" when the run ends.
+func (c *Thread) SetActiveSession(sessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.activeSessionID = sessionID
 }
 
 // ActiveSessionID returns the executing agent session ID, or "".
-func (c *Conversation) ActiveSessionID() string {
+func (c *Thread) ActiveSessionID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.activeSessionID
@@ -192,7 +194,7 @@ func (c *Conversation) ActiveSessionID() string {
 
 // ClearPendingInput atomically checks and clears the pending input flag.
 // Returns true if user messages were queued during execution.
-func (c *Conversation) ClearPendingInput() bool {
+func (c *Thread) ClearPendingInput() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	had := c.pendingInput
@@ -200,10 +202,10 @@ func (c *Conversation) ClearPendingInput() bool {
 	return had
 }
 
-// GetFormattedHistory returns the full conversation history formatted for
+// GetFormattedHistory returns the full thread history formatted for
 // inclusion in a prompt. Returns empty string if there are fewer than 2 messages
 // (i.e., only the current message exists, so no prior context).
-func (c *Conversation) GetFormattedHistory() string {
+func (c *Thread) GetFormattedHistory() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -227,26 +229,27 @@ func (c *Conversation) GetFormattedHistory() string {
 	return strings.TrimSpace(sb.String())
 }
 
-const conversationIdleTimeout = 30 * time.Minute
+const threadIdleTimeout = 30 * time.Minute
 
-// Manager manages active conversations keyed by chat/channel ID.
+// Manager manages active threads keyed by thread key (see Thread.ChatID).
+// Persisted files keep the conv- prefix so existing state loads after upgrade.
 type Manager struct {
-	mu            sync.RWMutex
-	conversations map[string]*Conversation
-	nextID        int
-	stopCh        chan struct{}
-	doneCh        chan struct{} // closed when the cleanup loop has exited
-	dir           string        // persistence directory; "" = disabled
+	mu      sync.RWMutex
+	threads map[string]*Thread
+	nextID  int
+	stopCh  chan struct{}
+	doneCh  chan struct{} // closed when the cleanup loop has exited
+	dir     string        // persistence directory; "" = disabled
 }
 
-// NewManager creates a new conversation manager. dir is the directory used to
-// persist conversations to disk across restarts; pass "" to disable persistence.
+// NewManager creates a new thread manager. dir is the directory used to
+// persist threads to disk across restarts; pass "" to disable persistence.
 func NewManager(dir string) *Manager {
 	m := &Manager{
-		conversations: make(map[string]*Conversation),
-		stopCh:        make(chan struct{}),
-		doneCh:        make(chan struct{}),
-		dir:           dir,
+		threads: make(map[string]*Thread),
+		stopCh:  make(chan struct{}),
+		doneCh:  make(chan struct{}),
+		dir:     dir,
 	}
 	if dir != "" {
 		m.loadAll()
@@ -255,7 +258,7 @@ func NewManager(dir string) *Manager {
 	return m
 }
 
-// convFilePath returns the JSON file path for a conversation.
+// convFilePath returns the JSON file path for a thread.
 func (m *Manager) convFilePath(chatID string) string {
 	// Sanitise chatID: keep alphanumeric, dash, underscore; replace rest with _.
 	safe := strings.Map(func(r rune) rune {
@@ -267,8 +270,8 @@ func (m *Manager) convFilePath(chatID string) string {
 	return filepath.Join(m.dir, "conv-"+safe+".json")
 }
 
-// persist writes a conversation to disk. No-op if persistence is disabled.
-func (m *Manager) persist(conv *Conversation) {
+// persist writes a thread to disk. No-op if persistence is disabled.
+func (m *Manager) persist(conv *Thread) {
 	if m.dir == "" {
 		return
 	}
@@ -276,42 +279,42 @@ func (m *Manager) persist(conv *Conversation) {
 	data, err := json.Marshal(conv)
 	conv.mu.Unlock()
 	if err != nil {
-		slog.Warn("conversation: marshal failed", "chat_id", conv.ChatID, "error", err)
+		slog.Warn("thread: marshal failed", "chat_id", conv.ChatID, "error", err)
 		return
 	}
 	if err := os.MkdirAll(m.dir, 0755); err != nil {
-		slog.Warn("conversation: persist failed to create dir", "dir", m.dir, "error", err)
+		slog.Warn("thread: persist failed to create dir", "dir", m.dir, "error", err)
 		return
 	}
 	// Write-then-rename so concurrent writers (saveAll + background loop)
 	// and restart-time readers never see a truncated file.
 	tmp, err := os.CreateTemp(m.dir, "conv-*.tmp")
 	if err != nil {
-		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+		slog.Warn("thread: persist failed", "chat_id", conv.ChatID, "error", err)
 		return
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+		slog.Warn("thread: persist failed", "chat_id", conv.ChatID, "error", err)
 		return
 	}
 	tmp.Close()
 	if err := os.Rename(tmp.Name(), m.convFilePath(conv.ChatID)); err != nil {
 		os.Remove(tmp.Name())
-		slog.Warn("conversation: persist failed", "chat_id", conv.ChatID, "error", err)
+		slog.Warn("thread: persist failed", "chat_id", conv.ChatID, "error", err)
 	}
 }
 
-// loadAll reads all persisted conversations from disk at startup.
+// loadAll reads all persisted threads from disk at startup.
 func (m *Manager) loadAll() {
 	if err := os.MkdirAll(m.dir, 0755); err != nil {
-		slog.Warn("conversation: failed to create persistence dir", "dir", m.dir, "error", err)
+		slog.Warn("thread: failed to create persistence dir", "dir", m.dir, "error", err)
 		return
 	}
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
-		slog.Warn("conversation: failed to read persistence dir", "dir", m.dir, "error", err)
+		slog.Warn("thread: failed to read persistence dir", "dir", m.dir, "error", err)
 		return
 	}
 	loaded := 0
@@ -322,45 +325,45 @@ func (m *Manager) loadAll() {
 		path := filepath.Join(m.dir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			slog.Warn("conversation: failed to read file", "path", path, "error", err)
+			slog.Warn("thread: failed to read file", "path", path, "error", err)
 			continue
 		}
-		var conv Conversation
+		var conv Thread
 		if err := json.Unmarshal(data, &conv); err != nil {
-			slog.Warn("conversation: corrupt file deleted", "path", path, "error", err)
+			slog.Warn("thread: corrupt file deleted", "path", path, "error", err)
 			os.Remove(path)
 			continue
 		}
 		if conv.State == StateCompleted {
-			continue // skip completed conversations
+			continue // skip completed threads
 		}
 		if conv.ChatID == "" {
 			continue
 		}
-		// A conversation persisted as executing belonged to a session that
+		// A thread persisted as executing belonged to a session that
 		// died with the previous process — left as-is it would queue every
 		// new message forever ("Message queued…"). Downgrade so the chat
 		// accepts input again; session recovery notifies the user separately.
 		if conv.State == StateExecuting {
-			slog.Info("conversation: resetting executing conversation from previous run", "chat_id", conv.ChatID)
+			slog.Info("thread: resetting executing conversation from previous run", "chat_id", conv.ChatID)
 			conv.State = StateGathering
 		}
-		m.conversations[conv.ChatID] = &conv
+		m.threads[conv.ChatID] = &conv
 		loaded++
 	}
 	if loaded > 0 {
-		slog.Info("conversation: loaded persisted conversations", "count", loaded)
+		slog.Info("thread: loaded persisted threads", "count", loaded)
 	}
 }
 
-// saveAll persists all active conversations. Called from the background loop.
+// saveAll persists all active threads. Called from the background loop.
 func (m *Manager) saveAll() {
 	if m.dir == "" {
 		return
 	}
 	m.mu.RLock()
-	convs := make([]*Conversation, 0, len(m.conversations))
-	for _, conv := range m.conversations {
+	convs := make([]*Thread, 0, len(m.threads))
+	for _, conv := range m.threads {
 		convs = append(convs, conv)
 	}
 	m.mu.RUnlock()
@@ -381,7 +384,7 @@ func (m *Manager) Stop() {
 	<-m.doneCh
 }
 
-// cleanupLoop periodically evicts stale conversations and saves active ones.
+// cleanupLoop periodically evicts stale threads and saves active ones.
 func (m *Manager) cleanupLoop() {
 	defer close(m.doneCh)
 	evictTicker := time.NewTicker(time.Minute)
@@ -406,14 +409,14 @@ func (m *Manager) evictStale() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cutoff := time.Now().Add(-conversationIdleTimeout)
-	for chatID, conv := range m.conversations {
+	cutoff := time.Now().Add(-threadIdleTimeout)
+	for chatID, conv := range m.threads {
 		conv.mu.Lock()
 		updatedAt := conv.UpdatedAt
 		conv.mu.Unlock()
 
 		if updatedAt.Before(cutoff) {
-			delete(m.conversations, chatID)
+			delete(m.threads, chatID)
 			if m.dir != "" {
 				os.Remove(m.convFilePath(chatID))
 			}
@@ -421,14 +424,14 @@ func (m *Manager) evictStale() {
 	}
 }
 
-// GetOrCreate returns the active conversation for a chat, creating one if none exists.
-// If the previous conversation is completed, it resets it to gathering state while
+// GetOrCreate returns the active thread for a chat, creating one if none exists.
+// If the previous thread is completed, it resets it to gathering state while
 // preserving message history so the agent has context from prior sessions.
-func (m *Manager) GetOrCreate(chatID string) *Conversation {
+func (m *Manager) GetOrCreate(chatID string) *Thread {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if conv, ok := m.conversations[chatID]; ok {
+	if conv, ok := m.threads[chatID]; ok {
 		if conv.GetState() == StateCompleted {
 			conv.Reset()
 		}
@@ -436,7 +439,7 @@ func (m *Manager) GetOrCreate(chatID string) *Conversation {
 	}
 
 	m.nextID++
-	conv := &Conversation{
+	conv := &Thread{
 		ID:        fmt.Sprintf("conv-%d", m.nextID),
 		ChatID:    chatID,
 		State:     StateGathering,
@@ -444,26 +447,26 @@ func (m *Manager) GetOrCreate(chatID string) *Conversation {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	m.conversations[chatID] = conv
+	m.threads[chatID] = conv
 	return conv
 }
 
-// Get returns the active conversation for a chat, if any.
-func (m *Manager) Get(chatID string) (*Conversation, bool) {
+// Get returns the active thread for a chat, if any.
+func (m *Manager) Get(chatID string) (*Thread, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	conv, ok := m.conversations[chatID]
+	conv, ok := m.threads[chatID]
 	if !ok || conv.GetState() == StateCompleted {
 		return nil, false
 	}
 	return conv, true
 }
 
-// Complete marks the conversation for a chat as completed and removes its
+// Complete marks the thread for a chat as completed and removes its
 // persisted file (if any).
 func (m *Manager) Complete(chatID string) {
 	m.mu.RLock()
-	conv, ok := m.conversations[chatID]
+	conv, ok := m.threads[chatID]
 	m.mu.RUnlock()
 	if ok {
 		conv.SetState(StateCompleted)

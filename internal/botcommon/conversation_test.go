@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // fakeLLMClient implements llm.Client, returning a scripted response or error.
@@ -19,8 +19,8 @@ func (f *fakeLLMClient) Complete(ctx context.Context, prompt string) (string, er
 	return f.response, f.err
 }
 
-func newTestConversation(n int) *conversation.Conversation {
-	conv := &conversation.Conversation{}
+func newTestConversation(n int) *thread.Thread {
+	conv := &thread.Thread{}
 	for i := 0; i < n; i++ {
 		conv.AddMessage("user", "message")
 	}
@@ -30,7 +30,7 @@ func newTestConversation(n int) *conversation.Conversation {
 func TestSummarizeConversation_CompactsOlderHalf(t *testing.T) {
 	// 20 messages: keepRecent = max(20/2, 4) = 10, so the first 10 are summarized.
 	conv := newTestConversation(20)
-	analyzer := conversation.NewAnalyzer(&fakeLLMClient{response: "summary text"})
+	analyzer := thread.NewAnalyzer(&fakeLLMClient{response: "summary text"})
 
 	SummarizeConversation(analyzer, conv, "test")
 
@@ -47,7 +47,7 @@ func TestSummarizeConversation_CompactsOlderHalf(t *testing.T) {
 func TestSummarizeConversation_MinimumKeepRecent(t *testing.T) {
 	// Fewer than 8 messages: keepRecent floors at 4 (len/2 would be < 4).
 	conv := newTestConversation(6)
-	analyzer := conversation.NewAnalyzer(&fakeLLMClient{response: "summary"})
+	analyzer := thread.NewAnalyzer(&fakeLLMClient{response: "summary"})
 
 	SummarizeConversation(analyzer, conv, "test")
 
@@ -60,7 +60,7 @@ func TestSummarizeConversation_MinimumKeepRecent(t *testing.T) {
 func TestSummarizeConversation_NothingToSummarize(t *testing.T) {
 	// keepRecent floors at 4; with exactly 4 messages there's nothing older to summarize.
 	conv := newTestConversation(4)
-	analyzer := conversation.NewAnalyzer(&fakeLLMClient{response: "should not be used"})
+	analyzer := thread.NewAnalyzer(&fakeLLMClient{response: "should not be used"})
 
 	SummarizeConversation(analyzer, conv, "test")
 
@@ -72,7 +72,7 @@ func TestSummarizeConversation_NothingToSummarize(t *testing.T) {
 
 func TestSummarizeConversation_AnalyzerErrorLeavesConversationUnchanged(t *testing.T) {
 	conv := newTestConversation(20)
-	analyzer := conversation.NewAnalyzer(&fakeLLMClient{err: errors.New("llm unavailable")})
+	analyzer := thread.NewAnalyzer(&fakeLLMClient{err: errors.New("llm unavailable")})
 
 	SummarizeConversation(analyzer, conv, "test")
 
@@ -90,7 +90,7 @@ func TestSummarizeConversation_ReturnsWithinTimeout(t *testing.T) {
 	t.Cleanup(func() { summarizeTimeout = orig })
 
 	conv := newTestConversation(20)
-	analyzer := conversation.NewAnalyzer(&blockingLLMClient{})
+	analyzer := thread.NewAnalyzer(&blockingLLMClient{})
 
 	done := make(chan struct{})
 	go func() {

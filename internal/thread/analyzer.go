@@ -1,4 +1,4 @@
-package conversation
+package thread
 
 import (
 	"context"
@@ -74,7 +74,7 @@ func (a *Analyzer) Summarize(ctx context.Context, messages []Message) (string, e
 // Analyze sends the conversation history to the LLM and returns a routing decision.
 // On non-timeout errors (LLM unavailable, parse failure, no credentials) it
 // degrades gracefully by returning "execute" so the message still reaches the agent.
-func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisResult, error) {
+func (a *Analyzer) Analyze(ctx context.Context, conv *Thread) (*AnalysisResult, error) {
 	prompt := a.buildPrompt(conv)
 
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
@@ -120,7 +120,7 @@ func (a *Analyzer) Analyze(ctx context.Context, conv *Conversation) (*AnalysisRe
 	return analysisResult, nil
 }
 
-func (a *Analyzer) buildPrompt(conv *Conversation) string {
+func (a *Analyzer) buildPrompt(conv *Thread) string {
 	var sb strings.Builder
 
 	if a.agentContext != "" {

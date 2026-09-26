@@ -1,8 +1,8 @@
 package stream
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/conversation"
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 // trackingStarter records whether StartAgent was called.
@@ -60,21 +60,21 @@ func newTestBot(t *testing.T, starter AgentStarter, gw Gateway) *Bot {
 	t.Cleanup(srv.Close)
 
 	cfg := config.StreamConfig{
-		ServerURL:       srv.URL,
-		BotToken:        "test-token",
-		ConversationIDs: []string{"conv-1"},
+		ServerURL:  srv.URL,
+		BotToken:   "test-token",
+		ChannelIDs: []string{"c_1"},
 	}
-	convMgr := conversation.NewManager("")
-	t.Cleanup(convMgr.Stop)
+	threadMgr := thread.NewManager("")
+	t.Cleanup(threadMgr.Stop)
 
-	return New(cfg, "", starter, convMgr, nil, gw)
+	return New(cfg, "", starter, threadMgr, nil, gw)
 }
 
 func TestStreamBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
 	bot := newTestBot(t, starter, fakeGateway{})
 
-	bot.handleMessage(context.Background(), "conv-1", "/set AGENT_MODEL gpt-4o")
+	bot.handleMessage(context.Background(), "c_1", "m_1", "/set AGENT_MODEL gpt-4o")
 
 	if starter.called.Load() {
 		t.Error("StartAgent should not be called when a known command is handled")
@@ -85,7 +85,7 @@ func TestStreamBot_UnknownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
 	bot := newTestBot(t, starter, fakeGateway{})
 
-	bot.handleMessage(context.Background(), "conv-1", "/unknown-command")
+	bot.handleMessage(context.Background(), "c_1", "m_1", "/unknown-command")
 
 	if starter.called.Load() {
 		t.Error("StartAgent should not be called for an unknown slash command")
@@ -104,15 +104,15 @@ func TestStreamBot_UnknownCommand_ReturnsHelpHint(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.StreamConfig{
-		ServerURL:       srv.URL,
-		BotToken:        "test-token",
-		ConversationIDs: []string{"conv-1"},
+		ServerURL:  srv.URL,
+		BotToken:   "test-token",
+		ChannelIDs: []string{"c_1"},
 	}
-	convMgr := conversation.NewManager("")
-	defer convMgr.Stop()
+	threadMgr := thread.NewManager("")
+	defer threadMgr.Stop()
 
-	bot := New(cfg, "", &trackingStarter{}, convMgr, nil, fakeGateway{})
-	bot.handleMessage(context.Background(), "conv-1", "/oops")
+	bot := New(cfg, "", &trackingStarter{}, threadMgr, nil, fakeGateway{})
+	bot.handleMessage(context.Background(), "c_1", "m_1", "/oops")
 
 	if !strings.Contains(replied, "Unknown command") {
 		t.Errorf("expected 'Unknown command' hint in reply, got: %s", replied)
@@ -124,7 +124,7 @@ func TestStreamBot_RegularMessage_StartsAgent(t *testing.T) {
 	// No analyzer → direct execution mode.
 	bot := newTestBot(t, starter, fakeGateway{})
 
-	bot.handleMessage(context.Background(), "conv-1", "please write hello.txt")
+	bot.handleMessage(context.Background(), "c_1", "m_1", "please write hello.txt")
 
 	if !starter.called.Load() {
 		t.Error("StartAgent should be called for a regular (non-command) message")

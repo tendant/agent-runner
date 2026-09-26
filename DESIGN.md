@@ -290,7 +290,7 @@ Key groups:
 - **Git**: `GIT_HOST`, `GIT_ORG`
 - **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_SHARED_REPOS`, `AGENT_MAX_CONCURRENT`, iteration/time limits, planner/reviewer toggles
 - **API**: `API_BIND`, `API_KEY`
-- **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CONVERSATION_IDS`
+- **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CHANNEL_IDS`
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - **Ollama**: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `AGENT_MODEL`
 
