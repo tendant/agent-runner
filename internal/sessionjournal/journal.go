@@ -30,6 +30,7 @@ type Entry struct {
 	MaxTotalSeconds int       `json:"max_total_seconds"`
 	CallbackURL     string    `json:"callback_url,omitempty"`
 	TaskWorkspace   string    `json:"task_workspace,omitempty"` // set for a turn of a multi-turn task
+	TaskFeedback    string    `json:"task_feedback,omitempty"`  // feedback the turn revises the plan with
 	Status          string    `json:"status"`                   // "queued" | "running"
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

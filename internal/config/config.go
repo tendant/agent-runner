@@ -132,6 +132,9 @@ type AgentConfig struct {
 	// then starts an independent run, as before.
 	TasksEnabled      bool          // AGENT_TASKS_ENABLED
 	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
+	TaskMaxTurns      int           // AGENT_TASK_MAX_TURNS — turns before a task pauses for a go-ahead (default 10; 0 = no limit)
+	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
+	TaskMaxCostUSD    float64       // AGENT_TASK_MAX_COST_USD — spend before a task pauses (default 0 = no limit)
 	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude conversations across task turns
 	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays        int           // Number of daily memory logs to include (default: 7)
@@ -257,6 +260,8 @@ func defaultConfigForDataDir(data string) *Config {
 			TaskRetention:       24 * time.Hour,
 			TaskIdleTTL:         7 * 24 * time.Hour,
 			TaskResumeBackend:   true,
+			TaskMaxTurns:        10,
+			TaskMaxSeconds:      4 * time.Hour,
 			MemoryDays:          7,
 			MemoryCharCap:       12000,
 			MemoryPullOnStart:   true,
@@ -475,6 +480,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
+	cfg.Agent.TaskMaxTurns = envIntOrDefault("AGENT_TASK_MAX_TURNS", cfg.Agent.TaskMaxTurns)
+	cfg.Agent.TaskMaxSeconds = envSecondsOrDefault("AGENT_TASK_MAX_SECONDS", cfg.Agent.TaskMaxSeconds)
+	cfg.Agent.TaskMaxCostUSD = envFloatOrDefault("AGENT_TASK_MAX_COST_USD", cfg.Agent.TaskMaxCostUSD)
 	cfg.Agent.TaskResumeBackend = envBoolOrDefault("AGENT_TASK_RESUME_BACKEND", cfg.Agent.TaskResumeBackend)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
@@ -715,6 +723,31 @@ func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
+		}
+	}
+	return fallback
+}
+
+// envSecondsOrDefault reads a whole number of seconds ("14400") or a Go
+// duration ("4h"); "0" is allowed and means no limit.
+func envSecondsOrDefault(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+		return time.Duration(n) * time.Second
+	}
+	if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+		return d
+	}
+	return fallback
+}
+
+func envFloatOrDefault(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

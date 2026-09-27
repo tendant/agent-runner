@@ -17,14 +17,16 @@ type taskStarterFake struct {
 	engineStarter
 	root       string
 	turnDirs   []string
+	feedbacks  []string
 	finishedWS []string
 }
 
-func (f *taskStarterFake) StartTaskTurn(message, source, convID, taskDir string) (string, error) {
+func (f *taskStarterFake) StartTaskTurn(turn agent.TaskTurn) (string, error) {
 	f.mu.Lock()
-	f.turnDirs = append(f.turnDirs, taskDir)
+	f.turnDirs = append(f.turnDirs, turn.Dir)
+	f.feedbacks = append(f.feedbacks, turn.Feedback)
 	f.mu.Unlock()
-	return f.StartAgent(message, source, convID)
+	return f.StartAgent(turn.Message, turn.Source, turn.ConvID)
 }
 
 func (f *taskStarterFake) TaskWorkspacePath(key string) string {

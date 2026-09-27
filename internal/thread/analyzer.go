@@ -182,3 +182,54 @@ func parseAnalysisResult(output string) (*AnalysisResult, error) {
 
 	return nil, fmt.Errorf("no valid JSON found in output")
 }
+
+// Task message kinds returned by ClassifyTaskMessage.
+const (
+	TaskMessageContinue = "continue" // an answer, feedback or go-ahead for the current task
+	TaskMessageNew      = "new"      // an unrelated new request
+	TaskMessageChat     = "chat"     // small talk or an acknowledgement ("thanks!"): no work
+)
+
+// ClassifyTaskMessage decides whether a message sent while a task is open
+// (waiting for an answer, paused, or recently finished) continues that task
+// or is a new, unrelated request. question is the agent's open question, if
+// any. Errors and unparseable output return fallback.
+func (a *Analyzer) ClassifyTaskMessage(ctx context.Context, goal, question, message, fallback string) string {
+	if a == nil || a.client == nil {
+		return fallback
+	}
+	var sb strings.Builder
+	sb.WriteString("A user is working with a coding agent on a task. Decide whether their new message continues that task (an answer to the agent's question, feedback or a correction on the work, approval, or a follow-up change to the same work) or is a NEW, unrelated request that should become a separate task.\n\n")
+	sb.WriteString("Use \"chat\" for small talk or a bare acknowledgement that asks for no work (\"thanks!\", \"great\", \"ok cool\") — unless it answers the agent's question.\n")
+	sb.WriteString("You MUST respond with ONLY a JSON object: {\"kind\": \"continue\"}, {\"kind\": \"new\"} or {\"kind\": \"chat\"}. When unsure, answer \"continue\".\n\n")
+	fmt.Fprintf(&sb, "Task goal: %s\n", goal)
+	if question != "" {
+		fmt.Fprintf(&sb, "The agent asked: %s\n", question)
+	}
+	fmt.Fprintf(&sb, "New message: %s\n", message)
+
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	defer cancel()
+	out, err := a.client.Complete(ctx, sb.String())
+	if err != nil {
+		slog.Warn("analyzer: task message classification failed", "error", err)
+		return fallback
+	}
+	out = strings.TrimSpace(out)
+	if i, j := strings.Index(out, "{"), strings.LastIndex(out, "}"); i >= 0 && j > i {
+		var r struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal([]byte(out[i:j+1]), &r) == nil {
+			switch strings.ToLower(r.Kind) {
+			case TaskMessageNew:
+				return TaskMessageNew
+			case TaskMessageContinue:
+				return TaskMessageContinue
+			case TaskMessageChat:
+				return TaskMessageChat
+			}
+		}
+	}
+	return fallback
+}

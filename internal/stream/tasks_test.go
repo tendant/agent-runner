@@ -26,11 +26,11 @@ func (s *taskStarter) StartAgent(m, _, _ string) (string, error) {
 	return "", errors.New("one-shot path used")
 }
 func (s *taskStarter) Steer(string, string) error { return errors.New("no steer") }
-func (s *taskStarter) StartTaskTurn(m, _, _, dir string) (string, error) {
+func (s *taskStarter) StartTaskTurn(turn agent.TaskTurn) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.messages = append(s.messages, m)
-	s.dirs = append(s.dirs, dir)
+	s.messages = append(s.messages, turn.Message)
+	s.dirs = append(s.dirs, turn.Dir)
 	if len(s.messages) == 1 {
 		return "turn-1", nil
 	}
@@ -66,7 +66,7 @@ func TestStreamBot_AnswerResumesTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bot.SetTasks(store)
+	bot.SetTasks(store, task.Limits{})
 
 	// No analyzer on the first message (executes directly), a failing one after.
 	bot.handleMessage(context.Background(), "c_1", "m_A", "deploy the app")

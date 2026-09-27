@@ -31,6 +31,7 @@ func (m *ManagerJournal) record(snap *agent.Session, status string) {
 		MaxTotalSeconds: snap.MaxTotalSeconds,
 		CallbackURL:     snap.CallbackURL,
 		TaskWorkspace:   snap.TaskWorkspace,
+		TaskFeedback:    snap.TaskFeedback,
 		Status:          status,
 		CreatedAt:       snap.StartedAt,
 	}

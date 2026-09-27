@@ -241,3 +241,87 @@ func TestTaskTurns_ResumeBackendDisabled(t *testing.T) {
 		t.Fatalf("resumed with the backend resume disabled: %v", re.refs)
 	}
 }
+
+// cannedLLM returns a fixed completion and records prompts.
+type cannedLLM struct {
+	out     string
+	prompts []string
+}
+
+func (c *cannedLLM) Complete(_ context.Context, prompt string) (string, error) {
+	c.prompts = append(c.prompts, prompt)
+	return c.out, nil
+}
+
+func revisedPlanJSON(steps ...string) string {
+	return `{"summary":"s","approach":"a","steps":[` + strings.Join(steps, ",") + `]}`
+}
+
+func seedPlan(t *testing.T, taskDir string) {
+	t.Helper()
+	os.MkdirAll(taskDir, 0o755)
+	if err := subagent.SavePlan(taskDir, &subagent.PlanResult{Summary: "s", Steps: []subagent.PlanStep{
+		{ID: "1", Description: "build", Done: true}, {ID: "2", Description: "deploy"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Feedback on a task revises its saved plan. A small revision is saved and
+// work continues on it; a large one ends the turn before any work to ask
+// for approval.
+func TestTaskTurns_PlanRevision(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		revised      string
+		wantFirst    string // saved plan's first two step descriptions
+		wantApproval bool
+	}{
+		{"small", revisedPlanJSON(`{"id":"1","description":"build","done":true}`, `{"id":"2","description":"deploy to staging"}`), "build/deploy to staging", false},
+		{"reopens finished work", revisedPlanJSON(`{"id":"1","description":"build again","done":false}`, `{"id":"2","description":"deploy"}`), "build again/deploy", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			env.handlers.config.Agent.PlannerEnabled = true
+			env.handlers.config.Agent.ReviewerEnabled = false
+			planner := &cannedLLM{out: tc.revised}
+			env.handlers.planner = planner
+			exec := &scriptedExecutor{fn: func(checkout string, _ int) {
+				writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{"status": "done"})
+			}}
+			env.handlers.executor = exec
+			taskDir := env.handlers.TaskWorkspacePath("m_1")
+			seedPlan(t, taskDir)
+
+			s, err := env.handlers.agentManager.CreateSession("## Task ... feedback", nil, "test", "m_1", 5, 60)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.TaskWorkspace = taskDir
+			s.TaskFeedback = "deploy to staging, not prod"
+			env.handlers.ExecuteAgent(s)
+
+			snap := s.Snapshot()
+			if snap.Status != "completed" {
+				t.Fatalf("status %s (%s)", snap.Status, snap.Error)
+			}
+			if len(planner.prompts) != 1 || !strings.Contains(planner.prompts[0], "User feedback: deploy to staging, not prod") || !strings.Contains(planner.prompts[0], `"description": "build"`) {
+				t.Fatalf("revise prompt missing plan or feedback: %v", planner.prompts)
+			}
+			saved := subagent.LoadPlan(taskDir)
+			if saved == nil || len(saved.Steps) != 2 || saved.Steps[0].Description+"/"+saved.Steps[1].Description != tc.wantFirst {
+				t.Fatalf("saved plan = %+v, want %s", saved, tc.wantFirst)
+			}
+			if snap.TurnApproval != tc.wantApproval {
+				t.Fatalf("approval = %v, want %v", snap.TurnApproval, tc.wantApproval)
+			}
+			if tc.wantApproval {
+				if exec.calls != 0 || !strings.Contains(snap.TurnQuestion, "Proceed with this plan?") || !strings.Contains(snap.TurnQuestion, "⬜ 1. build again") {
+					t.Fatalf("approval turn: %d agent calls, question %q", exec.calls, snap.TurnQuestion)
+				}
+			} else if exec.calls == 0 {
+				t.Fatal("a small revision should go straight to work")
+			}
+		})
+	}
+}

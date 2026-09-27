@@ -701,3 +701,7 @@ func (h *Handlers) writeJSON(w http.ResponseWriter, status int, data any) {
 func (h *Handlers) writeError(w http.ResponseWriter, status int, message string) {
 	h.writeJSON(w, status, map[string]string{"error": message})
 }
+
+// The bots find task support on the starter by type assertion; keep the
+// execution engine's methods in step with botcommon.TaskStarter.
+var _ botcommon.TaskStarter = (*execution.Engine)(nil)

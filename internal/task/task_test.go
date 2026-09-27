@@ -119,7 +119,7 @@ func TestContextBlock(t *testing.T) {
 	rec.Plan = []PlanStep{{ID: "1", Text: "build", Done: true}, {ID: "2", Text: "deploy"}}
 	rec.Decisions = []string{"use Postgres"}
 	rec.Turns = []Turn{{Summary: "built the image", Question: "Which environment?"}}
-	got := ContextBlock(rec, " staging ")
+	got := ContextBlock(rec, " staging ", false)
 	for _, want := range []string{
 		"## Task", "Goal: deploy the app", "1 [done] build", "2 [todo] deploy",
 		"- use Postgres", `turn 1 — built the image (asked: "Which environment?")`, "User's reply: staging",
@@ -136,5 +136,31 @@ func TestAddDecisionsDedupes(t *testing.T) {
 	rec.AddDecisions([]string{"b", "c"})
 	if strings.Join(rec.Decisions, ",") != "a,b,c" {
 		t.Fatalf("decisions = %v", rec.Decisions)
+	}
+}
+
+func TestLimitsExceeded(t *testing.T) {
+	l := Limits{MaxTurns: 3, MaxSeconds: 3600, MaxCostUSD: 2}
+	if got := l.Exceeded(Budget{Turns: 2, Seconds: 100, CostUSD: 1}); got != "" {
+		t.Errorf("within limits: %q", got)
+	}
+	for b, want := range map[Budget]string{
+		{Turns: 3}:      "3 turns",
+		{Seconds: 3600}: "1h0m0s of work",
+		{CostUSD: 2.5}:  "$2.50 spent",
+	} {
+		if got := l.Exceeded(b); got != want {
+			t.Errorf("Exceeded(%+v) = %q, want %q", b, got, want)
+		}
+	}
+	if got := (Limits{}).Exceeded(Budget{Turns: 100, Seconds: 1e6, CostUSD: 1e3}); got != "" {
+		t.Errorf("zero limits should be unlimited, got %q", got)
+	}
+}
+
+func TestContextBlockFeedback(t *testing.T) {
+	got := ContextBlock(New("m", "g", ""), "add tests", true)
+	if !strings.Contains(got, "User's feedback on the task (address it): add tests") {
+		t.Errorf("feedback label missing:\n%s", got)
 	}
 }

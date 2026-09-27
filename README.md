@@ -170,6 +170,7 @@ Key variables:
 | `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
 | `AGENT_TASKS_ENABLED` | `false` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
 | `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
+| `AGENT_TASK_MAX_TURNS` / `AGENT_TASK_MAX_SECONDS` / `AGENT_TASK_MAX_COST_USD` | `10` / `4h` / unlimited | Per-task budget; reaching it pauses the task until the user says "continue" |
 | `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude) |
 | `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
@@ -216,8 +217,25 @@ can span several agent runs:
   `_progress.json` completed steps and the saved plan are kept). The turn's
   prompt carries a task context block — goal, plan progress, decisions, earlier
   turns' summaries and the reply — instead of the raw chat transcript.
-- A turn that hits a limit or fails leaves the task *paused*; the next message
-  continues it. `/cancel` cancels the task and releases its workspace.
+- A turn that hits a limit or fails leaves the task *paused* and posts the plan
+  checklist; "continue" picks it up, anything else is feedback. `/cancel`
+  cancels the task and releases its workspace.
+- **Feedback revises the plan.** Feedback on a paused task, or on a finished
+  one whose workspace is still kept, goes to the planner in revise mode with
+  the current plan: finished steps stay finished unless the feedback reopens
+  them. A large revision (it reopens finished work or adds 3+ steps) is shown
+  for approval first — "yes" proceeds, "no" asks what to change, anything
+  else revises again. The intent analyzer decides whether a message after a
+  finished task is feedback or a new request.
+- **Budgets.** Each task has a budget of turns, working time and cost
+  (`AGENT_TASK_MAX_*`). Reaching it pauses the task: "continue" resets the
+  budget and resumes, "stop" ends it. A turn that asks a question is never
+  paused for budget.
+- **Telegram and WeChat run one task per chat.** A new request that arrives
+  while the chat's task is unfinished is queued ("Queued — I'll start it when
+  the current task finishes", at most 5) and starts as a new task when the
+  current one finishes or is cancelled. In agent-stream a new request is a new
+  thread, so nothing queues.
 - Each turn still commits and pushes as usual. Repos are cached back only when
   the task's workspace is released.
 
@@ -240,8 +258,6 @@ A conversation that can't be resumed is dropped with a warning and a fresh one
 starts; the context block keeps the turn correct either way. Claude keeps a
 conversation's first system prompt on resume.
 
-Current limit: while a task waits for an answer, every message in that thread
-(or Telegram/WeChat chat) is taken as the answer.
 
 What the runner cannot resolve is state outside git — a sequential ID derived by
 listing a directory, a deploy slot, a shared config file. That's what the

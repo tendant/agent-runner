@@ -57,6 +57,13 @@ type Engine struct {
 	// work keeps a record and a workspace across turns, and a turn can stop
 	// to ask the user a question. nil = one-shot runs, as before.
 	Tasks *task.Store
+	// TaskLimits caps each task's turns, working time and cost; reaching one
+	// pauses the task until the user says to continue.
+	TaskLimits task.Limits
+	// QueueNewRequests queues a new request that arrives while the chat's
+	// task is unfinished (Telegram/WeChat: one task per chat). Off for
+	// agent-stream, where a new request is a new thread.
+	QueueNewRequests bool
 
 	WG *sync.WaitGroup
 }
@@ -64,6 +71,12 @@ type Engine struct {
 // HandleConfirmation starts an agent session from the conversation's latest
 // user message (with history context) and reports progress until it ends.
 func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *thread.Thread) {
+	e.runTurn(ctx, id, conv, false)
+}
+
+// runTurn starts a run from the thread's latest user message. With tasks on
+// it is a task turn; feedback marks the message as feedback on the task.
+func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, feedback bool) {
 	e.Sender.Status(ctx, id, e.StartText)
 	conv.SetState(thread.StateExecuting)
 
@@ -86,7 +99,7 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *thread
 		err       error
 	)
 	if ts, ok := e.taskStarter(); ok {
-		sessionID, err = e.startTaskTurn(ts, id, message, currentMsg)
+		sessionID, err = e.startTaskTurn(ts, id, message, currentMsg, feedback)
 	} else {
 		sessionID, err = e.Starter.StartAgent(message, e.Source, id)
 	}
@@ -123,10 +136,9 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 				}
 			}
 		}
-		question := e.finishTaskTurn(id, sessionID, session, sessionOk)
-		if question != "" {
-			conv.AddMessage("assistant", question)
-			e.Sender.Final(ctx, id, FormatTurnQuestion(question))
+		if notice := e.finishTaskTurn(id, sessionID, session, sessionOk); notice != "" {
+			conv.AddMessage("assistant", notice)
+			e.Sender.Final(ctx, id, notice)
 		}
 		hasPending := conv.ClearPendingInput()
 
@@ -149,10 +161,21 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 			if e.AnnounceQueued {
 				e.Sender.Reply(ctx, id, "Processing queued messages...")
 			}
-			if e.Analyzer == nil || e.ResumesTask(id) {
+			if e.HandleTaskMessage(ctx, id, conv, lastUserMessage(conv)) {
+				return
+			}
+			if e.Analyzer == nil {
 				e.HandleConfirmation(ctx, id, conv)
 			} else {
 				e.HandleAnalysis(ctx, id, conv)
+			}
+			return
+		}
+
+		// A request queued behind the task that just finished starts now.
+		if e.Tasks != nil {
+			if next := e.popQueued(id); next != "" {
+				e.startQueued(ctx, id, next)
 			}
 		}
 	})
@@ -228,4 +251,15 @@ func (e *Engine) HandleAnalysis(ctx context.Context, id string, conv *thread.Thr
 		conv.AddMessage("assistant", result.Message)
 		e.Sender.Final(ctx, id, result.Message)
 	}
+}
+
+// lastUserMessage returns the thread's latest user message.
+func lastUserMessage(conv *thread.Thread) string {
+	msgs := conv.GetMessages()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }

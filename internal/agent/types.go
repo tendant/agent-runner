@@ -102,7 +102,13 @@ type Session struct {
 	// TaskWorkspace, when set, makes this run one turn of a multi-turn task
 	// (TASKS_DESIGN.md): the workspace at this path is reused from earlier
 	// turns and kept afterwards instead of being cached back and deleted.
-	TaskWorkspace string   `json:"-"`
+	TaskWorkspace string `json:"-"`
+	// TaskFeedback is the user's feedback that started this turn; with a
+	// saved plan the planner revises it (revise mode) before work resumes.
+	TaskFeedback string `json:"-"`
+	// TurnApproval reports that the turn ended before any work to have the
+	// user approve a large plan revision (TurnQuestion shows it).
+	TurnApproval  bool     `json:"-"`
 	TurnStatus    string   `json:"-"` // agent-reported status at turn end: "", "working", "needs_input" or "done"
 	TurnQuestion  string   `json:"-"` // question for the user when TurnStatus is "needs_input"
 	TurnSummary   string   `json:"-"` // agent's summary of the turn
@@ -275,7 +281,15 @@ func (s *Session) AddWarning(msg string) {
 	s.mu.Unlock()
 }
 
-// SetWorkspacePath stores the workspace path on the session.
+// TaskTurn describes one turn of a multi-turn task to start.
+type TaskTurn struct {
+	Message  string // the turn's prompt (context block + reply on later turns)
+	Source   string // session source tag, e.g. "stream"
+	ConvID   string // chat thread the task belongs to
+	Dir      string // the task's persistent workspace
+	Feedback string // user feedback to revise the plan with ("" = none)
+}
+
 // SetTurnResult records what the agent reported about this turn of a task.
 func (s *Session) SetTurnResult(status, question, summary string, decisions []string) {
 	s.mu.Lock()
@@ -286,6 +300,17 @@ func (s *Session) SetTurnResult(status, question, summary string, decisions []st
 	s.TurnDecisions = append([]string(nil), decisions...)
 }
 
+// SetTurnApproval marks the turn as waiting for approval of a revised plan.
+func (s *Session) SetTurnApproval(question string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TurnApproval = true
+	s.TurnStatus = "needs_input"
+	s.TurnQuestion = question
+	s.TurnSummary = "revised the plan; waiting for approval"
+}
+
+// SetWorkspacePath stores the workspace path on the session.
 func (s *Session) SetWorkspacePath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -379,6 +404,8 @@ func (s *Session) Snapshot() *Session {
 		LogLines:             append([]string{}, s.LogLines...),
 		AgentEvents:          append([]ExecEvent{}, s.AgentEvents...),
 		TaskWorkspace:        s.TaskWorkspace,
+		TaskFeedback:         s.TaskFeedback,
+		TurnApproval:         s.TurnApproval,
 		TurnStatus:           s.TurnStatus,
 		TurnQuestion:         s.TurnQuestion,
 		TurnSummary:          s.TurnSummary,
