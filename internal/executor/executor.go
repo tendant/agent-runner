@@ -119,7 +119,8 @@ func (e *ClaudeExecutor) ResumeKind() string { return "claude" }
 // ExecuteResuming continues the Claude conversation ref (--resume) or, with
 // ref "", starts one under a new session ID (--session-id) and returns it.
 // Claude keeps a conversation's first system prompt on resume.
-func (e *ClaudeExecutor) ExecuteResuming(ctx context.Context, workspacePath, systemPrompt, instruction, ref string, onEvent func(EventKind, string)) (*ExecutionResult, string, error) {
+func (e *ClaudeExecutor) ExecuteResuming(ctx context.Context, workspacePath string, req ResumeRequest) (*ExecutionResult, string, error) {
+	ref := req.Ref
 	var extra []string
 	if ref == "" {
 		ref = uuid.NewString()
@@ -127,7 +128,7 @@ func (e *ClaudeExecutor) ExecuteResuming(ctx context.Context, workspacePath, sys
 	} else {
 		extra = []string{"--resume", ref}
 	}
-	result, err := e.run(ctx, workspacePath, systemPrompt, instruction, extra, onEvent)
+	result, err := e.run(ctx, workspacePath, req.SystemPrompt, req.Instruction, extra, req.OnEvent)
 	if err != nil && extra[0] == "--resume" && claudeResumeMissing(result, err) {
 		return result, "", fmt.Errorf("%w: %v", ErrResumeFailed, err)
 	}

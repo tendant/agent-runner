@@ -31,14 +31,26 @@ type ContextRetainer interface {
 }
 
 // ResumingExecutor is implemented by one-shot executors that can continue a
-// saved conversation. ref names the conversation ("" = start a new one);
-// the returned ref is the one to continue next time. ErrResumeFailed means
-// ref could not be resumed and nothing ran.
+// saved conversation. The returned ref is the one to continue next time.
+// ErrResumeFailed means req.Ref could not be resumed and nothing ran.
 type ResumingExecutor interface {
-	// ResumeKind names the reference format ("claude"), so a reference saved
-	// by one CLI is never handed to another after a config change.
+	// ResumeKind names the reference format ("claude", "codex"), so a
+	// reference saved by one CLI is never handed to another after a config
+	// change.
 	ResumeKind() string
-	ExecuteResuming(ctx context.Context, workspacePath, systemPrompt, instruction, ref string, onEvent func(EventKind, string)) (result *ExecutionResult, newRef string, err error)
+	ExecuteResuming(ctx context.Context, workspacePath string, req ResumeRequest) (result *ExecutionResult, newRef string, err error)
+}
+
+// ResumeRequest is one prompt in a resumable conversation.
+type ResumeRequest struct {
+	SystemPrompt string
+	Instruction  string
+	Ref          string // conversation to continue; "" starts a new one
+	// Continuation marks an incremental prompt: the conversation already
+	// holds the instructions (SystemPrompt repeats the previous one), so a
+	// CLI that has to inline the system prompt into the message skips it.
+	Continuation bool
+	OnEvent      func(EventKind, string)
 }
 
 // ErrResumeFailed reports that a saved conversation reference was rejected
