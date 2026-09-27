@@ -170,6 +170,7 @@ Key variables:
 | `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
 | `AGENT_TASKS_ENABLED` | `false` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
 | `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
+| `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude) |
 | `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
@@ -225,9 +226,22 @@ background sweep releases a finished task's workspace after
 `AGENT_TASK_RETENTION` and expires a task left waiting after
 `AGENT_TASK_IDLE_TTL`. A turn interrupted by a restart pauses its task.
 
-Phase 1 limits: while a task waits for an answer, every message in that thread
-(or Telegram/WeChat chat) is taken as the answer, and backend conversation
-resume (pi/claude/codex sessions) is not used yet.
+**Backend conversation resume** (`AGENT_TASK_RESUME_BACKEND`, on by default):
+the agent CLI also keeps its own conversation across turns, so it remembers
+its earlier reasoning and tool results, not just the context block.
+
+| CLI | How |
+|---|---|
+| `pi` | a durable session (`--session-dir <task>/state/backend/pi --session-id <id>`) instead of `--no-session`; each turn's process restores it |
+| `claude` | the first prompt starts `--session-id <uuid>`, later prompts `--resume` it — within a turn too, so iterations after the first get incremental prompts as with pi |
+| `codex`, `opencode` | not yet; context block only |
+
+A conversation that can't be resumed is dropped with a warning and a fresh one
+starts; the context block keeps the turn correct either way. Claude keeps a
+conversation's first system prompt on resume.
+
+Current limit: while a task waits for an answer, every message in that thread
+(or Telegram/WeChat chat) is taken as the answer.
 
 What the runner cannot resolve is state outside git — a sequential ID derived by
 listing a directory, a deploy slot, a shared config file. That's what the

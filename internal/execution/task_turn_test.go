@@ -3,8 +3,10 @@ package execution
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -156,5 +158,86 @@ func TestTaskTurns_OneShotStillCleansUp(t *testing.T) {
 	}
 	if _, err := os.Stat(ws); !os.IsNotExist(err) {
 		t.Fatalf("one-shot workspace kept: %v", err)
+	}
+}
+
+// resumingExecutor is a scriptedExecutor that can also resume: it records
+// the conversation ref and whether each prompt carried the full prompt.
+type resumingExecutor struct {
+	scriptedExecutor
+	refs  []string
+	fulls []bool
+	n     int
+}
+
+func (r *resumingExecutor) ResumeKind() string { return "fake" }
+func (r *resumingExecutor) ExecuteResuming(_ context.Context, w, _, msg, ref string, _ func(executor.EventKind, string)) (*executor.ExecutionResult, string, error) {
+	r.mu.Lock()
+	r.refs = append(r.refs, ref)
+	r.fulls = append(r.fulls, msg == "deploy" || msg == "turn two")
+	if ref == "" {
+		r.n++
+		ref = fmt.Sprintf("conv-%d", r.n)
+	}
+	r.mu.Unlock()
+	res, err := r.run(w)
+	return res, ref, err
+}
+
+// A task's turns continue one backend conversation: iterations after the
+// first send incremental prompts, and the next turn resumes the same ref.
+func TestTaskTurns_ResumeBackendConversation(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.config.Agent.PlannerEnabled = false
+	env.handlers.config.Agent.ReviewerEnabled = false
+	env.handlers.config.Agent.TaskResumeBackend = true
+	taskDir := env.handlers.TaskWorkspacePath("m_1")
+
+	re := &resumingExecutor{}
+	re.fn = func(checkout string, call int) {
+		switch call {
+		case 2: // second iteration of turn 1 asks the user
+			writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{"status": "needs_input", "question": "Which env?"})
+		case 3:
+			writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{"status": "done"})
+		}
+	}
+	env.handlers.executor = re
+
+	for _, msg := range []string{"deploy", "turn two"} {
+		s, err := env.handlers.agentManager.CreateSession(msg, nil, "test", "m_1", 5, 60)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.TaskWorkspace = taskDir
+		env.handlers.ExecuteAgent(s)
+		if snap := s.Snapshot(); snap.Status != "completed" {
+			t.Fatalf("turn %q: %s (%s)", msg, snap.Status, snap.Error)
+		}
+	}
+
+	if got := strings.Join(re.refs, ","); got != ",conv-1,conv-1" {
+		t.Fatalf("refs = %q, want a new conversation, then the same one twice", got)
+	}
+	if want := []bool{true, false, true}; fmt.Sprint(re.fulls) != fmt.Sprint(want) {
+		t.Fatalf("full prompts = %v, want %v (incremental within a turn, full at a turn's start)", re.fulls, want)
+	}
+}
+
+// With AGENT_TASK_RESUME_BACKEND off, turns never resume a conversation.
+func TestTaskTurns_ResumeBackendDisabled(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.config.Agent.PlannerEnabled = false
+	env.handlers.config.Agent.TaskResumeBackend = false
+	re := &resumingExecutor{}
+	re.fn = func(checkout string, _ int) {
+		writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{"status": "done"})
+	}
+	env.handlers.executor = re
+	s, _ := env.handlers.agentManager.CreateSession("deploy", nil, "test", "m_1", 5, 60)
+	s.TaskWorkspace = env.handlers.TaskWorkspacePath("m_1")
+	env.handlers.ExecuteAgent(s)
+	if len(re.refs) != 0 {
+		t.Fatalf("resumed with the backend resume disabled: %v", re.refs)
 	}
 }

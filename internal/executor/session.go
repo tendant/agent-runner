@@ -21,6 +21,9 @@ type SessionOptions struct {
 	Provider string
 	Model    string
 	ExtraEnv []string
+	// Conversation, when set, continues a conversation saved by an earlier
+	// session (a multi-turn task's previous turn) where the backend can.
+	Conversation *Conversation
 }
 
 // PromptRequest is one prompt to a session. SystemPrompt is passed to the
@@ -128,12 +131,21 @@ func (b *OneShotBackend) Start(_ context.Context, workspace string, opts Session
 	if len(opts.ExtraEnv) > 0 {
 		b.SetExtraEnv(opts.ExtraEnv)
 	}
-	return &oneShotSession{exec: b.exec, workspace: workspace, events: make(chan Event, 64)}, nil
+	s := &oneShotSession{exec: b.exec, workspace: workspace, events: make(chan Event, 64)}
+	if _, ok := b.exec.(ResumingExecutor); ok && opts.Conversation != nil {
+		s.conv = opts.Conversation
+	}
+	return s, nil
 }
 
 type oneShotSession struct {
 	exec      Executor
 	workspace string
+
+	// conv is set when the executor can resume: every prompt then continues
+	// one saved conversation, across prompts and across sessions.
+	conv       *Conversation
+	lastSystem string // system prompt reused on incremental prompts
 
 	events chan Event
 
@@ -158,12 +170,41 @@ func (s *oneShotSession) Prompt(ctx context.Context, req PromptRequest) (*Execut
 	s.emit(EventPromptStart, "")
 	var result *ExecutionResult
 	var err error
-	if se, ok := s.exec.(StreamingExecutor); ok {
+	if s.conv != nil {
+		result, err = s.promptResuming(pctx, req)
+	} else if se, ok := s.exec.(StreamingExecutor); ok {
 		result, err = se.ExecuteStreaming(pctx, s.workspace, req.SystemPrompt, req.Message, s.emit)
 	} else {
 		result, _, err = s.exec.ExecuteWithLogAndSystemPrompt(pctx, s.workspace, req.SystemPrompt, req.Message)
 	}
 	s.emit(EventSettled, "")
+	return result, err
+}
+
+// RetainsContext reports whether prompts continue one conversation.
+func (s *oneShotSession) RetainsContext() bool { return s.conv != nil }
+
+// promptResuming runs the prompt in the saved conversation, starting a new
+// one when there is none or the saved one can't be resumed.
+func (s *oneShotSession) promptResuming(ctx context.Context, req PromptRequest) (*ExecutionResult, error) {
+	re := s.exec.(ResumingExecutor)
+	system := req.SystemPrompt
+	if system == "" {
+		system = s.lastSystem // incremental prompt: keep the instructions
+	}
+	s.lastSystem = system
+
+	name := re.ResumeKind()
+	ref := s.conv.loadRef(name)
+	result, newRef, err := re.ExecuteResuming(ctx, s.workspace, system, req.Message, ref, s.emit)
+	if errors.Is(err, ErrResumeFailed) {
+		s.emit(EventWarning, "saved conversation could not be resumed; starting a new one")
+		s.conv.saveRef(name, "")
+		result, newRef, err = re.ExecuteResuming(ctx, s.workspace, system, req.Message, "", s.emit)
+	}
+	if newRef != "" {
+		s.conv.saveRef(name, newRef)
+	}
 	return result, err
 }
 

@@ -496,6 +496,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			toolSpans.End(ev.Text)
 		}
 	}, toolSpans: toolSpans}
+	if taskDir := liveSession.TaskWorkspace; taskDir != "" && h.config.Agent.TaskResumeBackend {
+		// Continue the backend conversation of the task's earlier turns
+		// (TASKS_DESIGN.md §7); the task context block stays in the prompt
+		// either way, so a backend that can't resume loses nothing.
+		as.conv = &executor.Conversation{Dir: filepath.Join(taskDir, "state", "backend")}
+	}
 	if err := as.start(ctx, checkoutPath); err != nil {
 		h.FailSession(sessionID, "agent session start failed: "+err.Error())
 		return
@@ -1108,8 +1114,9 @@ func (h *Engine) resolvePrompt(sessionID, message string) (string, error) {
 // be swapping it during a restart.
 type agentSession struct {
 	backend   executor.Backend
-	onEvent   func(executor.Event) // forwards session progress events; may be nil
-	toolSpans *tracing.ToolSpans   // tool_start/tool_end → child spans of the current iteration; may be nil
+	conv      *executor.Conversation // task turns: the durable backend conversation
+	onEvent   func(executor.Event)   // forwards session progress events; may be nil
+	toolSpans *tracing.ToolSpans     // tool_start/tool_end → child spans of the current iteration; may be nil
 
 	mu   sync.RWMutex
 	sess executor.Session
@@ -1126,7 +1133,7 @@ func (as *agentSession) session() executor.Session {
 }
 
 func (as *agentSession) start(ctx context.Context, workspace string) error {
-	sess, err := as.backend.Start(ctx, workspace, executor.SessionOptions{})
+	sess, err := as.backend.Start(ctx, workspace, executor.SessionOptions{Conversation: as.conv})
 	if err != nil {
 		return err
 	}
@@ -1163,7 +1170,15 @@ func (as *agentSession) Close() {
 	}
 }
 
-func (as *agentSession) persistent() bool { return as.backend.Persistent() }
+// persistent reports whether the conversation carries over between prompts:
+// a persistent backend, or a one-shot one resuming a saved conversation.
+func (as *agentSession) persistent() bool {
+	if as.backend.Persistent() {
+		return true
+	}
+	cr, ok := as.session().(executor.ContextRetainer)
+	return ok && cr.RetainsContext()
+}
 
 // executePrompt runs a single prompt of the agent loop on the run's session.
 // It records success or error — no git operations. A user stop aborts the

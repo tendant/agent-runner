@@ -42,16 +42,22 @@ func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptio
 	}
 	env := append(append([]string{}, b.ExtraEnv...), opts.ExtraEnv...)
 
-	client, err := pi.Start(pi.Options{
+	po := pi.Options{
 		Provider:  provider,
 		Model:     model,
 		Workspace: workspace,
 		Env:       env,
-	})
+	}
+	if opts.Conversation != nil {
+		// A durable session: pi restores the conversation saved by the
+		// task's earlier turns (and saves this one for the next).
+		po.SessionDir, po.SessionID = opts.Conversation.piSession()
+	}
+	client, err := pi.Start(po)
 	if err != nil {
 		return nil, err
 	}
-	s := &piSession{client: client, events: make(chan Event, 256)}
+	s := &piSession{client: client, events: make(chan Event, 256), conv: opts.Conversation}
 	go s.forwardEvents()
 	return s, nil
 }
@@ -60,6 +66,9 @@ func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptio
 type piSession struct {
 	client *pi.Client
 	events chan Event
+
+	conv    *Conversation // durable conversation, or nil
+	settled bool          // a prompt has completed on this process
 }
 
 const piCommandTimeout = 10 * time.Second
@@ -77,12 +86,19 @@ func (s *piSession) Prompt(ctx context.Context, req PromptRequest) (*ExecutionRe
 	if err != nil {
 		result := &ExecutionResult{RawOutput: raw}
 		if errors.Is(err, pi.ErrDead) {
+			if s.conv != nil && !s.settled {
+				// Died before finishing a single prompt on a restored
+				// session: don't let a bad session file wedge the task.
+				// The engine's restart then begins a fresh conversation.
+				s.conv.discardPi()
+			}
 			result.Error = fmt.Errorf("%w: %v", ErrSessionDead, err)
 			return result, result.Error
 		}
 		// Context errors pass through for the caller to classify.
 		return result, err
 	}
+	s.settled = true
 	return &ExecutionResult{Output: res.Text, RawOutput: raw, CostUSD: res.CostUSD}, nil
 }
 

@@ -254,6 +254,12 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 - While a task is waiting, every message in the thread is its answer. Queueing new requests on Telegram/WeChat (decision 3) is not in phase 1.
 - A turn stopped by `needs_input` completes (it is not reviewed), and each reused turn starts with an empty `_send/` and no `_schedule.json` so earlier outputs aren't delivered twice.
 
+**Phase 2 status (implemented: pi and claude).** Behind `AGENT_TASK_RESUME_BACKEND` (default on when tasks are enabled). The backend reference lives in the task workspace (`state/backend/`), not in the task record.
+
+- **pi** (verified against pi 0.82.1 with a mock model, `internal/executor/pi/live_test.go`, run with `PI_LIVE=1`): `--session-dir <dir>/pi --session-id <uuid>` replaces `--no-session`. A new process with the same pair restores the conversation, and pi creates the session when the ID is new. If the process dies before finishing its first prompt on a restored session, the session is moved aside and the engine's one restart begins a fresh one.
+- **claude** (flags verified on 2.1.283): a task's first prompt runs with `--session-id <uuid>` and every later prompt, in the same turn or a later one, with `--resume <uuid>`. The one-shot session then reports that it retains context, so iterations after the first get incremental prompts as with pi. On resume the CLI reuses the conversation's first system prompt (`--system-prompt-snapshot` default); per-turn state reaches the agent through the context block and `_progress.json`. "No conversation found with session ID" → the reference is dropped and the prompt re-runs in a new conversation.
+- **codex**: not yet. `codex exec resume <id>` exists (0.149.0), but the thread-ID event in `--json` output and the missing-session error still need checking against a real run. **opencode**: context block only, as planned.
+
 ## 15. Decisions and open questions
 
 Decided:
