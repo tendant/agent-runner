@@ -168,6 +168,8 @@ Key variables:
 | `AGENT_PLANNER_ENABLED` | `true` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
 | `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
+| `AGENT_TASKS_ENABLED` | `false` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
+| `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
 | `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
@@ -198,6 +200,34 @@ normal case, and it resolves the way it does for people:
 
 The default `agent.md` tells the agent the same for pushes it does itself
 mid-task. Every git repo in the workspace is handled, not just the first.
+
+### Multi-turn tasks
+
+With `AGENT_TASKS_ENABLED=true` (off by default; design in
+[TASKS_DESIGN.md](TASKS_DESIGN.md)) a chat thread's work becomes a *task* that
+can span several agent runs:
+
+- The agent can stop mid-task to ask the user a question by writing
+  `"status": "needs_input"` and a `"question"` to `_progress.json`. The run ends
+  at the end of that iteration and the question is posted in the thread.
+- The user's next message in the thread is the answer: it skips the intent
+  analyzer and starts the next turn in **the same workspace** (scratch files,
+  `_progress.json` completed steps and the saved plan are kept). The turn's
+  prompt carries a task context block — goal, plan progress, decisions, earlier
+  turns' summaries and the reply — instead of the raw chat transcript.
+- A turn that hits a limit or fails leaves the task *paused*; the next message
+  continues it. `/cancel` cancels the task and releases its workspace.
+- Each turn still commits and pushes as usual. Repos are cached back only when
+  the task's workspace is released.
+
+Task records live in `STATE_ROOT/tasks/`, workspaces in `TMP_ROOT/task-*`. A
+background sweep releases a finished task's workspace after
+`AGENT_TASK_RETENTION` and expires a task left waiting after
+`AGENT_TASK_IDLE_TTL`. A turn interrupted by a restart pauses its task.
+
+Phase 1 limits: while a task waits for an answer, every message in that thread
+(or Telegram/WeChat chat) is taken as the answer, and backend conversation
+resume (pi/claude/codex sessions) is not used yet.
 
 What the runner cannot resolve is state outside git — a sequential ID derived by
 listing a directory, a deploy slot, a shared config file. That's what the

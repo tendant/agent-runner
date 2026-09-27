@@ -23,6 +23,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/thread"
 	// Import metrics package to register prometheus collectors.
 	_ "github.com/agent-runner/agent-runner/internal/metrics"
@@ -47,6 +48,8 @@ type Server struct {
 	threadManager *thread.Manager
 	scheduler     *scheduler.Scheduler
 	journal       *sessionjournal.Journal
+	tasks         *task.Store // nil unless AGENT_TASKS_ENABLED
+	stopSweeper   context.CancelFunc
 }
 
 // NewServer creates a new API server
@@ -165,6 +168,25 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	wechatBot.SetWelcome(welcome)
 
+	// Multi-turn tasks (TASKS_DESIGN.md): records live under STATE_ROOT so
+	// they survive restarts; workspaces live under TMP_ROOT (task-*).
+	var tasks *task.Store
+	if cfg.Agent.TasksEnabled {
+		if st, err := task.NewStore(filepath.Join(cfg.StateRoot, "tasks")); err != nil {
+			slog.Warn("multi-turn tasks disabled", "error", err)
+		} else {
+			tasks = st
+			if telegramBot != nil {
+				telegramBot.SetTasks(tasks)
+			}
+			if streamBot != nil {
+				streamBot.SetTasks(tasks)
+			}
+			wechatBot.SetTasks(tasks)
+			slog.Info("multi-turn tasks enabled", "retention", cfg.Agent.TaskRetention, "idle_ttl", cfg.Agent.TaskIdleTTL)
+		}
+	}
+
 	// Wire MultiNotifier: fan out background notifications to all active bots.
 	// Chat-initiated sessions (stream/telegram/wechat) skip notifySessionResult
 	// entirely; this path is only reached for API/runner-initiated sessions.
@@ -199,6 +221,7 @@ func NewServer(cfg *config.Config) *Server {
 		agentManager:  agentManager,
 		threadManager: threadManager,
 		journal:       journal,
+		tasks:         tasks,
 	}
 }
 
@@ -233,6 +256,17 @@ func (s *Server) Start() error {
 		}
 	}
 
+	if s.tasks != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.stopSweeper = cancel
+		engine := s.handlers.execEngine
+		go botcommon.RunTaskSweeper(ctx, s.tasks, 10*time.Minute, task.SweepPolicy{
+			Retention: s.config.Agent.TaskRetention,
+			IdleTTL:   s.config.Agent.TaskIdleTTL,
+			Finish:    engine.FinishTaskWorkspace,
+		})
+	}
+
 	// Setup graceful shutdown
 	done := make(chan struct{})
 	quit := make(chan os.Signal, 1)
@@ -256,6 +290,9 @@ func (s *Server) Start() error {
 			}
 		}()
 
+		if s.stopSweeper != nil {
+			s.stopSweeper()
+		}
 		// Cancel agent/job contexts first so running sessions stop promptly.
 		s.agentManager.Stop()
 		s.jobManager.Stop()
@@ -342,6 +379,7 @@ func (s *Server) Start() error {
 	// Recover sessions interrupted by the previous shutdown — after the bots
 	// are up so notifications can reach the originating conversations.
 	s.recoverSessions()
+	s.recoverTasks()
 
 	if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err

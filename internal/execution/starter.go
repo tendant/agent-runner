@@ -2,6 +2,8 @@ package execution
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
@@ -13,6 +15,38 @@ import (
 // non-chat callers) — recorded on the session so restart recovery can notify
 // the right conversation.
 func (h *Engine) StartAgent(message, source, convID string) (string, error) {
+	return h.startAgent(message, source, convID, "")
+}
+
+// StartTaskTurn starts one turn of a multi-turn task: like StartAgent, but
+// the run reuses and keeps the task's workspace at taskDir (see
+// TaskWorkspacePath) instead of preparing and deleting its own.
+func (h *Engine) StartTaskTurn(message, source, convID, taskDir string) (string, error) {
+	return h.startAgent(message, source, convID, taskDir)
+}
+
+// TaskWorkspacePath returns the workspace directory for a task key.
+func (h *Engine) TaskWorkspacePath(taskKey string) string {
+	return h.workspaceManager.TaskWorkspacePath(taskKey)
+}
+
+// FinishTaskWorkspace ends a task's workspace: repos are cached back for
+// future runs (deferred from each turn so half-finished work never reaches
+// the shared cache) and the directory is removed.
+func (h *Engine) FinishTaskWorkspace(taskDir string) {
+	if taskDir == "" {
+		return
+	}
+	if _, err := os.Stat(taskDir); err != nil {
+		return
+	}
+	h.workspaceManager.CacheReposBack(taskDir, h.config.RepoCacheRoot)
+	if err := h.workspaceManager.CleanupWorkspace(taskDir); err != nil {
+		slog.Warn("failed to remove task workspace", "path", taskDir, "error", err)
+	}
+}
+
+func (h *Engine) startAgent(message, source, convID, taskDir string) (string, error) {
 	// Fail fast on a missing CLI binary rather than burning workspace setup,
 	// planning, and iteration retries on a session that can't run at all.
 	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
@@ -34,6 +68,7 @@ func (h *Engine) StartAgent(message, source, convID string) (string, error) {
 	}
 	session.Source = source
 	session.ConvID = convID
+	session.TaskWorkspace = taskDir
 
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning

@@ -16,6 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/thread"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -114,6 +115,11 @@ func (b *Bot) ResumeSession(convID, sessionID string) {
 	b.engine.ResumeSession(context.Background(), convID, sessionID)
 }
 
+// SetTasks enables multi-turn tasks backed by store (nil disables them).
+func (b *Bot) SetTasks(store *task.Store) {
+	b.engine.Tasks = store
+}
+
 // SetWelcome configures the one-time first-contact greeting.
 func (b *Bot) SetWelcome(w botcommon.Welcome) {
 	b.engine.Welcome = w
@@ -196,7 +202,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Route through the unified gateway: /cancel, commands, slash-block.
 	if b.gateway != nil {
 		asyncSend := func(msg string) { b.send(tgChatID, msg) }
-		reset := func() { b.threadManager.Complete(chatID) }
+		reset := func() { b.engine.ResetThread(chatID) }
 		if reply, _, ok := b.gateway.Handle(content, asyncSend, reset); ok {
 			b.send(tgChatID, reply)
 			return
@@ -216,6 +222,13 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// If confirming, check for yes/no
+	// The agent asked a question (or stopped short): this message is the
+	// answer, so continue the task without re-analyzing.
+	if state == thread.StateGathering && b.engine.ResumesTask(chatID) {
+		b.engine.HandleConfirmation(context.Background(), chatID, conv)
+		return
+	}
+
 	if state == thread.StateConfirming {
 		if botcommon.IsConfirmation(content) {
 			b.engine.HandleConfirmation(context.Background(), chatID, conv)

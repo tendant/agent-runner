@@ -264,8 +264,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		snap := liveSession.Snapshot()
 		metrics.SessionsTotal.WithLabelValues(string(snap.Status), source).Inc()
 
-		// Cache repos back for future runs
-		if liveSession.WorkspacePath != "" {
+		// Cache repos back for future runs. A task turn defers this to the end
+		// of the task (FinishTaskWorkspace), so half-finished work never
+		// reaches the cache other runs copy from.
+		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
 			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.RepoCacheRoot)
 		}
 
@@ -408,8 +410,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			h.callbacks.Deliver(sessionID, snap.CallbackURL, CallbackPayload(liveSession.Snapshot(), logFile))
 		}
 
-		// Cleanup workspace after cache-back and logging are done
-		if liveSession.WorkspacePath != "" {
+		// Cleanup workspace after cache-back and logging are done. A task's
+		// workspace is kept for its next turn.
+		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
 			if err := h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath); err != nil {
 				slog.Warn("failed to cleanup workspace", "path", liveSession.WorkspacePath, "error", err)
 			}
@@ -509,8 +512,15 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
+	// A task turn reports how it ended (TASKS_DESIGN.md §5). A turn waiting
+	// on the user is not reviewed: the work is deliberately unfinished.
+	needsInput := false
+	if liveSession.TaskWorkspace != "" {
+		needsInput = h.recordTurnResult(liveSession, checkoutPath, completed)
+	}
+
 	reviewCtx, reviewSpan := tracing.Start(ctx, "agent.review", attribute.Bool("reviewer.enabled", h.config.Agent.ReviewerEnabled))
-	h.runReviewerPhase(reviewCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck, as)
+	h.runReviewerPhase(reviewCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, blockedOrStuck || needsInput, as)
 	if rr, ok := liveSession.Snapshot().ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
 		reviewSpan.SetAttributes(attribute.Int("review.score", rr.Score), attribute.Int("review.issues", len(rr.Issues)))
 	}
@@ -524,7 +534,8 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
 	finSpan.End()
 
-	h.determineFinalStatus(ctx, sessionID, liveSession, completed, blockedOrStuck, stopReason)
+	// A turn that stopped to ask the user ended as intended: it completes.
+	h.determineFinalStatus(ctx, sessionID, liveSession, completed || needsInput, blockedOrStuck, stopReason)
 }
 
 // prepareWorkspace sets up the agent's workspace (cloning/copying shared
@@ -532,10 +543,43 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 // calls h.FailSession and returns aborted=true; the caller should return
 // immediately.
 func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) (checkoutPath string, aborted bool) {
-	workspacePath, missingRepos, err := h.workspaceManager.PrepareAgentWorkspace(
-		h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
-		h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
+	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
+		checkout := filepath.Join(taskDir, "workspace")
+		if info, err := os.Stat(checkout); err == nil && info.IsDir() {
+			// A later turn of the task: continue in the same workspace.
+			liveSession.SetWorkspacePath(taskDir)
+			if err := subagent.ResetTurnFields(checkout); err != nil {
+				liveSession.AddWarning("could not reset _progress.json turn fields: " + err.Error())
+			}
+			// Outputs from earlier turns were already delivered (and persisted
+			// under OUTPUTS_ROOT); start this turn with an empty _send/ and no
+			// stale _schedule.json so nothing is delivered twice.
+			if err := os.RemoveAll(filepath.Join(checkout, "_send")); err != nil {
+				liveSession.AddWarning("could not clear _send/: " + err.Error())
+			}
+			_ = os.MkdirAll(filepath.Join(checkout, "_send"), 0o755)
+			_ = os.Remove(filepath.Join(checkout, "_schedule.json"))
+			slog.Info("reusing task workspace", "session_id", sessionID, "path", taskDir)
+			return checkout, false
+		}
+	}
+
+	var (
+		workspacePath string
+		missingRepos  []string
+		err           error
 	)
+	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
+		workspacePath, missingRepos, err = h.workspaceManager.PrepareAgentWorkspaceAt(
+			taskDir, h.config.RepoCacheRoot, h.config.Agent.SharedRepos,
+			h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
+		)
+	} else {
+		workspacePath, missingRepos, err = h.workspaceManager.PrepareAgentWorkspace(
+			h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
+			h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
+		)
+	}
 	if err != nil {
 		h.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return "", true
@@ -564,6 +608,15 @@ func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *
 	if !h.config.Agent.PlannerEnabled {
 		return nil, "", false
 	}
+	// A later task turn continues the task's plan instead of re-planning:
+	// _progress.json's completed step IDs refer to it.
+	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
+		if saved := subagent.LoadPlan(taskDir); saved != nil {
+			slog.Info("continuing task plan", "session_id", sessionID, "steps", len(saved.Steps))
+			liveSession.SetPlanResult(saved, len(saved.Steps))
+			return saved, "", false
+		}
+	}
 	if h.deps.PlannerClient() == nil {
 		slog.Warn("planner enabled but no LLM client configured; skipping", "session_id", sessionID)
 		liveSession.AddWarning("planner skipped: no LLM client configured")
@@ -589,6 +642,11 @@ func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *
 	}
 	slog.Info("planner produced steps", "session_id", sessionID, "steps", len(plan.Steps))
 	liveSession.SetPlanResult(plan, len(plan.Steps))
+	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
+		if err := subagent.SavePlan(taskDir, plan); err != nil {
+			liveSession.AddWarning("could not save task plan: " + err.Error())
+		}
+	}
 	return plan, plannerPromptText, false
 }
 
@@ -604,6 +662,7 @@ func (h *Engine) runIterationLoop(
 	plan *subagent.PlanResult, as *agentSession,
 ) (promptBuilder *subagent.PromptBuilder, stopReason string, completed, blockedOrStuck, aborted bool) {
 	promptBuilder = subagent.NewPromptBuilder(preamble)
+	promptBuilder.SetTaskMode(liveSession.TaskWorkspace != "")
 	iterReason := "first iteration"
 	stopReason = fmt.Sprintf("reached max iterations (%d)", maxIter)
 	iterationsRun := 0
@@ -749,6 +808,19 @@ func (h *Engine) runIterationLoop(
 
 		// Update completed steps from progress file and sync to plan
 		progress := subagent.ReadProgress(checkoutPath)
+		if liveSession.TaskWorkspace != "" {
+			if progress.Status == subagent.TurnNeedsInput && strings.TrimSpace(progress.Question) != "" {
+				stopReason = "waiting for the user's answer"
+				slog.Info("agent asked the user a question", "session_id", sessionID, "iteration", i)
+				break
+			}
+			if progress.Status == subagent.TurnDone {
+				stopReason = "task complete"
+				completed = true
+				slog.Info("agent reported the task done", "session_id", sessionID, "iteration", i)
+				break
+			}
+		}
 		if len(progress.BlockedSteps) > 0 {
 			reasons := make([]string, len(progress.BlockedSteps))
 			for j, b := range progress.BlockedSteps {
@@ -1413,4 +1485,21 @@ func buildErrorContext(iterNum int, errMsg, partialOutput string) string {
 		sb.WriteString(fmt.Sprintf("\n**Partial output:**\n```\n%s\n```\n", truncated))
 	}
 	return sb.String()
+}
+
+// recordTurnResult copies what the agent reported in _progress.json onto the
+// session for the chat engine, which merges it into the task record. A turn
+// that completed without an explicit status counts as done. Reports whether
+// the turn ended waiting for the user.
+func (h *Engine) recordTurnResult(liveSession *agent.Session, checkoutPath string, completed bool) bool {
+	p := subagent.ReadProgress(checkoutPath)
+	status := p.Status
+	if status == subagent.TurnNeedsInput && strings.TrimSpace(p.Question) == "" {
+		status = subagent.TurnWorking // a question is required to wait on the user
+	}
+	if completed && status == "" {
+		status = subagent.TurnDone
+	}
+	liveSession.SetTurnResult(status, strings.TrimSpace(p.Question), strings.TrimSpace(p.Summary), p.Decisions)
+	return status == subagent.TurnNeedsInput
 }

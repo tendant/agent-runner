@@ -21,6 +21,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/thread"
 	"github.com/agent-runner/agent-runner/internal/wechat"
 	qrcode "github.com/skip2/go-qrcode"
@@ -148,6 +149,11 @@ func (b *Bot) NotifyConversation(ctx context.Context, key, text string) {
 // ResumeSession re-attaches a result watcher to a recovered session.
 func (b *Bot) ResumeSession(key, sessionID string) {
 	b.engine.ResumeSession(context.Background(), key, sessionID)
+}
+
+// SetTasks enables multi-turn tasks backed by store (nil disables them).
+func (b *Bot) SetTasks(store *task.Store) {
+	b.engine.Tasks = store
 }
 
 // SetWelcome configures the one-time first-contact greeting.
@@ -794,7 +800,7 @@ func (b *Bot) handleMessage(ctx context.Context, channelID, key, text string) {
 	// Route all other messages through the unified gateway.
 	if b.gateway != nil {
 		asyncSend := func(msg string) { b.emitFinal(ctx, key, msg) }
-		reset := func() { b.threadManager.Complete(key) }
+		reset := func() { b.engine.ResetThread(key) }
 		if reply, _, ok := b.gateway.Handle(text, asyncSend, reset); ok {
 			b.emitFinal(ctx, key, reply)
 			return
@@ -808,6 +814,13 @@ func (b *Bot) handleMessage(ctx context.Context, channelID, key, text string) {
 
 	if state == thread.StateExecuting {
 		b.engine.HandleExecuting(ctx, key, conv, text)
+		return
+	}
+
+	// The agent asked a question (or stopped short): this message is the
+	// answer, so continue the task without re-analyzing.
+	if state == thread.StateGathering && b.engine.ResumesTask(key) {
+		b.engine.HandleConfirmation(ctx, key, conv)
 		return
 	}
 
