@@ -188,19 +188,22 @@ func (s *oneShotSession) RetainsContext() bool { return s.conv != nil }
 // one when there is none or the saved one can't be resumed.
 func (s *oneShotSession) promptResuming(ctx context.Context, req PromptRequest) (*ExecutionResult, error) {
 	re := s.exec.(ResumingExecutor)
-	system := req.SystemPrompt
-	if system == "" {
-		system = s.lastSystem // incremental prompt: keep the instructions
+	rr := ResumeRequest{SystemPrompt: req.SystemPrompt, Instruction: req.Message, OnEvent: s.emit}
+	if rr.SystemPrompt == "" {
+		rr.SystemPrompt = s.lastSystem // incremental prompt: keep the instructions
+		rr.Continuation = true
 	}
-	s.lastSystem = system
+	s.lastSystem = rr.SystemPrompt
 
 	name := re.ResumeKind()
-	ref := s.conv.loadRef(name)
-	result, newRef, err := re.ExecuteResuming(ctx, s.workspace, system, req.Message, ref, s.emit)
+	rr.Ref = s.conv.loadRef(name)
+	result, newRef, err := re.ExecuteResuming(ctx, s.workspace, rr)
 	if errors.Is(err, ErrResumeFailed) {
 		s.emit(EventWarning, "saved conversation could not be resumed; starting a new one")
 		s.conv.saveRef(name, "")
-		result, newRef, err = re.ExecuteResuming(ctx, s.workspace, system, req.Message, "", s.emit)
+		// A fresh conversation has no instructions yet: send them in full.
+		rr.Ref, rr.Continuation = "", false
+		result, newRef, err = re.ExecuteResuming(ctx, s.workspace, rr)
 	}
 	if newRef != "" {
 		s.conv.saveRef(name, newRef)

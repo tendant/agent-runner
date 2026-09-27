@@ -11,7 +11,8 @@ package e2e
 //	  go test ./e2e -run TasksRealClaude -v -timeout 45m
 //
 // The model's wording varies, so it checks outcomes (files, task records),
-// not text.
+// not text. AGENT_E2E_REAL_CLI=codex runs the same scenario with the real
+// codex CLI instead (AGENT_E2E_MODEL picks its model; default: the CLI's).
 
 import (
 	"io/fs"
@@ -29,14 +30,19 @@ func TestE2E_TasksRealClaude(t *testing.T) {
 	if os.Getenv("AGENT_E2E_REAL_CLAUDE") == "" {
 		t.Skip("set AGENT_E2E_REAL_CLAUDE=1 to run against the real claude CLI (billed)")
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("claude CLI not on PATH")
+	cli := os.Getenv("AGENT_E2E_REAL_CLI")
+	if cli == "" {
+		cli = "claude"
+	}
+	if _, err := exec.LookPath(cli); err != nil {
+		t.Skipf("%s CLI not on PATH", cli)
 	}
 	model := os.Getenv("AGENT_E2E_MODEL")
-	if model == "" {
+	if model == "" && cli == "claude" {
 		model = "sonnet"
 	}
 	st := startTaskStack(t, "",
+		"AGENT_CLI="+cli,
 		"AGENT_MODEL="+model,
 		"AGENT_MAX_ITERATIONS=4",
 		"AGENT_MAX_TOTAL_SECONDS=900",
@@ -86,8 +92,8 @@ func TestE2E_TasksRealClaude(t *testing.T) {
 	if data, _ := os.ReadFile(target); !strings.Contains(strings.ToLower(string(data)), "staging") {
 		t.Fatalf("deploy-target.txt = %q, want staging", data)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "state", "backend", "claude-session")); err != nil {
-		t.Fatalf("no saved claude conversation for the task: %v", err)
+	if _, err := os.Stat(filepath.Join(workspace, "state", "backend", cli+"-session")); err != nil {
+		t.Fatalf("no saved %s conversation for the task: %v", cli, err)
 	}
 
 	// 3. Feedback on the finished task continues it in the same workspace.

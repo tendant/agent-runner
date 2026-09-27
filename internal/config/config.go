@@ -135,7 +135,7 @@ type AgentConfig struct {
 	TaskMaxTurns      int           // AGENT_TASK_MAX_TURNS — turns before a task pauses for a go-ahead (default 10; 0 = no limit)
 	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
 	TaskMaxCostUSD    float64       // AGENT_TASK_MAX_COST_USD — spend before a task pauses (default 0 = no limit)
-	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude conversations across task turns
+	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude/codex conversations across task turns
 	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays        int           // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart bool          // Pull memory from git before each session

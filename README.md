@@ -171,7 +171,7 @@ Key variables:
 | `AGENT_TASKS_ENABLED` | `false` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
 | `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
 | `AGENT_TASK_MAX_TURNS` / `AGENT_TASK_MAX_SECONDS` / `AGENT_TASK_MAX_COST_USD` | `10` / `4h` / unlimited | Per-task budget; reaching it pauses the task until the user says "continue" |
-| `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude) |
+| `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude, codex) |
 | `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
 | `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
@@ -256,7 +256,8 @@ its earlier reasoning and tool results, not just the context block.
 |---|---|
 | `pi` | a durable session (`--session-dir <task>/state/backend/pi --session-id <id>`) instead of `--no-session`; each turn's process restores it |
 | `claude` | the first prompt starts `--session-id <uuid>`, later prompts `--resume` it — within a turn too, so iterations after the first get incremental prompts as with pi |
-| `codex`, `opencode` | not yet; context block only |
+| `codex` | the first prompt starts a thread (its ID comes from the `thread.started` event of `--json` output), later prompts `codex exec resume <id>` it; continuations don't re-inline the system prompt |
+| `opencode` | not yet; context block only |
 
 A conversation that can't be resumed is dropped with a warning and a fresh one
 starts; the context block keeps the turn correct either way. Claude keeps a

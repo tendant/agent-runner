@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,11 +52,11 @@ func TestClaudeExecuteResuming(t *testing.T) {
 	e := NewClaudeExecutor("", 0)
 	ws := t.TempDir()
 
-	_, ref, err := e.ExecuteResuming(context.Background(), ws, "sys", "first", "", nil)
+	_, ref, err := e.ExecuteResuming(context.Background(), ws, ResumeRequest{SystemPrompt: "sys", Instruction: "first"})
 	if err != nil || ref == "" {
 		t.Fatalf("new conversation: ref %q, err %v", ref, err)
 	}
-	_, ref2, err := e.ExecuteResuming(context.Background(), ws, "sys", "second", ref, nil)
+	_, ref2, err := e.ExecuteResuming(context.Background(), ws, ResumeRequest{SystemPrompt: "sys", Instruction: "second", Ref: ref})
 	if err != nil || ref2 != ref {
 		t.Fatalf("resume: ref %q (want %q), err %v", ref2, ref, err)
 	}
@@ -67,7 +68,7 @@ func TestClaudeExecuteResuming(t *testing.T) {
 		t.Errorf("second call should resume it: %s", c[1])
 	}
 
-	_, ref3, err := e.ExecuteResuming(context.Background(), ws, "sys", "third", "gone", nil)
+	_, ref3, err := e.ExecuteResuming(context.Background(), ws, ResumeRequest{SystemPrompt: "sys", Instruction: "third", Ref: "gone"})
 	if !errors.Is(err, ErrResumeFailed) || ref3 != "" {
 		t.Fatalf("missing session: ref %q, err %v; want ErrResumeFailed", ref3, err)
 	}
@@ -78,6 +79,7 @@ func TestClaudeExecuteResuming(t *testing.T) {
 type fakeResumer struct {
 	streamingStubExec
 	refs, systems, msgs []string
+	conts               []bool
 	bad                 map[string]bool
 	n                   int
 }
@@ -98,10 +100,12 @@ func (streamingStubExec) ExecuteWithLogAndSystemPrompt(context.Context, string, 
 }
 
 func (f *fakeResumer) ResumeKind() string { return "fake" }
-func (f *fakeResumer) ExecuteResuming(_ context.Context, _, sys, msg, ref string, _ func(EventKind, string)) (*ExecutionResult, string, error) {
+func (f *fakeResumer) ExecuteResuming(_ context.Context, _ string, req ResumeRequest) (*ExecutionResult, string, error) {
+	ref := req.Ref
 	f.refs = append(f.refs, ref)
-	f.systems = append(f.systems, sys)
-	f.msgs = append(f.msgs, msg)
+	f.systems = append(f.systems, req.SystemPrompt)
+	f.msgs = append(f.msgs, req.Instruction)
+	f.conts = append(f.conts, req.Continuation)
 	if f.bad[ref] {
 		return nil, "", ErrResumeFailed
 	}
@@ -134,6 +138,9 @@ func TestOneShotSession_ContinuesConversationAcrossSessions(t *testing.T) {
 	}
 	if fr.systems[1] != "SYS" {
 		t.Errorf("incremental prompt system = %q, want the previous system prompt kept", fr.systems[1])
+	}
+	if fmt.Sprint(fr.conts) != "[false true false]" {
+		t.Errorf("continuation flags = %v, want only the incremental prompt marked", fr.conts)
 	}
 
 	// The saved conversation disappears: start a fresh one, don't fail.
@@ -191,5 +198,100 @@ func TestPiBackend_DurableSessionArgs(t *testing.T) {
 	}
 	if first != second {
 		t.Fatalf("second start used different args:\n%q\n%q", first, second)
+	}
+}
+
+// fakeResumingCodex behaves like `codex exec [resume <id>] --json … -`, as
+// probed on codex-cli 0.149.0: the first JSONL event names the thread, the
+// last message goes to the -o file, and resuming an unknown thread fails
+// with "no rollout found". Each call's argv and stdin are logged.
+func fakeResumingCodex(t *testing.T) (argsLog, stdinLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsLog, stdinLog = filepath.Join(dir, "args.txt"), filepath.Join(dir, "stdin.txt")
+	script := `#!/bin/sh
+echo "$*" >> "$CAPTURE_ARGS_PATH"
+{ cat; echo; echo "<<END>>"; } >> "$CAPTURE_STDIN_PATH"
+out=""; id="019-new-thread"; resume=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  [ "$a" = "resume" ] && resume=1
+  prev="$a"
+done
+if [ -n "$resume" ]; then
+  # the thread ID is the argument before the trailing "-"
+  id=$(echo "$*" | awk '{print $(NF-1)}')
+  if [ "$id" = "gone" ]; then
+    echo "Error: thread/resume: thread/resume failed: no rollout found for thread id gone (code -32600)" >&2
+    exit 1
+  fi
+fi
+echo '{"type":"thread.started","thread_id":"'"$id"'"}'
+echo '{"type":"turn.completed"}'
+echo "OK from $id" > "$out"
+`
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE_ARGS_PATH", argsLog)
+	t.Setenv("CAPTURE_STDIN_PATH", stdinLog)
+	return argsLog, stdinLog
+}
+
+func TestCodexExecuteResuming(t *testing.T) {
+	argsLog, stdinLog := fakeResumingCodex(t)
+	e := NewCodexExecutor("")
+	ws := t.TempDir()
+	ctx := context.Background()
+
+	res, ref, err := e.ExecuteResuming(ctx, ws, ResumeRequest{SystemPrompt: "SYS", Instruction: "first"})
+	if err != nil || ref != "019-new-thread" || res.Output != "OK from 019-new-thread" {
+		t.Fatalf("new thread: ref %q, output %+v, err %v", ref, res, err)
+	}
+	// A continuation in the same thread: resumes it and doesn't inline SYS again.
+	_, ref2, err := e.ExecuteResuming(ctx, ws, ResumeRequest{SystemPrompt: "SYS", Instruction: "second", Ref: ref, Continuation: true})
+	if err != nil || ref2 != ref {
+		t.Fatalf("resume: ref %q, err %v", ref2, err)
+	}
+	// A full prompt (a later turn's start) in the thread inlines the new instructions.
+	if _, _, err := e.ExecuteResuming(ctx, ws, ResumeRequest{SystemPrompt: "SYS2", Instruction: "third", Ref: ref}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := calls(t, argsLog)
+	if strings.Contains(c[0], "resume") || !strings.Contains(c[0], "--json") {
+		t.Errorf("first call should start a thread with --json: %s", c[0])
+	}
+	if !strings.HasPrefix(c[1], "exec resume ") || !strings.HasSuffix(c[1], ref+" -") {
+		t.Errorf("second call should be exec resume … %s -: %s", ref, c[1])
+	}
+	stdin, _ := os.ReadFile(stdinLog)
+	prompts := strings.Split(string(stdin), "<<END>>")
+	if !strings.Contains(prompts[0], "SYS") || strings.Contains(prompts[1], "SYS") || !strings.Contains(prompts[2], "SYS2") {
+		t.Errorf("system prompt inlining wrong: %q", prompts[:3])
+	}
+
+	_, ref3, err := e.ExecuteResuming(ctx, ws, ResumeRequest{Instruction: "x", Ref: "gone"})
+	if !errors.Is(err, ErrResumeFailed) || ref3 != "" {
+		t.Fatalf("missing thread: ref %q, err %v; want ErrResumeFailed", ref3, err)
+	}
+}
+
+// Through a one-shot session, codex continues one thread across sessions.
+func TestOneShotSession_CodexConversation(t *testing.T) {
+	argsLog, _ := fakeResumingCodex(t)
+	conv := &Conversation{Dir: t.TempDir()}
+	b := WrapOneShot(NewCodexExecutor(""))
+	for i := 0; i < 2; i++ {
+		s, _ := b.Start(context.Background(), t.TempDir(), SessionOptions{Conversation: conv})
+		if _, err := s.Prompt(context.Background(), PromptRequest{SystemPrompt: "SYS", Message: "go"}); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+	c := calls(t, argsLog)
+	if strings.Contains(c[0], "resume") || !strings.Contains(c[1], "resume") || conv.loadRef("codex") != "019-new-thread" {
+		t.Fatalf("calls %q, saved ref %q", c, conv.loadRef("codex"))
 	}
 }

@@ -174,7 +174,8 @@ type resumingExecutor struct {
 }
 
 func (r *resumingExecutor) ResumeKind() string { return "fake" }
-func (r *resumingExecutor) ExecuteResuming(_ context.Context, w, _, msg, ref string, _ func(executor.EventKind, string)) (*executor.ExecutionResult, string, error) {
+func (r *resumingExecutor) ExecuteResuming(_ context.Context, w string, req executor.ResumeRequest) (*executor.ExecutionResult, string, error) {
+	msg, ref := req.Instruction, req.Ref
 	r.mu.Lock()
 	r.refs = append(r.refs, ref)
 	r.fulls = append(r.fulls, msg == "deploy" || msg == "turn two")

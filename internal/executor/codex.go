@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,28 +30,73 @@ func (e *CodexExecutor) Execute(ctx context.Context, workspacePath, instruction 
 // ExecuteWithSystemPrompt runs Codex CLI with separate system and user prompts.
 // Codex has no --system-prompt flag, so the system prompt is prepended to the instruction.
 func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, error) {
+	result, _, err := e.run(ctx, workspacePath, joinPrompt(systemPrompt, instruction), nil, false)
+	return result, err
+}
+
+// ResumeKind names Codex thread IDs.
+func (e *CodexExecutor) ResumeKind() string { return "codex" }
+
+// ExecuteResuming continues the Codex thread req.Ref (`codex exec resume`)
+// or, with no ref, starts one and returns its ID (the "thread.started"
+// event of --json output). Codex has no system-prompt flag, so the system
+// prompt is inlined — except on a continuation, whose thread already has it.
+func (e *CodexExecutor) ExecuteResuming(ctx context.Context, workspacePath string, req ResumeRequest) (*ExecutionResult, string, error) {
+	prompt := joinPrompt(req.SystemPrompt, req.Instruction)
+	if req.Continuation && req.Ref != "" {
+		prompt = req.Instruction
+	}
+	var resume []string
+	if req.Ref != "" {
+		resume = []string{req.Ref}
+	}
+	result, threadID, err := e.run(ctx, workspacePath, prompt, resume, true)
+	if err != nil && req.Ref != "" && result != nil && strings.Contains(result.RawOutput, "no rollout found") {
+		return result, "", fmt.Errorf("%w: %v", ErrResumeFailed, err)
+	}
+	if threadID == "" {
+		threadID = req.Ref
+	}
+	return result, threadID, err
+}
+
+func joinPrompt(systemPrompt, instruction string) string {
+	if systemPrompt == "" {
+		return instruction
+	}
+	return systemPrompt + "\n\n" + instruction
+}
+
+// run executes one `codex exec` (or, with resume = [thread ID],
+// `codex exec resume <id>`). With jsonEvents it asks for --json output and
+// returns the thread ID it reports.
+func (e *CodexExecutor) run(ctx context.Context, workspacePath, prompt string, resume []string, jsonEvents bool) (*ExecutionResult, string, error) {
 	// Create temp file for output
 	tmpFile, err := os.CreateTemp("", "codex-output-*.txt")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+		return nil, "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	// Build the prompt: prepend system prompt if provided
-	prompt := instruction
-	if systemPrompt != "" {
-		prompt = systemPrompt + "\n\n" + instruction
+	args := []string{"exec"}
+	if len(resume) > 0 {
+		args = append(args, "resume")
 	}
-
-	args := []string{"exec",
+	args = append(args,
 		"--dangerously-bypass-approvals-and-sandbox",
 		"-o", tmpPath,
-	}
+	)
 	if e.Model != "" {
 		args = append(args, "-m", e.Model)
 	}
+	if jsonEvents {
+		// --skip-git-repo-check: the task workspace holds repos in
+		// subdirectories but is not one itself.
+		args = append(args, "--json", "--skip-git-repo-check")
+	}
+	args = append(args, resume...)
 	// Pass large prompts over stdin to avoid argv length limits.
 	args = append(args, "-")
 
@@ -73,16 +119,20 @@ func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePa
 	result := &ExecutionResult{
 		RawOutput: stdout.String() + stderr.String(),
 	}
+	var threadID string
+	if jsonEvents {
+		threadID = codexThreadID(stdout.String())
+	}
 
 	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("TIMEOUT: execution exceeded timeout")
+			return nil, threadID, fmt.Errorf("TIMEOUT: execution exceeded timeout")
 		}
 		if ctx.Err() == context.Canceled {
-			return nil, fmt.Errorf("execution was canceled")
+			return nil, threadID, fmt.Errorf("execution was canceled")
 		}
 		result.Error = fmt.Errorf("CODEX_ERROR: %v - %s", runErr, firstLines(stderr.String(), 15))
-		return result, result.Error
+		return result, threadID, result.Error
 	}
 
 	if readErr != nil {
@@ -92,7 +142,22 @@ func (e *CodexExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePa
 		result.Output = strings.TrimSpace(string(outputData))
 	}
 
-	return result, nil
+	return result, threadID, nil
+}
+
+// codexThreadID returns the thread ID from the "thread.started" event of
+// `codex exec --json` output, or "".
+func codexThreadID(jsonl string) string {
+	for _, line := range strings.Split(jsonl, "\n") {
+		var ev struct {
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(line)), &ev) == nil && ev.Type == "thread.started" && ev.ThreadID != "" {
+			return ev.ThreadID
+		}
+	}
+	return ""
 }
 
 // ExecuteWithLog runs Codex CLI and returns both result and execution log.
