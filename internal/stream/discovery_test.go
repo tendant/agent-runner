@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ func TestStreamBot_FollowsChannelMemberships(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.URL.Path == "/v2/user":
+			w.Write([]byte(`{"user_id":"u_bot"}`))
 		case r.URL.Path == "/v2/channels":
 			var out []map[string]string
 			for _, c := range channels {
@@ -96,6 +99,10 @@ func TestStreamBot_DiscoveryErrorKeepsListeners(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		if r.URL.Path == "/v2/user" {
+			w.Write([]byte(`{"user_id":"u_bot"}`))
+			return
+		}
 		if r.URL.Path == "/v2/channels" {
 			if fail {
 				w.WriteHeader(http.StatusBadGateway)
@@ -121,5 +128,48 @@ func TestStreamBot_DiscoveryErrorKeepsListeners(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if got := bot.activeChannels(); len(got) != 1 || got[0] != "c_a" {
 		t.Fatalf("listeners after a failed listing = %v, want [c_a]", got)
+	}
+}
+
+// A token that doesn't carry the bot's user ID (not a JWT): the bot asks the
+// server, and refuses to start if it can't find out.
+func TestStreamBot_LearnsOwnUserID(t *testing.T) {
+	var whoAmI atomic.Int32
+	up := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/user":
+			whoAmI.Add(1)
+			if !up {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"user_id":"u_self"}`))
+		default:
+			w.Write([]byte("[]"))
+		}
+	}))
+	defer srv.Close()
+	threadMgr := thread.NewManager("")
+	t.Cleanup(threadMgr.Stop)
+	newBot := func() *Bot {
+		b := New(config.StreamConfig{ServerURL: srv.URL, BotToken: "opaque-token", PollInterval: 10 * time.Millisecond, DiscoveryInterval: time.Hour},
+			"", &trackingStarter{}, threadMgr, nil, nil)
+		b.stateDir = t.TempDir()
+		return b
+	}
+
+	bot := newBot()
+	if err := bot.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bot.Stop()
+	if bot.botUserID != "u_self" || whoAmI.Load() != 1 {
+		t.Fatalf("botUserID = %q after %d lookups, want u_self", bot.botUserID, whoAmI.Load())
+	}
+
+	up = false
+	if err := newBot().Start(context.Background()); err == nil {
+		t.Fatal("started without knowing its own user ID")
 	}
 }
