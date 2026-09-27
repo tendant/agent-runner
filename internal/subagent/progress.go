@@ -65,6 +65,24 @@ func ResetTurnFields(workspacePath string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// SyncCompletedSteps rewrites _progress.json's completed_steps to the plan's
+// done steps — after a plan revision, so a step the revision reopened isn't
+// marked done again from the stale list. Other fields are kept.
+func SyncCompletedSteps(workspacePath string, plan *PlanResult) error {
+	p := ReadProgress(workspacePath)
+	p.CompletedSteps = nil
+	for _, s := range plan.Steps {
+		if s.Done {
+			p.CompletedSteps = append(p.CompletedSteps, s.ID)
+		}
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workspacePath, "_progress.json"), data, 0o644)
+}
+
 // planFile is where a task keeps its plan between turns: the runner's state
 // directory, beside workspace/, which the agent does not see.
 func planFile(taskDir string) string { return filepath.Join(taskDir, "state", "plan.json") }
