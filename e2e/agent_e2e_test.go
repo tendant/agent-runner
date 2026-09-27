@@ -319,11 +319,13 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	}
 
 	baseDir := t.TempDir()
-	repoCacheDir, logsDir, _, mockBinDir := newE2EDirs(t, baseDir)
+	repoCacheDir, _, _, mockBinDir := newE2EDirs(t, baseDir)
 
-	// Use a separate temp dir for workspaces so background goroutines
-	// from executeAgent don't race with t.TempDir() cleanup.
+	// The session keeps running after the test returns, writing its
+	// workspace and audit log; keep both out of t.TempDir() so its cleanup
+	// doesn't race those writes ("directory not empty").
 	tmpDir := newManagedTempDir(t, "agent-e2e-noproject-*")
+	logsDir := newManagedTempDir(t, "agent-e2e-noproject-logs-*")
 
 	// The server now preflights the CLI backend binary before accepting a
 	// session — provide a no-op mock so this test (which is about project

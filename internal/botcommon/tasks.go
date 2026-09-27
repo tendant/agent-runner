@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/subagent"
@@ -308,7 +310,9 @@ func (e *Engine) finishTaskTurn(id, sessionID string, session *agent.Session, se
 			rec.AwaitingApproval = session.TurnApproval
 			turn.StopReason = "needs_input"
 			turn.Question = session.TurnQuestion
-			notice = FormatTurnQuestion(session.TurnQuestion)
+			if !alreadyAsked(lastOutput(session), session.TurnQuestion) {
+				notice = FormatTurnQuestion(session.TurnQuestion)
+			}
 			return // a question outranks the budget: the user is in the loop
 		case completed:
 			rec.Status = task.StatusDone
@@ -393,6 +397,48 @@ func (e *Engine) ResetThread(id string) {
 		e.WG.Go(func() { e.startQueued(context.Background(), id, next) })
 	}
 }
+
+// lastOutput returns the session's last non-empty iteration output — the
+// text the transport already posted as the turn's reply.
+func lastOutput(session *agent.Session) string {
+	for i := len(session.Iterations) - 1; i >= 0; i-- {
+		if out := strings.TrimSpace(session.Iterations[i].Output); out != "" {
+			return out
+		}
+	}
+	return ""
+}
+
+// alreadyAsked reports whether the agent's posted reply already asks the
+// user, so the separate question notice would only repeat it: the reply
+// contains the question, or its closing part asks one. The agent often words
+// it differently from the question in _progress.json, and may follow it
+// with a sentence ("…staging or production? Once you tell me, I'll…").
+func alreadyAsked(output, question string) bool {
+	if output == "" {
+		return false
+	}
+	norm := func(s string) string {
+		return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}), " ")
+	}
+	if q := norm(question); q != "" && strings.Contains(norm(output), q) {
+		return true
+	}
+	tail := []rune(output)
+	if len(tail) > askedTailRunes {
+		tail = tail[len(tail)-askedTailRunes:]
+	}
+	return sentenceQuestion.MatchString(string(tail))
+}
+
+// askedTailRunes is how much of the reply's end is checked for a question.
+const askedTailRunes = 600
+
+// sentenceQuestion matches a "?" that ends a sentence — not one inside a
+// URL's query string.
+var sentenceQuestion = regexp.MustCompile(`\?([\s*_)\]"'` + "`" + `]|$)`)
 
 // FormatTurnQuestion renders the question a task turn ended on.
 func FormatTurnQuestion(question string) string {

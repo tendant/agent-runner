@@ -216,3 +216,41 @@ func TestTask_SmallTalkFallsThrough(t *testing.T) {
 		t.Fatalf("small talk queued: %v", rec.Queue)
 	}
 }
+
+func TestAlreadyAsked(t *testing.T) {
+	cases := []struct {
+		output, question string
+		want             bool
+	}{
+		{"I've created both files.\n\nWhich of the two is the deploy target — **staging** or **production**?", "Which environment is the deploy target?", true},
+		{"Done step 1. Which environment should I use?\n\nI'll wait for your answer.", "Which environment should I use?", true},
+		{"Created both.\n\nWhich of the two is the target — **staging** or **production**? Once you tell me, I'll create the file.", "Which environment is the deploy target?", true},
+		{"Prepared; need the target environment.", "Which environment should I deploy to?", false},
+		{"Opened https://example.com/deploy?env=staging&x=1 for reference.", "Which environment?", false},
+		{"", "Which one?", false},
+	}
+	for _, c := range cases {
+		if got := alreadyAsked(c.output, c.question); got != c.want {
+			t.Errorf("alreadyAsked(%q) = %v, want %v", c.output, got, c.want)
+		}
+	}
+}
+
+// When the agent's reply already asks, no separate question notice is posted.
+func TestTask_NoDuplicateQuestion(t *testing.T) {
+	f, ts := newTaskFixture(t)
+	s := askingSession("Which environment is the deploy target?")
+	s.Iterations[0].Output = "Created both files.\n\nWhich of the two should I deploy — staging or production?"
+	ts.setSession(s)
+	send(f, "set up the env files, then ask me the target")
+
+	if rec, _ := f.engine.Tasks.Get("conv-1"); rec.Status != task.StatusAwaitingInput {
+		t.Fatalf("status %s, want awaiting_input", rec.Status)
+	}
+	_, _, finals := f.sender.snapshot()
+	for _, m := range finals {
+		if strings.HasPrefix(m, "❓") {
+			t.Fatalf("question posted again as a notice: %q", m)
+		}
+	}
+}
