@@ -73,10 +73,70 @@ type Record struct {
 	Workspace    string     `json:"workspace"`
 	// WorkspaceRemoved is set once the sweep has finished the workspace, so
 	// it is not finished twice.
-	WorkspaceRemoved bool      `json:"workspace_removed,omitempty"`
-	FailReason       string    `json:"fail_reason,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	WorkspaceRemoved bool   `json:"workspace_removed,omitempty"`
+	FailReason       string `json:"fail_reason,omitempty"`
+	// PauseReason says why a paused task stopped: PauseBudget, or the
+	// turn's own stop reason (a limit, a failure, a restart).
+	PauseReason string `json:"pause_reason,omitempty"`
+	// AwaitingApproval marks an awaiting_input task whose question is
+	// "proceed with this revised plan?".
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
+	// Budget is what the task has used since it started or the user last
+	// said to continue past a budget.
+	Budget Budget `json:"budget"`
+	// Queue holds new requests that arrived on a chat transport while this
+	// task was unfinished; they start in order as new tasks.
+	Queue     []string  `json:"queue,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PauseBudget is the PauseReason of a task stopped by a task budget.
+const PauseBudget = "budget"
+
+// MaxQueue bounds Record.Queue.
+const MaxQueue = 5
+
+// Budget is a task's usage counted against its limits.
+type Budget struct {
+	Turns   int     `json:"turns"`
+	Seconds int     `json:"seconds"` // working time: turn run time only
+	CostUSD float64 `json:"cost_usd"`
+}
+
+// Limits caps a task's Budget; zero fields are unlimited.
+type Limits struct {
+	MaxTurns   int
+	MaxSeconds int
+	MaxCostUSD float64
+}
+
+// Exceeded returns a short description of the first limit b has reached,
+// or "" while within limits.
+func (l Limits) Exceeded(b Budget) string {
+	switch {
+	case l.MaxTurns > 0 && b.Turns >= l.MaxTurns:
+		return fmt.Sprintf("%d turns", b.Turns)
+	case l.MaxSeconds > 0 && b.Seconds >= l.MaxSeconds:
+		return fmt.Sprintf("%s of work", (time.Duration(b.Seconds) * time.Second).String())
+	case l.MaxCostUSD > 0 && b.CostUSD >= l.MaxCostUSD:
+		return fmt.Sprintf("$%.2f spent", b.CostUSD)
+	}
+	return ""
+}
+
+// Checklist renders the plan with each step's status, one per line; "" when
+// there is no plan.
+func (r *Record) Checklist() string {
+	var sb strings.Builder
+	for _, st := range r.Plan {
+		mark := "⬜"
+		if st.Done {
+			mark = "✅"
+		}
+		fmt.Fprintf(&sb, "%s %s. %s\n", mark, st.ID, st.Text)
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // New starts a record for a thread's first turn.
@@ -299,7 +359,10 @@ func (s *Store) Sweep(now time.Time, p SweepPolicy) {
 
 // ContextBlock renders the task for the next turn's prompt: the goal, plan
 // progress, decisions, earlier turns and the user's reply (TASKS_DESIGN.md §7).
-func ContextBlock(rec *Record, reply string) string {
+//
+// feedback marks the message as feedback on the task (the plan may have been
+// revised for it) rather than an answer to the agent's question.
+func ContextBlock(rec *Record, reply string, feedback bool) string {
 	var sb strings.Builder
 	sb.WriteString("## Task\n\n")
 	sb.WriteString("You are continuing a task you started in an earlier turn. Your workspace is as you left it.\n\n")
@@ -336,7 +399,11 @@ func ContextBlock(rec *Record, reply string) string {
 		}
 	}
 	if reply = strings.TrimSpace(reply); reply != "" {
-		fmt.Fprintf(&sb, "\nUser's reply: %s\n", reply)
+		label := "User's reply"
+		if feedback {
+			label = "User's feedback on the task (address it)"
+		}
+		fmt.Fprintf(&sb, "\n%s: %s\n", label, reply)
 	}
 	return sb.String()
 }

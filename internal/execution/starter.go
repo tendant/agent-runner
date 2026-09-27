@@ -15,14 +15,15 @@ import (
 // non-chat callers) — recorded on the session so restart recovery can notify
 // the right conversation.
 func (h *Engine) StartAgent(message, source, convID string) (string, error) {
-	return h.startAgent(message, source, convID, "")
+	return h.startAgent(agent.TaskTurn{Message: message, Source: source, ConvID: convID})
 }
 
 // StartTaskTurn starts one turn of a multi-turn task: like StartAgent, but
 // the run reuses and keeps the task's workspace at taskDir (see
-// TaskWorkspacePath) instead of preparing and deleting its own.
-func (h *Engine) StartTaskTurn(message, source, convID, taskDir string) (string, error) {
-	return h.startAgent(message, source, convID, taskDir)
+// TaskWorkspacePath) instead of preparing and deleting its own. Feedback,
+// when set, has the planner revise the task's saved plan first.
+func (h *Engine) StartTaskTurn(turn agent.TaskTurn) (string, error) {
+	return h.startAgent(turn)
 }
 
 // TaskWorkspacePath returns the workspace directory for a task key.
@@ -46,7 +47,8 @@ func (h *Engine) FinishTaskWorkspace(taskDir string) {
 	}
 }
 
-func (h *Engine) startAgent(message, source, convID, taskDir string) (string, error) {
+func (h *Engine) startAgent(turn agent.TaskTurn) (string, error) {
+	message := turn.Message
 	// Fail fast on a missing CLI binary rather than burning workspace setup,
 	// planning, and iteration retries on a session that can't run at all.
 	if err := clisetup.PreflightAgentConfig(h.config.Agent.CLI); err != nil {
@@ -66,9 +68,10 @@ func (h *Engine) startAgent(message, source, convID, taskDir string) (string, er
 	if err != nil {
 		return "", err
 	}
-	session.Source = source
-	session.ConvID = convID
-	session.TaskWorkspace = taskDir
+	session.Source = turn.Source
+	session.ConvID = turn.ConvID
+	session.TaskWorkspace = turn.Dir
+	session.TaskFeedback = turn.Feedback
 
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning

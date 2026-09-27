@@ -176,13 +176,18 @@ func NewServer(cfg *config.Config) *Server {
 			slog.Warn("multi-turn tasks disabled", "error", err)
 		} else {
 			tasks = st
+			limits := task.Limits{
+				MaxTurns:   cfg.Agent.TaskMaxTurns,
+				MaxSeconds: int(cfg.Agent.TaskMaxSeconds.Seconds()),
+				MaxCostUSD: cfg.Agent.TaskMaxCostUSD,
+			}
 			if telegramBot != nil {
-				telegramBot.SetTasks(tasks)
+				telegramBot.SetTasks(tasks, limits)
 			}
 			if streamBot != nil {
-				streamBot.SetTasks(tasks)
+				streamBot.SetTasks(tasks, limits)
 			}
-			wechatBot.SetTasks(tasks)
+			wechatBot.SetTasks(tasks, limits)
 			slog.Info("multi-turn tasks enabled", "retention", cfg.Agent.TaskRetention, "idle_ttl", cfg.Agent.TaskIdleTTL)
 		}
 	}

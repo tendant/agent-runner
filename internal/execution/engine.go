@@ -481,6 +481,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if aborted {
 		return
 	}
+	if liveSession.Snapshot().TurnApproval {
+		// A large plan revision waits for the user before any work.
+		h.agentManager.CompleteSession(sessionID)
+		return
+	}
 
 	// Start the run-scoped executor session. Persistent backends (pi) spawn
 	// one live process here that serves every iteration; one-shot backends
@@ -618,6 +623,9 @@ func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *
 	// _progress.json's completed step IDs refer to it.
 	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
 		if saved := subagent.LoadPlan(taskDir); saved != nil {
+			if fb := strings.TrimSpace(liveSession.TaskFeedback); fb != "" {
+				return h.revisePlan(ctx, sessionID, liveSession, checkoutPath, preamble, taskDir, saved, fb), "", false
+			}
 			slog.Info("continuing task plan", "session_id", sessionID, "steps", len(saved.Steps))
 			liveSession.SetPlanResult(saved, len(saved.Steps))
 			return saved, "", false
@@ -654,6 +662,36 @@ func (h *Engine) runPlanner(ctx context.Context, sessionID string, liveSession *
 		}
 	}
 	return plan, plannerPromptText, false
+}
+
+// revisePlan edits a task's saved plan in response to the user's feedback
+// (planner revise mode) and saves it. A large revision — one that reopens
+// finished work or adds several steps — ends the turn before any work so the
+// user can approve it (SetTurnApproval). On failure the saved plan is kept
+// and the feedback still reaches the agent through the prompt.
+func (h *Engine) revisePlan(ctx context.Context, sessionID string, liveSession *agent.Session, checkoutPath, preamble, taskDir string, saved *subagent.PlanResult, feedback string) *subagent.PlanResult {
+	keep := func() *subagent.PlanResult {
+		liveSession.SetPlanResult(saved, len(saved.Steps))
+		return saved
+	}
+	if h.deps.PlannerClient() == nil {
+		return keep()
+	}
+	revised, err := subagent.NewPlanner(h.deps.PlannerClient(), preamble).Revise(ctx, checkoutPath, saved, feedback)
+	if err != nil || len(revised.Steps) == 0 {
+		slog.Warn("plan revision failed; continuing with the saved plan", "session_id", sessionID, "error", err)
+		liveSession.AddWarning("plan revision failed; kept the previous plan")
+		return keep()
+	}
+	slog.Info("planner revised the task plan", "session_id", sessionID, "steps_before", len(saved.Steps), "steps_after", len(revised.Steps))
+	liveSession.SetPlanResult(revised, len(revised.Steps))
+	if err := subagent.SavePlan(taskDir, revised); err != nil {
+		liveSession.AddWarning("could not save task plan: " + err.Error())
+	}
+	if subagent.RevisionIsLarge(saved, revised) {
+		liveSession.SetTurnApproval("I've revised the plan:\n\n" + revised.Checklist() + "\n\nProceed with this plan? (yes, or tell me what to change)")
+	}
+	return revised
 }
 
 // runIterationLoop runs Phase 2: the main iteration loop with dynamic

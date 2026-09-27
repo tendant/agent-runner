@@ -63,6 +63,7 @@ func New(cfg config.TelegramConfig, starter AgentStarter, threadMgr *thread.Mana
 		analyzer:      analyzer,
 	}
 	b.engine = &botcommon.Engine{
+		QueueNewRequests:     true, // one task per chat: new requests wait their turn
 		Starter:              starter,
 		ThreadManager:        threadMgr,
 		Analyzer:             analyzer,
@@ -115,9 +116,11 @@ func (b *Bot) ResumeSession(convID, sessionID string) {
 	b.engine.ResumeSession(context.Background(), convID, sessionID)
 }
 
-// SetTasks enables multi-turn tasks backed by store (nil disables them).
-func (b *Bot) SetTasks(store *task.Store) {
+// SetTasks enables multi-turn tasks backed by store (nil disables them),
+// each capped by limits.
+func (b *Bot) SetTasks(store *task.Store, limits task.Limits) {
 	b.engine.Tasks = store
+	b.engine.TaskLimits = limits
 }
 
 // SetWelcome configures the one-time first-contact greeting.
@@ -222,10 +225,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// If confirming, check for yes/no
-	// The agent asked a question (or stopped short): this message is the
-	// answer, so continue the task without re-analyzing.
-	if state == thread.StateGathering && b.engine.ResumesTask(chatID) {
-		b.engine.HandleConfirmation(context.Background(), chatID, conv)
+	// An open task (waiting for an answer, paused, or recently done) gets
+	// the message first: an answer, a go-ahead or feedback continues it.
+	if state == thread.StateGathering && b.engine.HandleTaskMessage(context.Background(), chatID, conv, content) {
 		return
 	}
 

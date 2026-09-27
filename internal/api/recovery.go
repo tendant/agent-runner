@@ -154,6 +154,7 @@ func restoredSession(entry sessionjournal.Entry) *agent.Session {
 		CallbackURL:         entry.CallbackURL,
 		StartedAt:           entry.CreatedAt,
 		TaskWorkspace:       entry.TaskWorkspace,
+		TaskFeedback:        entry.TaskFeedback,
 	}
 }
 

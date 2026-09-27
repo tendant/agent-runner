@@ -1,6 +1,8 @@
 package thread
 
 import (
+	"context"
+	"errors"
 	"testing"
 )
 
@@ -55,5 +57,37 @@ func TestParseAnalysisResult_EmptyAction(t *testing.T) {
 	_, err := parseAnalysisResult(input)
 	if err == nil {
 		t.Error("expected error for empty action")
+	}
+}
+
+type cannedClient struct {
+	out string
+	err error
+}
+
+func (c cannedClient) Complete(context.Context, string) (string, error) { return c.out, c.err }
+
+func TestClassifyTaskMessage(t *testing.T) {
+	cases := []struct {
+		out      string
+		err      error
+		fallback string
+		want     string
+	}{
+		{`{"kind":"new"}`, nil, TaskMessageContinue, TaskMessageNew},
+		{"Sure! {\"kind\": \"continue\"}", nil, TaskMessageNew, TaskMessageContinue},
+		{"no json here", nil, TaskMessageNew, TaskMessageNew},
+		{`{"kind":"chat"}`, nil, TaskMessageContinue, TaskMessageChat},
+		{"", errors.New("down"), TaskMessageContinue, TaskMessageContinue},
+	}
+	for _, c := range cases {
+		a := NewAnalyzer(cannedClient{c.out, c.err})
+		if got := a.ClassifyTaskMessage(context.Background(), "goal", "q?", "msg", c.fallback); got != c.want {
+			t.Errorf("output %q: got %q, want %q", c.out, got, c.want)
+		}
+	}
+	var nilAnalyzer *Analyzer
+	if got := nilAnalyzer.ClassifyTaskMessage(context.Background(), "", "", "", TaskMessageNew); got != TaskMessageNew {
+		t.Errorf("nil analyzer: %q", got)
 	}
 }

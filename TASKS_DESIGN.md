@@ -260,6 +260,16 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 - **claude** (flags verified on 2.1.283): a task's first prompt runs with `--session-id <uuid>` and every later prompt, in the same turn or a later one, with `--resume <uuid>`. The one-shot session then reports that it retains context, so iterations after the first get incremental prompts as with pi. On resume the CLI reuses the conversation's first system prompt (`--system-prompt-snapshot` default); per-turn state reaches the agent through the context block and `_progress.json`. "No conversation found with session ID" → the reference is dropped and the prompt re-runs in a new conversation.
 - **codex**: not yet. `codex exec resume <id>` exists (0.149.0), but the thread-ID event in `--json` output and the missing-session error still need checking against a real run. **opencode**: context block only, as planned.
 
+**Phase 3 status (implemented, except the live plan message).**
+
+- **Routing** lives in `botcommon.Engine.HandleTaskMessage`, which the bots call before intent analysis. It replaces phase 1's "every message is the answer". The analyzer's `ClassifyTaskMessage` sorts a message into "continues the task", "new request" or small talk. Small talk ("thanks!") falls through to the analyzer's normal reply, so it never starts a turn or gets queued. Without an analyzer, a message in an agent-stream thread continues the task; on a chat transport it continues an unfinished task and starts a new one after a finished task.
+- **Plan revision:** a turn started with feedback (`agent.TaskTurn.Feedback`) runs the planner in revise mode (`subagent.Planner.Revise`) on the saved plan. `RevisionIsLarge` (reopens a finished step, or adds 3+ steps) ends the turn before any work with an approval question (`Session.TurnApproval`, record `awaiting_approval`). If revision fails, the saved plan is kept with a warning.
+- **Budgets:** `task.Limits` from `AGENT_TASK_MAX_TURNS` (10), `AGENT_TASK_MAX_SECONDS` (4h, working time = run time of turns) and `AGENT_TASK_MAX_COST_USD` (unlimited). They are checked at the end of a turn that didn't finish or ask a question. Paused with `pause_reason: budget` → "continue" resets the budget, "stop" cancels, and anything else repeats the notice.
+- **Checklists:** done and paused turns post the plan checklist (✅/⬜) plus the next action. Questions post as before.
+- **Queue (decision 3):** on Telegram/WeChat, a new request while the task is unfinished goes to `Record.Queue` (max 5) and starts as a new task when the task finishes or `/cancel` ends it. The new record inherits the rest of the queue.
+- **Deviation:** a new request after a done task in agent-stream starts a new task in the same thread rather than suggesting a new thread.
+- **Not done:** the live plan message. It needs agent-stream to let bots edit their own messages beyond the 5-minute window.
+
 ## 15. Decisions and open questions
 
 Decided:

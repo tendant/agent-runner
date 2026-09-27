@@ -26,6 +26,7 @@ type engineShim struct {
 	executor     executor.Executor
 	backend      executor.Backend // optional; nil wraps executor as one-shot
 	agentManager *agent.Manager
+	planner      llm.Client // optional planner/reviser LLM
 }
 
 func (s *engineShim) Executor() executor.Executor { return s.executor }
@@ -35,7 +36,7 @@ func (s *engineShim) Backend() executor.Backend {
 	}
 	return executor.WrapOneShot(s.executor)
 }
-func (s *engineShim) PlannerClient() llm.Client         { return nil }
+func (s *engineShim) PlannerClient() llm.Client         { return s.planner }
 func (s *engineShim) CuratorClient() llm.Client         { return nil }
 func (s *engineShim) Notifier() Notifier                { return nil }
 func (s *engineShim) WorkflowClient() WorkflowScheduler { return nil }
