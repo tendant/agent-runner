@@ -83,7 +83,7 @@ curl -X POST localhost:8080/bootstrap
 go test -race ./...
 ```
 - E2E tests in `e2e/` use mock CLI bash scripts prepended to PATH
-- Multi-turn tasks end to end against a real agent-stream server (both built and run as binaries, fake `claude` in `e2e/testdata/mock-claude-tasks.py`): `AGENT_STREAM_SRC=/abs/path/to/agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v` (skipped when unset)
+- Multi-turn tasks end to end against a real agent-stream server (both built and run as binaries, fake `claude` in `e2e/testdata/mock-claude-tasks.py`): `AGENT_STREAM_SRC=/abs/path/to/agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v` (skipped when unset); add `AGENT_E2E_REAL_CLAUDE=1` and `-run TasksRealClaude -timeout 45m` for the same stack with the real claude CLI (billed, uses the local claude login)
 - Always run with `-race`; CI also gates on `gofmt -l` and `go vet`
 
 ### Configuration

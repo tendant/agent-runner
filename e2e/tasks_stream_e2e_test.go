@@ -7,9 +7,13 @@ package e2e
 // every model call — router, classifier, planner and the agent.
 //
 // It needs the agent-stream server source, so it only runs when
-// AGENT_STREAM_SRC points at it (the directory with cmd/server):
+// AGENT_STREAM_SRC points at it (the directory with cmd/server; use an
+// absolute path):
 //
-//	AGENT_STREAM_SRC=../agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v
+//	AGENT_STREAM_SRC=/path/to/agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v
+//
+// TestE2E_TasksRealClaude (tasks_real_claude_e2e_test.go) runs a shorter
+// scenario on the same stack with the real claude CLI.
 
 import (
 	"bufio"
@@ -27,13 +31,23 @@ import (
 	"time"
 )
 
-func TestE2E_TasksOverAgentStream(t *testing.T) {
+// taskStack is agent-stream plus agent-runner, running, with a human user,
+// a channel and the runner's bot in it.
+type taskStack struct {
+	human   *client
+	channel string
+	dataDir string
+	logs    func() string // agent-runner log tail, for failure messages
+}
+
+// startTaskStack builds and starts both servers. pathPrefix goes first on
+// agent-runner's PATH (the fake claude's dir, or "" for the real CLI);
+// runnerEnv adds agent-runner settings.
+func startTaskStack(t *testing.T, pathPrefix string, runnerEnv ...string) *taskStack {
+	t.Helper()
 	src := os.Getenv("AGENT_STREAM_SRC")
 	if src == "" {
 		t.Skip("set AGENT_STREAM_SRC to the agent-stream server source to run")
-	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 is needed for the fake claude CLI")
 	}
 	src, _ = filepath.Abs(src)
 	base := t.TempDir()
@@ -69,35 +83,32 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	human.do("POST", "/v2/bots", map[string]any{"name": "runner"}, &bot)
 	human.do("POST", "/v2/channels/"+ch.ID+"/members", map[string]any{"user_id": bot.UserID}, nil)
 
-	// agent-runner with tasks on and the fake claude first on PATH.
-	mockBin := filepath.Join(base, "mock-bin")
-	os.MkdirAll(mockBin, 0o755)
-	mock, _ := filepath.Abs("testdata/mock-claude-tasks.py")
-	if err := os.Symlink(mock, filepath.Join(mockBin, "claude")); err != nil {
-		t.Fatal(err)
+	// agent-runner with tasks on.
+	path := os.Getenv("PATH")
+	if pathPrefix != "" {
+		path = pathPrefix + string(os.PathListSeparator) + path
 	}
 	dataDir := filepath.Join(base, "runner")
-	claudeLog := filepath.Join(base, "claude-calls.jsonl")
 	runnerURL := fmt.Sprintf("http://127.0.0.1:%d", freePort(t))
 	runDir := filepath.Join(base, "cwd") // no .env here
 	os.MkdirAll(runDir, 0o755)
-	startProcess(t, "agent-runner", arBin, runDir, filepath.Join(base, "agent-runner.log"), cleanEnv(
-		"PATH="+mockBin+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"DATA_DIR="+dataDir,
-		"API_BIND="+strings.TrimPrefix(runnerURL, "http://"),
+	env := append([]string{
+		"PATH=" + path,
+		"DATA_DIR=" + dataDir,
+		"API_BIND=" + strings.TrimPrefix(runnerURL, "http://"),
 		"AGENT_CLI=claude",
 		"AGENT_TASKS_ENABLED=true",
 		"AGENT_REVIEWER_ENABLED=false",
-		"AGENT_MAX_ITERATIONS=3",
 		"WELCOME_ENABLED=false",
-		"STREAM_SERVER_URL="+asURL,
-		"STREAM_BOT_TOKEN="+bot.Token,
-		"STREAM_CHANNEL_IDS="+ch.ID,
-		"MOCK_CLAUDE_LOG="+claudeLog,
-	))
+		"STREAM_SERVER_URL=" + asURL,
+		"STREAM_BOT_TOKEN=" + bot.Token,
+		"STREAM_CHANNEL_IDS=" + ch.ID,
+	}, runnerEnv...)
+	logPath := filepath.Join(base, "agent-runner.log")
+	startProcess(t, "agent-runner", arBin, runDir, logPath, cleanEnv(env...))
 	waitHTTP(t, runnerURL+"/health")
 	logs := func() string {
-		a, _ := os.ReadFile(filepath.Join(base, "agent-runner.log"))
+		a, _ := os.ReadFile(logPath)
 		return tail(string(a), 60)
 	}
 	// A bot's first connection skips the channel's existing history, so the
@@ -105,13 +116,38 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	waitFor(t, 30*time.Second, "the stream bot to connect", logs, func() bool {
 		return strings.Contains(logs(), "stream bot: SSE connected")
 	})
+	return &taskStack{human: human, channel: ch.ID, dataDir: dataDir, logs: logs}
+}
 
-	// 1. A new thread: the agent works, then asks a question.
+// newThread posts a top-level message and returns its thread ID.
+func (s *taskStack) newThread(content string) string {
 	var root struct {
 		MessageID string `json:"message_id"`
 	}
-	human.do("POST", "/v2/channels/"+ch.ID+"/messages", map[string]any{"content": "deploy the app"}, &root)
-	thread := root.MessageID
+	s.human.do("POST", "/v2/channels/"+s.channel+"/messages", map[string]any{"content": content}, &root)
+	return root.MessageID
+}
+
+// reply posts a message in a thread.
+func (s *taskStack) reply(thread, content string) {
+	s.human.do("POST", "/v2/threads/"+thread+"/messages", map[string]any{"content": content}, nil)
+}
+
+func TestE2E_TasksOverAgentStream(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is needed for the fake claude CLI")
+	}
+	mockBin := t.TempDir()
+	mock, _ := filepath.Abs("testdata/mock-claude-tasks.py")
+	if err := os.Symlink(mock, filepath.Join(mockBin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	claudeLog := filepath.Join(t.TempDir(), "claude-calls.jsonl")
+	st := startTaskStack(t, mockBin, "AGENT_MAX_ITERATIONS=3", "MOCK_CLAUDE_LOG="+claudeLog)
+	human, dataDir, logs := st.human, st.dataDir, st.logs
+
+	// 1. A new thread: the agent works, then asks a question.
+	thread := st.newThread("deploy the app")
 	waitBotMessage(t, human, thread, "Which environment should I deploy to?", logs)
 	rec := readTask(t, dataDir, thread)
 	if rec.Status != "awaiting_input" || len(rec.Turns) != 1 {
@@ -161,18 +197,15 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	}
 
 	// 5. /cancel on a second task waiting for an answer releases its workspace.
-	var root2 struct {
-		MessageID string `json:"message_id"`
-	}
-	human.do("POST", "/v2/channels/"+ch.ID+"/messages", map[string]any{"content": "deploy the docs site"}, &root2)
-	waitBotMessage(t, human, root2.MessageID, "Which environment should I deploy to?", logs)
-	ws2 := readTask(t, dataDir, root2.MessageID).Workspace
+	thread2 := st.newThread("deploy the docs site")
+	waitBotMessage(t, human, thread2, "Which environment should I deploy to?", logs)
+	ws2 := readTask(t, dataDir, thread2).Workspace
 	if ws2 == workspace {
 		t.Fatal("a second thread shared the first thread's task workspace")
 	}
-	human.do("POST", "/v2/threads/"+root2.MessageID+"/messages", map[string]any{"content": "/cancel"}, nil)
+	human.do("POST", "/v2/threads/"+thread2+"/messages", map[string]any{"content": "/cancel"}, nil)
 	waitFor(t, 30*time.Second, "cancelled task", logs, func() bool {
-		return readTask(t, dataDir, root2.MessageID).Status == "cancelled"
+		return readTask(t, dataDir, thread2).Status == "cancelled"
 	})
 	waitFor(t, 30*time.Second, "cancelled task's workspace removed", logs, func() bool {
 		_, err := os.Stat(ws2)
@@ -394,7 +427,8 @@ func cleanEnv(extra ...string) []string {
 	for _, kv := range os.Environ() {
 		k := kv[:strings.IndexByte(kv, '=')]
 		if strings.HasSuffix(k, "_API_KEY") || k == "DATABASE_URL" || k == "PATH" ||
-			strings.HasPrefix(k, "AGENT_") || strings.HasPrefix(k, "STREAM_") || k == "DATA_DIR" {
+			strings.HasPrefix(k, "AGENT_") || strings.HasPrefix(k, "STREAM_") || k == "DATA_DIR" ||
+			k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_") { // don't look nested in a Claude Code session
 			continue
 		}
 		env = append(env, kv)
