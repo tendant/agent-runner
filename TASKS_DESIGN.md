@@ -1,6 +1,6 @@
 # Multi-Turn Tasks — Design
 
-Status: draft · Scope: agent-runner (engine, thread state, execution, stream bot); one small agent-stream change (§9)
+Status: draft, decisions recorded in §15 · Scope: agent-runner (engine, thread state, execution, stream bot); one small agent-stream change (§9)
 
 ## 1. Problem
 
@@ -104,7 +104,7 @@ thread file, keyed the same way.
 
 - **Path:** `STATE_DIR/tasks/<thread-key>/workspace/` instead of `session-<id>/workspace/`. The layout (`workspace/`, `state/`, `_send/`, `_progress.json`) is unchanged.
 - **Created on the first turn** by `PrepareAgentWorkspace`, exactly as today. Later turns reuse the directory as-is. They do not copy the repos in again or wipe untracked files.
-- **Repos:** each turn keeps today's end-of-run git handling. It commits and pushes through `gitsync` (rebase, agent-assisted conflict resolution, rescue branch), so finished work lands every turn, as it does now. What persistence adds is uncommitted scratch work, generated files, `_send/` history and the progress file.
+- **Repos (decided: push per turn):** each turn keeps today's end-of-run git handling. It commits and pushes through `gitsync` (rebase, agent-assisted conflict resolution, rescue branch), so finished work lands every turn, as it does now, and is never stranded in a workspace. What persistence adds is uncommitted scratch work, generated files, `_send/` history and the progress file.
 - **Cache-back:** `CacheReposBack` runs only when the task ends (`done`, `failed` or `cancelled`), not after every turn. That keeps half-finished work out of the shared cache that other tasks copy from.
 - **Lock:** each workspace has a lock, taken for the length of a turn. The thread state machine already allows only one turn per task; the lock is a guard against races around restart recovery.
 - **Clean-up:**
@@ -168,6 +168,16 @@ Routing rules in `handleMessage`, per thread. They replace today's three-state s
 | `paused` | "continue" / other | resume / treat as feedback and resume |
 | `done` (within retention) | any | the analyzer chooses **feedback** (resume the task with the message) or **new** (suggest a new thread, or start a new task in chat transports) |
 | any | `/cancel` | cancel the task, clean up the workspace, reset the thread (as today, extended) |
+
+**New requests while a task is active (chat transports).** On Telegram and
+WeChat a chat is one task at a time. When a message arrives for a task that is
+not finished, and the analyzer classifies it as a *new request* rather than an
+answer or feedback, it is **queued** on the chat and the user is told so
+("Queued — I'll start it when the current task finishes"). Queued requests
+start in order, each as a new task, once the current task reaches `done`,
+`failed` or `cancelled`. `/cancel` also releases the queue's next request. In
+agent-stream this never arises: a new request is a new top-level message,
+which is a new thread and so a new task.
 
 **Plan revision:** when a task resumes after feedback, the planner runs in
 revise mode. It receives the current plan and statuses plus the new message,
@@ -236,11 +246,17 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 | 3 | Planner revise mode, per-task budgets and `paused`, checklists; the optional live plan message with the agent-stream change |
 | 4 | Default `AGENT_TASKS_ENABLED` on; retire the transcript-as-context path |
 
-## 15. Open questions
+## 15. Decisions and open questions
 
-1. **Push per turn, or only at task end?** Proposed: push per turn, as today, so work is never stranded in a workspace. The alternative is a task branch merged at the end, which suits code review but needs a merge step and PR tooling.
-2. **Several repos:** should one task be able to change several shared repos in one turn? Today's `gitsync` handles them per repo; confirm that stays enough.
-3. **Retention defaults:** 24h after done, 7d idle. Disk use grows with tasks times the size of the repo copies; confirm on the production host.
-4. **Telegram/WeChat:** one task per chat means a new request while a task is `awaiting_input` is ambiguous. Proposal: the analyzer decides answer or new request, and a new request asks the user whether to cancel the open task.
-5. **Question limits:** cap the number of questions a task can ask (e.g. 5), to avoid ping-pong?
-6. **Cost reporting:** show the per-task cost in the final checklist?
+Decided:
+
+1. **Push per turn.** Each turn commits and pushes through `gitsync`, as today. There are no task branches and no merge step at task end.
+2. **Retention:** 24h after `done` (`AGENT_TASK_RETENTION`), 7 days idle in `awaiting_input` or `paused` (`AGENT_TASK_IDLE_TTL`).
+3. **New requests during an active task (Telegram/WeChat) queue** behind the current task and start in order as new tasks (§8). The analyzer still separates an answer from a new request, so a reply to an open question resumes the task.
+
+Open:
+
+1. **Several repos:** should one task be able to change several shared repos in one turn? Today's `gitsync` handles them per repo; confirm that stays enough.
+2. **Question limits:** cap the number of questions a task can ask (e.g. 5), to avoid ping-pong?
+3. **Cost reporting:** show the per-task cost in the final checklist?
+4. **Queue bound:** how many queued requests per chat before new ones are refused (proposal: 5)?
