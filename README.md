@@ -245,6 +245,8 @@ To connect agent-runner, you need three values from the app:
 
 Each top-level message in a channel starts a Thread, and the bot keeps separate context, plan and agent session for every thread. Replies inside a thread continue that thread's work, so several tasks can run side by side in one channel.
 
+Threads are handled in parallel: messages within one thread are processed in order, while a slow step in one thread (an analyzer call, a file download) doesn't hold up another; at most 8 threads are handled at once. Agent sessions themselves are limited by `AGENT_MAX_CONCURRENT` (default `1`), so with the default a second thread's task still queues behind the first. Set it to the number of tasks you want running at the same time, e.g. `AGENT_MAX_CONCURRENT=3` (see [Running sessions in parallel](#running-sessions-in-parallel)).
+
 ```bash
 STREAM_SERVER_URL=https://your-agent-stream-server
 STREAM_BOT_TOKEN=your-bot-jwt
