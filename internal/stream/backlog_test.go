@@ -55,6 +55,7 @@ func TestProcessEventBatch_CapsToMostRecentBacklog(t *testing.T) {
 		t.Errorf("afterSeq = %d, want %d (advances past skipped events too)", afterSeq, total)
 	}
 
+	bot.wg.Wait() // handling is asynchronous; wait for dispatch to drain
 	texts := gw.recorded()
 	if len(texts) != 5 {
 		t.Fatalf("gateway.Handle called %d times, want 5", len(texts))
@@ -79,6 +80,7 @@ func TestProcessEventBatch_UnderCap_ProcessesAll(t *testing.T) {
 	if afterSeq != 3 {
 		t.Errorf("afterSeq = %d, want 3", afterSeq)
 	}
+	bot.wg.Wait() // handling is asynchronous; wait for dispatch to drain
 	if texts := gw.recorded(); len(texts) != 3 {
 		t.Errorf("gateway.Handle called %d times, want 3, got %v", len(texts), texts)
 	}
@@ -94,6 +96,7 @@ func TestProcessEventBatch_AlreadyProcessedEventsSkipped(t *testing.T) {
 	if afterSeq != 2 {
 		t.Errorf("afterSeq = %d, want 2 (unchanged)", afterSeq)
 	}
+	bot.wg.Wait() // handling is asynchronous; wait for dispatch to drain
 	if texts := gw.recorded(); len(texts) != 0 {
 		t.Errorf("expected no events processed (all seq <= afterSeq), got %v", texts)
 	}
@@ -125,6 +128,7 @@ func TestConsumeSSEStream_ChannelClosed_ProcessesBurstAndReturns(t *testing.T) {
 	if afterSeq != 3 {
 		t.Errorf("afterSeq = %d, want 3", afterSeq)
 	}
+	bot.wg.Wait() // handling is asynchronous; wait for dispatch to drain
 	texts := gw.recorded()
 	if len(texts) != 2 {
 		t.Fatalf("gateway.Handle called %d times, want 2 (capped), got %v", len(texts), texts)
@@ -157,6 +161,7 @@ func TestConsumeSSEStream_IdleTimeoutEndsBurstPhase(t *testing.T) {
 	if afterSeq != 2 {
 		t.Errorf("afterSeq = %d, want 2", afterSeq)
 	}
+	bot.wg.Wait() // handling is asynchronous; wait for dispatch to drain
 	if texts := gw.recorded(); len(texts) != 2 {
 		t.Errorf("gateway.Handle called %d times, want 2, got %v", len(texts), texts)
 	}

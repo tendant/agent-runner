@@ -59,6 +59,12 @@ type Bot struct {
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
 	engine            *botcommon.Engine
+
+	// Threads are handled concurrently (each in arrival order); the cursor
+	// trackers keep a channel's saved cursor behind unfinished messages.
+	dispatcher *threadDispatcher
+	cursorsMu  sync.Mutex
+	cursors    map[string]*cursorTracker
 }
 
 // SetWeChatReloader registers a callback that is invoked with the new token and
@@ -94,6 +100,8 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threa
 		stateDir:          cfg.StateDir,
 		maxCatchUpBacklog: maxCatchUpBacklog,
 	}
+	b.dispatcher = newThreadDispatcher(defaultMaxThreadHandlers, &b.wg)
+	b.cursors = make(map[string]*cursorTracker)
 	b.engine = &botcommon.Engine{
 		Starter:       starter,
 		ThreadManager: threadMgr,
@@ -206,6 +214,7 @@ func (b *Bot) listenConversation(ctx context.Context, channelID string) {
 		slog.Info("stream bot caught up", "channel_id", channelID, "after_seq", afterSeq, "mode", b.mode())
 		b.saveCursor(channelID, afterSeq)
 	}
+	b.newCursor(channelID, afterSeq)
 
 	if b.pollInterval > 0 {
 		b.listenPoll(ctx, channelID, afterSeq)
@@ -348,10 +357,11 @@ burstLoop:
 			continue // already processed (shouldn't happen, but guard it)
 		}
 		if event.Type == "message.created" {
-			b.handleMessageEvent(ctx, channelID, event)
+			b.dispatchMessage(ctx, channelID, event)
+		} else {
+			b.cursor(channelID).advance(event.Seq)
 		}
-		newAfterSeq = event.Seq // advance only after successful handling
-		b.saveCursor(channelID, newAfterSeq)
+		newAfterSeq = event.Seq // dispatched; the tracker persists once handled
 	}
 
 	return newAfterSeq, received
@@ -385,16 +395,18 @@ func (b *Bot) processEventBatch(ctx context.Context, channelID string, events []
 		if event.Seq <= afterSeq {
 			continue // already processed
 		}
-		if event.Type == "message.created" {
-			if seen < skipTarget {
+		if event.Type == "message.created" && seen >= skipTarget {
+			b.dispatchMessage(ctx, channelID, event)
+		} else {
+			if event.Type == "message.created" {
 				skipped++
-			} else {
-				b.handleMessageEvent(ctx, channelID, event)
 			}
+			b.cursor(channelID).advance(event.Seq)
+		}
+		if event.Type == "message.created" {
 			seen++
 		}
-		afterSeq = event.Seq // advance only after successful handling
-		b.saveCursor(channelID, afterSeq)
+		afterSeq = event.Seq // dispatched; the tracker persists once handled
 	}
 	if skipped > 0 {
 		slog.Warn("stream bot: skipped stale backlog messages after reconnect gap",
@@ -548,6 +560,40 @@ type messagePayload struct {
 	Content   string            `json:"content"`
 	FileIDs   []string          `json:"file_ids,omitempty"`
 	FileURLs  map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
+}
+
+// newCursor starts tracking channelID's cursor from afterSeq.
+func (b *Bot) newCursor(channelID string, afterSeq int64) {
+	b.cursorsMu.Lock()
+	defer b.cursorsMu.Unlock()
+	b.cursors[channelID] = newCursorTracker(afterSeq, func(seq int64) { b.saveCursor(channelID, seq) })
+}
+
+// cursor returns channelID's tracker, creating one from the saved cursor if
+// the channel was not started through listenConversation (e.g. in tests).
+func (b *Bot) cursor(channelID string) *cursorTracker {
+	b.cursorsMu.Lock()
+	defer b.cursorsMu.Unlock()
+	t, ok := b.cursors[channelID]
+	if !ok {
+		start, _ := b.loadCursor(channelID)
+		t = newCursorTracker(start, func(seq int64) { b.saveCursor(channelID, seq) })
+		b.cursors[channelID] = t
+	}
+	return t
+}
+
+// dispatchMessage queues a message.created event on its thread: messages in
+// one thread are handled in order, different threads concurrently.
+func (b *Bot) dispatchMessage(ctx context.Context, channelID string, event Event) {
+	var msg messagePayload
+	_ = json.Unmarshal(event.Payload, &msg) // a bad payload is reported by handleMessageEvent
+	tracker := b.cursor(channelID)
+	tracker.begin(event.Seq)
+	b.dispatcher.Dispatch(threadKey(channelID, msg), func() {
+		defer tracker.done(event.Seq)
+		b.handleMessageEvent(ctx, channelID, event)
+	})
 }
 
 func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Event) {
