@@ -34,10 +34,11 @@ import (
 // taskStack is agent-stream plus agent-runner, running, with a human user,
 // a channel and the runner's bot in it.
 type taskStack struct {
-	human   *client
-	channel string
-	dataDir string
-	logs    func() string // agent-runner log tail, for failure messages
+	human     *client
+	channel   string
+	botUserID string
+	dataDir   string
+	logs      func() string // agent-runner log tail, for failure messages
 }
 
 // startTaskStack builds and starts both servers. pathPrefix goes first on
@@ -102,7 +103,8 @@ func startTaskStack(t *testing.T, pathPrefix string, runnerEnv ...string) *taskS
 		"WELCOME_ENABLED=false",
 		"STREAM_SERVER_URL=" + asURL,
 		"STREAM_BOT_TOKEN=" + bot.Token,
-		"STREAM_CHANNEL_IDS=" + ch.ID,
+		// No STREAM_CHANNEL_IDS: the bot follows the channels it's in.
+		"STREAM_CHANNEL_DISCOVERY_INTERVAL=1s",
 	}, runnerEnv...)
 	logPath := filepath.Join(base, "agent-runner.log")
 	startProcess(t, "agent-runner", arBin, runDir, logPath, cleanEnv(env...))
@@ -116,15 +118,35 @@ func startTaskStack(t *testing.T, pathPrefix string, runnerEnv ...string) *taskS
 	waitFor(t, 30*time.Second, "the stream bot to connect", logs, func() bool {
 		return strings.Contains(logs(), "stream bot: SSE connected")
 	})
-	return &taskStack{human: human, channel: ch.ID, dataDir: dataDir, logs: logs}
+	return &taskStack{human: human, channel: ch.ID, botUserID: bot.UserID, dataDir: dataDir, logs: logs}
+}
+
+// newChannel creates a channel with the bot in it and waits until the
+// running bot is listening there.
+func (s *taskStack) newChannel(t *testing.T, title string) string {
+	t.Helper()
+	var ch struct {
+		ID string `json:"channel_id"`
+	}
+	s.human.do("POST", "/v2/channels", map[string]any{"title": title}, &ch)
+	s.human.do("POST", "/v2/channels/"+ch.ID+"/members", map[string]any{"user_id": s.botUserID}, nil)
+	waitFor(t, 30*time.Second, "the bot to join "+ch.ID, s.logs, func() bool {
+		return strings.Contains(s.logs(), "SSE connected channel_id="+ch.ID)
+	})
+	return ch.ID
 }
 
 // newThread posts a top-level message and returns its thread ID.
 func (s *taskStack) newThread(content string) string {
+	return s.newThreadIn(s.channel, content)
+}
+
+// newThreadIn posts a top-level message in channel and returns its thread ID.
+func (s *taskStack) newThreadIn(channel, content string) string {
 	var root struct {
 		MessageID string `json:"message_id"`
 	}
-	s.human.do("POST", "/v2/channels/"+s.channel+"/messages", map[string]any{"content": content}, &root)
+	s.human.do("POST", "/v2/channels/"+channel+"/messages", map[string]any{"content": content}, &root)
 	return root.MessageID
 }
 
@@ -215,6 +237,11 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	if _, err := os.Stat(workspace); err != nil {
 		t.Fatalf("cancelling one thread's task removed another's workspace: %v", err)
 	}
+
+	// 6. Adding the bot to a new channel needs no restart: it joins and works there.
+	ch2 := st.newChannel(t, "second channel")
+	thread3 := st.newThreadIn(ch2, "deploy the api")
+	waitBotMessage(t, human, thread3, "Which environment should I deploy to?", logs)
 }
 
 // taskRecord mirrors the fields of task.Record the test checks.
