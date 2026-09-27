@@ -127,9 +127,15 @@ type AgentConfig struct {
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
 	MaxQueueSize        int      // Maximum number of queued agent sessions
 	MaxConcurrent       int      // AGENT_MAX_CONCURRENT — agent sessions allowed to run at once (1 = serial, the default)
-	MemoryDays          int      // Number of daily memory logs to include (default: 7)
-	MemoryPullOnStart   bool     // Pull memory from git before each session
-	MemoryCharCap       int      // Max characters in composed memory section (0 = no limit)
+
+	// Multi-turn tasks (TASKS_DESIGN.md). Off by default: each chat message
+	// then starts an independent run, as before.
+	TasksEnabled      bool          // AGENT_TASKS_ENABLED
+	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
+	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
+	MemoryDays        int           // Number of daily memory logs to include (default: 7)
+	MemoryPullOnStart bool          // Pull memory from git before each session
+	MemoryCharCap     int           // Max characters in composed memory section (0 = no limit)
 
 	// Post-session memory curation: a cheap LLM pass (uses the fast-LLM
 	// config) that distills each session's outcome into lessons.md and
@@ -247,6 +253,8 @@ func defaultConfigForDataDir(data string) *Config {
 			PlannerEnabled:      true,
 			MaxQueueSize:        10,
 			MaxConcurrent:       1,
+			TaskRetention:       24 * time.Hour,
+			TaskIdleTTL:         7 * 24 * time.Hour,
 			MemoryDays:          7,
 			MemoryCharCap:       12000,
 			MemoryPullOnStart:   true,
@@ -462,6 +470,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
 	cfg.Agent.MaxQueueSize = envIntOrDefault("AGENT_MAX_QUEUE_SIZE", cfg.Agent.MaxQueueSize)
 	cfg.Agent.MaxConcurrent = envIntOrDefault("AGENT_MAX_CONCURRENT", cfg.Agent.MaxConcurrent)
+	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
+	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
+	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
@@ -690,6 +701,17 @@ func envInt64OrDefault(key string, fallback int64) int64 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// envDurationOrDefault parses a Go duration ("24h", "90m"); invalid or
+// non-positive values fall back.
+func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
 		}
 	}
 	return fallback

@@ -9,6 +9,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/sessionjournal"
+	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 )
 
@@ -152,5 +153,38 @@ func restoredSession(entry sessionjournal.Entry) *agent.Session {
 		ConvID:              entry.ConvID,
 		CallbackURL:         entry.CallbackURL,
 		StartedAt:           entry.CreatedAt,
+		TaskWorkspace:       entry.TaskWorkspace,
+	}
+}
+
+// recoverTasks pauses task records whose running turn did not survive the
+// restart (TASKS_DESIGN.md §11). A turn re-enqueued by recoverSessions is
+// still known to the agent manager and its re-attached watcher updates the
+// record; any other "working" task lost its turn, and its intact workspace
+// lets the next message in the thread continue it.
+func (s *Server) recoverTasks() {
+	if s.tasks == nil {
+		return
+	}
+	for _, rec := range s.tasks.List() {
+		if rec.Status != task.StatusWorking {
+			continue
+		}
+		if t := rec.LastTurn(); t != nil {
+			if _, live := s.agentManager.GetSession(t.SessionID); live {
+				continue
+			}
+		}
+		_, _ = s.tasks.Update(rec.ThreadKey, func(r *task.Record) {
+			if r.Status != task.StatusWorking {
+				return
+			}
+			r.Status = task.StatusPaused
+			if t := r.LastTurn(); t != nil && t.EndedAt.IsZero() {
+				t.EndedAt = time.Now()
+				t.StopReason = "interrupted by restart"
+			}
+		})
+		slog.Info("task paused: its turn was interrupted by restart", "task_id", rec.ID, "thread", rec.ThreadKey)
 	}
 }

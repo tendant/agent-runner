@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
@@ -52,6 +53,11 @@ type Engine struct {
 	// (see WelcomeIfNeeded); zero value disables it.
 	Welcome Welcome
 
+	// Tasks enables multi-turn tasks (AGENT_TASKS_ENABLED): each thread's
+	// work keeps a record and a workspace across turns, and a turn can stop
+	// to ask the user a question. nil = one-shot runs, as before.
+	Tasks *task.Store
+
 	WG *sync.WaitGroup
 }
 
@@ -75,7 +81,15 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *thread
 		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
 	}
 
-	sessionID, err := e.Starter.StartAgent(message, e.Source, id)
+	var (
+		sessionID string
+		err       error
+	)
+	if ts, ok := e.taskStarter(); ok {
+		sessionID, err = e.startTaskTurn(ts, id, message, currentMsg)
+	} else {
+		sessionID, err = e.Starter.StartAgent(message, e.Source, id)
+	}
 	if err != nil {
 		conv.SetState(thread.StateGathering)
 		e.Sender.Final(ctx, id, fmt.Sprintf("Failed to start agent: %s", err))
@@ -109,6 +123,11 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 				}
 			}
 		}
+		question := e.finishTaskTurn(id, sessionID, session, sessionOk)
+		if question != "" {
+			conv.AddMessage("assistant", question)
+			e.Sender.Final(ctx, id, FormatTurnQuestion(question))
+		}
 		hasPending := conv.ClearPendingInput()
 
 		// Clear StateExecuting before slow post-processing so new messages
@@ -130,7 +149,7 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 			if e.AnnounceQueued {
 				e.Sender.Reply(ctx, id, "Processing queued messages...")
 			}
-			if e.Analyzer == nil {
+			if e.Analyzer == nil || e.ResumesTask(id) {
 				e.HandleConfirmation(ctx, id, conv)
 			} else {
 				e.HandleAnalysis(ctx, id, conv)

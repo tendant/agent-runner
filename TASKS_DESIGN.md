@@ -246,6 +246,14 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 | 3 | Planner revise mode, per-task budgets and `paused`, checklists; the optional live plan message with the agent-stream change |
 | 4 | Default `AGENT_TASKS_ENABLED` on; retire the transcript-as-context path |
 
+**Phase 1 status (implemented).** Differences from the text above:
+
+- Workspaces live at `TMP_ROOT/task-<task-id>` (one per task, so a new task in the same thread never inherits a finished one's files); records at `STATE_ROOT/tasks/<thread-key>.json`. The `task-` prefix keeps them out of the startup stale-workspace sweep.
+- No separate workspace lock: the thread state machine already allows one turn per thread, and a new task in a thread releases the previous task's workspace before starting.
+- Routing: `awaiting_input` and `paused` tasks resume on the next message; `done` tasks (within retention) start a new task rather than taking feedback (feedback resume and plan revise mode are phase 3).
+- While a task is waiting, every message in the thread is its answer. Queueing new requests on Telegram/WeChat (decision 3) is not in phase 1.
+- A turn stopped by `needs_input` completes (it is not reviewed), and each reused turn starts with an empty `_send/` and no `_schedule.json` so earlier outputs aren't delivered twice.
+
 ## 15. Decisions and open questions
 
 Decided:

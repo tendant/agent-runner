@@ -30,6 +30,22 @@ func ParseDoneSignal(output string) (string, bool) {
 // the preamble (resolved template), plan state, and workspace state.
 type PromptBuilder struct {
 	preamble string
+	taskMode bool // turn of a multi-turn task: the agent may ask the user and must summarise
+}
+
+// taskInstruction tells the agent how to end a turn of a multi-turn task
+// (TASKS_DESIGN.md §5). It is only added in task mode.
+const taskInstruction = "This task can span several turns with the user. If you need information or a decision only the user can provide, stop and write `_progress.json` with `\"status\": \"needs_input\"` and a clear `\"question\"` — do not guess. When the task is complete, set `\"status\": \"done\"`. Whenever you stop, also include `\"summary\"` (what you did this turn and what is next, 1-3 sentences) and `\"decisions\"` (a list of choices you made that later turns must respect), keeping `\"completed_steps\"` up to date."
+
+// SetTaskMode turns on the multi-turn task instructions.
+func (pb *PromptBuilder) SetTaskMode(on bool) { pb.taskMode = on }
+
+// endInstructions are the standing instructions every prompt ends with.
+func (pb *PromptBuilder) endInstructions() string {
+	if pb.taskMode {
+		return doneInstruction + "\n\n" + taskInstruction
+	}
+	return doneInstruction
 }
 
 // NewPromptBuilder creates a prompt builder with the given preamble.
@@ -116,7 +132,7 @@ func (pb *PromptBuilder) Build(ctx context.Context, workspacePath string, plan *
 
 	// Iteration metadata — no workflow instructions here; the preamble drives behavior
 	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n\n", iteration))
-	sb.WriteString(doneInstruction)
+	sb.WriteString(pb.endInstructions())
 	sb.WriteString("\n")
 
 	return sb.String()
@@ -153,7 +169,7 @@ func (pb *PromptBuilder) BuildIncremental(workspacePath string, plan *PlanResult
 	}
 
 	sb.WriteString(fmt.Sprintf("**Iteration:** %d\n\n", iteration))
-	sb.WriteString(doneInstruction)
+	sb.WriteString(pb.endInstructions())
 	sb.WriteString("\n")
 	return sb.String()
 }
@@ -165,6 +181,6 @@ func (pb *PromptBuilder) BuildStatic(message string, errorContext string) string
 	if errorContext != "" {
 		parts = append(parts, errorContext)
 	}
-	parts = append(parts, doneInstruction)
+	parts = append(parts, pb.endInstructions())
 	return strings.Join(parts, "\n\n")
 }

@@ -124,7 +124,25 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 // Returns the workspace path, a list of repos that were listed in sharedRepos but
 // missing from the cache, and any setup error.
 func (w *WorkspaceManager) PrepareAgentWorkspace(repoCacheRoot, sessionID string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, []string, error) {
-	workspacePath := filepath.Join(w.TmpRoot, "session-"+sessionID)
+	return w.PrepareAgentWorkspaceAt(filepath.Join(w.TmpRoot, "session-"+sessionID), repoCacheRoot, sharedRepos, skillsDir, gitHost, gitOrg, gitToken)
+}
+
+// TaskWorkspacePath is where a multi-turn task keeps its workspace between
+// turns. The "task-" prefix keeps it out of CleanupStaleWorkspaces, which
+// only sweeps session-* and job-* directories.
+func (w *WorkspaceManager) TaskWorkspacePath(taskKey string) string {
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, taskKey)
+	return filepath.Join(w.TmpRoot, "task-"+safe)
+}
+
+// PrepareAgentWorkspaceAt builds an agent workspace rooted at workspacePath
+// (see PrepareAgentWorkspace for the layout).
+func (w *WorkspaceManager) PrepareAgentWorkspaceAt(workspacePath, repoCacheRoot string, sharedRepos []string, skillsDir, gitHost, gitOrg, gitToken string) (string, []string, error) {
 
 	// [C1] Clean up the session directory if setup fails partway through, so
 	// partially-created directories don't accumulate in tmp/.

@@ -99,6 +99,15 @@ type Session struct {
 	PlanJSON             any               `json:"-"`
 	ReviewJSON           any               `json:"-"`
 
+	// TaskWorkspace, when set, makes this run one turn of a multi-turn task
+	// (TASKS_DESIGN.md): the workspace at this path is reused from earlier
+	// turns and kept afterwards instead of being cached back and deleted.
+	TaskWorkspace string   `json:"-"`
+	TurnStatus    string   `json:"-"` // agent-reported status at turn end: "", "working", "needs_input" or "done"
+	TurnQuestion  string   `json:"-"` // question for the user when TurnStatus is "needs_input"
+	TurnSummary   string   `json:"-"` // agent's summary of the turn
+	TurnDecisions []string `json:"-"` // decisions recorded during the turn
+
 	stopRequested bool
 	stopCh        chan struct{} // closed on RequestStop; created lazily by StopChan
 
@@ -267,6 +276,16 @@ func (s *Session) AddWarning(msg string) {
 }
 
 // SetWorkspacePath stores the workspace path on the session.
+// SetTurnResult records what the agent reported about this turn of a task.
+func (s *Session) SetTurnResult(status, question, summary string, decisions []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TurnStatus = status
+	s.TurnQuestion = question
+	s.TurnSummary = summary
+	s.TurnDecisions = append([]string(nil), decisions...)
+}
+
 func (s *Session) SetWorkspacePath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -359,6 +378,11 @@ func (s *Session) Snapshot() *Session {
 		ReviewJSON:           s.ReviewJSON,
 		LogLines:             append([]string{}, s.LogLines...),
 		AgentEvents:          append([]ExecEvent{}, s.AgentEvents...),
+		TaskWorkspace:        s.TaskWorkspace,
+		TurnStatus:           s.TurnStatus,
+		TurnQuestion:         s.TurnQuestion,
+		TurnSummary:          s.TurnSummary,
+		TurnDecisions:        append([]string{}, s.TurnDecisions...),
 	}
 	copy(snap.Iterations, s.Iterations)
 

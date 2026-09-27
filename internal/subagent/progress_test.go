@@ -57,3 +57,33 @@ func TestReadProgress_BlockedSteps(t *testing.T) {
 		t.Errorf("unexpected blocked steps: %+v", got.BlockedSteps)
 	}
 }
+
+func TestPlanPersistence(t *testing.T) {
+	dir := t.TempDir()
+	if LoadPlan(dir) != nil {
+		t.Fatal("LoadPlan on an empty task dir returned a plan")
+	}
+	plan := &PlanResult{Summary: "s", Steps: []PlanStep{{ID: "1", Description: "build"}, {ID: "2", Description: "ship"}}}
+	if err := SavePlan(dir, plan); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadPlan(dir)
+	if got == nil || len(got.Steps) != 2 || got.Steps[1].Description != "ship" {
+		t.Fatalf("LoadPlan = %+v", got)
+	}
+}
+
+func TestResetTurnFieldsKeepsCompletedSteps(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "_progress.json"), []byte(`{"completed_steps":["1"],"blocked_steps":[{"step":"2","reason":"x"}],"status":"needs_input","question":"q?","summary":"s","decisions":["d"]}`), 0o644)
+	if err := ResetTurnFields(dir); err != nil {
+		t.Fatal(err)
+	}
+	p := ReadProgress(dir)
+	if len(p.CompletedSteps) != 1 || p.Status != "" || p.Question != "" || p.Summary != "" || len(p.Decisions) != 0 || len(p.BlockedSteps) != 0 {
+		t.Fatalf("after reset: %+v", p)
+	}
+	if err := ResetTurnFields(t.TempDir()); err != nil {
+		t.Fatalf("reset with no progress file: %v", err)
+	}
+}
