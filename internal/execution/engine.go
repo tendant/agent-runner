@@ -688,6 +688,9 @@ func (h *Engine) revisePlan(ctx context.Context, sessionID string, liveSession *
 	if err := subagent.SavePlan(taskDir, revised); err != nil {
 		liveSession.AddWarning("could not save task plan: " + err.Error())
 	}
+	if err := subagent.SyncCompletedSteps(checkoutPath, revised); err != nil {
+		liveSession.AddWarning("could not update _progress.json for the revised plan: " + err.Error())
+	}
 	if subagent.RevisionIsLarge(saved, revised) {
 		liveSession.SetTurnApproval("I've revised the plan:\n\n" + revised.Checklist() + "\n\nProceed with this plan? (yes, or tell me what to change)")
 	}
@@ -853,6 +856,14 @@ func (h *Engine) runIterationLoop(
 		// Update completed steps from progress file and sync to plan
 		progress := subagent.ReadProgress(checkoutPath)
 		if liveSession.TaskWorkspace != "" {
+			// Record step progress before a task turn stops, so the plan
+			// the user sees (and the next turn continues) is current.
+			if len(progress.CompletedSteps) > 0 {
+				liveSession.SetCompletedSteps(progress.CompletedSteps)
+				if plan != nil {
+					plan.MarkDone(progress.CompletedSteps)
+				}
+			}
 			if progress.Status == subagent.TurnNeedsInput && strings.TrimSpace(progress.Question) != "" {
 				stopReason = "waiting for the user's answer"
 				slog.Info("agent asked the user a question", "session_id", sessionID, "iteration", i)
@@ -1546,6 +1557,14 @@ func buildErrorContext(iterNum int, errMsg, partialOutput string) string {
 // the turn ended waiting for the user.
 func (h *Engine) recordTurnResult(liveSession *agent.Session, checkoutPath string, completed bool) bool {
 	p := subagent.ReadProgress(checkoutPath)
+	// Keep the saved plan's done marks current for later turns and the
+	// plan reviser.
+	if plan, ok := liveSession.Snapshot().PlanJSON.(*subagent.PlanResult); ok && plan != nil {
+		plan.MarkDone(p.CompletedSteps)
+		if err := subagent.SavePlan(liveSession.TaskWorkspace, plan); err != nil {
+			liveSession.AddWarning("could not save task plan: " + err.Error())
+		}
+	}
 	status := p.Status
 	if status == subagent.TurnNeedsInput && strings.TrimSpace(p.Question) == "" {
 		status = subagent.TurnWorking // a question is required to wait on the user

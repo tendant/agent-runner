@@ -87,3 +87,16 @@ func TestResetTurnFieldsKeepsCompletedSteps(t *testing.T) {
 		t.Fatalf("reset with no progress file: %v", err)
 	}
 }
+
+func TestSyncCompletedSteps(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "_progress.json"), []byte(`{"completed_steps":["1","2"],"summary":"s"}`), 0o644)
+	plan := &PlanResult{Steps: []PlanStep{{ID: "1"}, {ID: "2", Done: true}, {ID: "3"}}}
+	if err := SyncCompletedSteps(dir, plan); err != nil {
+		t.Fatal(err)
+	}
+	p := ReadProgress(dir)
+	if len(p.CompletedSteps) != 1 || p.CompletedSteps[0] != "2" || p.Summary != "s" {
+		t.Fatalf("after sync: %+v", p)
+	}
+}

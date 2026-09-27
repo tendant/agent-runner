@@ -108,6 +108,9 @@ func TestTaskTurns_NeedsInputThenContinue(t *testing.T) {
 	if snap.TurnStatus != subagent.TurnNeedsInput || snap.TurnQuestion != "Which environment?" || snap.TurnSummary != "looked around" {
 		t.Fatalf("turn result = %q %q %q", snap.TurnStatus, snap.TurnQuestion, snap.TurnSummary)
 	}
+	if len(snap.CompletedSteps) != 1 || snap.CompletedSteps[0] != "1" {
+		t.Fatalf("completed steps = %v: progress must be recorded even when the turn stops to ask", snap.CompletedSteps)
+	}
 	if _, err := os.Stat(filepath.Join(taskDir, "workspace", "notes.txt")); err != nil {
 		t.Fatalf("task workspace not kept after turn 1: %v", err)
 	}

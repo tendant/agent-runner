@@ -239,6 +239,10 @@ can span several agent runs:
 - Each turn still commits and pushes as usual. Repos are cached back only when
   the task's workspace is released.
 
+The whole flow is covered end to end against a real agent-stream server by
+`e2e/tasks_stream_e2e_test.go` (set `AGENT_STREAM_SRC` to the agent-stream
+server source to run it).
+
 Task records live in `STATE_ROOT/tasks/`, workspaces in `TMP_ROOT/task-*`. A
 background sweep releases a finished task's workspace after
 `AGENT_TASK_RETENTION` and expires a task left waiting after
