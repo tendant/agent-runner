@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,7 +49,8 @@ type Bot struct {
 	gateway           Gateway
 	threadManager     *thread.Manager
 	analyzer          *thread.Analyzer
-	channelIDs        []string
+	channelIDs        []string      // fixed channel list; empty = follow the bot's memberships
+	discoveryInterval time.Duration // how often to re-list the bot's channels when following them
 	botUserID         string
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
@@ -66,6 +68,10 @@ type Bot struct {
 	dispatcher *threadDispatcher
 	cursorsMu  sync.Mutex
 	cursors    map[string]*cursorTracker
+
+	// listeners holds a cancel func per channel being listened on.
+	listenersMu sync.Mutex
+	listeners   map[string]context.CancelFunc
 }
 
 // SetWeChatReloader registers a callback that is invoked with the new token and
@@ -95,6 +101,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threa
 		threadManager:     threadMgr,
 		analyzer:          analyzer,
 		channelIDs:        cfg.ChannelIDs,
+		discoveryInterval: cfg.DiscoveryInterval,
 		uploadsDir:        uploadsDir,
 		botUserID:         extractBotUserID(cfg.BotToken),
 		pollInterval:      cfg.PollInterval,
@@ -163,33 +170,114 @@ func (b *Bot) SetWelcome(w botcommon.Welcome) {
 	b.engine.Welcome = w
 }
 
-// Start begins listening on all configured conversations. Non-blocking.
+// Start begins listening. Non-blocking. With STREAM_CHANNEL_IDS set it
+// listens on exactly those channels; otherwise it follows the bot's
+// memberships — every channel the bot is in, re-listed every
+// discoveryInterval, so adding the bot to a channel (or removing it) takes
+// effect without a restart.
 func (b *Bot) Start(ctx context.Context) error {
-	if len(b.channelIDs) == 0 {
-		slog.Info("stream bot: no conversation IDs configured, not starting")
+	ctx, b.cancel = context.WithCancel(ctx)
+
+	if len(b.channelIDs) > 0 {
+		for _, channelID := range b.channelIDs {
+			b.startListener(ctx, channelID)
+		}
+		slog.Info("stream bot started", "conversations", b.channelIDs)
 		return nil
 	}
 
-	ctx, b.cancel = context.WithCancel(ctx)
-
-	for _, channelID := range b.channelIDs {
-		channelID := channelID // capture for goroutine
-		b.wg.Add(1)
-		go func() {
-			defer b.wg.Done()
-			b.listenConversation(ctx, channelID)
-		}()
+	interval := b.discoveryInterval
+	if interval <= 0 {
+		interval = defaultDiscoveryInterval
 	}
-
-	slog.Info("stream bot started", "conversations", b.channelIDs)
+	b.syncChannels(ctx)
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				b.syncChannels(ctx)
+			}
+		}
+	}()
+	slog.Info("stream bot started, following its channels", "interval", interval, "conversations", b.activeChannels())
 	return nil
 }
 
-// SendNotification sends a message to all configured conversations as the bot.
+// defaultDiscoveryInterval is how often the bot re-lists its channels.
+const defaultDiscoveryInterval = 30 * time.Second
+
+// syncChannels starts listeners for channels the bot has joined and stops
+// those for channels it has left. A failed listing changes nothing.
+func (b *Bot) syncChannels(ctx context.Context) {
+	ids, err := b.client.ListChannels(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("stream bot: could not list channels", "error", err)
+		}
+		return
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+		if b.startListener(ctx, id) {
+			slog.Info("stream bot: joined channel", "channel_id", id)
+		}
+	}
+	b.listenersMu.Lock()
+	defer b.listenersMu.Unlock()
+	for id, cancel := range b.listeners {
+		if !want[id] {
+			cancel()
+			delete(b.listeners, id)
+			slog.Info("stream bot: left channel", "channel_id", id)
+		}
+	}
+}
+
+// startListener listens on channelID unless it already is; reports whether
+// it started one.
+func (b *Bot) startListener(ctx context.Context, channelID string) bool {
+	b.listenersMu.Lock()
+	defer b.listenersMu.Unlock()
+	if b.listeners == nil {
+		b.listeners = make(map[string]context.CancelFunc)
+	}
+	if _, ok := b.listeners[channelID]; ok {
+		return false
+	}
+	lctx, cancel := context.WithCancel(ctx)
+	b.listeners[channelID] = cancel
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		b.listenConversation(lctx, channelID)
+	}()
+	return true
+}
+
+// activeChannels returns the channels being listened on, sorted.
+func (b *Bot) activeChannels() []string {
+	b.listenersMu.Lock()
+	defer b.listenersMu.Unlock()
+	ids := make([]string, 0, len(b.listeners))
+	for id := range b.listeners {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// SendNotification sends a message to every channel the bot listens on.
 // Intended for external systems (monitoring, cron jobs, etc.) to post messages.
 func (b *Bot) SendNotification(ctx context.Context, message string) error {
 	var lastErr error
-	for _, channelID := range b.channelIDs {
+	for _, channelID := range b.activeChannels() {
 		if err := b.client.SendMessage(ctx, channelID, message, nil); err != nil {
 			slog.Error("stream bot: failed to notify", "channel_id", channelID, "error", err)
 			lastErr = err

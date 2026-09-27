@@ -225,6 +225,37 @@ func (c *Client) SendMessage(ctx context.Context, key, content string, fileIDs [
 	return nil
 }
 
+// ListChannels returns the IDs of the channels the bot is a member of.
+func (c *Client) ListChannels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/channels", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list channels: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list channels: status %d: %s", resp.StatusCode, string(body))
+	}
+	var channels []struct {
+		ID string `json:"channel_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&channels); err != nil {
+		return nil, fmt.Errorf("list channels: decode: %w", err)
+	}
+	ids := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		if ch.ID != "" {
+			ids = append(ids, ch.ID)
+		}
+	}
+	return ids, nil
+}
+
 // ErrNotFound is returned by PollEvents when the server has no polling
 // endpoint (404, or 405 because only POST is routed on that path).
 // Callers can use errors.Is to detect this and fall back to SSE catch-up.
