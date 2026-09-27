@@ -178,6 +178,18 @@ func (b *Bot) SetWelcome(w botcommon.Welcome) {
 func (b *Bot) Start(ctx context.Context) error {
 	ctx, b.cancel = context.WithCancel(ctx)
 
+	// The bot recognises (and ignores) its own messages by user ID. It is
+	// normally read from the token; ask the server when the token doesn't
+	// carry it, rather than risk answering itself in a loop.
+	if b.botUserID == "" {
+		id, err := b.client.WhoAmI(ctx)
+		if err != nil {
+			b.cancel()
+			return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
+		}
+		b.botUserID = id
+	}
+
 	if len(b.channelIDs) > 0 {
 		for _, channelID := range b.channelIDs {
 			b.startListener(ctx, channelID)

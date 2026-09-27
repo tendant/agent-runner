@@ -225,6 +225,31 @@ func (c *Client) SendMessage(ctx context.Context, key, content string, fileIDs [
 	return nil
 }
 
+// WhoAmI returns the user ID the bot token authenticates as.
+func (c *Client) WhoAmI(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/user", nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("who am i: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("who am i: status %d: %s", resp.StatusCode, string(body))
+	}
+	var u struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil || u.UserID == "" {
+		return "", fmt.Errorf("who am i: no user_id in response")
+	}
+	return u.UserID, nil
+}
+
 // ListChannels returns the IDs of the channels the bot is a member of.
 func (c *Client) ListChannels(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/channels", nil)
