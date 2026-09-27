@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Executor is the interface for CLI execution backends.
@@ -108,8 +110,44 @@ func (e *ClaudeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspaceP
 // those events plus stderr, which is what the audit log wants rather than
 // the raw NDJSON.
 func (e *ClaudeExecutor) ExecuteStreaming(ctx context.Context, workspacePath, systemPrompt, instruction string, onEvent func(EventKind, string)) (*ExecutionResult, error) {
+	return e.run(ctx, workspacePath, systemPrompt, instruction, nil, onEvent)
+}
+
+// ResumeKind names Claude session IDs.
+func (e *ClaudeExecutor) ResumeKind() string { return "claude" }
+
+// ExecuteResuming continues the Claude conversation ref (--resume) or, with
+// ref "", starts one under a new session ID (--session-id) and returns it.
+// Claude keeps a conversation's first system prompt on resume.
+func (e *ClaudeExecutor) ExecuteResuming(ctx context.Context, workspacePath, systemPrompt, instruction, ref string, onEvent func(EventKind, string)) (*ExecutionResult, string, error) {
+	var extra []string
+	if ref == "" {
+		ref = uuid.NewString()
+		extra = []string{"--session-id", ref}
+	} else {
+		extra = []string{"--resume", ref}
+	}
+	result, err := e.run(ctx, workspacePath, systemPrompt, instruction, extra, onEvent)
+	if err != nil && extra[0] == "--resume" && claudeResumeMissing(result, err) {
+		return result, "", fmt.Errorf("%w: %v", ErrResumeFailed, err)
+	}
+	return result, ref, err
+}
+
+// claudeResumeMissing reports Claude's "No conversation found with session
+// ID" failure, which it prints before doing any work.
+func claudeResumeMissing(result *ExecutionResult, err error) bool {
+	const marker = "No conversation found"
+	if strings.Contains(err.Error(), marker) {
+		return true
+	}
+	return result != nil && strings.Contains(result.RawOutput, marker)
+}
+
+func (e *ClaudeExecutor) run(ctx context.Context, workspacePath, systemPrompt, instruction string, extraArgs []string, onEvent func(EventKind, string)) (*ExecutionResult, error) {
 	// --verbose is required by the CLI for stream-json in --print mode.
 	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"}
+	args = append(args, extraArgs...)
 	if e.Model != "" {
 		args = append(args, "--model", e.Model)
 	}

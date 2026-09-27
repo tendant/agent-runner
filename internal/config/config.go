@@ -132,6 +132,7 @@ type AgentConfig struct {
 	// then starts an independent run, as before.
 	TasksEnabled      bool          // AGENT_TASKS_ENABLED
 	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
+	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude conversations across task turns
 	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays        int           // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart bool          // Pull memory from git before each session
@@ -255,6 +256,7 @@ func defaultConfigForDataDir(data string) *Config {
 			MaxConcurrent:       1,
 			TaskRetention:       24 * time.Hour,
 			TaskIdleTTL:         7 * 24 * time.Hour,
+			TaskResumeBackend:   true,
 			MemoryDays:          7,
 			MemoryCharCap:       12000,
 			MemoryPullOnStart:   true,
@@ -473,6 +475,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
+	cfg.Agent.TaskResumeBackend = envBoolOrDefault("AGENT_TASK_RESUME_BACKEND", cfg.Agent.TaskResumeBackend)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)

@@ -27,6 +27,12 @@ type Options struct {
 	Model     string
 	Workspace string   // process cwd; the agent's working directory
 	Env       []string // overlay on os.Environ()
+
+	// SessionDir and SessionID make the conversation durable: pi saves it
+	// under SessionDir as session SessionID and restores it when a later
+	// process starts with the same pair. Both empty = --no-session.
+	SessionDir string
+	SessionID  string
 }
 
 // Result is the outcome of one prompt.
@@ -76,7 +82,12 @@ func Start(opts Options) (*Client, error) {
 	if opts.Binary == "" {
 		opts.Binary = "pi"
 	}
-	args := []string{"--mode", "rpc", "--no-session"}
+	args := []string{"--mode", "rpc"}
+	if opts.SessionDir != "" && opts.SessionID != "" {
+		args = append(args, "--session-dir", opts.SessionDir, "--session-id", opts.SessionID)
+	} else {
+		args = append(args, "--no-session")
+	}
 	if opts.Provider != "" {
 		args = append(args, "--provider", opts.Provider)
 	}
