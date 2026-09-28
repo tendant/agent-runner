@@ -131,7 +131,7 @@ func TestStreamBot_ThreadsHandledInParallel(t *testing.T) {
 	bot.stateDir = t.TempDir()
 
 	msg := func(seq int64, id, content string) Event {
-		p, _ := json.Marshal(messagePayload{MessageID: id, UserID: "u_human", Content: content})
+		p, _ := json.Marshal(messagePayload{MessageID: id, UserID: "u_human", Content: content, Addressees: []string{testBotUserID}})
 		return Event{Seq: seq, Type: "message.created", Payload: p}
 	}
 	events := []Event{msg(1, "m_A", "slow"), msg(2, "m_B", "fast")}

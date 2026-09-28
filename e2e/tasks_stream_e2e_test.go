@@ -242,6 +242,34 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	ch2 := st.newChannel(t, "second channel")
 	thread3 := st.newThreadIn(ch2, "deploy the api")
 	waitBotMessage(t, human, thread3, "Which environment should I deploy to?", logs)
+
+	// 7. With a second bot in the channel, ours answers only what's addressed
+	// to it: a thread mentioning the other bot gets nothing from ours, and
+	// one mentioning ours is answered (ours stays the default bot).
+	var other struct {
+		UserID string `json:"user_id"`
+	}
+	human.do("POST", "/v2/bots", map[string]any{"name": "other"}, &other)
+	human.do("POST", "/v2/channels/"+st.channel+"/members", map[string]any{"user_id": other.UserID}, nil)
+	var forOther struct {
+		MessageID string `json:"message_id"`
+	}
+	human.do("POST", "/v2/channels/"+st.channel+"/messages", map[string]any{
+		"content": "@other deploy the admin panel", "mentions": []string{other.UserID},
+	}, &forOther)
+	var forUs struct {
+		MessageID string `json:"message_id"`
+	}
+	human.do("POST", "/v2/channels/"+st.channel+"/messages", map[string]any{
+		"content": "@runner deploy the billing service", "mentions": []string{st.botUserID},
+	}, &forUs)
+	waitBotMessage(t, human, forUs.MessageID, "Which environment should I deploy to?", logs)
+	if got := human.botMessages(forOther.MessageID); len(got) != 0 {
+		t.Fatalf("our bot answered a thread addressed to another bot: %q", got)
+	}
+	if rec := readTask(t, dataDir, forOther.MessageID); len(rec.Turns) != 0 {
+		t.Fatal("a task was started for a thread addressed to another bot")
+	}
 }
 
 // taskRecord mirrors the fields of task.Record the test checks.

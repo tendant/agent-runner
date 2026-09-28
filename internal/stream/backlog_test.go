@@ -34,7 +34,7 @@ func (g *countingGateway) recorded() []string {
 }
 
 func makeMessageEvent(seq int64, content string) Event {
-	payload, _ := json.Marshal(messagePayload{UserID: "u_other", Content: content})
+	payload, _ := json.Marshal(messagePayload{UserID: "u_other", Content: content, Addressees: []string{testBotUserID}})
 	return Event{Seq: seq, Type: "message.created", Payload: payload}
 }
 

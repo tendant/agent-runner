@@ -160,7 +160,6 @@ type StreamConfig struct {
 	ServerURL         string        // STREAM_SERVER_URL
 	BotToken          string        // STREAM_BOT_TOKEN (pre-registered bot JWT)
 	ChannelIDs        []string      // STREAM_CHANNEL_IDS (STREAM_CONVERSATION_IDS still read); empty = follow every channel the bot is a member of
-	BotName           string        // STREAM_BOT_NAME — how other bots address this one (@name); default: the bot's name on the server
 	DiscoveryInterval time.Duration // STREAM_CHANNEL_DISCOVERY_INTERVAL — how often to re-list the bot's channels when following them (default 30s)
 	PollInterval      time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
 	StateDir          string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
@@ -503,7 +502,6 @@ func LoadFromEnv() (*Config, error) {
 			cfg.Stream.PollInterval = d
 		}
 	}
-	cfg.Stream.BotName = envOrDefault("STREAM_BOT_NAME", "")
 	cfg.Stream.DiscoveryInterval = envDurationOrDefault("STREAM_CHANNEL_DISCOVERY_INTERVAL", 30*time.Second)
 	cfg.Stream.StateDir = envOrDefault("STREAM_STATE_DIR", cfg.TmpRoot)
 	cfg.Stream.MaxCatchUpBacklog = envIntOrDefault("STREAM_MAX_CATCHUP_BACKLOG", 100)

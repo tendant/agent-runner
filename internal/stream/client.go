@@ -191,65 +191,65 @@ func (c *Client) UploadFile(ctx context.Context, key, filename, contentType stri
 // SendMessage posts a reply in a thread (or, for a c_ key, a new thread root
 // in a channel), optionally with file attachments.
 func (c *Client) SendMessage(ctx context.Context, key, content string, fileIDs []string) error {
-	body := map[string]any{
-		"content": content,
-	}
-	if len(fileIDs) > 0 {
-		body["file_ids"] = fileIDs
-	}
+	return c.PostMessage(ctx, key, OutMessage{Content: content, FileIDs: fileIDs})
+}
 
-	data, err := json.Marshal(body)
+// OutMessage is a Message the bot posts.
+type OutMessage struct {
+	Content        string   `json:"content"`
+	FileIDs        []string `json:"file_ids,omitempty"`
+	RunID          string   `json:"run_id,omitempty"`   // marks the Message as that Run's result
+	Mentions       []string `json:"mentions,omitempty"` // user IDs it addresses
+	IdempotencyKey string   `json:"idempotency_key,omitempty"`
+}
+
+// PostMessage posts a Message to a thread (or, for a c_ key, the channel).
+func (c *Client) PostMessage(ctx context.Context, key string, m OutMessage) error {
+	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-
-	url := c.targetPath(key) + "/messages"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.targetPath(key)+"/messages", bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("send message: status %d: %s", resp.StatusCode, string(respBody))
 	}
-
 	return nil
 }
 
-// WhoAmI returns the user ID the bot token authenticates as and the bot's
-// name (its display name; "" from servers that don't report it).
-func (c *Client) WhoAmI(ctx context.Context) (userID, name string, err error) {
+// WhoAmI returns the user ID the bot token authenticates as.
+func (c *Client) WhoAmI(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/user", nil)
 	if err != nil {
-		return "", "", fmt.Errorf("create request: %w", err)
+		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("who am i: %w", err)
+		return "", fmt.Errorf("who am i: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("who am i: status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("who am i: status %d: %s", resp.StatusCode, string(body))
 	}
 	var u struct {
-		UserID      string `json:"user_id"`
-		DisplayName string `json:"display_name"`
+		UserID string `json:"user_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil || u.UserID == "" {
-		return "", "", fmt.Errorf("who am i: no user_id in response")
+		return "", fmt.Errorf("who am i: no user_id in response")
 	}
-	return u.UserID, u.DisplayName, nil
+	return u.UserID, nil
 }
 
 // ListChannels returns the IDs of the channels the bot is a member of.

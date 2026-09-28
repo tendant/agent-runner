@@ -67,8 +67,14 @@ func newTestBot(t *testing.T, starter AgentStarter, gw Gateway) *Bot {
 	threadMgr := thread.NewManager("")
 	t.Cleanup(threadMgr.Stop)
 
-	return New(cfg, "", starter, threadMgr, nil, gw)
+	b := New(cfg, "", starter, threadMgr, nil, gw)
+	b.botUserID = testBotUserID
+	return b
 }
+
+// testBotUserID is the test bot's user ID; test messages list it in their
+// addressees, as the server would for a message meant for this bot.
+const testBotUserID = "u_bot"
 
 func TestStreamBot_KnownCommand_DoesNotStartAgent(t *testing.T) {
 	starter := &trackingStarter{}
