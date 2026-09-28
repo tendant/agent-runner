@@ -164,7 +164,7 @@ func TestStreamBot_LearnsOwnUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot.Stop()
-	if bot.botUserID != "u_self" || whoAmI.Load() != 1 {
+	if bot.botUserID != "u_self" || whoAmI.Load() < 1 {
 		t.Fatalf("botUserID = %q after %d lookups, want u_self", bot.botUserID, whoAmI.Load())
 	}
 

@@ -308,6 +308,8 @@ To connect agent-runner, you need three values from the app:
 
 3. **Add the bot to a channel** in the app. By default the bot follows its memberships: it listens on every channel it's a member of and notices being added to (or removed from) a channel within `STREAM_CHANNEL_DISCOVERY_INTERVAL` (default `30s`), with no restart. To pin it to specific channels instead, set **`STREAM_CHANNEL_IDS`** (IDs start with `c_`; `STREAM_CONVERSATION_IDS` is still read as a fallback).
 
+**Who the bot answers.** Every message from a person (or webhook) in its channels. A message from *another bot* only when it addresses this bot by `@name` (its bot name on the server, or `STREAM_BOT_NAME`), so bots sharing a channel don't answer each other in a loop; and at most 5 such bot messages per thread until a person speaks there again.
+
 Each top-level message in a channel starts a Thread, and the bot keeps separate context, plan and agent session for every thread. Replies inside a thread continue that thread's work, so several tasks can run side by side in one channel.
 
 Threads are handled in parallel: messages within one thread are processed in order, while a slow step in one thread (an analyzer call, a file download) doesn't hold up another; at most 8 threads are handled at once. Agent sessions themselves are limited by `AGENT_MAX_CONCURRENT` (default `1`), so with the default a second thread's task still queues behind the first. Set it to the number of tasks you want running at the same time, e.g. `AGENT_MAX_CONCURRENT=3` (see [Running sessions in parallel](#running-sessions-in-parallel)).

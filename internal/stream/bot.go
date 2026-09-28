@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
@@ -52,6 +54,7 @@ type Bot struct {
 	channelIDs        []string      // fixed channel list; empty = follow the bot's memberships
 	discoveryInterval time.Duration // how often to re-list the bot's channels when following them
 	botUserID         string
+	botNameFixed      bool                        // STREAM_BOT_NAME set: don't take the server's name
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
 	stateDir          string                      // persistent directory for the per-conversation event-seq cursor
@@ -68,6 +71,15 @@ type Bot struct {
 	dispatcher *threadDispatcher
 	cursorsMu  sync.Mutex
 	cursors    map[string]*cursorTracker
+
+	// botName is how other bots address this one (@name); "" = unknown, in
+	// which case other bots' messages are all ignored.
+	nameMu  sync.RWMutex
+	botName string
+	// botTurns counts, per thread, messages from other bots handled since
+	// the last human message there — a cap on bot-to-bot exchanges.
+	botTurnsMu sync.Mutex
+	botTurns   map[string]int
 
 	// listeners holds a cancel func per channel being listened on.
 	listenersMu sync.Mutex
@@ -102,6 +114,9 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threa
 		analyzer:          analyzer,
 		channelIDs:        cfg.ChannelIDs,
 		discoveryInterval: cfg.DiscoveryInterval,
+		botName:           cfg.BotName,
+		botNameFixed:      cfg.BotName != "",
+		botTurns:          make(map[string]int),
 		uploadsDir:        uploadsDir,
 		botUserID:         extractBotUserID(cfg.BotToken),
 		pollInterval:      cfg.PollInterval,
@@ -181,13 +196,18 @@ func (b *Bot) Start(ctx context.Context) error {
 	// The bot recognises (and ignores) its own messages by user ID. It is
 	// normally read from the token; ask the server when the token doesn't
 	// carry it, rather than risk answering itself in a loop.
-	if b.botUserID == "" {
-		id, err := b.client.WhoAmI(ctx)
-		if err != nil {
-			b.cancel()
-			return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
+	id, name, err := b.client.WhoAmI(ctx)
+	switch {
+	case err == nil:
+		if b.botUserID == "" {
+			b.botUserID = id
 		}
-		b.botUserID = id
+		b.setBotName(name)
+	case b.botUserID == "":
+		b.cancel()
+		return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
+	default:
+		slog.Warn("stream bot: could not look up the bot's name; messages from other bots will be ignored", "error", err)
 	}
 
 	if len(b.channelIDs) > 0 {
@@ -225,8 +245,14 @@ func (b *Bot) Start(ctx context.Context) error {
 const defaultDiscoveryInterval = 30 * time.Second
 
 // syncChannels starts listeners for channels the bot has joined and stops
-// those for channels it has left. A failed listing changes nothing.
+// those for channels it has left. A failed listing changes nothing. It also
+// picks up a rename of the bot.
 func (b *Bot) syncChannels(ctx context.Context) {
+	if !b.botNameFixed {
+		if _, name, err := b.client.WhoAmI(ctx); err == nil {
+			b.setBotName(name)
+		}
+	}
 	ids, err := b.client.ListChannels(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -662,12 +688,13 @@ func sortBySeq(events []Event) {
 
 // messagePayload is the shape of a message.created event payload.
 type messagePayload struct {
-	MessageID string            `json:"message_id"`
-	ThreadID  string            `json:"thread_id,omitempty"` // empty for a thread root
-	UserID    string            `json:"user_id"`
-	Content   string            `json:"content"`
-	FileIDs   []string          `json:"file_ids,omitempty"`
-	FileURLs  map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
+	MessageID  string            `json:"message_id"`
+	ThreadID   string            `json:"thread_id,omitempty"` // empty for a thread root
+	UserID     string            `json:"user_id"`
+	SenderKind string            `json:"sender_kind,omitempty"` // human, bot, webhook, system
+	Content    string            `json:"content"`
+	FileIDs    []string          `json:"file_ids,omitempty"`
+	FileURLs   map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
 }
 
 // newCursor starts tracking channelID's cursor from afterSeq.
@@ -715,6 +742,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 	if msg.UserID == b.botUserID {
 		return
 	}
+	key := threadKey(channelID, msg)
+	if !b.shouldHandle(key, msg) {
+		return
+	}
 
 	text := strings.TrimSpace(msg.Content)
 	slog.Info("stream bot: message received", "channel_id", channelID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
@@ -738,7 +769,94 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 		return
 	}
 
-	b.handleMessage(ctx, channelID, threadKey(channelID, msg), text)
+	b.handleMessage(ctx, channelID, key, text)
+}
+
+// maxBotTurnsPerThread caps how many messages from other bots one thread
+// handles without a human speaking in it, so two bots that keep
+// addressing each other can't run forever.
+const maxBotTurnsPerThread = 5
+
+// shouldHandle applies who the bot answers: every human (and webhook)
+// message, but another bot's message only when it addresses this bot by
+// @name — and at most maxBotTurnsPerThread of those per thread between
+// human messages.
+func (b *Bot) shouldHandle(key string, msg messagePayload) bool {
+	if msg.SenderKind != senderBot {
+		if msg.SenderKind == senderHuman {
+			b.botTurnsMu.Lock()
+			delete(b.botTurns, key)
+			b.botTurnsMu.Unlock()
+		}
+		return true
+	}
+	name := b.currentBotName()
+	if !addresses(msg.Content, name) {
+		slog.Debug("stream bot: ignoring another bot's message not addressed to it", "thread", key, "user_id", msg.UserID)
+		return false
+	}
+	b.botTurnsMu.Lock()
+	defer b.botTurnsMu.Unlock()
+	if b.botTurns[key] >= maxBotTurnsPerThread {
+		slog.Warn("stream bot: bot-to-bot limit reached in thread; waiting for a human", "thread", key, "limit", maxBotTurnsPerThread)
+		return false
+	}
+	b.botTurns[key]++
+	return true
+}
+
+// Sender kinds on message.created (agent-stream /v2).
+const (
+	senderHuman = "human"
+	senderBot   = "bot"
+)
+
+func (b *Bot) setBotName(name string) {
+	name = strings.TrimSpace(name)
+	if b.botNameFixed || name == "" {
+		return
+	}
+	b.nameMu.Lock()
+	defer b.nameMu.Unlock()
+	if b.botName != name {
+		slog.Info("stream bot: addressed as @"+name, "bot_user_id", b.botUserID)
+		b.botName = name
+	}
+}
+
+func (b *Bot) currentBotName() string {
+	b.nameMu.RLock()
+	defer b.nameMu.RUnlock()
+	return b.botName
+}
+
+// addresses reports whether text mentions @name (case-insensitive, and not
+// as the start of a longer name: "@help" doesn't address "helper", nor
+// "@helper" "help").
+func addresses(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	lower, mention := strings.ToLower(text), "@"+strings.ToLower(name)
+	for i := 0; ; {
+		j := strings.Index(lower[i:], mention)
+		if j < 0 {
+			return false
+		}
+		end := i + j + len(mention)
+		if end == len(lower) {
+			return true
+		}
+		if r, _ := utf8.DecodeRuneInString(lower[end:]); !isNameRune(r) {
+			return true
+		}
+		i = end
+	}
+}
+
+// isNameRune reports whether r can continue a bot name.
+func isNameRune(r rune) bool {
+	return r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // threadKey returns the thread a message belongs to: its thread_id for a
