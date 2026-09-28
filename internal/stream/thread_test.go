@@ -41,8 +41,9 @@ func (s *threadStarter) Steer(sessionID, text string) error {
 
 func messageEvent(t *testing.T, seq int64, messageID, threadID, content string) Event {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]string{
+	payload, _ := json.Marshal(map[string]any{
 		"message_id": messageID, "thread_id": threadID, "user_id": "u_human", "content": content,
+		"addressees": []string{testBotUserID},
 	})
 	return Event{Seq: seq, Type: "message.created", Payload: payload}
 }
@@ -66,6 +67,7 @@ func TestStreamBot_ThreadsKeepIndependentState(t *testing.T) {
 	starter := &threadStarter{}
 	bot := New(config.StreamConfig{ServerURL: srv.URL, BotToken: "test-token", ChannelIDs: []string{"c_1"}},
 		"", starter, threads, nil, fakeGateway{})
+	bot.botUserID = testBotUserID
 
 	ctx := context.Background()
 	bot.handleMessageEvent(ctx, "c_1", messageEvent(t, 1, "m_A", "", "build the site"))

@@ -308,7 +308,7 @@ To connect agent-runner, you need three values from the app:
 
 3. **Add the bot to a channel** in the app. By default the bot follows its memberships: it listens on every channel it's a member of and notices being added to (or removed from) a channel within `STREAM_CHANNEL_DISCOVERY_INTERVAL` (default `30s`), with no restart. To pin it to specific channels instead, set **`STREAM_CHANNEL_IDS`** (IDs start with `c_`; `STREAM_CONVERSATION_IDS` is still read as a fallback).
 
-**Who the bot answers.** Every message from a person (or webhook) in its channels. A message from *another bot* only when it addresses this bot by `@name` (its bot name on the server, or `STREAM_BOT_NAME`), so bots sharing a channel don't answer each other in a loop; and at most 5 such bot messages per thread until a person speaks there again.
+**Who the bot answers.** agent-stream decides who each message is for and lists those bots in the message's `addressees`: a mentioned bot, else the thread's assignee (for replies), else the channel's default bot (for new threads) — see agent-stream's `BOT_ADDRESSING_DESIGN.md`. The bot acts only on messages that list it, so bots sharing a channel answer only what is meant for them, and bot-to-bot exchanges happen only by mention (the server stops long chains). A run ends with its result posted as a message carrying the run's `run_id`.
 
 Each top-level message in a channel starts a Thread, and the bot keeps separate context, plan and agent session for every thread. Replies inside a thread continue that thread's work, so several tasks can run side by side in one channel.
 

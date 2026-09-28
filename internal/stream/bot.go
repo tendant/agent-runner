@@ -18,8 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
@@ -54,7 +54,6 @@ type Bot struct {
 	channelIDs        []string      // fixed channel list; empty = follow the bot's memberships
 	discoveryInterval time.Duration // how often to re-list the bot's channels when following them
 	botUserID         string
-	botNameFixed      bool                        // STREAM_BOT_NAME set: don't take the server's name
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
 	stateDir          string                      // persistent directory for the per-conversation event-seq cursor
@@ -71,15 +70,6 @@ type Bot struct {
 	dispatcher *threadDispatcher
 	cursorsMu  sync.Mutex
 	cursors    map[string]*cursorTracker
-
-	// botName is how other bots address this one (@name); "" = unknown, in
-	// which case other bots' messages are all ignored.
-	nameMu  sync.RWMutex
-	botName string
-	// botTurns counts, per thread, messages from other bots handled since
-	// the last human message there — a cap on bot-to-bot exchanges.
-	botTurnsMu sync.Mutex
-	botTurns   map[string]int
 
 	// listeners holds a cancel func per channel being listened on.
 	listenersMu sync.Mutex
@@ -114,9 +104,6 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threa
 		analyzer:          analyzer,
 		channelIDs:        cfg.ChannelIDs,
 		discoveryInterval: cfg.DiscoveryInterval,
-		botName:           cfg.BotName,
-		botNameFixed:      cfg.BotName != "",
-		botTurns:          make(map[string]int),
 		uploadsDir:        uploadsDir,
 		botUserID:         extractBotUserID(cfg.BotToken),
 		pollInterval:      cfg.PollInterval,
@@ -193,21 +180,16 @@ func (b *Bot) SetWelcome(w botcommon.Welcome) {
 func (b *Bot) Start(ctx context.Context) error {
 	ctx, b.cancel = context.WithCancel(ctx)
 
-	// The bot recognises (and ignores) its own messages by user ID. It is
+	// The bot recognises Messages addressed to it by its user ID. It is
 	// normally read from the token; ask the server when the token doesn't
-	// carry it, rather than risk answering itself in a loop.
-	id, name, err := b.client.WhoAmI(ctx)
-	switch {
-	case err == nil:
-		if b.botUserID == "" {
-			b.botUserID = id
+	// carry it.
+	if b.botUserID == "" {
+		id, err := b.client.WhoAmI(ctx)
+		if err != nil {
+			b.cancel()
+			return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
 		}
-		b.setBotName(name)
-	case b.botUserID == "":
-		b.cancel()
-		return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
-	default:
-		slog.Warn("stream bot: could not look up the bot's name; messages from other bots will be ignored", "error", err)
+		b.botUserID = id
 	}
 
 	if len(b.channelIDs) > 0 {
@@ -245,14 +227,8 @@ func (b *Bot) Start(ctx context.Context) error {
 const defaultDiscoveryInterval = 30 * time.Second
 
 // syncChannels starts listeners for channels the bot has joined and stops
-// those for channels it has left. A failed listing changes nothing. It also
-// picks up a rename of the bot.
+// those for channels it has left. A failed listing changes nothing.
 func (b *Bot) syncChannels(ctx context.Context) {
-	if !b.botNameFixed {
-		if _, name, err := b.client.WhoAmI(ctx); err == nil {
-			b.setBotName(name)
-		}
-	}
 	ids, err := b.client.ListChannels(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -688,11 +664,16 @@ func sortBySeq(events []Event) {
 
 // messagePayload is the shape of a message.created event payload.
 type messagePayload struct {
-	MessageID  string            `json:"message_id"`
-	ThreadID   string            `json:"thread_id,omitempty"` // empty for a thread root
-	UserID     string            `json:"user_id"`
-	SenderKind string            `json:"sender_kind,omitempty"` // human, bot, webhook, system
-	Content    string            `json:"content"`
+	MessageID  string `json:"message_id"`
+	ThreadID   string `json:"thread_id,omitempty"` // empty for a thread root
+	UserID     string `json:"user_id"`
+	SenderKind string `json:"sender_kind,omitempty"` // human, bot, webhook, system
+	Content    string `json:"content"`
+	// Addressees are the bots the server addressed this Message to; a bot
+	// acts only on Messages that list it.
+	Addressees []string          `json:"addressees"`
+	Mentions   []string          `json:"mentions,omitempty"`
+	RunID      string            `json:"run_id,omitempty"`
 	FileIDs    []string          `json:"file_ids,omitempty"`
 	FileURLs   map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
 }
@@ -738,14 +719,12 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 		return
 	}
 
-	// Ignore own messages
-	if msg.UserID == b.botUserID {
+	// The server decides who a Message is for (a mention, the thread's
+	// assignee, or the channel's default bot); act only when it's this bot.
+	if !addressedTo(msg, b.botUserID) {
 		return
 	}
 	key := threadKey(channelID, msg)
-	if !b.shouldHandle(key, msg) {
-		return
-	}
 
 	text := strings.TrimSpace(msg.Content)
 	slog.Info("stream bot: message received", "channel_id", channelID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
@@ -772,91 +751,17 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 	b.handleMessage(ctx, channelID, key, text)
 }
 
-// maxBotTurnsPerThread caps how many messages from other bots one thread
-// handles without a human speaking in it, so two bots that keep
-// addressing each other can't run forever.
-const maxBotTurnsPerThread = 5
-
-// shouldHandle applies who the bot answers: every human (and webhook)
-// message, but another bot's message only when it addresses this bot by
-// @name — and at most maxBotTurnsPerThread of those per thread between
-// human messages.
-func (b *Bot) shouldHandle(key string, msg messagePayload) bool {
-	if msg.SenderKind != senderBot {
-		if msg.SenderKind == senderHuman {
-			b.botTurnsMu.Lock()
-			delete(b.botTurns, key)
-			b.botTurnsMu.Unlock()
-		}
-		return true
-	}
-	name := b.currentBotName()
-	if !addresses(msg.Content, name) {
-		slog.Debug("stream bot: ignoring another bot's message not addressed to it", "thread", key, "user_id", msg.UserID)
+// addressedTo reports whether the server addressed msg to botUserID.
+func addressedTo(msg messagePayload, botUserID string) bool {
+	if botUserID == "" {
 		return false
 	}
-	b.botTurnsMu.Lock()
-	defer b.botTurnsMu.Unlock()
-	if b.botTurns[key] >= maxBotTurnsPerThread {
-		slog.Warn("stream bot: bot-to-bot limit reached in thread; waiting for a human", "thread", key, "limit", maxBotTurnsPerThread)
-		return false
-	}
-	b.botTurns[key]++
-	return true
-}
-
-// Sender kinds on message.created (agent-stream /v2).
-const (
-	senderHuman = "human"
-	senderBot   = "bot"
-)
-
-func (b *Bot) setBotName(name string) {
-	name = strings.TrimSpace(name)
-	if b.botNameFixed || name == "" {
-		return
-	}
-	b.nameMu.Lock()
-	defer b.nameMu.Unlock()
-	if b.botName != name {
-		slog.Info("stream bot: addressed as @"+name, "bot_user_id", b.botUserID)
-		b.botName = name
-	}
-}
-
-func (b *Bot) currentBotName() string {
-	b.nameMu.RLock()
-	defer b.nameMu.RUnlock()
-	return b.botName
-}
-
-// addresses reports whether text mentions @name (case-insensitive, and not
-// as the start of a longer name: "@help" doesn't address "helper", nor
-// "@helper" "help").
-func addresses(text, name string) bool {
-	if name == "" {
-		return false
-	}
-	lower, mention := strings.ToLower(text), "@"+strings.ToLower(name)
-	for i := 0; ; {
-		j := strings.Index(lower[i:], mention)
-		if j < 0 {
-			return false
-		}
-		end := i + j + len(mention)
-		if end == len(lower) {
+	for _, id := range msg.Addressees {
+		if id == botUserID {
 			return true
 		}
-		if r, _ := utf8.DecodeRuneInString(lower[end:]); !isNameRune(r) {
-			return true
-		}
-		i = end
 	}
-}
-
-// isNameRune reports whether r can continue a bot name.
-func isNameRune(r rune) bool {
-	return r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)
+	return false
 }
 
 // threadKey returns the thread a message belongs to: its thread_id for a
@@ -1128,18 +1033,30 @@ func (r *streamReporter) OnTimeout() {
 // Event emission helpers
 
 func (b *Bot) emitThinking(ctx context.Context, key, msg string) {
-	b.emit(ctx, key, "run.status", map[string]string{"message": msg})
+	b.emit(ctx, key, "run.status", map[string]string{"message": msg, "run_id": b.runID(key)})
 }
 
 func (b *Bot) emitDelta(ctx context.Context, key, text string) {
-	b.emit(ctx, key, "reply.delta", map[string]string{"delta": text})
+	b.emit(ctx, key, "reply.delta", map[string]string{"delta": text, "run_id": b.runID(key)})
 }
 
+// emitFinal ends the run with its result Message (run_id set), which is how
+// clients close the streaming reply and how other bots see it.
 func (b *Bot) emitFinal(ctx context.Context, key, text string) {
-	b.emit(ctx, key, "reply.final", map[string]string{"content": text})
+	m := OutMessage{Content: text, RunID: b.runID(key), IdempotencyKey: uuid.NewString()}
+	b.retrySend(ctx, "result message", func() error { return b.client.PostMessage(ctx, key, m) })
 }
 
-// emitBackoffs is the inter-attempt delay schedule for emit retries.
+// runID names the bot's run in a thread: one at a time per thread, so the
+// thread ID; a channel-level send gets the bot's own run.
+func (b *Bot) runID(key string) string {
+	if strings.HasPrefix(key, "c_") {
+		return "u:" + b.botUserID
+	}
+	return key
+}
+
+// emitBackoffs is the inter-attempt delay schedule for send retries.
 // Three attempts total → two backoff waits (between 1→2 and 2→3).
 var emitBackoffs = []time.Duration{
 	250 * time.Millisecond,
@@ -1153,39 +1070,38 @@ func (b *Bot) emit(ctx context.Context, key, eventType string, payload any) {
 		slog.Error("stream bot: marshal error", "error", err)
 		return
 	}
+	b.retrySend(ctx, eventType, func() error { return b.client.EmitEvent(ctx, key, eventType, data) })
+}
 
-	// Retry transient emit failures (TLS handshake timeouts, connection
-	// resets, 5xx, etc.) so a Cloudflare hiccup doesn't drop reply.final
-	// on the floor. Permanent errors (4xx other than 429, bad payload) fail fast.
+// retrySend runs send, retrying transient failures (TLS handshake timeouts,
+// connection resets, 5xx, …) so a network hiccup doesn't drop a reply.
+// Permanent errors (4xx other than 429) fail fast.
+func (b *Bot) retrySend(ctx context.Context, what string, send func() error) {
 	maxAttempts := len(emitBackoffs) + 1
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		emitErr := b.client.EmitEvent(ctx, key, eventType, data)
-		if emitErr == nil {
+		err := send()
+		if err == nil {
 			if attempt > 1 {
-				slog.Info("stream bot: emit succeeded after retry",
-					"event_type", eventType, "attempts", attempt)
+				slog.Info("stream bot: send succeeded after retry", "what", what, "attempts", attempt)
 			}
 			return
 		}
-		lastErr = emitErr
-		if !isTransientEmitError(emitErr) || attempt == maxAttempts {
+		lastErr = err
+		if !isTransientEmitError(err) || attempt == maxAttempts {
 			break
 		}
 		backoff := emitBackoffs[attempt-1]
-		slog.Warn("stream bot: transient emit error, retrying",
-			"event_type", eventType, "attempt", attempt,
-			"next_backoff", backoff, "error", emitErr)
+		slog.Warn("stream bot: transient send error, retrying",
+			"what", what, "attempt", attempt, "next_backoff", backoff, "error", err)
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
-			slog.Warn("stream bot: emit cancelled during retry",
-				"event_type", eventType, "error", ctx.Err())
+			slog.Warn("stream bot: send cancelled during retry", "what", what, "error", ctx.Err())
 			return
 		}
 	}
-	slog.Error("stream bot: emit error",
-		"event_type", eventType, "attempts", maxAttempts, "error", lastErr)
+	slog.Error("stream bot: send error", "what", what, "attempts", maxAttempts, "error", lastErr)
 }
 
 // isTransientEmitError reports whether an EmitEvent error is worth retrying.
