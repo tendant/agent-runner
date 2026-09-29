@@ -665,3 +665,22 @@ func TestLoadFromEnv_SliceParsing(t *testing.T) {
 		t.Errorf("unexpected projects: %v", cfg.AllowedProjects)
 	}
 }
+
+func TestLoad_TasksEnabledByDefault(t *testing.T) {
+	t.Setenv("AGENT_TASKS_ENABLED", "")
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Agent.TasksEnabled {
+		t.Error("multi-turn tasks should be on by default")
+	}
+	t.Setenv("AGENT_TASKS_ENABLED", "false")
+	cfg, err = LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.TasksEnabled {
+		t.Error("AGENT_TASKS_ENABLED=false should turn tasks off")
+	}
+}

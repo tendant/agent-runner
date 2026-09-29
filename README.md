@@ -168,7 +168,7 @@ Key variables:
 | `AGENT_PLANNER_ENABLED` | `true` | Run planner sub-agent before iteration loop |
 | `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
 | `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
-| `AGENT_TASKS_ENABLED` | `false` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
+| `AGENT_TASKS_ENABLED` | `true` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
 | `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
 | `AGENT_TASK_MAX_TURNS` / `AGENT_TASK_MAX_SECONDS` / `AGENT_TASK_MAX_COST_USD` | `10` / `4h` / unlimited | Per-task budget; reaching it pauses the task until the user says "continue" |
 | `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude, codex) |
@@ -205,7 +205,7 @@ mid-task. Every git repo in the workspace is handled, not just the first.
 
 ### Multi-turn tasks
 
-With `AGENT_TASKS_ENABLED=true` (off by default; design in
+By default (`AGENT_TASKS_ENABLED`, set it to `false` for one-shot runs; design in
 [TASKS_DESIGN.md](TASKS_DESIGN.md)) a chat thread's work becomes a *task* that
 can span several agent runs:
 
