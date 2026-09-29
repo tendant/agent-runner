@@ -40,7 +40,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### State & Persistence
 
 - **In-memory (lost on restart):** one-shot jobs.
-- **Task records (opt-in, `AGENT_TASKS_ENABLED`):** `STATE_ROOT/tasks` (internal/task), with each task's persistent workspace at `TMP_ROOT/task-*`; see TASKS_DESIGN.md.
+- **Task records (`AGENT_TASKS_ENABLED`, on by default):** `STATE_ROOT/tasks` (internal/task), with each task's persistent workspace at `TMP_ROOT/task-*`; see TASKS_DESIGN.md.
 - **Journaled (recovered on restart):** queued/running agent sessions — `STATE_ROOT/sessions` (internal/sessionjournal). On startup, interrupted sessions are failed with a targeted chat notice; never-started queued sessions are re-enqueued with their watcher re-attached (internal/api/recovery.go).
 - **Survives restart:** scheduled tasks (`SCHEDULER_DATABASE_URL` DB), conversations (`tmp/conversations`, executing state auto-reset on load), the memory dir (git-synced), `.env.local` (written by `/set`), audit logs (`logs/`), outputs/uploads, bot event cursors (`tmp/`).
 - All mutable state roots under `DATA_DIR`.

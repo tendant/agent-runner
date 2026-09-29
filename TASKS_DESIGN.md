@@ -244,7 +244,7 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 | 1 | Task record, task workspace (persist, lock, clean-up), `_progress.json` extensions, `needs_input` → `awaiting_input` → resume routing, context block, per-turn summaries. Gated behind `AGENT_TASKS_ENABLED`, default off. |
 | 2 | Backend resume (`pi` session file first, as the default CLI; then claude and codex) |
 | 3 | Planner revise mode, per-task budgets and `paused`, checklists; the optional live plan message with the agent-stream change |
-| 4 | Default `AGENT_TASKS_ENABLED` on; retire the transcript-as-context path |
+| 4 | Default `AGENT_TASKS_ENABLED` on (done); retire the transcript-as-context path |
 
 **Phase 1 status (implemented).** Differences from the text above:
 

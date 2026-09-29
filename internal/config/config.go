@@ -130,7 +130,7 @@ type AgentConfig struct {
 
 	// Multi-turn tasks (TASKS_DESIGN.md). Off by default: each chat message
 	// then starts an independent run, as before.
-	TasksEnabled      bool          // AGENT_TASKS_ENABLED
+	TasksEnabled      bool          // AGENT_TASKS_ENABLED (default true; false = one-shot runs)
 	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
 	TaskMaxTurns      int           // AGENT_TASK_MAX_TURNS — turns before a task pauses for a go-ahead (default 10; 0 = no limit)
 	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
@@ -258,6 +258,7 @@ func defaultConfigForDataDir(data string) *Config {
 			PlannerEnabled:      true,
 			MaxQueueSize:        10,
 			MaxConcurrent:       1,
+			TasksEnabled:        true,
 			TaskRetention:       24 * time.Hour,
 			TaskIdleTTL:         7 * 24 * time.Hour,
 			TaskResumeBackend:   true,
