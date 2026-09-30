@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"mime"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +30,50 @@ type Client struct {
 	serverURL  string
 	botToken   string
 	httpClient *http.Client
+
+	// instanceID names this process to the server, which allows one live
+	// process per bot (X-Bot-Instance). A newer process on the same bot
+	// takes over; this one is then told it was replaced.
+	instanceID string
+	replaced   atomic.Bool
+	onReplaced func() // called once when the server says this process was replaced
+}
+
+// botInstanceHeader and codeBotInstanceReplaced are agent-stream's names
+// for the process ID header and the "replaced" error code.
+const (
+	botInstanceHeader       = "X-Bot-Instance"
+	codeBotInstanceReplaced = "bot_instance_replaced"
+)
+
+// markReplaced records that another process took over the bot.
+func (c *Client) markReplaced() {
+	if c.replaced.CompareAndSwap(false, true) && c.onReplaced != nil {
+		c.onReplaced()
+	}
+}
+
+// instanceTransport adds the process ID to every request and notices a
+// 409 bot_instance_replaced on any response.
+type instanceTransport struct {
+	base   http.RoundTripper
+	client *Client
+}
+
+func (t *instanceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set(botInstanceHeader, t.client.instanceID)
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusConflict {
+		return resp, err
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr == nil && bytes.Contains(body, []byte(codeBotInstanceReplaced)) {
+		t.client.markReplaced()
+	}
+	return resp, nil
 }
 
 // targetPath returns the agent-stream /v2 resource a send is addressed to.
@@ -43,13 +89,16 @@ func (c *Client) targetPath(key string) string {
 
 // NewClient creates a new agent-stream API client.
 func NewClient(serverURL, botToken string) *Client {
-	return &Client{
-		serverURL: strings.TrimRight(serverURL, "/"),
-		botToken:  botToken,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+	c := &Client{
+		serverURL:  strings.TrimRight(serverURL, "/"),
+		botToken:   botToken,
+		instanceID: uuid.NewString(),
 	}
+	c.httpClient = &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &instanceTransport{base: http.DefaultTransport, client: c},
+	}
+	return c
 }
 
 // EmitEvent sends a run event to a thread (or, for a c_ key, a channel).
@@ -337,9 +386,7 @@ func (c *Client) StreamEvents(ctx context.Context, channelID string, afterSeq in
 	// Disable HTTP/2: SSE requires chunked streaming which HTTP/2 multiplexing
 	// can interfere with on some server implementations.
 	sseClient := &http.Client{
-		Transport: &http.Transport{
-			ForceAttemptHTTP2: false,
-		},
+		Transport: &instanceTransport{base: &http.Transport{ForceAttemptHTTP2: false}, client: c},
 	}
 	resp, err := sseClient.Do(req)
 	if err != nil {
@@ -368,6 +415,7 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 256*1024), 1024*1024) // 1 MB max line
 	var dataLines []string
+	var eventName string
 	var count int
 
 	for scanner.Scan() {
@@ -381,6 +429,12 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int 
 
 		if line == "" {
 			// Empty line = end of event
+			if eventName == "bot.replaced" {
+				// Another process took over this bot; the server ends the stream.
+				c.markReplaced()
+				return count
+			}
+			eventName = ""
 			if len(dataLines) > 0 {
 				data := strings.Join(dataLines, "\n")
 				dataLines = nil
@@ -400,6 +454,10 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int 
 			continue
 		}
 
+		if strings.HasPrefix(line, "event: ") {
+			eventName = strings.TrimPrefix(line, "event: ")
+			continue
+		}
 		if strings.HasPrefix(line, "data: ") {
 			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
 		}

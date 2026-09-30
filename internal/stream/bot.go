@@ -179,6 +179,14 @@ func (b *Bot) SetWelcome(w botcommon.Welcome) {
 // effect without a restart.
 func (b *Bot) Start(ctx context.Context) error {
 	ctx, b.cancel = context.WithCancel(ctx)
+	// The server allows one live process per bot. If another process takes
+	// over, stop instead of reconnecting against it.
+	cancel := b.cancel
+	b.client.onReplaced = func() {
+		slog.Error("stream bot: another process is now running this bot (bot_instance_replaced); stopping the stream bot here. " +
+			"Run one agent-runner per bot: stop the other process, or give each agent its own bot.")
+		cancel()
+	}
 
 	// The bot recognises Messages addressed to it by its user ID. It is
 	// normally read from the token; ask the server when the token doesn't

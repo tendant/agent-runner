@@ -39,6 +39,35 @@ type taskStack struct {
 	botUserID string
 	dataDir   string
 	logs      func() string // agent-runner log tail, for failure messages
+
+	// For starting another agent-runner on the same bot.
+	base   string
+	arBin  string
+	runEnv []string
+}
+
+// startAnotherRunner starts a second agent-runner process on the same bot
+// (own data dir and port) and returns its log tail.
+func (s *taskStack) startAnotherRunner(t *testing.T, name string) func() string {
+	t.Helper()
+	dir := filepath.Join(s.base, name)
+	os.MkdirAll(filepath.Join(dir, "cwd"), 0o755)
+	url := fmt.Sprintf("http://127.0.0.1:%d", freePort(t))
+	env := []string{}
+	for _, kv := range s.runEnv {
+		if strings.HasPrefix(kv, "DATA_DIR=") || strings.HasPrefix(kv, "API_BIND=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "DATA_DIR="+filepath.Join(dir, "data"), "API_BIND="+strings.TrimPrefix(url, "http://"))
+	logPath := filepath.Join(dir, "agent-runner.log")
+	startProcess(t, name, s.arBin, filepath.Join(dir, "cwd"), logPath, cleanEnv(env...))
+	waitHTTP(t, url+"/health")
+	return func() string {
+		a, _ := os.ReadFile(logPath)
+		return tail(string(a), 60)
+	}
 }
 
 // startTaskStack builds and starts both servers. pathPrefix goes first on
@@ -118,7 +147,8 @@ func startTaskStack(t *testing.T, pathPrefix string, runnerEnv ...string) *taskS
 	waitFor(t, 30*time.Second, "the stream bot to connect", logs, func() bool {
 		return strings.Contains(logs(), "stream bot: SSE connected")
 	})
-	return &taskStack{human: human, channel: ch.ID, botUserID: bot.UserID, dataDir: dataDir, logs: logs}
+	return &taskStack{human: human, channel: ch.ID, botUserID: bot.UserID, dataDir: dataDir, logs: logs,
+		base: base, arBin: arBin, runEnv: env}
 }
 
 // newChannel creates a channel with the bot in it and waits until the
@@ -558,4 +588,38 @@ func tail(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// Two agent-runners on one bot: the newer one takes over, the older one
+// stops, and a message is answered once.
+func TestE2E_SecondRunnerTakesOver(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is needed for the fake claude CLI")
+	}
+	mockBin := t.TempDir()
+	mock, _ := filepath.Abs("testdata/mock-claude-tasks.py")
+	if err := os.Symlink(mock, filepath.Join(mockBin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	st := startTaskStack(t, mockBin, "AGENT_MAX_ITERATIONS=3")
+
+	second := st.startAnotherRunner(t, "second-runner")
+	waitFor(t, 30*time.Second, "the first runner to stop as replaced", st.logs, func() bool {
+		return strings.Contains(st.logs(), "another process is now running this bot")
+	})
+	waitFor(t, 30*time.Second, "the second runner to connect", second, func() bool {
+		return strings.Contains(second(), "stream bot: SSE connected")
+	})
+
+	thread := st.newThread("deploy the app")
+	waitBotMessage(t, st.human, thread, "Which environment should I deploy to?", func() string {
+		return "--- first ---\n" + st.logs() + "\n--- second ---\n" + second()
+	})
+	time.Sleep(2 * time.Second) // time for a duplicate to show up
+	if n := countContaining(st.human.botMessages(thread), "Which environment should I deploy to?"); n != 1 {
+		t.Fatalf("question posted %d times, want once", n)
+	}
+	if strings.Contains(st.logs(), "task turn started") {
+		t.Fatal("the replaced runner still started work")
+	}
 }
