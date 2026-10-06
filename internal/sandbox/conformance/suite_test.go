@@ -55,3 +55,11 @@ func TestSuiteDetectsUnenforcedBackend(t *testing.T) {
 		}
 	}
 }
+
+func TestMissing(t *testing.T) {
+	rep := Report{Results: map[string]Result{"fs.ssh_unreadable": {Status: Pass}, "fs.symlink_escape": {Status: Pass}, "net.none_loopback": {Status: Fail}}}
+	got := rep.Missing([]sandbox.CapabilityID{sandbox.CapFSDeny, sandbox.CapNetworkDirectNone, sandbox.CapKernelIsolation})
+	if len(got) != 2 || got[0] != sandbox.CapNetworkDirectNone || got[1] != sandbox.CapKernelIsolation {
+		t.Errorf("%v", got)
+	}
+}

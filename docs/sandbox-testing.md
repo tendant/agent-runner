@@ -59,3 +59,10 @@ sudo ./sandbox-conformance --isobox ./isobox/isobox --backend gvisor \
 
 ## E. 尚未接线、无法冒烟的部分
 受限出口（egress 网关）、模型代理、磁盘配额/输出上限、diff 导出隔离区——代码与单测存在，但未进入运行路径，见 `docs/sandbox.md` 的 Known gaps。
+
+## F. CI 自动化（GitHub Actions）
+`.github/workflows/sandbox.yml`：PR/每晚运行 `unit`（`go test ./internal/sandbox/... ./internal/executor/...`）和
+`conformance` 矩阵（macOS→seatbelt，ubuntu+sudo→gvisor，安装 runsc 20250106.0，构建固定 ref 的 isobox）。
+`sandbox-conformance --require-file .github/sandbox-baselines/<backend>.json` 在基线能力未被证明时以 exit 3 失败；
+报告与 manifest 作为 artifact 上传。基线目前是保守初值：首次绿跑后收紧（gvisor 加入 process.* / resource.*）。
+将 `ISOBOX_REF` 固定到 commit SHA 以获得可复现结果。托管 runner 若缺 cgroup v2 委派，resource.* 会不被证明，需自托管 Linux。

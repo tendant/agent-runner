@@ -432,6 +432,17 @@ func hostName() string {
 	return strings.TrimSpace(string(out))
 }
 
+// Missing returns the required capabilities the report does not prove.
+func (r Report) Missing(required []sandbox.CapabilityID) []sandbox.CapabilityID {
+	var out []sandbox.CapabilityID
+	for _, c := range required {
+		if !r.Proven(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // JSON renders the report as evidence.
 func (r Report) JSON() []byte {
 	b, _ := json.MarshalIndent(r, "", "  ")
