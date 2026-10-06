@@ -113,6 +113,7 @@ func NewHandlers(
 	h.callbacks = callback.New()
 	h.execEngine = execution.New(cfg, agentManager, workspaceManager, runLogger, h)
 	h.execEngine.SetCallbacks(h.callbacks)
+	h.execEngine.SetSandbox(newSandboxRuntime(cfg))
 	h.execEngine.SetLockManager(h.lockManager)
 	return h
 }

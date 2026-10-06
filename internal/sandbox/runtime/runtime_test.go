@@ -153,3 +153,13 @@ func TestNewRejectsBadMode(t *testing.T) {
 		t.Error("bad mode must fail")
 	}
 }
+
+func TestFailedRuntimeRejectsEverything(t *testing.T) {
+	rt := Failed(os.ErrInvalid)
+	if rt.Mode() != sandbox.ModeStrict {
+		t.Fatal("failed runtime must be strict")
+	}
+	if _, err := rt.Begin(context.Background(), BeginReq{RunID: "x", Workspace: t.TempDir()}); err == nil {
+		t.Error("must reject")
+	}
+}

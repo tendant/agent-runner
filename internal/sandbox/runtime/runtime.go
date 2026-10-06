@@ -80,6 +80,7 @@ type Runtime struct {
 	owner    lease.Owner
 	system   sandbox.SandboxSpec
 	evidence *conformance.Report
+	initErr  error
 }
 
 // New validates configuration. Mode off returns a passthrough runtime.
@@ -135,6 +136,12 @@ func New(cfg Config) (*Runtime, error) {
 	return r, nil
 }
 
+// Failed returns a runtime that rejects every run with err. It is what a
+// misconfigured sandbox degrades to: never silently to host execution.
+func Failed(err error) *Runtime {
+	return &Runtime{cfg: Config{Mode: sandbox.ModeStrict}, initErr: err}
+}
+
 // Mode reports the configured mode.
 func (r *Runtime) Mode() sandbox.Mode { return r.cfg.Mode }
 
@@ -176,6 +183,9 @@ type Run struct {
 
 // Begin prepares a run. With mode off it returns ctx unchanged.
 func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
+	if r.initErr != nil {
+		return nil, &RejectedError{r.initErr}
+	}
 	if r.cfg.Mode == sandbox.ModeOff {
 		return &Run{Ctx: ctx, rt: r, req: req, stop: make(chan struct{})}, nil
 	}
