@@ -106,3 +106,67 @@ func hostsSubset(child, parent []string) (bool, string) {
 	}
 	return true, ""
 }
+
+// HostMatcher decides whether a destination (host name or IP literal) is
+// granted by a list of egress patterns, with @set expansion.
+type HostMatcher struct {
+	pats []hostPattern
+	sets map[string]*HostMatcher
+}
+
+// NewHostMatcher parses patterns. sets maps "@name" to its member patterns
+// (members may not themselves be sets, which keeps expansion finite).
+func NewHostMatcher(patterns []string, sets map[string][]string) (*HostMatcher, error) {
+	m := &HostMatcher{sets: map[string]*HostMatcher{}}
+	for name, members := range sets {
+		sub, err := NewHostMatcher(members, nil)
+		if err != nil {
+			return nil, fmt.Errorf("set %s: %w", name, err)
+		}
+		m.sets[strings.ToLower(name)] = sub
+	}
+	for _, s := range patterns {
+		p, err := parseHostPattern(s)
+		if err != nil {
+			return nil, err
+		}
+		if p.kind == hostSet && m.sets[p.name] == nil {
+			return nil, fmt.Errorf("unknown set %s", p.name)
+		}
+		m.pats = append(m.pats, p)
+	}
+	return m, nil
+}
+
+// Match reports whether host (a name or IP literal, no port) is granted.
+func (m *HostMatcher) Match(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	addr, err := netip.ParseAddr(host)
+	isIP := err == nil
+	for _, p := range m.pats {
+		switch p.kind {
+		case hostSet:
+			if m.sets[p.name].Match(host) {
+				return true
+			}
+		case hostPrefix:
+			if isIP && p.prefix.Contains(addr.Unmap()) {
+				return true
+			}
+		case hostExact:
+			if !isIP && host == p.name {
+				return true
+			}
+		case hostWildcard:
+			if !isIP {
+				if label, ok := strings.CutSuffix(host, "."+p.name); ok && label != "" && !strings.Contains(label, ".") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// MatchIP reports whether ip is covered by an explicit CIDR/IP grant.
+func (m *HostMatcher) MatchIP(ip netip.Addr) bool { return m.Match(ip.Unmap().String()) }
