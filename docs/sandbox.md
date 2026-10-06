@@ -85,6 +85,8 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 
 ## Tests
 
+See [sandbox-testing.md](sandbox-testing.md) for the full test guide (automated, smoke, real-host conformance, red-team checklist).
+
 `go test ./internal/sandbox/...` (includes `e2e`: strict happy path, policy rejection, timeout,
 crash recovery via supervisor, export conflict quarantine). `ISOBOX_BIN=... ISOBOX_BACKEND=seatbelt
 go test -run Real ./internal/sandbox/isobox` prints the offline plan for a real isobox.
