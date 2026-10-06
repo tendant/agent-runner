@@ -66,7 +66,11 @@ func DefaultSystemSpec() sandbox.SandboxSpec {
 				{Path: sandbox.RootHome, Access: sandbox.ReadWrite},
 				{Path: sandbox.RootTmp, Access: sandbox.ReadWrite},
 			},
-			Deny: []string{sandbox.RootHome + "/.ssh"},
+			// No deny list by default: the sandbox home is a private runner-managed
+			// directory (no real credentials), and the isobox adapter always
+			// read-denies the host user's credential directories. A deny inside a
+			// writable grant cannot be enforced for writes, so it would make
+			// fs.deny a gap under strict.
 		},
 		Network: sandbox.NetworkPolicy{Egress: sandbox.EgressOutbound},
 	}

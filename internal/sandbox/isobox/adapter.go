@@ -268,12 +268,13 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 }
 
 type prepared struct {
-	b    *Backend
-	spec sandbox.SandboxSpec
-	mu   sync.Mutex
-	pids map[int]bool
-	cmds []*exec.Cmd
-	dead bool
+	b       *Backend
+	spec    sandbox.SandboxSpec
+	mu      sync.Mutex
+	pids    map[int]bool
+	cmds    []*exec.Cmd
+	cancels []context.CancelFunc
+	dead    bool
 }
 
 // buildArgs returns the isobox argv and the exact environment for a command.
@@ -336,6 +337,14 @@ func (p *prepared) Command(ctx context.Context, ps sandbox.ProcSpec) (*exec.Cmd,
 	grace := p.b.cfg.DefaultGrace
 	if g := p.spec.Resources.GraceSec; g > 0 {
 		grace = time.Duration(g) * time.Second
+	}
+	// The spec's wall timeout bounds a Command too (TERM, grace, KILL via Cancel).
+	if t := p.spec.Resources.TimeoutSec; t > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(t)*time.Second)
+		p.mu.Lock()
+		p.cancels = append(p.cancels, cancel)
+		p.mu.Unlock()
 	}
 	cmd := exec.CommandContext(ctx, p.b.cfg.Binary, args...)
 	cmd.Env = env
@@ -426,6 +435,9 @@ func (p *prepared) Destroy(context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.dead = true
+	for _, c := range p.cancels {
+		c()
+	}
 	for _, c := range p.cmds {
 		if c.Process != nil {
 			_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)

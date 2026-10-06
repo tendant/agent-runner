@@ -208,3 +208,21 @@ func TestRealIsobox(t *testing.T) {
 	t.Logf("%s", rep.JSON())
 	os.WriteFile(os.Getenv("ISOBOX_CONFORMANCE"), rep.JSON(), 0o644)
 }
+
+func TestCommandHonoursSpecTimeout(t *testing.T) {
+	b := New(Config{Binary: fakeIsobox(t), Roots: roots(t)})
+	s := spec(sandbox.EgressNone)
+	s.Resources.TimeoutSec, s.Resources.GraceSec = 1, 1
+	ps, _ := b.Prepare(context.Background(), s)
+	defer ps.Destroy(context.Background())
+	cmd, err := ps.(sandbox.Commander).Command(context.Background(), sandbox.ProcSpec{Args: []string{"sleep", "30"}, Dir: sandbox.RootWorkspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	cmd.Start()
+	cmd.Wait()
+	if d := time.Since(start); d > 8*time.Second {
+		t.Errorf("Command ignored spec timeout: %v", d)
+	}
+}
