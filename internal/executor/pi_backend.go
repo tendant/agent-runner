@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/executor/pi"
@@ -18,6 +19,8 @@ type PiBackend struct {
 	ExtraEnv []string
 	Provider string
 	Model    string
+	// Launcher starts pi; nil runs it directly on the host.
+	Launcher Launcher
 }
 
 // NewPiBackend creates a new pi session backend.
@@ -31,6 +34,9 @@ func (b *PiBackend) Persistent() bool { return true }
 // SetExtraEnv sets an environment overlay applied to spawned processes.
 func (b *PiBackend) SetExtraEnv(env []string) { b.ExtraEnv = env }
 
+// SetLauncher sets how pi is started (host or sandbox).
+func (b *PiBackend) SetLauncher(l Launcher) { b.Launcher = l }
+
 // Start spawns the pi process bound to the workspace.
 func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptions) (Session, error) {
 	provider, model := b.Provider, b.Model
@@ -42,7 +48,12 @@ func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptio
 	}
 	env := append(append([]string{}, b.ExtraEnv...), opts.ExtraEnv...)
 
+	l := launcherOrHost(b.Launcher)
 	po := pi.Options{
+		Command: func(name string, args []string, dir string, env []string) (*exec.Cmd, func(), error) {
+			// pi's lifetime is the session's, not this call's context.
+			return l.Command(context.Background(), LaunchSpec{Name: name, Args: args, Dir: dir, ExtraEnv: env})
+		},
 		Provider:  provider,
 		Model:     model,
 		Workspace: workspace,
@@ -144,6 +155,8 @@ type PiExecutor struct {
 	ExtraEnv []string
 	Provider string
 	Model    string
+	// Launcher starts pi; nil runs it directly on the host.
+	Launcher Launcher
 }
 
 // NewPiExecutor creates a new pi executor.
@@ -158,7 +171,7 @@ func (e *PiExecutor) Execute(ctx context.Context, workspacePath, instruction str
 
 // ExecuteWithSystemPrompt runs pi with separate system and user prompts.
 func (e *PiExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspacePath, systemPrompt, instruction string) (*ExecutionResult, error) {
-	backend := &PiBackend{Provider: e.Provider, Model: e.Model, ExtraEnv: e.ExtraEnv}
+	backend := &PiBackend{Provider: e.Provider, Model: e.Model, ExtraEnv: e.ExtraEnv, Launcher: e.Launcher}
 	sess, err := backend.Start(ctx, workspacePath, SessionOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("PI_ERROR: failed to start pi: %v", err)
@@ -202,3 +215,6 @@ func (e *PiExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, workspac
 
 // SetExtraEnv sets an environment overlay applied to spawned processes.
 func (e *PiExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }
+
+// SetLauncher sets how pi is started (host or sandbox).
+func (e *PiExecutor) SetLauncher(l Launcher) { e.Launcher = l }
