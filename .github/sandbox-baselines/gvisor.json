@@ -1,0 +1,2 @@
+{"_note": "Initial baseline for Linux gVisor. Tighten (add process.containment, process.cross_run_isolation, resource.*) after the first green run.",
+ "require": ["fs.write_scope", "env.scrub", "network.direct_none", "network.outbound", "resource.timeout"]}

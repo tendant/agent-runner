@@ -1,0 +1,2 @@
+{"_note": "Initial conservative baseline for macOS Seatbelt. Tighten after the first green run; Seatbelt cannot prove cross-run isolation, memory/pids/cpu limits.",
+ "require": ["fs.write_scope", "env.scrub", "network.direct_none", "resource.timeout"]}
