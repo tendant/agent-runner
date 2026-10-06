@@ -38,7 +38,7 @@ func (b *PiBackend) SetExtraEnv(env []string) { b.ExtraEnv = env }
 func (b *PiBackend) SetLauncher(l Launcher) { b.Launcher = l }
 
 // Start spawns the pi process bound to the workspace.
-func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptions) (Session, error) {
+func (b *PiBackend) Start(startCtx context.Context, workspace string, opts SessionOptions) (Session, error) {
 	provider, model := b.Provider, b.Model
 	if opts.Provider != "" {
 		provider = opts.Provider
@@ -48,7 +48,7 @@ func (b *PiBackend) Start(_ context.Context, workspace string, opts SessionOptio
 	}
 	env := append(append([]string{}, b.ExtraEnv...), opts.ExtraEnv...)
 
-	l := launcherOrHost(b.Launcher)
+	l := resolveLauncher(startCtx, b.Launcher)
 	po := pi.Options{
 		Command: func(name string, args []string, dir string, env []string) (*exec.Cmd, func(), error) {
 			// pi's lifetime is the session's, not this call's context.

@@ -108,7 +108,11 @@ func (s *Supervisor) finish(r lease.Record) {
 // signalled if its start identity still matches (pid reuse protection).
 func (s *Supervisor) killProcs(r lease.Record) {
 	var targets []int
-	for _, p := range r.Procs {
+	procs := r.Procs
+	if len(procs) == 0 && r.Tag != "" {
+		procs = lease.FindByArgvTag(r.Tag)
+	}
+	for _, p := range procs {
 		if p.Start != "" {
 			if cur := lease.ProcStart(p.PID); cur != "" && cur != p.Start {
 				continue // pid was reused by something else

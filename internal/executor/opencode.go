@@ -47,7 +47,7 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 	}
 	args = append(args, prompt)
 
-	cmd, release, lerr := launcherOrHost(e.Launcher).Command(ctx, LaunchSpec{Name: "opencode", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	cmd, release, lerr := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "opencode", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
 	if lerr != nil {
 		return nil, fmt.Errorf("OPENCODE_ERROR: launch: %w", lerr)
 	}
