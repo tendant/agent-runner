@@ -125,6 +125,13 @@ func (b *OneShotBackend) SetExtraEnv(env []string) {
 	}
 }
 
+// SetLauncher forwards the launcher to the wrapped executor.
+func (b *OneShotBackend) SetLauncher(l Launcher) {
+	if ls, ok := b.exec.(LauncherSetter); ok {
+		ls.SetLauncher(l)
+	}
+}
+
 // Start returns a session bound to the workspace. No process is spawned
 // until Prompt.
 func (b *OneShotBackend) Start(_ context.Context, workspace string, opts SessionOptions) (Session, error) {

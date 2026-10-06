@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"io"
+	"os/exec"
 )
 
 // Backend enforces capabilities; it never owns policy.
@@ -44,4 +45,11 @@ type CheckResult struct {
 	Enforced []CapabilityID `json:"enforced"`
 	Gaps     []Gap          `json:"gaps,omitempty"`
 	Caveats  []string       `json:"caveats,omitempty"`
+}
+
+// Commander is implemented by sandboxes that can hand back an unstarted
+// *exec.Cmd, for callers needing their own pipes (e.g. persistent stdio agents).
+// The returned command is still fully confined; there is no host fallback.
+type Commander interface {
+	Command(ctx context.Context, p ProcSpec) (*exec.Cmd, error)
 }

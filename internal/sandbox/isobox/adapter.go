@@ -272,22 +272,28 @@ type prepared struct {
 	spec sandbox.SandboxSpec
 	mu   sync.Mutex
 	pids map[int]bool
+	cmds []*exec.Cmd
 	dead bool
 }
 
-func (p *prepared) Run(ctx context.Context, ps sandbox.ProcSpec) (int, error) {
+// buildArgs returns the isobox argv and the exact environment for a command.
+func (p *prepared) buildArgs(ps sandbox.ProcSpec) (args, env []string, err error) {
 	if len(ps.Args) == 0 {
-		return 0, errors.New("sandbox run: empty command")
+		return nil, nil, errors.New("sandbox run: empty command")
 	}
 	flags, _, err := p.b.flags(p.spec)
 	if err != nil {
-		return 0, err
+		return nil, nil, err
 	}
 	// The runner supplies the complete environment; only those names pass.
-	env := append([]string(nil), ps.Env...)
+	env = append([]string(nil), ps.Env...)
 	names := map[string]bool{}
 	for _, e := range env {
 		names[strings.SplitN(e, "=", 2)[0]] = true
+	}
+	if !names["PATH"] {
+		env = append(env, "PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
+		names["PATH"] = true
 	}
 	var nl []string
 	for n := range names {
@@ -300,13 +306,59 @@ func (p *prepared) Run(ctx context.Context, ps sandbox.ProcSpec) (int, error) {
 	if ps.Dir != "" {
 		h, err := p.b.host(ps.Dir)
 		if err != nil {
-			return 0, err
+			return nil, nil, err
 		}
 		flags = append(flags, "--dir", h)
 	}
-	args := append(flags, "--")
+	args = append(flags, "--")
 	args = append(args, ps.Args...)
+	return args, env, nil
+}
 
+// Command returns an unstarted *exec.Cmd that runs ps inside the sandbox, for
+// callers that need their own pipes (persistent stdio agents). Cancelling ctx
+// sends TERM to the process group, then KILL after the grace period. The caller
+// must call Destroy after Wait.
+func (p *prepared) Command(ctx context.Context, ps sandbox.ProcSpec) (*exec.Cmd, error) {
+	args, env, err := p.buildArgs(ps)
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	dead := p.dead
+	p.mu.Unlock()
+	if dead {
+		return nil, errors.New("sandbox destroyed")
+	}
+	grace := p.b.cfg.DefaultGrace
+	if g := p.spec.Resources.GraceSec; g > 0 {
+		grace = time.Duration(g) * time.Second
+	}
+	cmd := exec.CommandContext(ctx, p.b.cfg.Binary, args...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = ps.Stdin, ps.Stdout, ps.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		pid := cmd.Process.Pid
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+		time.AfterFunc(grace, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+		return nil
+	}
+	cmd.WaitDelay = grace + 2*time.Second
+	p.mu.Lock()
+	p.cmds = append(p.cmds, cmd)
+	p.mu.Unlock()
+	return cmd, nil
+}
+
+func (p *prepared) Run(ctx context.Context, ps sandbox.ProcSpec) (int, error) {
+	args, env, err := p.buildArgs(ps)
+	if err != nil {
+		return 0, err
+	}
 	// Hard wall-clock deadline: TERM, grace, KILL.
 	runCtx := ctx
 	var cancel context.CancelFunc = func() {}
@@ -321,9 +373,6 @@ func (p *prepared) Run(ctx context.Context, ps sandbox.ProcSpec) (int, error) {
 
 	cmd := exec.Command(p.b.cfg.Binary, args...)
 	cmd.Env = env
-	if !names["PATH"] {
-		cmd.Env = append(cmd.Env, "PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
-	}
 	cmd.Stdin = ps.Stdin // nil => /dev/null; never the caller's terminal
 	cmd.Stdout, cmd.Stderr = ps.Stdout, ps.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -374,6 +423,11 @@ func (p *prepared) Destroy(context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.dead = true
+	for _, c := range p.cmds {
+		if c.Process != nil {
+			_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	for pid := range p.pids {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 	}

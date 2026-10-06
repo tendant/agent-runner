@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,6 +63,8 @@ type ClaudeExecutor struct {
 	ExtraEnv []string
 	Model    string
 	MaxTurns int
+	// Launcher starts the CLI; nil runs it directly on the host.
+	Launcher Launcher
 }
 
 // NewClaudeExecutor creates a new Claude Code executor
@@ -160,11 +160,11 @@ func (e *ClaudeExecutor) run(ctx context.Context, workspacePath, systemPrompt, i
 	}
 	args = append(args, instruction)
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = workspacePath
-	if len(e.ExtraEnv) > 0 {
-		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	cmd, release, err := launcherOrHost(e.Launcher).Command(ctx, LaunchSpec{Name: "claude", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	if err != nil {
+		return nil, fmt.Errorf("CLAUDE_ERROR: launch: %w", err)
 	}
+	defer release()
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -250,3 +250,6 @@ func (e *ClaudeExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, work
 
 // SetExtraEnv sets an environment overlay applied to spawned processes.
 func (e *ClaudeExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }
+
+// SetLauncher sets how the CLI is started (host or sandbox).
+func (e *ClaudeExecutor) SetLauncher(l Launcher) { e.Launcher = l }
