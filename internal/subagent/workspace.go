@@ -3,9 +3,9 @@ package subagent
 import (
 	"bytes"
 	"context"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -132,7 +132,7 @@ func parseSkillFrontmatter(content string) (name, description string) {
 
 // gitCmd runs a git command and returns trimmed stdout, or empty string on error.
 func gitCmd(ctx context.Context, dir string, args ...string) string {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitsafe.CommandContext(ctx, args...)
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

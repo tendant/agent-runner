@@ -3,6 +3,7 @@ package chatcmd
 import (
 	"context"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -333,7 +334,7 @@ func (c *Commander) handleStatus() string {
 
 	// Memory git state
 	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); err == nil {
-		if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+		if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
 			fmt.Fprintf(&b, "**memory:** git ✓ → %s\n", strings.TrimSpace(string(out)))
 		} else {
 			b.WriteString("**memory:** git (no remote)\n")
@@ -906,7 +907,7 @@ func (c *Commander) handleMemoryPush() string {
 		return fmt.Sprintf("error: %v", err)
 	}
 	remote := ""
-	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+	if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
 		remote = strings.TrimSpace(string(out))
 	}
 	if remote == "" {
@@ -1006,13 +1007,13 @@ func (c *Commander) handleMemoryStatus() string {
 	}
 	b.WriteString("**git:** initialised\n")
 
-	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
+	if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
 		fmt.Fprintf(&b, "**remote:** %s\n", strings.TrimSpace(string(out)))
 	} else {
 		b.WriteString("**remote:** none\n")
 	}
 
-	if out, err := exec.Command("git", "-C", c.cfg.MemoryDir, "log", "-1", "--format=%s").Output(); err == nil {
+	if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "log", "-1", "--format=%s").Output(); err == nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {
 			fmt.Fprintf(&b, "**last commit:** %s", msg)
@@ -1064,7 +1065,7 @@ func (c *Commander) handleRepoAdd(url string) string {
 	// Clone — inject token into URL so credentials aren't stored.
 	token := c.cfg.GitToken
 	cloneURL := tmpl.InjectToken(url, token, "")
-	cloneCmd := exec.Command("git", "clone", cloneURL, cachePath)
+	cloneCmd := gitsafe.Command("clone", cloneURL, cachePath)
 	var cloneStderr strings.Builder
 	cloneCmd.Stderr = &cloneStderr
 	if err := cloneCmd.Run(); err != nil {
@@ -1072,7 +1073,7 @@ func (c *Commander) handleRepoAdd(url string) string {
 	}
 
 	// Strip token: set remote back to clean URL.
-	setURL := exec.Command("git", "-C", cachePath, "remote", "set-url", "origin", url)
+	setURL := gitsafe.Command("-C", cachePath, "remote", "set-url", "origin", url)
 	var setURLStderr strings.Builder
 	setURL.Stderr = &setURLStderr
 	if err := setURL.Run(); err != nil {
@@ -1135,11 +1136,11 @@ func (c *Commander) handleRepoList() string {
 		}
 		count++
 		remote := ""
-		if out, err := exec.Command("git", "-C", p, "remote", "get-url", "origin").Output(); err == nil {
+		if out, err := gitsafe.Command("-C", p, "remote", "get-url", "origin").Output(); err == nil {
 			remote = strings.TrimSpace(string(out))
 		}
 		last := ""
-		if out, err := exec.Command("git", "-C", p, "log", "-1", "--format=%h %s").Output(); err == nil {
+		if out, err := gitsafe.Command("-C", p, "log", "-1", "--format=%h %s").Output(); err == nil {
 			last = strings.TrimSpace(string(out))
 		}
 		fmt.Fprintf(&b, "**%s**", e.Name())
@@ -1222,7 +1223,7 @@ func (c *Commander) handleRepoUpdate(name string) string {
 	}
 
 	run := func(args ...string) error {
-		cmd := exec.Command("git", args...)
+		cmd := gitsafe.Command(args...)
 		cmd.Dir = p
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -1247,7 +1248,7 @@ func (c *Commander) handleRepoUpdate(name string) string {
 
 	// Detect default branch; fall back to "main".
 	branch := "main"
-	if out, err := exec.Command("git", "-C", p, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
+	if out, err := gitsafe.Command("-C", p, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
 		parts := strings.Split(strings.TrimSpace(string(out)), "/")
 		if len(parts) > 0 {
 			branch = parts[len(parts)-1]

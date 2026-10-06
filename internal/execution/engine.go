@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1530,7 +1531,7 @@ func pushUnpushedCommits(ctx context.Context, repoPath string, retries, retryDel
 }
 
 func gitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitsafe.CommandContext(ctx, args...)
 	cmd.Dir = repoPath
 	return cmd
 }
