@@ -46,12 +46,26 @@ func (HostLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd, func(
 	return cmd, func() {}, nil
 }
 
-// launcherOrHost returns l, or HostLauncher when unset.
-func launcherOrHost(l Launcher) Launcher {
-	if l == nil {
-		return HostLauncher{}
+type launcherKey struct{}
+
+// WithLauncher returns a context whose agent-CLI launches (planner, reviewer,
+// session, fallbacks: everything started under it) go through l. Setting it
+// once at the top of a run confines every CLI the run starts, without mutating
+// the shared executors.
+func WithLauncher(ctx context.Context, l Launcher) context.Context {
+	return context.WithValue(ctx, launcherKey{}, l)
+}
+
+// resolveLauncher prefers the context's launcher, then the executor's own,
+// then the host.
+func resolveLauncher(ctx context.Context, l Launcher) Launcher {
+	if cl, ok := ctx.Value(launcherKey{}).(Launcher); ok && cl != nil {
+		return cl
 	}
-	return l
+	if l != nil {
+		return l
+	}
+	return HostLauncher{}
 }
 
 // SandboxLauncher confines every launch with a sandbox.Backend.
@@ -65,6 +79,12 @@ type SandboxLauncher struct {
 	// EnvAllow names host environment variables copied into the sandbox
 	// (interim until the model proxy keeps provider credentials outside).
 	EnvAllow []string
+	// EnvOverride is applied after the base env (e.g. HOME/TMPDIR inside the
+	// sandbox) and before the executor's own overlay.
+	EnvOverride []string
+	// Tag labels every sandboxed process (visible in argv) so an external
+	// supervisor can find the process group of a run.
+	Tag string
 	// OnCheck, if set, receives every check result (for events/logging).
 	OnCheck func(sandbox.CheckResult, error)
 }
@@ -97,6 +117,7 @@ func (l *SandboxLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd,
 		Args: append([]string{s.Name}, s.Args...),
 		Dir:  sandbox.RootWorkspace,
 		Env:  l.env(s),
+		Tag:  l.Tag,
 	})
 	if err != nil {
 		_ = ps.Destroy(ctx)
@@ -109,7 +130,7 @@ func (l *SandboxLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd,
 // host variables, then the executor's overlay.
 func (l *SandboxLauncher) env(s LaunchSpec) []string {
 	env := []string{"LANG=C.UTF-8", "TERM=dumb"}
-	for _, k := range []string{"PATH", "HOME", "TMPDIR"} {
+	for _, k := range []string{"PATH"} {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
@@ -119,5 +140,12 @@ func (l *SandboxLauncher) env(s LaunchSpec) []string {
 			env = append(env, k+"="+v)
 		}
 	}
+	env = append(env, l.EnvOverride...)
 	return append(env, s.ExtraEnv...)
+}
+
+// LauncherFrom returns the launcher carried by ctx, if any.
+func LauncherFrom(ctx context.Context) (Launcher, bool) {
+	l, ok := ctx.Value(launcherKey{}).(Launcher)
+	return l, ok && l != nil
 }

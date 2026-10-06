@@ -46,6 +46,7 @@ type Record struct {
 	Expires  time.Time `json:"expires"`            // renewed by the owner
 	Deadline time.Time `json:"deadline,omitempty"` // hard wall-clock limit; supervisor enforces
 	Procs    []ProcRef `json:"procs,omitempty"`    // process-group leaders to kill
+	Tag      string    `json:"tag,omitempty"`      // argv tag identifying the sandbox process group
 	RunDir   string    `json:"run_dir,omitempty"`
 	ThreadID string    `json:"thread_id,omitempty"`
 	RunID    string    `json:"run_id,omitempty"`

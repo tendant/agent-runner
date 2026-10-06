@@ -21,6 +21,7 @@ type ProcSpec struct {
 	Args   []string
 	Dir    string // logical path
 	Env    []string
+	Tag    string    // opaque label placed in the sandbox launcher's argv for supervisors
 	Stdin  io.Reader // must not be a terminal
 	Stdout io.Writer
 	Stderr io.Writer

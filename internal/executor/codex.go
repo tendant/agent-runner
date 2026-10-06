@@ -101,7 +101,7 @@ func (e *CodexExecutor) run(ctx context.Context, workspacePath, prompt string, r
 	// Pass large prompts over stdin to avoid argv length limits.
 	args = append(args, "-")
 
-	cmd, release, lerr := launcherOrHost(e.Launcher).Command(ctx, LaunchSpec{Name: "codex", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	cmd, release, lerr := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "codex", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
 	if lerr != nil {
 		return nil, "", fmt.Errorf("CODEX_ERROR: launch: %w", lerr)
 	}

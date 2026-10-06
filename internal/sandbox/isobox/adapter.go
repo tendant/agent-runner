@@ -303,6 +303,9 @@ func (p *prepared) buildArgs(ps sandbox.ProcSpec) (args, env []string, err error
 	for _, n := range nl {
 		flags = append(flags, "--env-allow", n)
 	}
+	if ps.Tag != "" {
+		flags = append(flags, "--env-allow", "sbx."+ps.Tag) // inert pattern; makes the run findable in argv
+	}
 	if ps.Dir != "" {
 		h, err := p.b.host(ps.Dir)
 		if err != nil {

@@ -160,7 +160,7 @@ func (e *ClaudeExecutor) run(ctx context.Context, workspacePath, systemPrompt, i
 	}
 	args = append(args, instruction)
 
-	cmd, release, err := launcherOrHost(e.Launcher).Command(ctx, LaunchSpec{Name: "claude", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	cmd, release, err := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "claude", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
 	if err != nil {
 		return nil, fmt.Errorf("CLAUDE_ERROR: launch: %w", err)
 	}
