@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -63,13 +63,13 @@ func (o *Operations) FetchAndReset(ctx context.Context, repoPath string) error {
 
 // GetChangedFiles returns a list of changed files (staged and unstaged)
 func (o *Operations) GetChangedFiles(ctx context.Context, repoPath string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
+	cmd := gitsafe.CommandContext(ctx, "diff", "--name-only", "HEAD")
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
 	if err != nil {
 		// No changes case - check if working tree is clean
-		statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+		statusCmd := gitsafe.CommandContext(ctx, "status", "--porcelain")
 		statusCmd.Dir = repoPath
 		statusOutput, _ := statusCmd.Output()
 		if len(statusOutput) == 0 {
@@ -88,7 +88,7 @@ func (o *Operations) GetChangedFiles(ctx context.Context, repoPath string) ([]st
 	}
 
 	// Also get untracked files
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusCmd := gitsafe.CommandContext(ctx, "status", "--porcelain")
 	statusCmd.Dir = repoPath
 	statusOutput, err := statusCmd.Output()
 	if err == nil {
@@ -110,7 +110,7 @@ func (o *Operations) GetChangedFiles(ctx context.Context, repoPath string) ([]st
 
 // GetDiffSummary returns the insertions and deletions count
 func (o *Operations) GetDiffSummary(ctx context.Context, repoPath string) (DiffSummary, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--stat", "HEAD")
+	cmd := gitsafe.CommandContext(ctx, "diff", "--stat", "HEAD")
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
@@ -129,7 +129,7 @@ func (o *Operations) Commit(ctx context.Context, repoPath, message, author, inst
 	}
 
 	// Check if there are changes to commit
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusCmd := gitsafe.CommandContext(ctx, "status", "--porcelain")
 	statusCmd.Dir = repoPath
 	statusOutput, _ := statusCmd.Output()
 	if len(strings.TrimSpace(string(statusOutput))) == 0 {
@@ -156,7 +156,7 @@ func (o *Operations) Commit(ctx context.Context, repoPath, message, author, inst
 	}
 
 	// Get commit hash
-	hashCmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
+	hashCmd := gitsafe.CommandContext(ctx, "rev-parse", "--short", "HEAD")
 	hashCmd.Dir = repoPath
 	hashOutput, err := hashCmd.Output()
 	if err != nil {
@@ -174,7 +174,7 @@ func (o *Operations) resolveRemote(ctx context.Context, repoPath string) string 
 	if o.Token == "" {
 		return "origin"
 	}
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	cmd := gitsafe.CommandContext(ctx, "remote", "get-url", "origin")
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
@@ -297,7 +297,7 @@ func (o *Operations) PushToBranch(ctx context.Context, repoPath, branch string) 
 
 // ConflictedFiles lists paths with unresolved merge conflicts.
 func (o *Operations) ConflictedFiles(ctx context.Context, repoPath string) []string {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--diff-filter=U")
+	cmd := gitsafe.CommandContext(ctx, "diff", "--name-only", "--diff-filter=U")
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
@@ -315,7 +315,7 @@ func (o *Operations) ConflictedFiles(ctx context.Context, repoPath string) []str
 // RebaseInProgress reports whether repoPath is mid-rebase.
 func (o *Operations) RebaseInProgress(ctx context.Context, repoPath string) bool {
 	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
-		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", dir)
+		cmd := gitsafe.CommandContext(ctx, "rev-parse", "--git-path", dir)
 		cmd.Dir = repoPath
 		out, err := cmd.Output()
 		if err != nil {
@@ -341,7 +341,7 @@ func (o *Operations) ContinueRebase(ctx context.Context, repoPath string) error 
 // RebaseHeadName returns the branch a rebase in progress is rewriting.
 func (o *Operations) RebaseHeadName(ctx context.Context, repoPath string) (string, error) {
 	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
-		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-path", dir+"/head-name")
+		cmd := gitsafe.CommandContext(ctx, "rev-parse", "--git-path", dir+"/head-name")
 		cmd.Dir = repoPath
 		out, err := cmd.Output()
 		if err != nil {
@@ -365,7 +365,7 @@ func (o *Operations) AbortRebase(ctx context.Context, repoPath string) error {
 
 // GetCurrentBranch returns the current branch name
 func (o *Operations) GetCurrentBranch(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := gitsafe.CommandContext(ctx, "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
@@ -418,7 +418,7 @@ func (o *Operations) ConfigureAuthor(ctx context.Context, repoPath, author strin
 }
 
 func (o *Operations) getDefaultBranch(ctx context.Context, repoPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := gitsafe.CommandContext(ctx, "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = repoPath
 
 	output, err := cmd.Output()
@@ -440,7 +440,7 @@ func (o *Operations) runGitCommand(ctx context.Context, repoPath string, args ..
 }
 
 func (o *Operations) runGitCommandEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitsafe.CommandContext(ctx, args...)
 	cmd.Dir = repoPath
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)

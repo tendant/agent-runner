@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -90,6 +91,10 @@ type Engine struct {
 	// callbacks delivers terminal results to a session's CallbackURL; nil
 	// disables webhooks.
 	callbacks *callback.Dispatcher
+
+	// sandbox confines every agent CLI a run starts; nil or mode off runs them
+	// on the host as before.
+	sandbox *sandboxrt.Runtime
 
 	// locks holds the advisory leases sessions take out on each other. Optional:
 	// nil disables the auto-release sweep at session end. See SetLockManager.

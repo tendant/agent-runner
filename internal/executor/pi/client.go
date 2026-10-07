@@ -33,6 +33,10 @@ type Options struct {
 	// process starts with the same pair. Both empty = --no-session.
 	SessionDir string
 	SessionID  string
+
+	// Command, if set, builds the process (e.g. inside a sandbox) instead of
+	// exec.Command on the host. release is called after the process exits.
+	Command func(name string, args []string, dir string, env []string) (cmd *exec.Cmd, release func(), err error)
 }
 
 // Result is the outcome of one prompt.
@@ -52,9 +56,10 @@ type Event struct {
 
 // Client owns one pi RPC process. One prompt may be in flight at a time.
 type Client struct {
-	opts  Options
-	cmd   *exec.Cmd
-	stdin io.WriteCloser
+	opts    Options
+	cmd     *exec.Cmd
+	release func()
+	stdin   io.WriteCloser
 
 	writeMu sync.Mutex // serializes stdin writes
 
@@ -95,10 +100,19 @@ func Start(opts Options) (*Client, error) {
 		args = append(args, "--model", opts.Model)
 	}
 
-	cmd := exec.Command(opts.Binary, args...)
-	cmd.Dir = opts.Workspace
-	if len(opts.Env) > 0 {
-		cmd.Env = append(os.Environ(), opts.Env...)
+	var cmd *exec.Cmd
+	release := func() {}
+	if opts.Command != nil {
+		var err error
+		if cmd, release, err = opts.Command(opts.Binary, args, opts.Workspace, opts.Env); err != nil {
+			return nil, err
+		}
+	} else {
+		cmd = exec.Command(opts.Binary, args...)
+		cmd.Dir = opts.Workspace
+		if len(opts.Env) > 0 {
+			cmd.Env = append(os.Environ(), opts.Env...)
+		}
 	}
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -106,6 +120,7 @@ func Start(opts Options) (*Client, error) {
 	c := &Client{
 		opts:    opts,
 		cmd:     cmd,
+		release: release,
 		events:  make(chan Event, 256),
 		pending: make(map[string]chan line),
 		deadCh:  make(chan struct{}),
@@ -116,14 +131,17 @@ func Start(opts Options) (*Client, error) {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		release()
 		return nil, err
 	}
 	c.stdin = stdin
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		release()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		release()
 		return nil, err
 	}
 	go c.readLoop(stdout)
@@ -331,6 +349,7 @@ func (c *Client) readLoop(stdout io.Reader) {
 	}
 	err := scanner.Err()
 	waitErr := c.cmd.Wait()
+	c.release()
 	c.markDead(err, waitErr)
 }
 

@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -217,7 +217,7 @@ func commitMemoryToParentRepo(memoryDir string) error {
 	}
 
 	// Ask git for the repo root.
-	revParseCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	revParseCmd := gitsafe.Command("rev-parse", "--show-toplevel")
 	revParseCmd.Dir = absDir
 	var revParseStderr strings.Builder
 	revParseCmd.Stderr = &revParseStderr
@@ -530,7 +530,7 @@ func GitSSHEnv(remote, sshKey string) []string {
 }
 
 func gitRunEnv(dir string, env []string, args ...string) error {
-	cmd := exec.Command("git", args...)
+	cmd := gitsafe.Command(args...)
 	cmd.Dir = dir
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
@@ -544,7 +544,7 @@ func gitRunEnv(dir string, env []string, args ...string) error {
 }
 
 func gitOutput(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
+	cmd := gitsafe.Command(args...)
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

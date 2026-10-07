@@ -120,6 +120,12 @@ type AgentConfig struct {
 	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
+	SandboxMode         string   // AGENT_SANDBOX — off (default) | permissive | strict
+	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — isobox backend: "" (native) | seatbelt | gvisor
+	SandboxIsobox       string   // AGENT_SANDBOX_ISOBOX — path to the isobox binary (default "isobox")
+	SandboxPolicyFile   string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
+	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
+	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
@@ -416,6 +422,12 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxIterationSeconds = envIntOrDefault("AGENT_MAX_ITERATION_SECONDS", cfg.Agent.MaxIterationSeconds)
 	cfg.Agent.CLI = envOrDefault("AGENT_CLI", cfg.Agent.CLI)
 	cfg.Agent.Isolated = envOrDefault("AGENT_ISOLATED", "") == "true"
+	cfg.Agent.SandboxMode = envOrDefault("AGENT_SANDBOX", cfg.Agent.SandboxMode)
+	cfg.Agent.SandboxBackend = envOrDefault("AGENT_SANDBOX_BACKEND", cfg.Agent.SandboxBackend)
+	cfg.Agent.SandboxIsobox = envOrDefault("AGENT_SANDBOX_ISOBOX", cfg.Agent.SandboxIsobox)
+	cfg.Agent.SandboxPolicyFile = envOrDefault("AGENT_SANDBOX_POLICY", cfg.Agent.SandboxPolicyFile)
+	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
+	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	// opencode requires an explicit model; ship a two-tier default pair
 	// (pro for real work, flash for the fast tier). pi needs no forced pair:
 	// it selects a default model from its own provider catalog.
