@@ -19,8 +19,10 @@ it starts inside one isolation boundary, provided by [isobox](https://github.com
 An invalid sandbox configuration rejects every run; it never falls back to the host.
 
 Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor`), `AGENT_SANDBOX_ISOBOX`
-(path to a pinned isobox build), `AGENT_SANDBOX_POLICY` (JSON `SandboxSpec` for the system
-layer), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
+(path to a pinned isobox build), `AGENT_SANDBOX_POLICY` (system-layer `SandboxSpec`: a path to a
+JSON file, or the JSON itself when it starts with `{`; fields it leaves unset keep the default
+policy's values, so `{"version":1,"network":{"egress":"none"}}` still grants the workspace,
+home and tmp; a field it sets replaces the default's), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
 (comma-separated host env var names to pass in, e.g. a model API key; interim until the model proxy is wired).
 
 ## How a run is confined
@@ -32,7 +34,14 @@ Resolve policy -> Check (reject in strict) -> Thread lease -> sandbox lease
 
 * The whole CLI process tree is the sandboxed unit (the CLIs run their own tools), so
   there is no per-tool shim and no command allowlist.
-* Sandbox state: `STATE_ROOT/sandbox/{leases,home/<thread>,runs/<run>/tmp}`.
+* Sandbox state: `STATE_ROOT/sandbox/{leases,home/<thread>,runs/<run>/tmp}`. Lease updates
+  serialize on one `leases/.lock`; a released lease leaves no file behind.
+* The runner's own files are read-denied in every run (`sandboxPrivatePaths`): its `.env`,
+  `.env.<instance>` and `DATA_DIR/.env.local`, and `STATE_ROOT`, `TMP_ROOT`, `LOGS_ROOT`,
+  `OUTPUTS_ROOT`, `REPO_CACHE_ROOT`, except the directories holding the run's own workspace,
+  home and tmp (other sessions' workspaces, other threads' homes, leases and the session
+  journal stay denied). The memory dir and uploads stay readable: prompts point the agent at
+  memory, and uploaded files reach it by path.
 * `HOME`/`TMPDIR` point at those private directories; the environment is an allowlist.
 * Runner-side git (`internal/gitsafe`) is hardened against hooks/fsmonitor planted in the workspace.
 
@@ -63,7 +72,10 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   policies translate to no network and report `network.restricted_egress` as a gap.
 * **Seatbelt** has no CPU/memory/pids limits and blocks loopback with `net=disable`.
 * **No disk quota** from isobox: `WatchDisk`/`LimitedWriter` exist but are not wired into runs.
-* **Reads are broad** (host files minus denied credential directories); `fs.read` scoping is not used.
+* **Reads are broad** (host files minus the user's credential directories and the runner's own
+  files); `fs.read` scoping is not used, so other projects on the host are readable. Entries
+  created under `TMP_ROOT` or `STATE_ROOT` after a run starts (a session started meanwhile) are
+  not denied to it.
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
 * **Model proxy** (`internal/sandbox/proxy`) is implemented but not wired; provider keys still

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,12 +44,16 @@ type Config struct {
 	Instance      string // runner instance id
 	IsoboxBin     string
 	IsoboxBackend string // "", "seatbelt", "gvisor"
-	PolicyFile    string // optional JSON SandboxSpec for the system layer
+	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	EvidenceFile  string // optional conformance report; claims limited to proven caps
 	EnvAllow      []string
-	LeaseTTL      time.Duration
-	MaxQueue      int
-	OnEvent       func(Event)
+	// PrivatePaths are the runner's own host files and directories (its .env
+	// files, state, logs, ...). Every run is read-denied them, except for the
+	// parts that hold the run's own workspace, home and tmp (see readDeny).
+	PrivatePaths []string
+	LeaseTTL     time.Duration
+	MaxQueue     int
+	OnEvent      func(Event)
 	// NewBackend overrides backend construction (tests, other backends).
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
@@ -74,6 +79,82 @@ func DefaultSystemSpec() sandbox.SandboxSpec {
 		},
 		Network: sandbox.NetworkPolicy{Egress: sandbox.EgressOutbound},
 	}
+}
+
+// loadPolicy reads the system-layer policy from AGENT_SANDBOX_POLICY: a path
+// to a JSON SandboxSpec, or the JSON itself when the value starts with "{".
+// Fields the policy leaves unset keep DefaultSystemSpec's values, so a policy
+// that only sets the network still grants the workspace, home and tmp; a set
+// field replaces the default's (grants replace the default grants).
+func loadPolicy(value string) (sandbox.SandboxSpec, error) {
+	data, src := []byte(value), "AGENT_SANDBOX_POLICY"
+	if !strings.HasPrefix(strings.TrimSpace(value), "{") {
+		b, err := os.ReadFile(value)
+		if err != nil {
+			return sandbox.SandboxSpec{}, fmt.Errorf("sandbox policy: %w", err)
+		}
+		data, src = b, value
+	}
+	spec, err := sandbox.ParseSpec(data)
+	if err != nil {
+		return sandbox.SandboxSpec{}, fmt.Errorf("sandbox policy %s: %w", src, err)
+	}
+	return withDefaults(spec, DefaultSystemSpec()), nil
+}
+
+// withDefaults fills the fields spec leaves unset from def.
+func withDefaults(spec, def sandbox.SandboxSpec) sandbox.SandboxSpec {
+	if len(spec.Filesystem.Grants) == 0 {
+		spec.Filesystem.Grants = def.Filesystem.Grants
+	}
+	if len(spec.Filesystem.Deny) == 0 {
+		spec.Filesystem.Deny = def.Filesystem.Deny
+	}
+	n, dn := &spec.Network, def.Network
+	if n.Egress == "" {
+		n.Egress = dn.Egress
+	}
+	if n.EgressAllow == nil {
+		n.EgressAllow = dn.EgressAllow
+	}
+	if n.DNS == "" {
+		n.DNS = dn.DNS
+	}
+	if n.Listen == nil {
+		n.Listen = dn.Listen
+	}
+	if n.Expose == nil {
+		n.Expose = dn.Expose
+	}
+	res, dr := &spec.Resources, def.Resources
+	if res.CPUs == 0 {
+		res.CPUs = dr.CPUs
+	}
+	if res.MemoryBytes == 0 {
+		res.MemoryBytes = dr.MemoryBytes
+	}
+	if res.DiskBytes == 0 {
+		res.DiskBytes = dr.DiskBytes
+	}
+	if res.PIDs == 0 {
+		res.PIDs = dr.PIDs
+	}
+	if res.OutputBytes == 0 {
+		res.OutputBytes = dr.OutputBytes
+	}
+	if res.TimeoutSec == 0 {
+		res.TimeoutSec = dr.TimeoutSec
+	}
+	if res.GraceSec == 0 {
+		res.GraceSec = dr.GraceSec
+	}
+	if spec.Secrets == nil {
+		spec.Secrets = def.Secrets
+	}
+	if spec.Requirements == nil {
+		spec.Requirements = def.Requirements
+	}
+	return spec
 }
 
 // Runtime creates per-run sandboxes.
@@ -114,12 +195,8 @@ func New(cfg Config) (*Runtime, error) {
 	r.owner = lease.SelfOwner(cfg.Instance)
 	r.system = DefaultSystemSpec()
 	if cfg.PolicyFile != "" {
-		b, err := os.ReadFile(cfg.PolicyFile)
-		if err != nil {
+		if r.system, err = loadPolicy(cfg.PolicyFile); err != nil {
 			return nil, err
-		}
-		if r.system, err = sandbox.ParseSpec(b); err != nil {
-			return nil, fmt.Errorf("sandbox policy %s: %w", cfg.PolicyFile, err)
 		}
 	}
 	if cfg.EvidenceFile != "" {
@@ -217,11 +294,16 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			return nil, err
 		}
 	}
+	keep := make([]string, 0, len(roots))
+	for _, d := range roots {
+		keep = append(keep, d)
+	}
+	deny := readDeny(r.cfg.PrivatePaths, keep)
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
 		}
-		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence})
+		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence, ReadDeny: deny})
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).
@@ -323,4 +405,71 @@ func safe(s string) string {
 		}
 		return r
 	}, strings.ReplaceAll(s, "..", "_"))
+}
+
+// readDeny returns the host paths a run is read-denied: each private path, or,
+// for one that holds a directory the run needs (keep: its workspace, home and
+// tmp), that path's other entries, descending until only the kept directory is
+// left readable. So under STATE_ROOT the run's own sandbox home stays readable
+// while other threads' homes, the leases and the session journal are denied.
+// Entries created after the run starts (another session's new workspace) are
+// not covered. Missing paths are skipped; paths are absolute and, where they
+// go through a symlink (macOS /tmp), listed both ways.
+func readDeny(private, keep []string) []string {
+	canon := func(p string) []string {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil
+		}
+		out := []string{abs}
+		if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
+			out = append(out, real)
+		}
+		return out
+	}
+	var kept []string
+	for _, k := range keep {
+		kept = append(kept, canon(k)...)
+	}
+	within := func(p, dir string) bool {
+		return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
+	}
+	seen := map[string]bool{}
+	var out []string
+	var walk func(p string)
+	walk = func(p string) {
+		if _, err := os.Lstat(p); err != nil {
+			return
+		}
+		holds := false
+		for _, k := range kept {
+			if within(p, k) {
+				return // the run's own directory, or inside it
+			}
+			if within(k, p) {
+				holds = true
+			}
+		}
+		if !holds {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+			return
+		}
+		ents, err := os.ReadDir(p)
+		if err != nil {
+			return
+		}
+		for _, e := range ents {
+			walk(filepath.Join(p, e.Name()))
+		}
+	}
+	for _, p := range private {
+		for _, c := range canon(p) {
+			walk(c)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

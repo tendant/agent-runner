@@ -163,3 +163,82 @@ func TestFailedRuntimeRejectsEverything(t *testing.T) {
 		t.Error("must reject")
 	}
 }
+
+func TestReadDenyKeepsOnlyTheRunsOwnDirectories(t *testing.T) {
+	data := t.TempDir()
+	mk := func(rel string) string {
+		p := filepath.Join(data, rel)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	ws := mk("tmp/session-1/workspace")
+	mk("tmp/session-2/workspace")
+	home := mk("state/sandbox/home/thread-1")
+	mk("state/sandbox/home/thread-2")
+	tmp := mk("state/sandbox/runs/run-1/tmp")
+	mk("state/sandbox/leases")
+	mk("state/sessions")
+	mk("logs")
+	os.WriteFile(filepath.Join(data, ".env.local"), []byte("TOKEN=x"), 0o600)
+
+	got := readDeny([]string{
+		filepath.Join(data, "state"), filepath.Join(data, "tmp"), filepath.Join(data, "logs"),
+		filepath.Join(data, ".env.local"), filepath.Join(data, "missing"),
+	}, []string{ws, home, tmp})
+
+	real, _ := filepath.EvalSymlinks(data) // macOS: /var -> /private/var
+	rel := map[string]bool{}
+	for _, p := range got {
+		for _, base := range []string{data, real} {
+			if r, err := filepath.Rel(base, p); err == nil && !strings.HasPrefix(r, "..") {
+				rel[r] = true
+			}
+		}
+	}
+	for _, want := range []string{".env.local", "logs", "state/sessions", "state/sandbox/leases",
+		"state/sandbox/home/thread-2", "tmp/session-2"} {
+		if !rel[want] {
+			t.Errorf("not denied: %s (got %v)", want, got)
+		}
+	}
+	for _, kept := range []string{"state", "tmp", "tmp/session-1", "tmp/session-1/workspace",
+		"state/sandbox/home/thread-1", "state/sandbox/runs/run-1/tmp", "missing"} {
+		if rel[kept] {
+			t.Errorf("denied %s, which the run needs (or does not exist)", kept)
+		}
+	}
+}
+
+func TestPolicyInheritsDefaultsAndAcceptsInlineJSON(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "policy.json")
+	os.WriteFile(file, []byte(`{"version":1,"network":{"egress":"none"}}`), 0o600)
+	for _, value := range []string{file, ` {"version":1,"network":{"egress":"none"}}`} {
+		spec, err := loadPolicy(value)
+		if err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		if spec.Network.Egress != sandbox.EgressNone {
+			t.Errorf("%q: egress = %q, want none", value, spec.Network.Egress)
+		}
+		// Unset in the policy: the default grants still make the workspace writable.
+		if len(spec.Filesystem.Grants) != len(DefaultSystemSpec().Filesystem.Grants) {
+			t.Errorf("%q: grants = %v, want the default grants", value, spec.Filesystem.Grants)
+		}
+	}
+	// A set field replaces the default's.
+	spec, err := loadPolicy(`{"version":1,"filesystem":{"grants":[{"path":"/workspace","access":"rw"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Filesystem.Grants) != 1 || spec.Network.Egress != sandbox.EgressOutbound {
+		t.Errorf("spec = %+v", spec)
+	}
+	if _, err := loadPolicy(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Error("a missing policy file must fail")
+	}
+	if _, err := loadPolicy(`{"version":1,"bogus":true}`); err == nil {
+		t.Error("an unknown field must fail")
+	}
+}

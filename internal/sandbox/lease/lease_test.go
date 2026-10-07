@@ -3,6 +3,7 @@ package lease
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"sync"
 	"testing"
@@ -139,5 +140,30 @@ func TestLostLeaseCancelsRun(t *testing.T) {
 	}
 	if th := <-lost; th != "th" {
 		t.Error(th)
+	}
+}
+
+func TestLeasesLeaveNoLockFilesBehind(t *testing.T) {
+	s := store(t)
+	me := SelfOwner("A")
+	for _, name := range []string{"thread:1", "sandbox:run-1", "sandbox:run-2"} {
+		if _, err := s.Acquire(Record{Name: name, Owner: me}, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Release(name, me); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ents, err := os.ReadDir(s.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	// Only the store's one lock file: no lease record, no per-lease lock file.
+	if len(names) != 1 || names[0] != storeLock {
+		t.Errorf("lease dir = %v, want [%s]", names, storeLock)
 	}
 }

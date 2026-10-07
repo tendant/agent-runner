@@ -36,6 +36,10 @@ type Config struct {
 	RequireEvidence bool
 	// DefaultGrace is the TERM->KILL grace when the spec sets none.
 	DefaultGrace time.Duration
+	// ReadDeny are host paths read-denied in every run, like credentialDirs:
+	// the runner's own private files (its .env, state, logs). They come from
+	// the runner, not the policy, so they are host paths, not logical ones.
+	ReadDeny []string
 }
 
 // Backend implements sandbox.Backend over the isobox CLI.
@@ -115,6 +119,9 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 		for _, d := range credentialDirs {
 			deny[filepath.Join(home, d)] = true
 		}
+	}
+	for _, d := range b.cfg.ReadDeny {
+		deny[d] = true
 	}
 	for _, d := range spec.Filesystem.Deny {
 		h, err := b.host(d)
