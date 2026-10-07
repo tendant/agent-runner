@@ -11,12 +11,14 @@ import (
 // recordingSender captures Final sends.
 type recordingSender struct {
 	finals []string
+	ids    []string
 }
 
 func (s *recordingSender) Status(_ context.Context, _, text string) {}
 func (s *recordingSender) Reply(_ context.Context, _, text string)  {}
-func (s *recordingSender) Final(_ context.Context, _, text string) {
+func (s *recordingSender) Final(_ context.Context, id, text string) {
 	s.finals = append(s.finals, text)
+	s.ids = append(s.ids, id)
 }
 
 func welcomeEngine(t *testing.T, enabled bool) (*Engine, *recordingSender) {
@@ -46,6 +48,18 @@ func TestWelcomeIfNeeded_FirstContactOnly(t *testing.T) {
 	}
 	if sender.finals[0] != "hello there" {
 		t.Errorf("unexpected welcome text: %q", sender.finals[0])
+	}
+}
+
+func TestWelcomeIfNeededTo_SentToThread(t *testing.T) {
+	e, sender := welcomeEngine(t, true)
+
+	// Once per id, as a reply in whichever thread spoke first.
+	e.WelcomeIfNeededTo(context.Background(), "stream-u_bot", "m_first")
+	e.WelcomeIfNeededTo(context.Background(), "stream-u_bot", "m_second")
+
+	if len(sender.ids) != 1 || sender.ids[0] != "m_first" {
+		t.Fatalf("welcome sent to %v, want [m_first]", sender.ids)
 	}
 }
 
