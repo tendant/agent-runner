@@ -86,9 +86,16 @@ func fileName(name string) string {
 
 func (s *Store) path(name string) string { return filepath.Join(s.Dir, fileName(name)) }
 
-// withLock serializes read-modify-write on one lease via flock on a sidecar.
-func (s *Store) withLock(name string, fn func() error) error {
-	f, err := os.OpenFile(s.path(name)+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+// storeLock is the one lock file all lease updates in a Store serialize on.
+// A sidecar per lease could never be deleted safely (a waiter would still lock
+// the unlinked file while a newcomer locks a fresh one), so each lease left a
+// lock file behind for good. Lease updates are rare; one lock is enough.
+const storeLock = ".lock"
+
+// withLock serializes read-modify-write on leases via flock on the store's
+// lock file.
+func (s *Store) withLock(fn func() error) error {
+	f, err := os.OpenFile(filepath.Join(s.Dir, storeLock), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -132,7 +139,7 @@ func sameOwner(a, b Owner) bool {
 // the previous owner is dead (a stalled-but-alive owner keeps it).
 func (s *Store) Acquire(r Record, ttl time.Duration) (Record, error) {
 	var out Record
-	err := s.withLock(r.Name, func() error {
+	err := s.withLock(func() error {
 		cur, err := s.read(r.Name)
 		if err != nil {
 			return err
@@ -151,7 +158,7 @@ func (s *Store) Acquire(r Record, ttl time.Duration) (Record, error) {
 
 // Renew extends the lease and may update procs/deadline via mutate.
 func (s *Store) Renew(name string, owner Owner, ttl time.Duration, mutate func(*Record)) error {
-	return s.withLock(name, func() error {
+	return s.withLock(func() error {
 		cur, err := s.read(name)
 		if err != nil {
 			return err
@@ -169,7 +176,7 @@ func (s *Store) Renew(name string, owner Owner, ttl time.Duration, mutate func(*
 
 // Release removes the lease if still ours.
 func (s *Store) Release(name string, owner Owner) error {
-	return s.withLock(name, func() error {
+	return s.withLock(func() error {
 		cur, err := s.read(name)
 		if err != nil || cur == nil {
 			return err
@@ -183,7 +190,7 @@ func (s *Store) Release(name string, owner Owner) error {
 
 // Remove deletes a lease unconditionally (supervisor use).
 func (s *Store) Remove(name string) error {
-	return s.withLock(name, func() error {
+	return s.withLock(func() error {
 		if err := os.Remove(s.path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

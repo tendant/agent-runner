@@ -43,6 +43,7 @@ func hasDataLayout(dir string) bool {
 type Config struct {
 	// Directory paths
 	ProjectDir    string // Resolved CWD at startup — the project root
+	DataDir       string // DATA_DIR: base of the roots below; holds .env.local
 	RepoCacheRoot string
 	LogsRoot      string
 	TmpRoot       string
@@ -227,6 +228,7 @@ func DefaultConfig() *Config {
 // state instead of only affecting where .env.local is read from.
 func defaultConfigForDataDir(data string) *Config {
 	return &Config{
+		DataDir:                  data,
 		RepoCacheRoot:            filepath.Join(data, "repo-cache"),
 		StateRoot:                filepath.Join(data, "state"),
 		LogsRoot:                 filepath.Join(data, "logs"),

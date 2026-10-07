@@ -226,3 +226,17 @@ func TestCommandHonoursSpecTimeout(t *testing.T) {
 		t.Errorf("Command ignored spec timeout: %v", d)
 	}
 }
+
+func TestRunnerReadDenyIsAlwaysApplied(t *testing.T) {
+	b := New(Config{Roots: roots(t), ReadDeny: []string{"/data/.env", "/data/state"}})
+	f, _, err := b.flags(spec(sandbox.EgressOutbound))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(f, " ")
+	for _, want := range []string{"--read-deny /data/.env", "--read-deny /data/state"} {
+		if !strings.Contains(j, want) {
+			t.Errorf("missing %q in %s", want, j)
+		}
+	}
+}
