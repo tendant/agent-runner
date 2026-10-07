@@ -922,7 +922,9 @@ func isImageContent(contentType string) bool {
 
 // handleMessage routes one message into its thread's state machine.
 func (b *Bot) handleMessage(ctx context.Context, channelID, key, text string) {
-	b.engine.WelcomeIfNeeded(ctx, channelID)
+	// Greet once per bot, not per channel: users open channels with it all
+	// the time. The greeting answers the first message, in its thread.
+	b.engine.WelcomeIfNeededTo(ctx, "stream-"+b.botUserID, key)
 
 	// /wechat-login runs a channel-specific QR flow — handle before the gateway.
 	if text == "/wechat-login" {

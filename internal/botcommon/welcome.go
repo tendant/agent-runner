@@ -44,6 +44,14 @@ func LoadWelcomeText(memoryDir string) string {
 // message is lost. Call it at the top of a bot's message handler, before
 // gateway or conversation processing.
 func (e *Engine) WelcomeIfNeeded(ctx context.Context, id string) {
+	e.WelcomeIfNeededTo(ctx, id, id)
+}
+
+// WelcomeIfNeededTo is WelcomeIfNeeded for a conversation whose greeting is
+// sent somewhere other than its id: once per id, sent to the engine id to
+// (for agent-stream, once per bot, as a reply in the thread that first
+// spoke, so it reads in order rather than as a thread of its own).
+func (e *Engine) WelcomeIfNeededTo(ctx context.Context, id, to string) {
 	w := e.Welcome
 	if !w.Enabled || w.Text == "" || w.StateDir == "" {
 		return
@@ -64,7 +72,7 @@ func (e *Engine) WelcomeIfNeeded(ctx context.Context, id string) {
 	}
 
 	slog.Info(e.Label+": first contact, sending welcome", "id", id)
-	e.Sender.Final(ctx, id, w.Text)
+	e.Sender.Final(ctx, to, w.Text)
 }
 
 // sanitizeID makes a conversation id safe for use as a filename.
