@@ -86,6 +86,21 @@ longer runs `Engine.ExecuteAgent` itself: it calls `Backend.Start` and then
 `Watch`es until the session is terminal, so `AGENT_MAX_CONCURRENT` becomes
 "jobs in flight".
 
+## 5a. Relation to the sandbox
+
+The sandbox (docs/sandbox.md, `AGENT_SANDBOX`) confines a run **on the host
+that runs it**: the CLI process tree goes through `executor.Launcher` into
+isobox, under a `SandboxSpec` resolved from tighten-only layers. Jobs decide
+**where** a run happens. The two compose:
+
+- **`local` and `subprocess` use the sandbox as their boundary.** A `subprocess` runner applies `AGENT_SANDBOX` exactly as the in-process engine does, so the sandbox lands first and jobs reuse it.
+- **In `k8s-job` the pod is the outer boundary**, and the same `SandboxSpec` is translated into it rather than into isobox flags: `fs` into the pod's volumes and read-only root, limits into resources, `restricted` egress into a NetworkPolicy (which Kubernetes can enforce, unlike isobox today), and gVisor through a `runtimeClassName`. The runner inside the pod may still run its CLIs under isobox; that is a deployment choice, not a requirement.
+- **Capabilities and evidence carry over.** A `k8s-job` backend claims capabilities the same way an isobox backend does, so `strict` rejects a run whose spec the cluster cannot enforce (no NetworkPolicy controller, no gVisor runtime class).
+- **The model proxy moves to the dispatcher.** `internal/sandbox/proxy` keeps provider credentials outside the sandbox; for jobs it runs in the dispatcher, and the job gets the proxy's URL and a per-run token instead of LLM keys in its env. This closes the `AGENT_SANDBOX_ENV_ALLOW` interim gap for jobs.
+- **Secrets delivery** (`internal/sandbox/secrets`) is how a job receives the git and memory tokens it does need, instead of `envFrom` a whole Secret.
+- **Leases and the supervisor stay per host.** The Thread run queue (one active run per thread) and sandbox leases guard runs on one machine; across pods the dispatcher's queue and journal are the owner, and Kubernetes (`activeDeadlineSeconds`, Job deletion) does the supervisor's deadline and orphan work. A `subprocess` runner keeps using leases and `sandbox-supervisor` as today.
+- **Workspace export.** The validated-diff export with quarantine (`internal/sandbox/workspace`) is the natural way for a job to hand a task workspace back without a shared volume (§8.1): the job returns a diff, and the dispatcher validates and applies it. Not wired in the run path yet on either side.
+
 ## 6. Backend interface
 
 ```go
@@ -229,7 +244,7 @@ This needs the journal to carry the handle and enough of the session to rebuild 
 Job template (built in Go, overridable fields from config):
 
 - image `AGENT_JOB_IMAGE` (the full image with CLIs); command `agent-runner run-session --id <id>`
-- env: `AGENT_SESSION_ID`, `AGENT_JOB_DISPATCHER_URL`, `AGENT_SESSION_TOKEN`; `envFrom` the runner's Secret (`AGENT_JOB_SECRET`) for LLM keys, git and memory tokens
+- env: `AGENT_SESSION_ID`, `AGENT_JOB_DISPATCHER_URL`, `AGENT_SESSION_TOKEN`, and the model proxy's URL and per-run token (§5a). Git and memory tokens through secrets delivery; `AGENT_JOB_SECRET` only for what the proxy cannot cover (a CLI that needs its own login)
 - CLI login (`~/.claude`, `~/.codex`) from a Secret or the shared volume (§16)
 - volumes: `emptyDir` for the one-shot workspace; the shared volume (`AGENT_JOB_SHARED_VOLUME`) for task workspaces and the repo cache
 - resources `AGENT_JOB_CPU` / `AGENT_JOB_MEMORY`; `backoffLimit: 0` (the engine already retries iterations; a re-run job would repeat side effects such as pushes); `activeDeadlineSeconds` (§9); `ttlSecondsAfterFinished: 600`
@@ -262,6 +277,7 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
 
 ## 15. Plan
 
+0. **Sandbox first** (merged): the local runner is confined by `AGENT_SANDBOX`, and `executor.Launcher` is the seam for where a CLI process runs.
 1. **Split the engine (no behavior change).** Separate `ExecuteAgentWithContext` into the run (prompt → workspace → planner → loop → reviewer → git sync → outputs) and finalization (audit log, daily log, curation, memory push, notify, webhook, cleanup), with a `Reporter` between them. `local` = both in process. Existing tests and e2e must pass unchanged.
 2. **Wire protocol and `run-session`.** `SessionWire`, `/internal/sessions/*`, the control long poll, tokens, and the `subprocess` backend. E2E: the existing mock-CLI suites run again with `AGENT_EXECUTION_BACKEND=subprocess`, plus stop, steer, a killed runner, and a dispatcher restart mid-session.
 3. **Cross-pod state.** `flock` repo-cache lock, memory clone in the runner and single-writer finalization in the dispatcher, journal handles and re-attach (§10).
