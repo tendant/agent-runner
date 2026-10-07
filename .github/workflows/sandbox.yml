@@ -1,0 +1,60 @@
+name: sandbox
+on:
+  pull_request:
+    paths: ["internal/sandbox/**", "internal/executor/**", "cmd/sandbox-*/**", ".github/**"]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  ISOBOX_REF: main   # pin to a commit SHA for reproducible results
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go build ./... && go test ./internal/sandbox/... ./internal/executor/...
+
+  conformance:
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, backend: seatbelt }
+          - { os: ubuntu-latest, backend: gvisor }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26" }
+      - name: Build isobox
+        run: |
+          git clone https://github.com/can1357/isobox /tmp/isobox
+          git -C /tmp/isobox checkout "$ISOBOX_REF"
+          (cd /tmp/isobox && go build -o /tmp/isobox/isobox ./cmd/isobox)
+      - name: Install gVisor (Linux)
+        if: matrix.backend == 'gvisor'
+        run: |
+          curl -fsSL -o runsc https://storage.googleapis.com/gvisor/releases/release/20250106.0/x86_64/runsc
+          sudo install -m 0755 runsc /usr/local/bin/runsc
+          runsc --version
+      - name: Conformance
+        run: |
+          go build -o sandbox-conformance ./cmd/sandbox-conformance
+          RUN=""; [ "${{ matrix.backend }}" = gvisor ] && RUN="sudo env PATH=$PATH"
+          $RUN ./sandbox-conformance --isobox /tmp/isobox/isobox --backend ${{ matrix.backend }} \
+            --report report-${{ matrix.backend }}.json --manifest manifest-${{ matrix.backend }}.json \
+            --require-file .github/sandbox-baselines/${{ matrix.backend }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conformance-${{ matrix.backend }}
+          path: |
+            report-${{ matrix.backend }}.json
+            manifest-${{ matrix.backend }}.json

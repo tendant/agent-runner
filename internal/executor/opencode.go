@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +17,8 @@ import (
 type OpencodeExecutor struct {
 	// ExtraEnv overlays the inherited environment for spawned processes.
 	ExtraEnv []string
+	// Launcher starts the CLI; nil runs it directly on the host.
+	Launcher Launcher
 	Model    string
 	MaxTurns int // stored for interface compatibility; opencode has no max-turns flag
 }
@@ -47,11 +47,11 @@ func (e *OpencodeExecutor) ExecuteWithSystemPrompt(ctx context.Context, workspac
 	}
 	args = append(args, prompt)
 
-	cmd := exec.CommandContext(ctx, "opencode", args...)
-	cmd.Dir = workspacePath
-	if len(e.ExtraEnv) > 0 {
-		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	cmd, release, lerr := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "opencode", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	if lerr != nil {
+		return nil, fmt.Errorf("OPENCODE_ERROR: launch: %w", lerr)
 	}
+	defer release()
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -193,3 +193,6 @@ func parseOpencodeOutput(data []byte) (string, float64, error) {
 
 // SetExtraEnv sets an environment overlay applied to spawned processes.
 func (e *OpencodeExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }
+
+// SetLauncher sets how the CLI is started (host or sandbox).
+func (e *OpencodeExecutor) SetLauncher(l Launcher) { e.Launcher = l }

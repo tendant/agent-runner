@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -14,6 +13,8 @@ import (
 type CodexExecutor struct {
 	// ExtraEnv overlays the inherited environment for spawned processes.
 	ExtraEnv []string
+	// Launcher starts the CLI; nil runs it directly on the host.
+	Launcher Launcher
 	Model    string
 }
 
@@ -100,11 +101,11 @@ func (e *CodexExecutor) run(ctx context.Context, workspacePath, prompt string, r
 	// Pass large prompts over stdin to avoid argv length limits.
 	args = append(args, "-")
 
-	cmd := exec.CommandContext(ctx, "codex", args...)
-	cmd.Dir = workspacePath
-	if len(e.ExtraEnv) > 0 {
-		cmd.Env = append(os.Environ(), e.ExtraEnv...)
+	cmd, release, lerr := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "codex", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
+	if lerr != nil {
+		return nil, "", fmt.Errorf("CODEX_ERROR: launch: %w", lerr)
 	}
+	defer release()
 	cmd.Stdin = strings.NewReader(prompt)
 
 	var stdout, stderr bytes.Buffer
@@ -180,3 +181,6 @@ func (e *CodexExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, works
 
 // SetExtraEnv sets an environment overlay applied to spawned processes.
 func (e *CodexExecutor) SetExtraEnv(env []string) { e.ExtraEnv = env }
+
+// SetLauncher sets how the CLI is started (host or sandbox).
+func (e *CodexExecutor) SetLauncher(l Launcher) { e.Launcher = l }

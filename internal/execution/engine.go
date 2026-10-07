@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
+	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"io"
 	"log/slog"
 	"net/http"
@@ -154,6 +156,28 @@ func recordToolMetric(ev executor.Event) {
 // SetCallbacks installs the webhook dispatcher used for sessions that carry
 // a CallbackURL. nil disables delivery.
 func (h *Engine) SetCallbacks(d *callback.Dispatcher) { h.callbacks = d }
+
+// SetSandbox installs the sandbox runtime (nil = host execution).
+func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
+
+// beginSandbox confines the run's agent CLIs. The returned context carries the
+// sandbox launcher, so the planner, session and reviewer are all covered. A
+// strict-mode rejection fails the session before any work starts.
+func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (context.Context, func(), bool) {
+	if h.sandbox == nil || h.sandbox.Mode() == "off" {
+		return ctx, func() {}, false
+	}
+	thread := sessionID
+	if live.TaskWorkspace != "" {
+		thread = filepath.Base(live.TaskWorkspace) // all turns of a task share a Thread
+	}
+	run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds})
+	if err != nil {
+		h.FailSession(sessionID, "sandbox: "+err.Error())
+		return ctx, func() {}, true
+	}
+	return run.Ctx, run.Finish, false
+}
 
 // CallbackPayload is the body POSTed to a session's CallbackURL: the same
 // object GET /agent/{id} returns, plus an "event" discriminator and the
@@ -467,6 +491,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
+
+	ctx, sandboxFinish, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
+	if sandboxAborted {
+		return
+	}
+	defer sandboxFinish()
 
 	planCtx, planSpan := tracing.Start(ctx, "agent.planner", attribute.Bool("planner.enabled", h.config.Agent.PlannerEnabled))
 	plan, plannerText, aborted := h.runPlanner(planCtx, sessionID, liveSession, checkoutPath, preamble, message)
@@ -1530,7 +1560,7 @@ func pushUnpushedCommits(ctx context.Context, repoPath string, retries, retryDel
 }
 
 func gitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := gitsafe.CommandContext(ctx, args...)
 	cmd.Dir = repoPath
 	return cmd
 }

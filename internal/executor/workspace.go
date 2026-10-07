@@ -2,9 +2,9 @@ package executor
 
 import (
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -379,7 +379,7 @@ func SuggestCachedRepo(repoCacheRoot, repo string) string {
 // The remote must already have credentials configured (via configureGitRemote).
 func fetchAndResetRepo(repoPath, repoName string) error {
 	run := func(args ...string) error {
-		cmd := exec.Command("git", args...)
+		cmd := gitsafe.Command(args...)
 		cmd.Dir = repoPath
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -395,7 +395,7 @@ func fetchAndResetRepo(repoPath, repoName string) error {
 
 	// Detect default branch via the symbolic ref; fall back to "main".
 	branch := "main"
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := gitsafe.Command("symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = repoPath
 	if out, err := cmd.Output(); err == nil {
 		// output: "refs/remotes/origin/main\n"
@@ -430,7 +430,7 @@ func fetchAndResetRepo(repoPath, repoName string) error {
 // git-documented idiom) so only the helper set here applies to this repo.
 func ConfigureCredHelper(repoPath string) {
 	runGitConfig := func(args ...string) error {
-		cmd := exec.Command("git", append([]string{"config"}, args...)...)
+		cmd := gitsafe.Command(append([]string{"config"}, args...)...)
 		cmd.Dir = repoPath
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -456,7 +456,7 @@ func ConfigureCredHelper(repoPath string) {
 // It checks the current URL first and only updates if different.
 func configureGitRemote(repoPath, repoName, expectedURL string) {
 	// Check current remote URL
-	getURL := exec.Command("git", "remote", "get-url", "origin")
+	getURL := gitsafe.Command("remote", "get-url", "origin")
 	getURL.Dir = repoPath
 	out, err := getURL.Output()
 	if err == nil {
@@ -466,7 +466,7 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 			return
 		}
 		slog.Info("workspace: updating git remote", "repo", repoName, "old", currentURL, "new", expectedURL)
-		setURL := exec.Command("git", "remote", "set-url", "origin", expectedURL)
+		setURL := gitsafe.Command("remote", "set-url", "origin", expectedURL)
 		setURL.Dir = repoPath
 		var setURLStderr strings.Builder
 		setURL.Stderr = &setURLStderr
@@ -478,7 +478,7 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 
 	// No remote — add it
 	slog.Info("workspace: adding git remote", "repo", repoName, "url", expectedURL)
-	addRemote := exec.Command("git", "remote", "add", "origin", expectedURL)
+	addRemote := gitsafe.Command("remote", "add", "origin", expectedURL)
 	addRemote.Dir = repoPath
 	var addRemoteStderr strings.Builder
 	addRemote.Stderr = &addRemoteStderr
