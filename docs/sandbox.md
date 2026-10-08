@@ -45,6 +45,22 @@ Resolve policy -> Check (reject in strict) -> Thread lease -> sandbox lease
 * `HOME`/`TMPDIR` point at those private directories; the environment is an allowlist.
 * Runner-side git (`internal/gitsafe`) is hardened against hooks/fsmonitor planted in the workspace.
 
+## Claude credentials and config
+
+The sandbox hides the host's `claude login` (`~/.claude`, and on macOS the Keychain), and copying
+its `.credentials.json` would break the host login when a copy refreshes the rotating token. So:
+
+* **Credentials:** run `claude setup-token` (a long-lived subscription token, no refresh) and set
+  `CLAUDE_CODE_OAUTH_TOKEN` in the runner's env. It is passed to the `claude` CLI only
+  (`SandboxLauncher.CLIEnvAllow`), never to other CLIs. An API key works too, listed in
+  `AGENT_SANDBOX_ENV_ALLOW`. With neither, a claude run fails before it starts, saying so.
+* **Config:** `CLAUDE_CONFIG_DIR` is `/home/agent/.claude` (the thread's sandbox home: writable,
+  kept across a task's turns so `--resume` works). Before each run it is refreshed from
+  `~/.claude` (or `agent-home/claude` with `AGENT_ISOLATED=true`), copying only `settings.json`,
+  `CLAUDE.md`, `agents/`, `commands/`, `skills/` (symlinks resolved) and the `mcpServers` and
+  `hasCompletedOnboarding` keys of `.claude.json`. Never credentials, other projects'
+  transcripts, history or todos.
+
 ## Policy
 
 `SandboxSpec` (version 1; unknown fields or versions fail closed). Layers

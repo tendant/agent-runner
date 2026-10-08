@@ -93,3 +93,33 @@ func TestSandboxLauncherPermissiveEnvAndRelease(t *testing.T) {
 		t.Error("release must destroy the sandbox")
 	}
 }
+
+func TestSandboxLauncherPerCLIEnvAndForcedEnv(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+	d := 0
+	fb := &fakeBackend{destroys: &d}
+	l := &SandboxLauncher{Backend: func(string) sandbox.Backend { return fb }, Mode: sandbox.ModePermissive,
+		CLIEnvAllow: map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}},
+		EnvForce:    []string{"CLAUDE_CONFIG_DIR=/sandbox/home/.claude"}}
+	env := func(name string) string {
+		_, release, err := l.Command(context.Background(), LaunchSpec{Name: name, Dir: "/w",
+			ExtraEnv: []string{"CLAUDE_CONFIG_DIR=/runner/agent-home/claude"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+		return strings.Join(fb.got.Env, "\n")
+	}
+
+	got := env("/usr/local/bin/claude")
+	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=tok") {
+		t.Errorf("claude did not get its token: %s", got)
+	}
+	// The forced value comes last, so it wins over the executor's overlay.
+	if i, j := strings.LastIndex(got, "CLAUDE_CONFIG_DIR=/sandbox/home/.claude"), strings.LastIndex(got, "CLAUDE_CONFIG_DIR=/runner"); i < j {
+		t.Errorf("forced env must come after the overlay: %s", got)
+	}
+	if got := env("codex"); strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("another CLI got claude's token: %s", got)
+	}
+}

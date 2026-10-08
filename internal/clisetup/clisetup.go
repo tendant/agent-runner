@@ -465,6 +465,27 @@ func codexHasOAuthCredentials() bool {
 	return err == nil
 }
 
+// SandboxedClaudeAuthHelp says how to give a sandboxed claude CLI credentials.
+const SandboxedClaudeAuthHelp = "the sandbox hides this host's `claude login` (~/.claude, the macOS Keychain). " +
+	"Run `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN, or set ANTHROPIC_API_KEY " +
+	"(or ANTHROPIC_AUTH_TOKEN) and list it in AGENT_SANDBOX_ENV_ALLOW"
+
+// SandboxedClaudeAuth reports whether a claude CLI inside the sandbox can
+// authenticate: the sandbox passes CLAUDE_CODE_OAUTH_TOKEN to claude itself,
+// and an API key or auth token only when envAllow lists it. A `claude login`
+// does not count: its credentials stay outside the sandbox.
+func SandboxedClaudeAuth(envAllow []string) bool {
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		return true
+	}
+	for _, k := range envAllow {
+		if (k == "ANTHROPIC_API_KEY" || k == "ANTHROPIC_AUTH_TOKEN") && os.Getenv(k) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ClaudeHasHostAuth returns true if Claude Code can authenticate without an
 // API key env var: a CLAUDE_CODE_OAUTH_TOKEN, or a prior `claude login` whose
 // credentials live in the config dir (.credentials.json on Linux, the login

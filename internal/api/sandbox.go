@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/agent-runner/agent-runner/internal/agenthome"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
@@ -30,6 +32,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EvidenceFile:  cfg.Agent.SandboxEvidence,
 		EnvAllow:      cfg.Agent.SandboxEnvAllow,
 		PrivatePaths:  sandboxPrivatePaths(cfg),
+		Claude:        sandboxClaudeSeed(cfg),
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
@@ -40,6 +43,9 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend)
+	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow) {
+		slog.Warn("sandbox: claude runs have no credentials: " + clisetup.SandboxedClaudeAuthHelp)
+	}
 	return rt
 }
 
@@ -68,4 +74,19 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		}
 	}
 	return paths
+}
+
+// sandboxClaudeSeed is where a sandboxed claude CLI's settings, skills and MCP
+// servers come from: agent-home/claude when the runner is isolated, else the
+// host user's ~/.claude and ~/.claude.json. Credentials are never copied.
+func sandboxClaudeSeed(cfg *config.Config) sandboxrt.ClaudeSeed {
+	if cfg.Agent.Isolated {
+		dir := filepath.Join(cfg.ProjectDir, agenthome.Dir, "claude")
+		return sandboxrt.ClaudeSeed{Dir: dir, StateFile: filepath.Join(dir, ".claude.json")}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return sandboxrt.ClaudeSeed{}
+	}
+	return sandboxrt.ClaudeSeed{Dir: filepath.Join(home, ".claude"), StateFile: filepath.Join(home, ".claude.json")}
 }
