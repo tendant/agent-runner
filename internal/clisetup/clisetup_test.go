@@ -108,3 +108,24 @@ func TestResolveCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestSandboxedClaudeAuth(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	if SandboxedClaudeAuth(nil) {
+		t.Error("no credentials at all")
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	if SandboxedClaudeAuth(nil) {
+		t.Error("an API key not passed into the sandbox does not count")
+	}
+	if !SandboxedClaudeAuth([]string{"ANTHROPIC_API_KEY"}) {
+		t.Error("an allowed API key counts")
+	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+	if !SandboxedClaudeAuth(nil) {
+		t.Error("a setup-token token is passed to claude without an allow entry")
+	}
+}

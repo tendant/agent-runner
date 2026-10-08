@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 )
@@ -79,9 +80,17 @@ type SandboxLauncher struct {
 	// EnvAllow names host environment variables copied into the sandbox
 	// (interim until the model proxy keeps provider credentials outside).
 	EnvAllow []string
+	// CLIEnvAllow names host environment variables copied in only for one
+	// CLI, keyed by its binary name (e.g. "claude": CLAUDE_CODE_OAUTH_TOKEN),
+	// so a credential reaches the CLI it is for and no other.
+	CLIEnvAllow map[string][]string
 	// EnvOverride is applied after the base env (e.g. HOME/TMPDIR inside the
 	// sandbox) and before the executor's own overlay.
 	EnvOverride []string
+	// EnvForce is applied last, over the executor's overlay: settings the
+	// sandbox must own, such as a CLI config dir inside the sandbox home
+	// (an overlay's AGENT_ISOLATED config dir is outside it and read-only).
+	EnvForce []string
 	// Tag labels every sandboxed process (visible in argv) so an external
 	// supervisor can find the process group of a run.
 	Tag string
@@ -135,13 +144,14 @@ func (l *SandboxLauncher) env(s LaunchSpec) []string {
 			env = append(env, k+"="+v)
 		}
 	}
-	for _, k := range l.EnvAllow {
+	for _, k := range append(append([]string(nil), l.EnvAllow...), l.CLIEnvAllow[filepath.Base(s.Name)]...) {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
 	}
 	env = append(env, l.EnvOverride...)
-	return append(env, s.ExtraEnv...)
+	env = append(env, s.ExtraEnv...)
+	return append(env, l.EnvForce...)
 }
 
 // LauncherFrom returns the launcher carried by ctx, if any.

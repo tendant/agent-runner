@@ -51,9 +51,11 @@ type Config struct {
 	// files, state, logs, ...). Every run is read-denied them, except for the
 	// parts that hold the run's own workspace, home and tmp (see readDeny).
 	PrivatePaths []string
-	LeaseTTL     time.Duration
-	MaxQueue     int
-	OnEvent      func(Event)
+	// Claude seeds a sandboxed claude CLI's config dir (see seedClaudeConfig).
+	Claude   ClaudeSeed
+	LeaseTTL time.Duration
+	MaxQueue int
+	OnEvent  func(Event)
 	// NewBackend overrides backend construction (tests, other backends).
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
@@ -294,6 +296,14 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			return nil, err
 		}
 	}
+	// claude's config dir lives in the sandbox home: writable, kept per thread
+	// (a task's next turn resumes its conversation), seeded from an allowlist.
+	claudeDir := filepath.Join(roots[sandbox.RootHome], ".claude")
+	if err := seedClaudeConfig(r.cfg.Claude, claudeDir); err != nil {
+		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "claude config: " + err.Error()})
+		return nil, &RejectedError{fmt.Errorf("seed claude config: %w", err)}
+	}
+
 	keep := make([]string, 0, len(roots))
 	for _, d := range roots {
 		keep = append(keep, d)
@@ -363,10 +373,14 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		Mode:     r.cfg.Mode,
 		EnvAllow: r.cfg.EnvAllow,
 		Tag:      req.RunID,
+		// A `claude setup-token` token reaches the claude CLI only; the host's
+		// `claude login` (Keychain, ~/.claude) is out of the sandbox's reach.
+		CLIEnvAllow: map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}},
 		EnvOverride: []string{
 			"HOME=" + roots[sandbox.RootHome],
 			"TMPDIR=" + roots[sandbox.RootTmp],
 		},
+		EnvForce: []string{"CLAUDE_CONFIG_DIR=" + claudeDir},
 		OnCheck: func(cr sandbox.CheckResult, err error) {
 			if err != nil || (r.cfg.Mode == sandbox.ModeStrict && len(cr.Gaps) > 0) {
 				r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Backend: cr.Backend, Detail: "check at launch failed"})

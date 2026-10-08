@@ -20,6 +20,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/callback"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/curator"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
@@ -166,6 +167,11 @@ func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (context.Context, func(), bool) {
 	if h.sandbox == nil || h.sandbox.Mode() == "off" {
 		return ctx, func() {}, false
+	}
+	// Fail now, in words, rather than deep in the CLI with an auth error.
+	if clisetup.ResolveCLI(h.config.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(h.config.Agent.SandboxEnvAllow) {
+		h.FailSession(sessionID, "sandbox: claude has no credentials: "+clisetup.SandboxedClaudeAuthHelp)
+		return ctx, func() {}, true
 	}
 	thread := sessionID
 	if live.TaskWorkspace != "" {
