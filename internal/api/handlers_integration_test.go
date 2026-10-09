@@ -286,17 +286,18 @@ func TestHandleRun_ProjectLocked(t *testing.T) {
 }
 
 func TestHandleRun_AtCapacity(t *testing.T) {
-	dir := t.TempDir()
-	repoCacheDir := filepath.Join(dir, "repo-cache")
-	os.MkdirAll(repoCacheDir, 0755)
-
-	// Use a separate temp dir for workspaces to avoid t.TempDir() cleanup races
-	// with background job goroutines still running after the test exits.
-	tmpDir, err := os.MkdirTemp("", "agent-runner-test-tmp-*")
+	// Not t.TempDir(): the accepted job keeps running in the background after
+	// the test returns and writes its workspace and log, which made
+	// t.TempDir()'s cleanup fail ("directory not empty"). This cleanup is
+	// best-effort instead.
+	dir, err := os.MkdirTemp("", "agent-runner-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	repoCacheDir := filepath.Join(dir, "repo-cache")
+	os.MkdirAll(repoCacheDir, 0755)
+	tmpDir := filepath.Join(dir, "tmp")
 
 	cfg := config.DefaultConfig()
 	cfg.RepoCacheRoot = repoCacheDir
