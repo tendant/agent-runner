@@ -379,6 +379,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		EnvOverride: []string{
 			"HOME=" + roots[sandbox.RootHome],
 			"TMPDIR=" + roots[sandbox.RootTmp],
+			// claude's Bash tool keeps its scratch under /tmp/claude-<uid>
+			// otherwise, which the sandbox does not let it write.
+			"CLAUDE_CODE_TMPDIR=" + roots[sandbox.RootTmp],
 		},
 		EnvForce: []string{"CLAUDE_CONFIG_DIR=" + claudeDir},
 		OnCheck: func(cr sandbox.CheckResult, err error) {
