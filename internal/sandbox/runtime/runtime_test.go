@@ -123,6 +123,9 @@ func TestPermissiveRunsAndReportsGaps(t *testing.T) {
 	if !strings.Contains(env, "HOME="+home) || !strings.Contains(env, "X=1") || got.Tag != "r2" || got.Args[0] != "claude" {
 		t.Errorf("proc spec: %+v", got)
 	}
+	if !strings.Contains(env, "CLAUDE_CODE_TMPDIR="+filepath.Join(rt.cfg.StateDir, "runs", "r2", "tmp")) {
+		t.Errorf("claude's scratch dir must be the run's tmp: %s", env)
+	}
 	if !strings.Contains(env, "CLAUDE_CONFIG_DIR="+filepath.Join(home, ".claude")) {
 		t.Errorf("claude's config dir must be in the sandbox home: %s", env)
 	}
