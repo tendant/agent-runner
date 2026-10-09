@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  ISOBOX_REF: main   # pin to a commit SHA for reproducible results
+  ISOBOX_REF: c7bbd193e9b1b20054b94b776509ea1fd2129cd5   # isobox main as of 2026-10-07; bump deliberately
 
 jobs:
   unit:
