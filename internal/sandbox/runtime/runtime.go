@@ -223,13 +223,26 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.StateDir == "" {
 		return nil, errors.New("sandbox: state dir required")
 	}
+	// Absolute: these reach the sandbox (CODEX_HOME, isobox's --dir and
+	// --read-deny), whose processes run in the workspace, so a relative path
+	// (DATA_DIR defaults to ".") would name the wrong place or nothing.
+	var err error
+	if r.cfg.StateDir, err = filepath.Abs(cfg.StateDir); err != nil {
+		return nil, err
+	}
+	r.cfg.PrivatePaths = make([]string, len(cfg.PrivatePaths))
+	for i, p := range cfg.PrivatePaths {
+		if r.cfg.PrivatePaths[i], err = filepath.Abs(p); err != nil {
+			return nil, err
+		}
+	}
 	if cfg.LeaseTTL == 0 {
 		r.cfg.LeaseTTL = 30 * time.Second
 	}
 	if cfg.MaxQueue == 0 {
 		r.cfg.MaxQueue = 8
 	}
-	st, err := lease.NewStore(filepath.Join(cfg.StateDir, "leases"))
+	st, err := lease.NewStore(filepath.Join(r.cfg.StateDir, "leases"))
 	if err != nil {
 		return nil, err
 	}
@@ -330,6 +343,11 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	if req.RunID == "" || req.Workspace == "" {
 		return nil, errors.New("sandbox: run id and workspace required")
 	}
+	ws, err := filepath.Abs(req.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	req.Workspace = ws
 	if req.ThreadID == "" {
 		req.ThreadID = req.RunID
 	}
