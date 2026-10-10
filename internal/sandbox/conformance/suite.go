@@ -360,9 +360,9 @@ if os.fork()==0:
 			s := t.baseSpec()
 			s.Resources.PIDs = 16
 			py := "import os,time\ntry:\n for i in range(100):\n  if os.fork()==0:\n   time.sleep(3);os._exit(0)\n print('UNLIMITED')\nexcept OSError:\n print('LIMITED')"
-			out, _ := t.exec(s, "python3 -c \""+strings.ReplaceAll(py, `"`, `\"`)+"\" 2>&1")
+			out, _ := t.exec(s, "grep 'Max processes' /proc/self/limits; python3 -c \""+strings.ReplaceAll(py, `"`, `\"`)+"\" 2>&1")
 			if !strings.Contains(out, "LIMITED") || strings.Contains(out, "UNLIMITED") {
-				return errors.New("process cap not enforced")
+				return fmt.Errorf("process cap not enforced: %s", tail(out, 300))
 			}
 			return nil
 		}},
@@ -464,4 +464,12 @@ func (r Report) Missing(required []sandbox.CapabilityID) []sandbox.CapabilityID 
 func (r Report) JSON() []byte {
 	b, _ := json.MarshalIndent(r, "", "  ")
 	return b
+}
+
+// tail returns the last n bytes of s, on one line, for failure details.
+func tail(s string, n int) string {
+	if len(s) > n {
+		s = s[len(s)-n:]
+	}
+	return strings.Join(strings.Fields(s), " ")
 }

@@ -154,8 +154,11 @@ sandbox; the pids cap makes `fork()` fail with `EAGAIN` and the run carries on.
   process does not reach the sandbox, so the adapter starts the agent CLI through the runner's
   own binary as a shim (`internal/sandbox/isobox/nproc.go`): `<runner> __agent-runner-nproc N --
   <cli> ...` sets the soft and hard limits to N and execs the CLI. The sandbox has no
-  capabilities, so the agent cannot raise the hard limit. The runner's binary must be readable
-  inside the sandbox (it is unless it lives in one of the runner's private directories).
+  capabilities, so the agent cannot raise the hard limit. The sandbox runs as uid 0 without
+  capabilities and so cannot load the runner's binary from a private directory (a 0750 home), so
+  each launch runs a fresh copy in the run's tmp dir (a copy, never a hard link: the sandbox can
+  write there). An agent that replaces that copy mid-run escapes only the pids cap of its later
+  launches, not the sandbox.
 * **isobox's `--pids` does not limit sandboxed processes**, so the adapter does not use it on
   gVisor. It sets `pids.max` on the sandbox's host cgroup, which counts the Sentry's own host
   threads (an idle run already uses ~29). A small value stops runsc from starting (8 or 16 do; 32

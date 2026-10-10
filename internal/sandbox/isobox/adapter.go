@@ -331,7 +331,7 @@ func (p *prepared) buildArgs(ps sandbox.ProcSpec) (args, env []string, err error
 	}
 	args = append(flags, "--")
 	if n := p.spec.Resources.PIDs; n > 0 && p.b.nprocByRlimit() {
-		shim, err := nprocPrefix(n)
+		shim, err := nprocPrefix(p.b.cfg.Roots[sandbox.RootTmp], n)
 		if err != nil {
 			return nil, nil, err
 		}
