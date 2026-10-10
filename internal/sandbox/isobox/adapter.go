@@ -198,6 +198,16 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 		return sandbox.CheckResult{}, fmt.Errorf("isobox --print: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	backend, enforces, caveats := parsePlan(out.String())
+	// isobox's default ("auto") is gVisor on Linux.
+	if backend == "gvisor" || b.cfg.Backend == "gvisor" {
+		for _, root := range []string{sandbox.RootWorkspace, sandbox.RootHome, sandbox.RootTmp} {
+			if h, ok := b.cfg.Roots[root]; ok {
+				if err := gvisorUnreachable(h); err != nil {
+					return sandbox.CheckResult{}, err
+				}
+			}
+		}
+	}
 	declared := map[sandbox.CapabilityID]bool{}
 	for _, c := range enforces {
 		for _, id := range isoboxToCap[c] {

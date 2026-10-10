@@ -14,8 +14,17 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 )
 
-func roots(t *testing.T) map[string]string {
+// openTempDir is a t.TempDir that, like a real data dir, others can search:
+// Go makes the per-test parent 0700, which a gVisor sandbox cannot enter.
+func openTempDir(t *testing.T) string {
 	d := t.TempDir()
+	os.Chmod(filepath.Dir(d), 0o755)
+	os.Chmod(d, 0o755)
+	return d
+}
+
+func roots(t *testing.T) map[string]string {
+	d := openTempDir(t)
 	m := map[string]string{sandbox.RootWorkspace: d + "/ws", sandbox.RootHome: d + "/home", sandbox.RootTmp: d + "/tmp"}
 	for _, p := range m {
 		os.MkdirAll(p, 0o755)
