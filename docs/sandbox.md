@@ -98,7 +98,15 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   enter via `AGENT_SANDBOX_ENV_ALLOW`.
 * Memory-curation and conversation-analyzer CLI fallbacks still run on the host.
 * No `sandbox.oom`/`fs_denied`/`egress_denied` events (isobox gives no denial signal).
-* **gVisor and Seatbelt enforcement are unverified by this repo's suite on real hosts yet.**
+* **Conformance on real hosts** (isobox `c7bbd19`): Seatbelt on macOS proves 8 capabilities
+  but not `process.containment`, so `strict` cannot run there. gVisor (`runsc` 20261005.0, Linux
+  arm64 in a privileged container) proves 10, including `process.containment` and
+  `process.cross_run_isolation`; not `resource.pids` (isobox puts the limit on the Sentry's host
+  cgroup, which does not cap sandboxed processes, and a small limit stops runsc starting) and not
+  `fs.virtual_paths` (no `/workspace` remap on either backend).
+* **gVisor host requirements:** root, cgroup v2, `runsc` new enough for `runsc features`
+  (oci-seccomp; 20250106.0 is too old), and `ip`, `sysctl` and `iptables` (isobox builds the
+  sandbox's network namespace with them).
 
 ## Operations
 

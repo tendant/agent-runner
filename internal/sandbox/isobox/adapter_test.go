@@ -240,3 +240,10 @@ func TestRunnerReadDenyIsAlwaysApplied(t *testing.T) {
 		}
 	}
 }
+
+func TestWithSystemPath(t *testing.T) {
+	got := withSystemPath([]string{"HOME=/h", "PATH=/usr/bin:/bin:/usr/sbin"})
+	if got[0] != "HOME=/h" || got[1] != "PATH=/usr/bin:/bin:/usr/sbin:/usr/local/sbin:/sbin" {
+		t.Errorf("env = %v", got)
+	}
+}

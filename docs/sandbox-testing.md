@@ -34,7 +34,7 @@ go build -o sandbox-conformance ./cmd/sandbox-conformance
 # macOS (Seatbelt)
 ./sandbox-conformance --isobox ./isobox/isobox --backend seatbelt \
   --report seatbelt-macos.json --manifest seatbelt-macos-manifest.json
-# Linux：需要 root + runsc + cgroup
+# Linux：需要 root + cgroup v2 + iproute2/procps/iptables + runsc ≥ 20261005.0（release tarball，见 .github/workflows/sandbox.yml）
 sudo ./sandbox-conformance --isobox ./isobox/isobox --backend gvisor \
   --report gvisor-linux.json --manifest production.json
 ```

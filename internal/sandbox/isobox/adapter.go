@@ -303,6 +303,7 @@ func (p *prepared) buildArgs(ps sandbox.ProcSpec) (args, env []string, err error
 		env = append(env, "PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
 		names["PATH"] = true
 	}
+	env = withSystemPath(env)
 	var nl []string
 	for n := range names {
 		nl = append(nl, n)
@@ -454,4 +455,34 @@ func (p *prepared) Destroy(context.Context) error {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 	}
 	return nil
+}
+
+// systemDirs are where isobox's own helpers live on Linux: the gVisor backend
+// runs ip, sysctl and iptables to build the sandbox's network namespace.
+var systemDirs = []string{"/usr/local/sbin", "/usr/sbin", "/sbin"}
+
+// withSystemPath appends systemDirs to env's PATH. isobox runs with the
+// sandbox's environment (it passes the allowed names through), so its helpers
+// are looked up on that PATH; without the sbin dirs every gVisor run failed
+// ("disabling sandbox IPv6: exit status 1": sysctl not found). The dirs hold
+// system tools, not credentials, so the sandboxed command seeing them is fine.
+func withSystemPath(env []string) []string {
+	out := append([]string(nil), env...)
+	for i, e := range out {
+		v, ok := strings.CutPrefix(e, "PATH=")
+		if !ok {
+			continue
+		}
+		have := map[string]bool{}
+		for _, d := range filepath.SplitList(v) {
+			have[d] = true
+		}
+		for _, d := range systemDirs {
+			if !have[d] {
+				v += string(filepath.ListSeparator) + d
+			}
+		}
+		out[i] = "PATH=" + v
+	}
+	return out
 }
