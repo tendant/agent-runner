@@ -1,11 +1,17 @@
 // Package codexlogin holds a codex ChatGPT login (an auth.json written by
 // `codex login`) on the runner's side, so sandboxed codex can use a ChatGPT
-// subscription through the model proxy without seeing a token. It refreshes
-// the access token the way codex does: within 5 minutes of its expiry, or
-// every 8 days when the token carries none.
+// subscription through the model proxy without seeing a token.
 //
-// The refresh token rotates, so the login must be the runner's own: a copy
-// shared with a codex on the host breaks whichever side refreshes second.
+// The file can be the user's own ~/.codex/auth.json, shared with codex on the
+// host. The refresh token rotates, and codex shares one file between
+// processes by re-reading it before a refresh and adopting tokens another
+// process wrote; there is no file lock. This package plays by the same rule:
+// it re-reads the file on every call, writes it atomically keeping every
+// field, refreshes 10 minutes before expiry (codex waits until 5, so when both
+// are active the runner refreshes first and codex finds fresh tokens), and
+// after a failed refresh adopts tokens another process rotated meanwhile.
+// Both refreshing in the same instant still fails one side; a login made for
+// the runner alone avoids that.
 package codexlogin
 
 import (
@@ -28,7 +34,7 @@ import (
 const (
 	DefaultTokenURL = "https://auth.openai.com/oauth/token"
 	clientID        = "app_EMoamEEZ73f0CkXaXp7hrann"
-	refreshWindow   = 5 * time.Minute
+	refreshWindow   = 10 * time.Minute // codex: 5
 	refreshInterval = 8 * 24 * time.Hour
 )
 
@@ -53,8 +59,15 @@ func (l *Login) Headers(ctx context.Context) (http.Header, error) {
 		return nil, err
 	}
 	if l.due(f) {
+		used := f.tokens.RefreshToken
 		if err := l.refresh(ctx, f); err != nil {
-			return nil, err
+			// Lost a race? Another process (codex on the host) may have
+			// rotated the token and written the file meanwhile.
+			g, lerr := l.load()
+			if lerr != nil || g.tokens.RefreshToken == used || l.expired(g) {
+				return nil, err
+			}
+			f = g
 		}
 	}
 	h := http.Header{}
@@ -121,6 +134,12 @@ func (l *Login) now() time.Time {
 		return l.Now()
 	}
 	return time.Now()
+}
+
+// expired reports whether the access token is past its exp (unknown: no).
+func (l *Login) expired(f *file) bool {
+	exp, ok := jwtExp(f.tokens.AccessToken)
+	return ok && !exp.After(l.now())
 }
 
 func (l *Login) due(f *file) bool {

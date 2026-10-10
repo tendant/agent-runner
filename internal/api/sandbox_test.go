@@ -87,3 +87,63 @@ func TestSandboxCodexLogin(t *testing.T) {
 		t.Error("the home directory must never be hidden")
 	}
 }
+
+func TestSandboxCodexLoginDefault(t *testing.T) {
+	chatgpt := `{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":"r","account_id":"x"}}`
+	put := func(dir, body string) {
+		os.MkdirAll(dir, 0o700)
+		os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	put(filepath.Join(home, ".codex"), chatgpt)
+
+	cfg := config.DefaultConfig()
+	cfg.Agent.SandboxModelProxy = true
+	cfg.Agent.CLI = "codex"
+	cfg.ProjectDir = t.TempDir()
+	chatgptChannel := func() bool {
+		ch := sandboxModelChannels(cfg)[sandboxrt.ProviderOpenAI]
+		return ch != nil && ch.ChatGPT
+	}
+
+	if !chatgptChannel() || !slices.Contains(sandboxPrivatePaths(cfg), filepath.Join(home, ".codex")) {
+		t.Error("AGENT_CLI=codex: ~/.codex's ChatGPT login must be the default, hidden from the sandbox")
+	}
+	codexHome := filepath.Join(t.TempDir(), "ch")
+	put(codexHome, chatgpt)
+	t.Setenv("CODEX_HOME", codexHome)
+	if p, explicit := codexLogin(cfg); p != filepath.Join(codexHome, "auth.json") || explicit {
+		t.Errorf("CODEX_HOME: %s %v", p, explicit)
+	}
+	t.Setenv("CODEX_HOME", "")
+
+	cfg.Agent.Isolated = true
+	if chatgptChannel() {
+		t.Error("isolated without agent-home/codex/auth.json: no login")
+	}
+	put(filepath.Join(cfg.ProjectDir, "agent-home", "codex"), chatgpt)
+	if p, _ := codexLogin(cfg); p != filepath.Join(cfg.ProjectDir, "agent-home", "codex", "auth.json") {
+		t.Errorf("isolated: %s", p)
+	}
+	cfg.Agent.Isolated = false
+
+	for name, mod := range map[string]func(){
+		"other CLI":     func() { cfg.Agent.CLI = "claude" },
+		"API key set":   func() { t.Setenv("OPENAI_API_KEY", "sk-real") },
+		"off":           func() { cfg.Agent.SandboxCodexLogin = "off" },
+		"API-key login": func() { put(filepath.Join(home, ".codex"), `{"auth_mode":"apikey","OPENAI_API_KEY":"sk"}`) },
+	} {
+		mod()
+		if chatgptChannel() {
+			t.Errorf("%s: no default ChatGPT channel", name)
+		}
+		cfg.Agent.CLI, cfg.Agent.SandboxCodexLogin = "codex", ""
+		t.Setenv("OPENAI_API_KEY", "")
+		put(filepath.Join(home, ".codex"), chatgpt)
+	}
+}

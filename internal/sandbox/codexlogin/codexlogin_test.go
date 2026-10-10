@@ -36,6 +36,7 @@ type tokenServer struct {
 	got    map[string]string
 	status int
 	reply  map[string]any
+	during func() // runs while the refresh is in flight
 }
 
 func (s *tokenServer) start(t *testing.T) string {
@@ -43,6 +44,9 @@ func (s *tokenServer) start(t *testing.T) string {
 		s.calls++
 		s.got = map[string]string{}
 		json.NewDecoder(r.Body).Decode(&s.got)
+		if s.during != nil {
+			s.during()
+		}
 		if s.status != 0 {
 			w.WriteHeader(s.status)
 		}
@@ -134,5 +138,62 @@ func TestRejectsNonChatGPTLogins(t *testing.T) {
 	}
 	if err := (&Login{Path: filepath.Join(t.TempDir(), "none.json")}).Check(); err == nil || !strings.Contains(err.Error(), "codex login --device-auth") {
 		t.Errorf("missing file: %v", err)
+	}
+}
+
+func TestRefreshesBeforeCodexWould(t *testing.T) {
+	now := time.Now()
+	ts := &tokenServer{reply: map[string]any{"access_token": jwt(now.Add(time.Hour))}}
+	// 8 minutes left: codex (5-minute window) would not refresh yet; we do.
+	l := &Login{Path: writeLogin(t, jwt(now.Add(8*time.Minute))), TokenURL: ts.start(t), Now: func() time.Time { return now }}
+	if _, err := l.Headers(context.Background()); err != nil || ts.calls != 1 {
+		t.Errorf("err %v, refresh calls %d", err, ts.calls)
+	}
+}
+
+// Shared with codex on the host: codex rotated the token while our refresh
+// (with the now-used refresh token) was in flight.
+func TestLostRefreshRaceAdoptsTheOtherProcesssTokens(t *testing.T) {
+	now := time.Now()
+	path := writeLogin(t, jwt(now.Add(3*time.Minute)))
+	codexAccess := jwt(now.Add(time.Hour))
+	ts := &tokenServer{status: 400, reply: map[string]any{"error": map[string]any{"code": "refresh_token_reused"}}}
+	ts.during = func() {
+		b, _ := os.ReadFile(path)
+		var f map[string]any
+		json.Unmarshal(b, &f)
+		tok := f["tokens"].(map[string]any)
+		tok["access_token"], tok["refresh_token"] = codexAccess, "refresh-codex"
+		b, _ = json.Marshal(f)
+		os.WriteFile(path, b, 0o600)
+	}
+	l := &Login{Path: path, TokenURL: ts.start(t), Now: func() time.Time { return now }}
+	h, err := l.Headers(context.Background())
+	if err != nil || h.Get("Authorization") != "Bearer "+codexAccess {
+		t.Fatalf("got %v, %v; want codex's token", h, err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "refresh-codex") {
+		t.Error("codex's rotated token was overwritten")
+	}
+	// The next call refreshes nothing: codex's token is fresh.
+	ts.calls = 0
+	if _, err := l.Headers(context.Background()); err != nil || ts.calls != 0 {
+		t.Errorf("next call: %v, refresh calls %d", err, ts.calls)
+	}
+}
+
+func TestLostRaceWithAnExpiredTokenStillFails(t *testing.T) {
+	now := time.Now()
+	path := writeLogin(t, jwt(now.Add(-time.Minute)))
+	ts := &tokenServer{status: 400, reply: map[string]any{"error": "invalid_grant"}}
+	ts.during = func() { // rotated, but to a token that is already expired
+		b, _ := os.ReadFile(path)
+		s := strings.Replace(string(b), "refresh-1", "refresh-other", 1)
+		os.WriteFile(path, []byte(s), 0o600)
+	}
+	l := &Login{Path: path, TokenURL: ts.start(t), Now: func() time.Time { return now }}
+	if _, err := l.Headers(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Errorf("err %v, want the refresh error", err)
 	}
 }

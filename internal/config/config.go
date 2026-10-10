@@ -130,7 +130,7 @@ type AgentConfig struct {
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
-	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — the runner's own codex ChatGPT login (auth.json); sandboxed codex uses the subscription through the proxy
+	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — a codex ChatGPT login (auth.json) for sandboxed codex, through the proxy; unset: codex's own when AGENT_CLI=codex without OPENAI_API_KEY; "off": none
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
