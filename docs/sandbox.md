@@ -96,7 +96,10 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
 * **Model proxy** (`internal/sandbox/proxy`) is implemented but not wired; provider keys still
   enter via `AGENT_SANDBOX_ENV_ALLOW`.
-* Memory-curation and conversation-analyzer CLI fallbacks still run on the host.
+* The fast-LLM executor fallback (analyzer, curator, and the planner outside a session, used when
+  no LLM API key is set) runs the agent CLI in a sandbox run of its own, sharing one sandbox
+  thread (`llm-fallback`). Before, it ran on the host: `make sandbox-smoke` caught it writing
+  outside the workspace.
 * No `sandbox.oom`/`fs_denied`/`egress_denied` events (isobox gives no denial signal).
 * **Conformance on real hosts** (isobox `c7bbd19`): Seatbelt on macOS proves 8 capabilities
   but not `process.containment`, so `strict` cannot run there. gVisor (`runsc` 20261005.0, Linux
@@ -120,6 +123,10 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 * **Thread runs:** one active run per Thread, bounded queue; a lost lease cancels the run.
 
 ## Tests
+
+`make sandbox-smoke` and `make sandbox-gvisor` check a real host end to end (see
+[sandbox-testing.md](sandbox-testing.md)). One gVisor run in Docker once failed the probe's
+internet check and the next three passed; if it recurs, look at isobox's NAT setup.
 
 See [sandbox-testing.md](sandbox-testing.md) for the full test guide (automated, smoke, real-host conformance, red-team checklist).
 

@@ -31,6 +31,8 @@ type Config struct {
 	APIKey    string // falls back to provider-specific env var
 	BaseURL   string // override API base URL (e.g. Ollama endpoint)
 	MaxTokens int    // max tokens in response; 0 = provider default (512)
+	// Confine, when set, confines the executor fallback (see ExecutorClient).
+	Confine Confiner
 }
 
 // NewClient builds a Client from cfg. When the configured provider has no API
@@ -109,5 +111,7 @@ func NewClient(cfg Config, exec executor.Executor) Client {
 
 	// 3. Last resort: executor CLI fallback.
 	slog.Info("llm: no API credentials found, using executor fallback")
-	return NewExecutorClient(exec)
+	c := NewExecutorClient(exec)
+	c.Confine = cfg.Confine
+	return c
 }

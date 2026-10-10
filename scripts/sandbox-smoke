@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# Check the agent sandbox on this host, end to end (docs/sandbox.md).
+#
+#   scripts/sandbox-smoke            conformance + runner probes (fake claude)
+#   scripts/sandbox-smoke --real     also one task with the real claude CLI
+#                                    (billed; needs CLAUDE_CODE_OAUTH_TOKEN in
+#                                    the env or in .env, from `claude setup-token`)
+#
+# 1. Conformance: what this host's backend actually enforces (Seatbelt on
+#    macOS, gVisor on Linux), gated on .github/sandbox-baselines/<backend>.json.
+# 2. Runner probes: the real agent-runner, with a fake `claude` that tries to
+#    escape (read ~/.ssh and the runner's .env, write outside the workspace,
+#    reach the network, ...). Every outcome is checked against what the
+#    sandbox should allow, under the default policy and with egress "none".
+#
+# Env:
+#   ISOBOX       isobox binary; default: built at the ref CI pins, cached
+#   KEEP=1       keep the work dir (runner logs, probe reports)
+#   SMOKE_PORT   runner port (default 18093)
+#   AGENT_RUNNER_BIN, CONFORMANCE_BIN   prebuilt binaries (scripts/sandbox-gvisor)
+#
+# The probes record outcomes and byte counts only, never file contents.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+REPO=$PWD
+
+REAL=0
+[ "${1:-}" = "--real" ] && REAL=1
+PORT=${SMOKE_PORT:-18093}
+
+case "$(uname -s)" in
+Darwin) BACKEND=seatbelt ;;
+Linux) BACKEND=gvisor ;;
+*) echo "unsupported OS: $(uname -s)" >&2; exit 2 ;;
+esac
+if [ "$BACKEND" = gvisor ] && [ "$(id -u)" != 0 ]; then
+	echo "gVisor needs root: run as root, or use scripts/sandbox-gvisor (Docker)" >&2
+	exit 2
+fi
+
+W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-smoke.XXXXXX")
+W=$(cd "$W" && pwd -P)
+RUNNER_PID=
+cleanup() {
+	[ -n "$RUNNER_PID" ] && kill "$RUNNER_PID" 2>/dev/null && wait "$RUNNER_PID" 2>/dev/null
+	pkill -f "sleep 9997" 2>/dev/null || true
+	if [ "${KEEP:-}" = 1 ]; then echo "kept $W"; else rm -rf "$W"; fi
+}
+trap cleanup EXIT
+
+FAILED=0
+pass() { printf '  ok    %s\n' "$*"; }
+fail() { printf '  FAIL  %s\n' "$*"; FAILED=1; }
+step() { printf '\n== %s\n' "$*"; }
+
+# --- binaries ----------------------------------------------------------------
+
+step "build"
+if [ -z "${ISOBOX:-}" ]; then
+	REF=$(sed -n 's/^  ISOBOX_REF: \([0-9a-f]*\).*/\1/p' .github/workflows/sandbox.yml)
+	[ -n "$REF" ] || { echo "no ISOBOX_REF in .github/workflows/sandbox.yml" >&2; exit 2; }
+	CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner/isobox-$REF
+	if [ ! -x "$CACHE/isobox" ]; then
+		echo "building isobox $REF (Go fetches the toolchain it needs)"
+		rm -rf "$CACHE" && git clone -q https://github.com/can1357/isobox "$CACHE"
+		git -C "$CACHE" checkout -q "$REF"
+		(cd "$CACHE" && go build -o isobox ./cmd/isobox)
+	fi
+	ISOBOX=$CACHE/isobox
+fi
+AGENT_RUNNER_BIN=${AGENT_RUNNER_BIN:-$W/agent-runner}
+CONFORMANCE_BIN=${CONFORMANCE_BIN:-$W/sandbox-conformance}
+[ -x "$AGENT_RUNNER_BIN" ] || go build -o "$AGENT_RUNNER_BIN" ./cmd/server
+[ -x "$CONFORMANCE_BIN" ] || go build -o "$CONFORMANCE_BIN" ./cmd/sandbox-conformance
+echo "isobox: $ISOBOX"
+
+# --- 1. conformance ------------------------------------------------------------
+
+step "conformance ($BACKEND)"
+if (cd "$W" && "$CONFORMANCE_BIN" --isobox "$ISOBOX" --backend "$BACKEND" \
+	--report "report-$BACKEND.json" --manifest "manifest-$BACKEND.json" \
+	--require-file "$REPO/.github/sandbox-baselines/$BACKEND.json" 2>&1 | grep -v notrun); then
+	pass "baseline capabilities proven"
+else
+	fail "baseline capabilities not proven (see above)"
+fi
+
+# --- 2. runner probes ----------------------------------------------------------
+
+RUN=$W/run   # the runner's working dir: its .env lives here
+DATA=$RUN/data
+mkdir -p "$W/bin" "$RUN"
+echo "FAKE_RUNNER_SECRET=1" >"$RUN/.env"
+
+# The fake claude. Paths are baked in: the sandbox passes no host env through.
+cat >"$W/bin/claude" <<EOF
+#!/bin/bash
+R="\$PWD/_send/report.txt"; mkdir -p "\$PWD/_send"
+# try: allowed when the command succeeds (writes, network).
+try() {
+	local name="\$1"; shift
+	if out=\$("\$@" 2>&1); then echo "allowed|\$name|\$(printf %s "\$out" | wc -c | tr -d ' ') bytes"
+	else echo "blocked|\$name|\$(printf %s "\$out" | tail -c 80 | tr '\n' ' ')"; fi
+}
+# tryread: allowed only when the read returns something. gVisor hides a
+# denied path behind an empty one rather than failing the read, so every
+# target is non-empty on the host.
+tryread() {
+	local name="\$1"; shift
+	if out=\$("\$@" 2>&1) && [ -n "\$out" ]; then echo "allowed|\$name|\$(printf %s "\$out" | wc -c | tr -d ' ') bytes"
+	else echo "blocked|\$name|\$(printf %s "\$out" | tail -c 80 | tr '\n' ' ')"; fi
+}
+{
+	echo "env|home|\$HOME"
+	echo "env|config_dir|\$CLAUDE_CONFIG_DIR"
+	echo "env|token|\${CLAUDE_CODE_OAUTH_TOKEN:+present}"
+	echo "env|host_secret|\${FAKE_SECRET_TOKEN:+present}"
+	tryread ssh_dir ls $HOME/.ssh
+	tryread aws_dir ls $HOME/.aws
+	tryread claude_dir ls $HOME/.claude
+	tryread runner_env cat $RUN/.env
+	tryread runner_env_local cat $DATA/.env.local
+	tryread runner_logs ls $DATA/logs
+	tryread other_session ls $DATA/tmp/session-other
+	tryread journal ls $DATA/state/sessions
+	tryread memory ls $DATA/memory
+	try write_outside  sh -c "echo x > $W/escaped"
+	try write_tmp      sh -c "echo x > /tmp/sandbox-smoke-escaped"
+	try write_workspace sh -c "echo x > \$PWD/inside.txt"
+	try write_config   sh -c "echo x > \$CLAUDE_CONFIG_DIR/probe"
+	ln -sf $W/run/.env link 2>/dev/null
+	tryread symlink cat link
+	try metadata_ip    curl -sS -m 3 http://169.254.169.254/
+	try internet       curl -sS -m 5 -o /dev/null https://example.com
+	nohup sleep 9997 >/dev/null 2>&1 &
+} >"\$R" 2>&1
+echo '{"result":"TASK: DONE","cost_usd":0,"duration_ms":1}'
+EOF
+chmod +x "$W/bin/claude"
+
+# start_runner MODE [ENV=VALUE...]: a runner on $PORT with a fresh data dir.
+start_runner() {
+	local mode=$1; shift
+	rm -rf "$DATA"
+	# Non-empty, so a read the sandbox hides (empty) differs from one it allows.
+	for d in tmp/session-other logs state/sessions memory; do
+		mkdir -p "$DATA/$d" && echo marker >"$DATA/$d/marker"
+	done
+	echo "SECRET=1" >"$DATA/.env.local"
+	(cd "$RUN" && exec env -i PATH="$PATH_FOR_RUNNER" HOME="$HOME" \
+		DATA_DIR="$DATA" API_BIND="127.0.0.1:$PORT" AGENT_CLI=claude \
+		AGENT_PLANNER_ENABLED=false AGENT_REVIEWER_ENABLED=false AGENT_MEMORY_CURATION_ENABLED=false \
+		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" AGENT_SANDBOX_ISOBOX="$ISOBOX" AGENT_SANDBOX_BACKEND="$BACKEND" \
+		FAKE_SECRET_TOKEN=leak-me "$@" "$AGENT_RUNNER_BIN" >"$W/runner-$mode.log" 2>&1) &
+	RUNNER_PID=$!
+	for _ in $(seq 100); do curl -sf "localhost:$PORT/health" >/dev/null && return 0; sleep 0.1; done
+	echo "runner did not start; log:" >&2; tail -20 "$W/runner-$mode.log" >&2; exit 1
+}
+stop_runner() { kill "$RUNNER_PID" 2>/dev/null; wait "$RUNNER_PID" 2>/dev/null || true; RUNNER_PID=; }
+
+# run_task MESSAGE [TIMEOUT]: post a task and wait. Sets SESSION, LAST_BODY
+# and RESULT ("status|error").
+run_task() {
+	local id status body
+	id=$(curl -s -XPOST "localhost:$PORT/agent" -H 'Content-Type: application/json' \
+		-d "{\"message\":$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')}" |
+		python3 -c 'import json,sys;print(json.load(sys.stdin)["session_id"])')
+	for _ in $(seq "${2:-60}"); do
+		body=$(curl -s "localhost:$PORT/agent/$id")
+		status=$(printf '%s' "$body" | python3 -c 'import json,sys;print(json.load(sys.stdin)["status"])')
+		case $status in completed | failed | stopped) break ;; esac
+		sleep 1
+	done
+	SESSION=$id
+	LAST_BODY=$body
+	RESULT="$status|$(printf '%s' "$body" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("error",""))')"
+}
+
+# expect NAME allowed|blocked: check one probe outcome in $REPORT.
+expect() {
+	local line got
+	line=$(grep "^[a-z]*|$1|" "$REPORT" || true)
+	got=${line%%|*}
+	if [ -z "$line" ]; then fail "$1: no result"
+	elif [ "$got" = "$2" ]; then pass "$1 $got"
+	else fail "$1 $got, want $2 (${line##*|})"; fi
+}
+expect_env() {
+	local v
+	v=$(grep "^env|$1|" "$REPORT" | cut -d'|' -f3-)
+	case $v in $2) pass "$1 = ${v:-<unset>}" ;; *) fail "$1 = ${v:-<unset>}, want $2" ;; esac
+}
+
+PATH_FOR_RUNNER="$W/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# probe MODE [ENV...]: run the fake claude once and load its report.
+probe() {
+	start_runner "$@"
+	run_task "sandbox smoke probe"
+	REPORT=$(find "$DATA" -path "*$SESSION*" -name report.txt | head -1)
+	stop_runner
+	if [ -z "$REPORT" ]; then
+		fail "no probe report (session: $RESULT)"
+		return 1
+	fi
+	pass "session ${RESULT%%|*}"
+}
+
+step "runner, default policy (permissive)"
+if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
+	# Only where the host has something there to hide.
+	[ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ] && expect ssh_dir blocked
+	[ -n "$(ls -A "$HOME/.aws" 2>/dev/null)" ] && expect aws_dir blocked
+	[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ] && expect claude_dir blocked
+	for n in runner_env runner_env_local runner_logs other_session journal \
+		write_outside write_tmp symlink metadata_ip; do
+		expect $n blocked
+	done
+	for n in memory write_workspace write_config internet; do expect $n allowed; done
+	expect_env home "$DATA/state/sandbox/home/*"
+	expect_env config_dir "$DATA/state/sandbox/home/*/.claude"
+	expect_env token present
+	expect_env host_secret ""
+	[ ! -e "$W/escaped" ] || fail "a file was written outside the workspace"
+	leftover=$(find "$DATA/state/sandbox/leases" -type f ! -name .lock 2>/dev/null | wc -l | tr -d ' ')
+	[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
+fi
+
+step "runner, egress none"
+if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
+	AGENT_SANDBOX_POLICY='{"version":1,"network":{"egress":"none"}}'; then
+	expect internet blocked
+	expect metadata_ip blocked
+	expect write_workspace allowed # unset grants inherit the default policy
+fi
+
+if [ "$BACKEND" = gvisor ]; then
+	# gVisor proves process.containment, which every run requires, so strict
+	# mode can run here (on Seatbelt it rejects every run).
+	step "runner, strict (evidence from the conformance run)"
+	if probe strict CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_SANDBOX_EVIDENCE="$W/report-$BACKEND.json"; then
+		expect runner_env blocked
+		expect write_outside blocked
+		expect write_workspace allowed
+	fi
+fi
+
+step "runner, no claude credentials"
+start_runner permissive
+run_task "sandbox smoke probe" 20
+stop_runner
+case $RESULT in
+"failed|"*"claude setup-token"*) pass "fails before starting, pointing at claude setup-token" ;;
+*) fail "want a failed session naming claude setup-token, got: $RESULT" ;;
+esac
+
+# --- 3. the real claude CLI (--real) -----------------------------------------------
+
+if [ "$REAL" = 1 ]; then
+	step "real claude (billed)"
+	TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-$(sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' .env 2>/dev/null | tr -d '"'"'" | head -1)}
+	REAL_CLAUDE=$(command -v claude || true)
+	if [ -z "$TOKEN" ] || [ -z "$REAL_CLAUDE" ]; then
+		fail "needs the claude CLI and CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)"
+	else
+		PATH_FOR_RUNNER="$(dirname "$REAL_CLAUDE"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN="$TOKEN"
+		run_task "Create hello.txt containing the word sandboxed. Then run 'ls ~/.ssh' with the Bash tool and report its output verbatim. Then say TASK: DONE." 300
+		stop_runner
+		if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
+		printf '%s' "$LAST_BODY" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print("  cost: $%.4f" % (d.get("total_cost_usd") or 0))
+for it in d.get("iterations") or []:
+    print("  reply:", (it.get("output") or it.get("error") or "")[:800].replace("\n","\n         "))'
+	fi
+fi
+
+step "result"
+if [ "$FAILED" = 0 ]; then echo "all checks passed"; else echo "some checks FAILED"; fi
+exit "$FAILED"

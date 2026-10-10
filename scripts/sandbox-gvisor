@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Check the agent sandbox on Linux gVisor from any host with Docker: builds the
+# binaries for the Docker VM's architecture, starts a privileged Ubuntu
+# container with the gVisor release CI pins (and the ip/sysctl/iptables isobox
+# needs), and runs scripts/sandbox-smoke in it as root: conformance, runner
+# probes, and a strict-mode run.
+#
+#   scripts/sandbox-gvisor
+#
+# Env: GVISOR_RELEASE (default: the one .github/workflows/sandbox.yml installs),
+# KEEP=1 to keep the work dir.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+REPO=$PWD
+
+command -v docker >/dev/null || { echo "docker not found" >&2; exit 2; }
+ARCH=$(docker info --format '{{.Architecture}}')
+case $ARCH in
+aarch64 | arm64) GOARCH=arm64 GVARCH=aarch64 ;;
+x86_64 | amd64) GOARCH=amd64 GVARCH=x86_64 ;;
+*) echo "unsupported Docker architecture: $ARCH" >&2; exit 2 ;;
+esac
+
+REF=$(sed -n 's/^  ISOBOX_REF: \([0-9a-f]*\).*/\1/p' .github/workflows/sandbox.yml)
+GVISOR_RELEASE=${GVISOR_RELEASE:-$(sed -n 's|.*gvisor/releases/release/\([0-9.]*\)/.*|\1|p' .github/workflows/sandbox.yml | head -1)}
+[ -n "$REF" ] && [ -n "$GVISOR_RELEASE" ] || { echo "cannot read pins from .github/workflows/sandbox.yml" >&2; exit 2; }
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner
+
+W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-gvisor.XXXXXX")
+trap 'if [ "${KEEP:-}" = 1 ]; then echo "kept $W"; else rm -rf "$W"; fi' EXIT
+
+echo "== build (linux/$GOARCH; isobox $REF)"
+if [ ! -d "$CACHE/isobox-$REF" ]; then
+	git clone -q https://github.com/can1357/isobox "$CACHE/isobox-$REF"
+	git -C "$CACHE/isobox-$REF" checkout -q "$REF"
+fi
+(cd "$CACHE/isobox-$REF" && CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/isobox" ./cmd/isobox)
+CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/agent-runner" ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/sandbox-conformance" ./cmd/sandbox-conformance
+
+echo "== gVisor $GVISOR_RELEASE ($GVARCH)"
+TARBALL=$CACHE/gvisor-$GVISOR_RELEASE-$GVARCH.tar.bz2
+URL=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/$GVARCH/gvisor.tar.bz2
+[ -f "$TARBALL" ] || { mkdir -p "$CACHE" && curl -fsSL -o "$TARBALL.part" "$URL" && mv "$TARBALL.part" "$TARBALL"; }
+cp "$TARBALL" "$W/gvisor.tar.bz2"
+curl -fsSL "$URL.sha512" | sed 's/ .*/  gvisor.tar.bz2/' >"$W/gvisor.tar.bz2.sha512"
+
+echo "== container"
+docker run --rm --privileged --cgroupns=host -e KEEP="${KEEP:-}" \
+	-v "$REPO:/repo:ro" -v "$W:/w" ubuntu:24.04 bash -euc '
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get update -qq >/dev/null
+	apt-get install -y -qq iproute2 iptables procps python3 curl bzip2 ca-certificates >/dev/null
+	cd /w && sha512sum -c gvisor.tar.bz2.sha512 >/dev/null && tar -xjf gvisor.tar.bz2
+	install -m 0755 runsc /usr/local/bin/runsc && cp -r gvisor-bin /usr/local/bin/
+	runsc --version | head -1
+	# Credentials for the probes to be kept away from.
+	mkdir -p /root/.ssh /root/.aws /root/.claude
+	for f in .ssh/known_hosts .aws/credentials .claude/.credentials.json; do echo dummy >/root/$f; done
+	cd /repo
+	KEEP="${KEEP:-}" ISOBOX=/w/isobox AGENT_RUNNER_BIN=/w/agent-runner CONFORMANCE_BIN=/w/sandbox-conformance \
+		scripts/sandbox-smoke
+'
