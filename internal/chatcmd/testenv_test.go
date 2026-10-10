@@ -60,7 +60,7 @@ func setupTestEnv(t *testing.T) *cmdTestEnv {
 	dir := t.TempDir()
 
 	// Pin DATA_DIR so config.ReloadFromEnv triggered by /set resolves inside
-	// the sandbox — never the real ~/.agent-runner.
+	// the sandbox — never the real agent directory.
 	t.Setenv("DATA_DIR", dir)
 
 	repoCacheDir := filepath.Join(dir, "repo-cache")

@@ -23,22 +23,6 @@ func defaultDataDir() string {
 	return "."
 }
 
-// legacyLayoutWarned suppresses repeat legacy-layout warnings when the
-// config is reloaded (/set re-runs LoadFromEnv).
-var legacyLayoutWarned bool
-
-// hasDataLayout reports whether dir contains runner state: a non-empty
-// repo-cache/, runs/, or workspaces/ directory.
-func hasDataLayout(dir string) bool {
-	for _, name := range []string{"repo-cache", "runs", "workspaces"} {
-		entries, err := os.ReadDir(filepath.Join(dir, name))
-		if err == nil && len(entries) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // Config represents the application configuration
 type Config struct {
 	// Directory paths
@@ -324,29 +308,14 @@ func LoadFromEnv() (*Config, error) {
 
 	// Determine data dir: explicit DATA_DIR wins (checking real OS env first,
 	// then .env/.env.<instance> — must happen after those are read, since DATA_DIR
-	// itself is commonly set inside .env rather than exported), then instance-scoped
-	// default, then global default.
+	// itself is commonly set inside .env rather than exported), else the
+	// working directory.
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = merged["DATA_DIR"]
 	}
 	if dataDir == "" {
 		dataDir = defaultDataDir()
-		// Migration notice: an earlier default kept state under
-		// ~/.agent-runner. If state exists there but not here, say so once —
-		// the run proceeds in the agent directory either way.
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			legacy := filepath.Join(home, ".agent-runner")
-			if instance != "" {
-				legacy = filepath.Join(legacy, instance)
-			}
-			if !hasDataLayout(dataDir) && hasDataLayout(legacy) && !legacyLayoutWarned {
-				legacyLayoutWarned = true
-				slog.Warn("config: found existing runner state under "+legacy+
-					"; state now defaults to the agent directory — set DATA_DIR="+legacy+
-					" to keep using it, or move its contents here", "data_dir", dataDir)
-			}
-		}
 	}
 
 	// Wire SetEnvLocal to write to the data dir's .env.local.
