@@ -71,7 +71,7 @@ func (b *Backend) host(logical string) (string, error) {
 
 // credentialDirs are always read-denied (relative to the real user home).
 var credentialDirs = []string{".ssh", ".aws", ".gnupg", ".azure", ".docker", ".kube", ".npmrc", ".pypirc", ".netrc",
-	".git-credentials", ".config/gcloud", ".config/gh", ".claude", ".codex"}
+	".git-credentials", ".config/gcloud", ".config/gh", ".claude", ".codex", ".pi", ".local/share/opencode"}
 
 // flags translates the spec. It returns isobox flags (before "--") plus notes
 // about parts of the spec isobox cannot express.

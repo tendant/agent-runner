@@ -36,7 +36,9 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EnvAllow:      cfg.Agent.SandboxEnvAllow,
 		PrivatePaths:  sandboxPrivatePaths(cfg),
 		Claude:        sandboxClaudeSeed(cfg),
-		Model:         sandboxModelChannel(cfg),
+		Models:        sandboxModelChannels(cfg),
+		CodexSeed:     sandboxSeedDir(cfg, ".codex", "codex"),
+		PiSeed:        sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
@@ -126,29 +128,64 @@ func (h *Handlers) llmConfiner() llm.Confiner {
 	}
 }
 
-// sandboxModelChannel is the credential the per-run model proxy attaches for a
-// sandboxed claude: a `claude setup-token` token (as a bearer token, which the
-// API accepts for subscription use) or else an API key, sent to
-// ANTHROPIC_BASE_URL or the Anthropic API. Nil when the proxy is off or there
-// is no credential.
-func sandboxModelChannel(cfg *config.Config) *sandboxrt.ModelChannel {
+// sandboxModelChannels are the credentials the per-run model proxies attach
+// for sandboxed CLIs, by provider:
+//   - Anthropic (claude, pi): a `claude setup-token` token, sent as a bearer
+//     token (the API accepts it for subscription use), or else an API key;
+//     to ANTHROPIC_BASE_URL or the Anthropic API.
+//   - OpenAI (codex, pi): OPENAI_API_KEY; to OPENAI_BASE_URL or the OpenAI API.
+//     A codex ChatGPT login (auth.json) refreshes and rotates its tokens and is
+//     not supported in the sandbox.
+//
+// Nil when AGENT_SANDBOX_MODEL_PROXY is off.
+func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel {
 	if !cfg.Agent.SandboxModelProxy {
 		return nil
 	}
-	upstream := "https://api.anthropic.com"
-	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" {
-		upstream = v
+	out := map[string]*sandboxrt.ModelChannel{}
+	if u := upstreamURL("ANTHROPIC_BASE_URL", "https://api.anthropic.com"); u != nil {
+		switch {
+		case os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "":
+			out[sandboxrt.ProviderAnthropic] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.AnthropicPaths, OAuth: true,
+				AuthHeader: "Authorization", AuthValue: "Bearer " + os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")}
+		case os.Getenv("ANTHROPIC_API_KEY") != "":
+			out[sandboxrt.ProviderAnthropic] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.AnthropicPaths,
+				AuthHeader: "x-api-key", AuthValue: os.Getenv("ANTHROPIC_API_KEY")}
+		}
 	}
-	u, err := url.Parse(upstream)
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		if u := upstreamURL("OPENAI_BASE_URL", "https://api.openai.com"); u != nil {
+			out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.OpenAIPaths,
+				AuthHeader: "Authorization", AuthValue: "Bearer " + key}
+		}
+	}
+	return out
+}
+
+// upstreamURL is env's base URL, or def. The proxy's paths start at /v1, so a
+// trailing /v1 (OPENAI_BASE_URL usually has one) is dropped.
+func upstreamURL(env, def string) *url.URL {
+	v := os.Getenv(env)
+	if v == "" {
+		v = def
+	}
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimSuffix(v, "/"), "/v1"))
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		slog.Warn("sandbox: model proxy off: bad ANTHROPIC_BASE_URL", "value", upstream)
+		slog.Warn("sandbox: model proxy: bad "+env+"; that provider is not proxied", "value", v)
 		return nil
 	}
-	switch {
-	case os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "":
-		return &sandboxrt.ModelChannel{Upstream: u, AuthHeader: "Authorization", AuthValue: "Bearer " + os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")}
-	case os.Getenv("ANTHROPIC_API_KEY") != "":
-		return &sandboxrt.ModelChannel{Upstream: u, AuthHeader: "x-api-key", AuthValue: os.Getenv("ANTHROPIC_API_KEY")}
+	return u
+}
+
+// sandboxSeedDir is where a sandboxed CLI's allowlisted config is copied
+// from: agent-home/<isolated> when the runner is isolated, else ~/<host>.
+func sandboxSeedDir(cfg *config.Config, host, isolated string) string {
+	if cfg.Agent.Isolated {
+		return filepath.Join(cfg.ProjectDir, agenthome.Dir, isolated)
 	}
-	return nil
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, host)
 }

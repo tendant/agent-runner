@@ -94,6 +94,10 @@ type SandboxLauncher struct {
 	// sandbox must own, such as a CLI config dir inside the sandbox home
 	// (an overlay's AGENT_ISOLATED config dir is outside it and read-only).
 	EnvForce []string
+	// ScratchDir is a directory the sandboxed CLI can write and the runner
+	// can read (the run's tmp): where an executor puts a file the CLI writes
+	// its output to. The host's temp dir is not writable from the sandbox.
+	ScratchDir string
 	// Tag labels every sandboxed process (visible in argv) so an external
 	// supervisor can find the process group of a run.
 	Tag string
@@ -162,4 +166,14 @@ func (l *SandboxLauncher) env(s LaunchSpec) []string {
 func LauncherFrom(ctx context.Context) (Launcher, bool) {
 	l, ok := ctx.Value(launcherKey{}).(Launcher)
 	return l, ok && l != nil
+}
+
+// scratchDir is where an executor should create a file the CLI writes to:
+// the sandbox's scratch dir when ctx carries a sandbox launcher, else ""
+// (the host's temp dir).
+func scratchDir(ctx context.Context, l Launcher) string {
+	if sl, ok := resolveLauncher(ctx, l).(*SandboxLauncher); ok {
+		return sl.ScratchDir
+	}
+	return ""
 }

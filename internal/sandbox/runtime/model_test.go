@@ -2,9 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,100 +16,152 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 )
 
-func TestModelChannelKeepsTheCredentialOutOfTheSandbox(t *testing.T) {
-	var gotAuth string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+// upstream is a fake provider recording the credential it received.
+func upstream(t *testing.T, header string) (*url.URL, *string) {
+	t.Helper()
+	got := new(string)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*got = r.Header.Get(header)
 		w.Write([]byte(`{"ok":true}`))
 	}))
-	defer upstream.Close()
-	u, _ := url.Parse(upstream.URL)
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "real-secret")
-	t.Setenv("ANTHROPIC_API_KEY", "real-key")
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	return u, got
+}
 
-	got := &sandbox.ProcSpec{}
-	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
-		EnvAllow:   []string{"ANTHROPIC_API_KEY"}, // listed, but the channel keeps it out
-		Model:      &ModelChannel{Upstream: u, AuthHeader: "Authorization", AuthValue: "Bearer real-secret"},
-		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }})
-	if err != nil {
-		t.Fatal(err)
+func envOf(spec *sandbox.ProcSpec) map[string]string {
+	m := map[string]string{}
+	for _, e := range spec.Env {
+		k, v, _ := strings.Cut(e, "=")
+		m[k] = v
 	}
-	ws := t.TempDir()
-	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", Workspace: ws})
-	if err != nil {
-		t.Fatal(err)
-	}
+	return m
+}
+
+// launch returns the sandbox env one CLI is started with.
+func launch(t *testing.T, run *Run, got *sandbox.ProcSpec, cli string) map[string]string {
+	t.Helper()
 	l, _ := executor.LauncherFrom(run.Ctx)
-	_, release, err := l.Command(run.Ctx, executor.LaunchSpec{Name: "claude", Dir: ws})
+	_, release, err := l.Command(run.Ctx, executor.LaunchSpec{Name: cli})
 	if err != nil {
 		t.Fatal(err)
 	}
 	release()
-	env := strings.Join(got.Env, "\n")
-	if strings.Contains(env, "real-secret") || strings.Contains(env, "real-key") {
-		t.Fatalf("a credential entered the sandbox: %s", env)
-	}
-	var base, token string
-	for _, e := range got.Env {
-		if v, ok := strings.CutPrefix(e, "ANTHROPIC_BASE_URL="); ok {
-			base = v
-		}
-		if v, ok := strings.CutPrefix(e, "ANTHROPIC_AUTH_TOKEN="); ok {
-			token = v
-		}
-	}
-	if base == "" || token == "" {
-		t.Fatalf("claude has no proxy URL or token: %s", env)
-	}
+	return envOf(got)
+}
 
-	// Through the proxy with the run's token: the upstream sees the credential.
-	req, _ := http.NewRequest("POST", base+"/v1/messages", strings.NewReader("{}"))
-	req.Header.Set("Authorization", "Bearer "+token)
+func post(t *testing.T, url, auth string) int {
+	t.Helper()
+	req, _ := http.NewRequest("POST", url, strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+auth)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || gotAuth != "Bearer real-secret" {
-		t.Errorf("status %d, upstream auth %q", resp.StatusCode, gotAuth)
+	return resp.StatusCode
+}
+
+func TestModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
+	anthropic, anthropicGot := upstream(t, "Authorization")
+	openai, openaiGot := upstream(t, "Authorization")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "real-claude-token")
+	t.Setenv("OPENAI_API_KEY", "real-openai-key")
+
+	got := &sandbox.ProcSpec{}
+	piSeed := t.TempDir()
+	os.WriteFile(filepath.Join(piSeed, "models.json"),
+		[]byte(`{"providers":{"anthropic":{"apiKey":"$ANTHROPIC_API_KEY"},"ollama":{"baseUrl":"http://localhost:11434/v1"}}}`), 0o600)
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
+		EnvAllow: []string{"OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}, // listed, but the channels keep them out
+		PiSeed:   piSeed,
+		Models: map[string]*ModelChannel{
+			ProviderAnthropic: {Upstream: anthropic, AuthHeader: "Authorization", AuthValue: "Bearer real-claude-token", Paths: AnthropicPaths, OAuth: true},
+			ProviderOpenAI:    {Upstream: openai, AuthHeader: "Authorization", AuthValue: "Bearer real-openai-key", Paths: OpenAIPaths},
+		},
+		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Without the token, or off the allowed paths: refused.
-	for _, r := range []struct{ path, token string }{{"/v1/messages", "wrong"}, {"/v1/files", token}} {
-		req, _ := http.NewRequest("POST", base+r.path, strings.NewReader("{}"))
-		req.Header.Set("Authorization", "Bearer "+r.token)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cli := range []string{"claude", "codex", "pi", "opencode"} {
+		env := launch(t, run, got, cli)
+		for k, v := range env {
+			if strings.Contains(v, "real-") {
+				t.Errorf("%s: credential in the sandbox: %s", cli, k)
+			}
 		}
-		resp.Body.Close()
-		if resp.StatusCode < 400 {
-			t.Errorf("%s with token %q: status %d, want refused", r.path, r.token, resp.StatusCode)
+	}
+
+	claude := launch(t, run, got, "claude")
+	if code := post(t, claude["ANTHROPIC_BASE_URL"]+"/v1/messages", claude["ANTHROPIC_AUTH_TOKEN"]); code != 200 || *anthropicGot != "Bearer real-claude-token" {
+		t.Errorf("claude through its proxy: %d, upstream got %q", code, *anthropicGot)
+	}
+	codex := launch(t, run, got, "codex")
+	codexToken := codex[codexKeyEnv]
+	conf, err := os.ReadFile(filepath.Join(codex["CODEX_HOME"], "config.toml"))
+	if err != nil || codexToken == "" {
+		t.Fatalf("codex: config %v, env %v", err, codex)
+	}
+	var codexBase string
+	for _, line := range strings.Split(string(conf), "\n") {
+		if v, ok := strings.CutPrefix(line, "base_url = "); ok {
+			codexBase = strings.Trim(v, `"`)
 		}
+	}
+	if !strings.Contains(string(conf), `model_provider = "`+codexProvider+`"`) || !strings.HasSuffix(codexBase, "/v1") {
+		t.Fatalf("codex config.toml:\n%s", conf)
+	}
+	if code := post(t, codexBase+"/responses", codexToken); code != 200 || *openaiGot != "Bearer real-openai-key" {
+		t.Errorf("codex through its proxy: %d, upstream got %q", code, *openaiGot)
+	}
+	if code := post(t, codexBase+"/files", codexToken); code < 400 {
+		t.Errorf("a path off the allowlist: %d, want refused", code)
+	}
+	if !strings.HasPrefix(codex["CODEX_HOME"], "/") || !strings.Contains(codex["CODEX_HOME"], filepath.Join("home", "t1")) {
+		t.Errorf("CODEX_HOME = %q, want the sandbox home", codex["CODEX_HOME"])
+	}
+
+	// pi: an OAuth run token, and models.json pointing both providers at
+	// their proxies, keeping the seed's other providers.
+	pi := launch(t, run, got, "pi")
+	if pi["ANTHROPIC_OAUTH_TOKEN"] == "" || pi["OPENAI_API_KEY"] == "" || pi["ANTHROPIC_API_KEY"] != "" {
+		t.Errorf("pi env: %v", pi)
+	}
+	b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Providers map[string]map[string]any `json:"providers"`
+	}
+	json.Unmarshal(b, &doc)
+	if doc.Providers["anthropic"]["baseUrl"] != claude["ANTHROPIC_BASE_URL"] || doc.Providers["anthropic"]["apiKey"] != nil {
+		t.Errorf("pi anthropic provider = %v", doc.Providers["anthropic"])
+	}
+	if doc.Providers["openai"]["baseUrl"] != codexBase || doc.Providers["ollama"] == nil {
+		t.Errorf("pi providers = %v", doc.Providers)
 	}
 
 	run.Finish()
-	if _, err := http.Get(base + "/api/hello"); err == nil {
-		t.Error("the proxy must stop with the run")
+	if _, err := http.Get(claude["ANTHROPIC_BASE_URL"] + "/api/hello"); err == nil {
+		t.Error("the proxies must stop with the run")
 	}
 }
 
-func TestNoModelChannelWithoutOutboundNetwork(t *testing.T) {
+func TestNoModelChannelsWithoutOutboundNetwork(t *testing.T) {
 	u, _ := url.Parse("https://api.anthropic.com")
 	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
-		Model: &ModelChannel{Upstream: u, AuthHeader: "x-api-key", AuthValue: "k"}})
+		Models: map[string]*ModelChannel{ProviderAnthropic: {Upstream: u, AuthHeader: "x-api-key", AuthValue: "k", Paths: AnthropicPaths}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	none := sandbox.SandboxSpec{Network: sandbox.NetworkPolicy{Egress: sandbox.EgressNone}}
-	if p, err := rt.startModelProxy(none, "r", "t"); p != nil || err != nil {
-		t.Errorf("egress none: proxy %v, err %v; want none (it would be unreachable)", p, err)
-	}
-}
-
-func TestWithoutModelCredentials(t *testing.T) {
-	got := withoutModelCredentials([]string{"FOO", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "BAR"})
-	if strings.Join(got, ",") != "FOO,BAR" {
-		t.Errorf("got %v", got)
+	if m, err := rt.startModels(none, "r", "t"); m != nil || err != nil {
+		t.Errorf("egress none: %v, %v; want no channels (they would be unreachable)", m, err)
 	}
 }
