@@ -23,8 +23,9 @@ Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor`), `AGENT_SANDB
 JSON file, or the JSON itself when it starts with `{`; fields it leaves unset keep the default
 policy's values, so `{"version":1,"network":{"egress":"none"}}` still grants the workspace,
 home and tmp; a field it sets replaces the default's), `AGENT_SANDBOX_MEMORY` (memory cap for
-every run, e.g. `4g`; overrides the policy's `resources.memory_bytes`; see
-[Fork bombs](#fork-bombs-and-the-memory-cap)), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
+every run, e.g. `4g`; overrides the policy's `resources.memory_bytes`), `AGENT_SANDBOX_PIDS`
+(process and thread cap for every run, e.g. `1024`; overrides the policy's `resources.pids`; see
+[Fork bombs](#fork-bombs-memory-and-pids-caps)), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
 (comma-separated host env var names to pass in; model credentials are never passed while the model
 proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below).
 
@@ -130,36 +131,42 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 * No `sandbox.oom`/`fs_denied`/`egress_denied` events (isobox gives no denial signal).
 * **Conformance on real hosts** (isobox `c7bbd19`): Seatbelt on macOS proves 8 capabilities
   but not `process.containment`, so `strict` cannot run there. gVisor (`runsc` 20261005.0, Linux
-  arm64 in a privileged container) proves 10, including `process.containment` and
-  `process.cross_run_isolation`; not `resource.pids` (isobox puts the limit on the Sentry's host
-  cgroup, which does not cap sandboxed processes, and a small limit stops runsc starting) and not
+  arm64 in a privileged container) proves 11, including `process.containment`,
+  `process.cross_run_isolation` and `resource.pids` (through the nproc shim, see below); not
   `fs.virtual_paths` (no `/workspace` remap on either backend).
-* **No process limit on gVisor** (see below): `resource.pids` is unproven (isobox's `--pids` caps
-  the Sentry's host threads and crashes runsc under a fork bomb), and nothing sets `RLIMIT_NPROC`.
+* **The pids cap uses `RLIMIT_NPROC` only with `AGENT_SANDBOX_BACKEND=gvisor`.** With the
+  backend left to isobox (`""`) the cap goes to isobox's `--pids`, which on gVisor caps the
+  Sentry's host threads instead (see below).
 * **gVisor host requirements:** root, cgroup v2, `runsc` new enough for `runsc features`
   (oci-seccomp; 20250106.0 is too old), and `ip`, `sysctl` and `iptables` (isobox builds the
   sandbox's network namespace with them).
 
-## Fork bombs and the memory cap
+## Fork bombs: memory and pids caps
 
-On gVisor the memory cap, not a process limit, is what stops a fork bomb. Set
-`AGENT_SANDBOX_MEMORY` in production (`4g` is a reasonable start: agent CLIs plus `go build` or
-`npm` can need a few GB).
+Set both in production on gVisor: `AGENT_SANDBOX_MEMORY` (`4g` is a reasonable start: agent CLIs
+plus `go build` or `npm` can need a few GB) and `AGENT_SANDBOX_PIDS` (`1024` is a reasonable
+start, not measured against real workloads: the limit counts threads, and a node CLI has a dozen or
+more, a parallel `go build` many more). Either one contains a fork bomb. The memory cap kills the
+sandbox; the pids cap makes `fork()` fail with `EAGAIN` and the run carries on.
 
-* **isobox's `--pids` does not limit sandboxed processes.** It sets `pids.max` on the sandbox's
-  host cgroup, which counts the Sentry's own host threads (an idle run already uses ~29). A small
-  value stops runsc from starting (8 or 16 do; 32 works), and under a fork bomb `--pids 256`
-  makes runsc exit with status 2 within a second; `fork()` never fails with `EAGAIN`.
-* **`RLIMIT_NPROC` does work inside gVisor** (runsc 20261005.0, although google/gvisor#169 is
-  still open): with soft and hard limits of 256 set before the bomb, `fork()` fails with `EAGAIN`
-  and the sandbox survives. Nothing sets it today: the limits default to unlimited and the agent
-  runs as uid 0, so it would have to come from isobox (or the runner) before the agent starts.
-  The sandbox cannot mount cgroupfs itself (`permission denied`).
-* **The memory cap contains a fork bomb.** The bomb uses up memory, so the sandbox is killed
+* **How the pids cap works on gVisor.** gVisor enforces `RLIMIT_NPROC` inside the sandbox
+  (runsc 20261005.0, although google/gvisor#169 is still open), but a limit set on the host
+  process does not reach the sandbox, so the adapter starts the agent CLI through the runner's
+  own binary as a shim (`internal/sandbox/isobox/nproc.go`): `<runner> __agent-runner-nproc N --
+  <cli> ...` sets the soft and hard limits to N and execs the CLI. The sandbox has no
+  capabilities, so the agent cannot raise the hard limit. The runner's binary must be readable
+  inside the sandbox (it is unless it lives in one of the runner's private directories).
+* **isobox's `--pids` does not limit sandboxed processes**, so the adapter does not use it on
+  gVisor. It sets `pids.max` on the sandbox's host cgroup, which counts the Sentry's own host
+  threads (an idle run already uses ~29). A small value stops runsc from starting (8 or 16 do; 32
+  works), and under a fork bomb `--pids 256` makes runsc exit with status 2 within a second;
+  `fork()` never fails with `EAGAIN`. The sandbox cannot mount cgroupfs itself (`permission
+  denied`).
+* **The memory cap contains a fork bomb** too: the bomb uses up memory, so the sandbox is killed
   within seconds and the host is left alone. When the run's main process exits, gVisor also kills
   every process left in the sandbox.
-* **Without a cap**, only the run timeout ends it, and until then it can take all of the host's
-  memory.
+* **Without either cap**, only the run timeout ends it, and until then it can take all of the
+  host's memory.
 
 Measured on gVisor in Docker (isobox `c7bbd19`, infinite fork bomb with the main process kept
 alive, 20 s isobox timeout, host `MemAvailable` sampled every 0.5 s):
@@ -171,9 +178,11 @@ alive, 20 s isobox timeout, host `MemAvailable` sampled every 0.5 s):
 | `--pids 256` | runsc exits 2 in ~0.6 s | unchanged |
 | `RLIMIT_NPROC` 256 | `fork()` fails with `EAGAIN`; sandbox still running at 12 s | 3.0 GB → 2.8 GB |
 
-`make sandbox-gvisor` checks this: a fork bomb under `AGENT_SANDBOX_MEMORY=512m` must be killed
-well before the iteration timeout, with the host's available memory and the runner unharmed.
-Seatbelt (macOS) has no memory limit, so there the cap is only reported as unenforced.
+`make sandbox-gvisor` checks both through the runner: a fork bomb under
+`AGENT_SANDBOX_MEMORY=512m` must be killed well before the iteration timeout, and one under
+`AGENT_SANDBOX_PIDS=256` (no memory cap) must hit `EAGAIN` and let the session complete, each with
+the host's available memory and the runner unharmed. Seatbelt (macOS) has neither limit
+(`RLIMIT_NPROC` there is per user across the whole host), so both caps are reported as unenforced.
 
 ## Operations
 

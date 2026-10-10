@@ -33,6 +33,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		IsoboxBackend: cfg.Agent.SandboxBackend,
 		PolicyFile:    cfg.Agent.SandboxPolicyFile,
 		Memory:        cfg.Agent.SandboxMemory,
+		PIDs:          cfg.Agent.SandboxPIDs,
 		EvidenceFile:  cfg.Agent.SandboxEvidence,
 		EnvAllow:      cfg.Agent.SandboxEnvAllow,
 		PrivatePaths:  sandboxPrivatePaths(cfg),
