@@ -160,9 +160,23 @@ type testCase struct {
 	run func(*x) error
 }
 
-// listener accepts and counts TCP connections on 127.0.0.1.
-func listener() (port int, accepted *atomic.Int64, stop func(), err error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// hostIP is a non-loopback IPv4 address of this host, or 127.0.0.1 if it has
+// none.
+func hostIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
+				return n.IP.String()
+			}
+		}
+	}
+	return "127.0.0.1"
+}
+
+// listener accepts and counts TCP connections on ip.
+func listener(ip string) (port int, accepted *atomic.Int64, stop func(), err error) {
+	l, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -272,7 +286,7 @@ if os.fork()==0:
 			if err := need("bash"); err != nil {
 				return err
 			}
-			port, n, stop, err := listener()
+			port, n, stop, err := listener("127.0.0.1")
 			if err != nil {
 				return err
 			}
@@ -289,14 +303,17 @@ if os.fork()==0:
 			if err := need("bash"); err != nil {
 				return err
 			}
-			port, n, stop, err := listener()
+			// Not loopback: a backend with its own network namespace (gVisor)
+			// has its own 127.0.0.1 and reaches the host only by its address.
+			ip := hostIP()
+			port, n, stop, err := listener(ip)
 			if err != nil {
 				return err
 			}
 			defer stop()
 			s := t.baseSpec()
 			s.Network.Egress = sandbox.EgressOutbound
-			t.exec(s, tcpProbe("127.0.0.1", port))
+			t.exec(s, tcpProbe(ip, port))
 			if n.Load() == 0 {
 				return errors.New("outbound connect failed")
 			}

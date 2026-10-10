@@ -40,10 +40,15 @@ jobs:
           (cd /tmp/isobox && go build -o /tmp/isobox/isobox ./cmd/isobox)
       - name: Install gVisor (Linux)
         if: matrix.backend == 'gvisor'
+        # isobox needs `runsc features` (oci-seccomp), which 20250106.0 lacks;
+        # releases now ship as a tarball. isobox also runs ip/sysctl/iptables.
         run: |
-          curl -fsSL -o runsc https://storage.googleapis.com/gvisor/releases/release/20250106.0/x86_64/runsc
-          sudo install -m 0755 runsc /usr/local/bin/runsc
-          runsc --version
+          U=https://storage.googleapis.com/gvisor/releases/release/20261005.0/x86_64/gvisor.tar.bz2
+          curl -fsSL -o gvisor.tar.bz2 "$U" && curl -fsSL "$U.sha512" | sed 's/ .*/  gvisor.tar.bz2/' | sha512sum -c -
+          tar -xjf gvisor.tar.bz2
+          sudo install -m 0755 runsc /usr/local/bin/runsc && sudo cp -r gvisor-bin /usr/local/bin/
+          runsc --version && runsc features | grep -q oci-seccomp
+          which ip sysctl iptables
       - name: Conformance
         run: |
           go build -o sandbox-conformance ./cmd/sandbox-conformance
