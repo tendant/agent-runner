@@ -125,6 +125,7 @@ type AgentConfig struct {
 	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — isobox backend: "" (native) | seatbelt | gvisor
 	SandboxIsobox       string   // AGENT_SANDBOX_ISOBOX — path to the isobox binary (default "isobox")
 	SandboxPolicyFile   string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
+	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
@@ -430,6 +431,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxBackend = envOrDefault("AGENT_SANDBOX_BACKEND", cfg.Agent.SandboxBackend)
 	cfg.Agent.SandboxIsobox = envOrDefault("AGENT_SANDBOX_ISOBOX", cfg.Agent.SandboxIsobox)
 	cfg.Agent.SandboxPolicyFile = envOrDefault("AGENT_SANDBOX_POLICY", cfg.Agent.SandboxPolicyFile)
+	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxModelProxy = envBoolOrDefault("AGENT_SANDBOX_MODEL_PROXY", cfg.Agent.SandboxModelProxy)

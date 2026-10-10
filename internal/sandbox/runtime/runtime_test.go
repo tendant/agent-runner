@@ -248,3 +248,57 @@ func TestPolicyInheritsDefaultsAndAcceptsInlineJSON(t *testing.T) {
 		t.Error("an unknown field must fail")
 	}
 }
+
+func TestParseBytes(t *testing.T) {
+	for in, want := range map[string]int64{
+		"4g": 4 << 30, "4G": 4 << 30, "4GiB": 4 << 30, "4gb": 4 << 30, " 512m ": 512 << 20,
+		"64k": 64 << 10, "1t": 1 << 40, "1048576": 1 << 20, "100b": 100,
+	} {
+		if got, err := ParseBytes(in); err != nil || got != want {
+			t.Errorf("ParseBytes(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "g", "0", "-1g", "1.5g", "4x", "lots", "99999999999t"} {
+		if _, err := ParseBytes(in); err == nil {
+			t.Errorf("ParseBytes(%q) must fail", in)
+		}
+	}
+}
+
+func TestMemoryCapsEveryRun(t *testing.T) {
+	newWith := func(cfg Config) (*Runtime, error) {
+		cfg.Mode, cfg.StateDir = sandbox.ModePermissive, t.TempDir()
+		return New(cfg)
+	}
+	rt, err := newWith(Config{Memory: "4g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.system.Resources.MemoryBytes; got != 4<<30 {
+		t.Errorf("memory = %d, want 4 GiB", got)
+	}
+	// It overrides the policy's memory_bytes; the policy's other fields stay.
+	rt, err = newWith(Config{Memory: "512m", PolicyFile: `{"version":1,"network":{"egress":"none"},"resources":{"memory_bytes":1073741824}}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.system.Resources.MemoryBytes; got != 512<<20 || rt.system.Network.Egress != sandbox.EgressNone {
+		t.Errorf("spec = %+v", rt.system)
+	}
+	if _, err := newWith(Config{Memory: "4 gigs"}); err == nil {
+		t.Error("a bad memory size must fail")
+	}
+	// Seatbelt cannot cap memory: a capped run reports resource.memory as a gap there.
+	if caps := sandbox.Required(rt.system); !containsCap(caps, sandbox.CapResourceMemory) {
+		t.Errorf("a memory cap must require %s, got %v", sandbox.CapResourceMemory, caps)
+	}
+}
+
+func containsCap(caps []sandbox.CapabilityID, c sandbox.CapabilityID) bool {
+	for _, x := range caps {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}

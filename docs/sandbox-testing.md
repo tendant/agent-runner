@@ -5,7 +5,8 @@
 a privileged Docker container, from any host). Both run the conformance suite against the CI
 baseline, then the real runner with a fake `claude` that tries to escape, and check every outcome:
 credentials, the runner's own files, other sessions, writes outside the workspace, the network,
-and that a claude run without credentials fails up front. On gVisor they also run `strict` mode.
+and that a claude run without credentials fails up front. On gVisor they also run `strict` mode
+and a fork bomb under `AGENT_SANDBOX_MEMORY=512m`, which must be killed without harming the host.
 
 ## A. 自动化测试（任何机器）
 

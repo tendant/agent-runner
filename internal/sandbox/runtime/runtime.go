@@ -13,9 +13,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +47,7 @@ type Config struct {
 	IsoboxBin     string
 	IsoboxBackend string // "", "seatbelt", "gvisor"
 	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
+	Memory        string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	EvidenceFile  string // optional conformance report; claims limited to proven caps
 	EnvAllow      []string
 	// PrivatePaths are the runner's own host files and directories (its .env
@@ -110,6 +113,34 @@ func loadPolicy(value string) (sandbox.SandboxSpec, error) {
 		return sandbox.SandboxSpec{}, fmt.Errorf("sandbox policy %s: %w", src, err)
 	}
 	return withDefaults(spec, DefaultSystemSpec()), nil
+}
+
+// ParseBytes reads a size: a byte count, or a number with a k, m, g or t
+// suffix (binary units; "4g", "4G", "4GiB" and "4gb" are all 4 GiB).
+func ParseBytes(s string) (int64, error) {
+	v := strings.ToLower(strings.TrimSpace(s))
+	v = strings.TrimSuffix(strings.TrimSuffix(v, "ib"), "b")
+	shift := 0
+	if v != "" {
+		switch v[len(v)-1] {
+		case 'k':
+			shift = 10
+		case 'm':
+			shift = 20
+		case 'g':
+			shift = 30
+		case 't':
+			shift = 40
+		}
+		if shift > 0 {
+			v = v[:len(v)-1]
+		}
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n <= 0 || n > math.MaxInt64>>shift {
+		return 0, fmt.Errorf("bad size %q (want e.g. 4g, 512m or a byte count)", s)
+	}
+	return n << shift, nil
 }
 
 // withDefaults fills the fields spec leaves unset from def.
@@ -208,6 +239,13 @@ func New(cfg Config) (*Runtime, error) {
 		if r.system, err = loadPolicy(cfg.PolicyFile); err != nil {
 			return nil, err
 		}
+	}
+	if cfg.Memory != "" {
+		n, err := ParseBytes(cfg.Memory)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox memory: %w", err)
+		}
+		r.system.Resources.MemoryBytes = n
 	}
 	if cfg.EvidenceFile != "" {
 		b, err := os.ReadFile(cfg.EvidenceFile)
