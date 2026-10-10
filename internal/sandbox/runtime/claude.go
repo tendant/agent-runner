@@ -36,16 +36,8 @@ func seedClaudeConfig(seed ClaudeSeed, dst string) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
-	if seed.Dir != "" {
-		for _, name := range claudeConfigEntries {
-			target := filepath.Join(dst, name)
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			if err := copyEntry(filepath.Join(seed.Dir, name), target); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-		}
+	if err := seedDir(seed.Dir, dst, claudeConfigEntries); err != nil {
+		return err
 	}
 	if seed.StateFile == "" {
 		return nil
@@ -76,6 +68,39 @@ func seedClaudeConfig(seed ClaudeSeed, dst string) error {
 	}
 	return os.WriteFile(statePath, b, 0o600)
 }
+
+// seedDir refreshes the allowlisted entries of dst from src: each is replaced
+// with src's current copy, or removed when src no longer has it. Other entries
+// in dst (the CLI's own sessions and state) are kept. An empty src only makes
+// sure dst exists.
+func seedDir(src, dst string, entries []string) error {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
+	}
+	if src == "" {
+		return nil
+	}
+	for _, name := range entries {
+		target := filepath.Join(dst, name)
+		if err := os.RemoveAll(target); err != nil {
+			return err
+		}
+		if err := copyEntry(filepath.Join(src, name), target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// codexConfigEntries and piConfigEntries are what a sandboxed codex or pi gets
+// of its host (or agent-home) config: instructions, prompts and skills, and
+// pi's settings. Never auth.json (logins), config.toml (it can select a
+// ChatGPT login or other providers) or sessions. pi's models.json is written
+// per run by the model channel (writePiModels).
+var (
+	codexConfigEntries = []string{"AGENTS.md", "prompts", "skills"}
+	piConfigEntries    = []string{"AGENTS.md", "settings.json", "prompts", "skills"}
+)
 
 // copyEntry copies a file or directory tree, following symlinks to their
 // content so nothing in dst points back outside the sandbox. A directory

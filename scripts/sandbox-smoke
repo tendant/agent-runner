@@ -115,6 +115,8 @@ tryread() {
 {
 	echo "env|home|\$HOME"
 	echo "env|config_dir|\$CLAUDE_CONFIG_DIR"
+	echo "env|codex_home|\$CODEX_HOME"
+	echo "env|pi_dir|\$PI_CODING_AGENT_DIR"
 	echo "env|token|\${CLAUDE_CODE_OAUTH_TOKEN:+present}"
 	echo "env|proxy_url|\${ANTHROPIC_BASE_URL:+present}"
 	echo "env|proxy_token|\${ANTHROPIC_AUTH_TOKEN:+present}"
@@ -136,7 +138,8 @@ tryread() {
 	try write_outside  sh -c "echo x > $W/escaped"
 	try write_tmp      sh -c "echo x > /tmp/sandbox-smoke-escaped"
 	try write_workspace sh -c "echo x > \$PWD/inside.txt"
-	try write_config   sh -c "echo x > \$CLAUDE_CONFIG_DIR/probe"
+	try write_config   sh -c "echo x > \$CLAUDE_CONFIG_DIR/probe && echo x > \$CODEX_HOME/probe && echo x > \$PI_CODING_AGENT_DIR/probe"
+	tryread pi_auth    cat $HOME/.pi/agent/auth.json
 	ln -sf $W/run/.env link 2>/dev/null
 	tryread symlink cat link
 	try metadata_ip    curl -sS -m 3 http://169.254.169.254/
@@ -228,6 +231,9 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	for n in memory write_workspace write_config internet; do expect $n allowed; done
 	expect_env home "$DATA/state/sandbox/home/*"
 	expect_env config_dir "$DATA/state/sandbox/home/*/.claude"
+	expect_env codex_home "$DATA/state/sandbox/home/*/.codex"
+	expect_env pi_dir "$DATA/state/sandbox/home/*/.pi/agent"
+	[ -s "$HOME/.pi/agent/auth.json" ] && expect pi_auth blocked
 	# The model proxy holds the token; claude gets its URL and a run token.
 	expect_env token ""
 	expect_env proxy_url present

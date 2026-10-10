@@ -25,7 +25,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 	"github.com/agent-runner/agent-runner/internal/sandbox/isobox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
-	"github.com/agent-runner/agent-runner/internal/sandbox/proxy"
 )
 
 // Event is a focused observability record. It never carries environment
@@ -52,9 +51,14 @@ type Config struct {
 	// files, state, logs, ...). Every run is read-denied them, except for the
 	// parts that hold the run's own workspace, home and tmp (see readDeny).
 	PrivatePaths []string
-	// Model, when set, is the credential sandboxed claude runs reach the
-	// model with through a per-run proxy (see ModelChannel).
-	Model *ModelChannel
+	// Models are the credentials sandboxed agent CLIs reach the model with,
+	// by provider (ProviderAnthropic, ProviderOpenAI), each through a per-run
+	// proxy (see ModelChannel).
+	Models map[string]*ModelChannel
+	// CodexSeed and PiSeed are the config dirs a sandboxed codex or pi's
+	// allowlisted config is copied from (~/.codex, ~/.pi/agent, or agent-home).
+	CodexSeed string
+	PiSeed    string
 	// Claude seeds a sandboxed claude CLI's config dir (see seedClaudeConfig).
 	Claude   ClaudeSeed
 	LeaseTTL time.Duration
@@ -266,7 +270,7 @@ type Run struct {
 	releaseT func()
 	started  time.Time
 	backend  string
-	model    *proxy.Proxy // the run's model channel, if any
+	model    *modelRun // the run's model channels, if any
 }
 
 // Begin prepares a run. With mode off it returns ctx unchanged.
@@ -303,10 +307,21 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	}
 	// claude's config dir lives in the sandbox home: writable, kept per thread
 	// (a task's next turn resumes its conversation), seeded from an allowlist.
-	claudeDir := filepath.Join(roots[sandbox.RootHome], ".claude")
-	if err := seedClaudeConfig(r.cfg.Claude, claudeDir); err != nil {
-		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "claude config: " + err.Error()})
-		return nil, &RejectedError{fmt.Errorf("seed claude config: %w", err)}
+	// So do codex's and pi's (and pi's sessions).
+	home := roots[sandbox.RootHome]
+	claudeDir := filepath.Join(home, ".claude")
+	codexDir := filepath.Join(home, ".codex")
+	piDir := filepath.Join(home, ".pi", "agent")
+	seedErr := seedClaudeConfig(r.cfg.Claude, claudeDir)
+	if seedErr == nil {
+		seedErr = seedDir(r.cfg.CodexSeed, codexDir, codexConfigEntries)
+	}
+	if seedErr == nil {
+		seedErr = seedDir(r.cfg.PiSeed, piDir, piConfigEntries)
+	}
+	if seedErr != nil {
+		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "agent config: " + seedErr.Error()})
+		return nil, &RejectedError{fmt.Errorf("seed agent config: %w", seedErr)}
 	}
 
 	keep := make([]string, 0, len(roots))
@@ -372,14 +387,24 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		}
 	}()
 
-	// The model channel: claude gets the proxy's URL and a per-run token,
-	// never the credential. Without one (no credential, or no outbound
-	// network), a `claude setup-token` token is passed to claude itself.
+	// The model channels: the CLIs get their proxies' URLs and per-run
+	// tokens, never the credentials. Without them (none configured, or no
+	// outbound network), a `claude setup-token` token is passed to claude
+	// itself, and other CLIs' keys only through AGENT_SANDBOX_ENV_ALLOW.
 	envAllow := r.cfg.EnvAllow
 	cliEnvAllow := map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}}
 	var cliEnv map[string][]string
-	model, err := r.startModelProxy(spec, req.RunID, req.ThreadID)
+	model, err := r.startModels(spec, req.RunID, req.ThreadID)
+	if err == nil && model != nil {
+		err = model.writePiModels(r.cfg.PiSeed, piDir)
+		if err == nil {
+			err = model.writeCodexConfig(codexDir)
+		}
+	}
 	if err != nil {
+		if model != nil {
+			model.close()
+		}
 		cancel()
 		_ = r.store.Release(name, r.owner)
 		releaseThread()
@@ -388,12 +413,13 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	}
 	if model != nil {
 		run.model = model
-		envAllow = withoutModelCredentials(envAllow)
+		envAllow = model.envAllow(envAllow)
 		cliEnvAllow = nil
-		cliEnv = map[string][]string{"claude": {
-			"ANTHROPIC_BASE_URL=" + model.BaseURL(),
-			"ANTHROPIC_AUTH_TOKEN=" + model.Token(),
-		}}
+		cliEnv = model.cliEnv(r.cfg.Models)
+		if gapNote != "" {
+			gapNote += "; "
+		}
+		gapNote += "model channels: " + model.names()
 	}
 
 	launcher := &executor.SandboxLauncher{
@@ -403,6 +429,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		EnvAllow:    envAllow,
 		Tag:         req.RunID,
 		CLIEnvAllow: cliEnvAllow,
+		ScratchDir:  roots[sandbox.RootTmp],
 		CLIEnv:      cliEnv,
 		EnvOverride: []string{
 			"HOME=" + roots[sandbox.RootHome],
@@ -411,7 +438,14 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			// otherwise, which the sandbox does not let it write.
 			"CLAUDE_CODE_TMPDIR=" + roots[sandbox.RootTmp],
 		},
-		EnvForce: []string{"CLAUDE_CONFIG_DIR=" + claudeDir},
+		// Config dirs in the sandbox home, over an AGENT_ISOLATED overlay's
+		// agent-home ones, which the sandbox can read but not write.
+		EnvForce: []string{
+			"CLAUDE_CONFIG_DIR=" + claudeDir,
+			"CODEX_HOME=" + codexDir,
+			"PI_CODING_AGENT_DIR=" + piDir,
+			"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(home, ".pi", "sessions"),
+		},
 		OnCheck: func(cr sandbox.CheckResult, err error) {
 			if err != nil || (r.cfg.Mode == sandbox.ModeStrict && len(cr.Gaps) > 0) {
 				r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Backend: cr.Backend, Detail: "check at launch failed"})
@@ -434,7 +468,7 @@ func (run *Run) Finish() {
 			run.cancel()
 		}
 		if run.model != nil {
-			_ = run.model.Close()
+			run.model.close()
 		}
 		_ = run.rt.store.Release("sandbox:"+run.req.RunID, run.rt.owner)
 		_ = os.RemoveAll(filepath.Dir(run.roots[sandbox.RootTmp])) // runs/<id>

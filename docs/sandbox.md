@@ -54,17 +54,29 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
 * **Credentials:** run `claude setup-token` (a long-lived subscription token, no refresh) and set
   `CLAUDE_CODE_OAUTH_TOKEN` in the runner's env, or set `ANTHROPIC_API_KEY`. With neither, a claude
   run fails before it starts, saying so.
-* **Model proxy** (`AGENT_SANDBOX_MODEL_PROXY`, default on): the credential stays in the runner.
-  Each sandbox run starts a proxy (`internal/sandbox/proxy`) that attaches it (the token as
-  `Authorization: Bearer`, or the key as `x-api-key`) and forwards to `ANTHROPIC_BASE_URL` or the
-  Anthropic API; the `claude` CLI gets only `ANTHROPIC_BASE_URL` (the proxy) and
-  `ANTHROPIC_AUTH_TOKEN` (a per-run token), and the credential variables are stripped from the
-  sandbox whatever `AGENT_SANDBOX_ENV_ALLOW` lists. The proxy accepts `/v1/messages` and
-  `/api/hello` only, 600 requests a minute, 64 MiB a request, and stops with the run. It listens on
+* **Model proxy** (`AGENT_SANDBOX_MODEL_PROXY`, default on): credentials stay in the runner. Each
+  sandbox run starts a proxy (`internal/sandbox/proxy`) per provider that attaches the credential
+  and forwards; the CLIs get only proxy URLs and per-run tokens, and the credential variables are
+  stripped from the sandbox whatever `AGENT_SANDBOX_ENV_ALLOW` lists.
+  * **Anthropic** (`claude`, `pi`): `CLAUDE_CODE_OAUTH_TOKEN` (sent as `Authorization: Bearer`) or
+    `ANTHROPIC_API_KEY` (`x-api-key`), to `ANTHROPIC_BASE_URL` or the Anthropic API; paths
+    `/v1/messages`, `/api/hello`. `claude` gets `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`.
+  * **OpenAI** (`codex`, `pi`): `OPENAI_API_KEY`, to `OPENAI_BASE_URL` or the OpenAI API; paths
+    `/v1/responses`, `/v1/chat/completions`, `/v1/models`. codex ignores `OPENAI_BASE_URL` for its
+    built-in provider, so the run's `CODEX_HOME/config.toml` defines a provider pointing at the
+    proxy. A codex ChatGPT login (`auth.json`) is not supported: it refreshes and rotates tokens.
+  * **pi** gets the run's `models.json` (the seed's, with each proxied built-in provider's `baseUrl`
+    set to its proxy) and run tokens in env (`ANTHROPIC_OAUTH_TOKEN` for a setup-token).
+
+  Proxies allow 600 requests a minute and 64 MiB a request and stop with the run. They listen on
   127.0.0.1 on macOS (Seatbelt shares the host's network) and on the host's address on Linux
-  (gVisor has its own loopback). It needs outbound network: with egress `none` or `restricted`
-  isobox cannot open it a port, so no proxy starts and the token is passed to `claude` directly
-  (as with `AGENT_SANDBOX_MODEL_PROXY=false`); the model API is unreachable then anyway.
+  (gVisor has its own loopback). They need outbound network: with egress `none` or `restricted`
+  isobox cannot open them a port, so none start and a setup-token is passed to `claude` directly
+  (as with `AGENT_SANDBOX_MODEL_PROXY=false`); the model APIs are unreachable then anyway.
+* **codex and pi config:** `CODEX_HOME` (`~/.codex`) and `PI_CODING_AGENT_DIR` (`~/.pi/agent`, sessions
+  in `~/.pi/sessions`) are in the sandbox home too, seeded from `~/.codex` / `~/.pi/agent` (or
+  `agent-home/`) with `AGENTS.md`, `prompts/`, `skills/` and pi's `settings.json`, never `auth.json`.
+  `~/.pi` and opencode's `~/.local/share/opencode` are read-denied like `~/.claude`.
 * **Config:** `CLAUDE_CONFIG_DIR` is `/home/agent/.claude` (the thread's sandbox home: writable,
   kept across a task's turns so `--resume` works). Before each run it is refreshed from
   `~/.claude` (or `agent-home/claude` with `AGENT_ISOLATED=true`), copying only `settings.json`,
@@ -105,9 +117,9 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   not denied to it.
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
-* **The model proxy is for claude only**, and only with outbound network (isobox cannot expose one
-  port into a sandbox without network). Other CLIs (codex, opencode, pi) still need their keys
-  through `AGENT_SANDBOX_ENV_ALLOW`. On Linux the proxy's port is on the host's address, reachable
+* **The model proxy covers Anthropic and OpenAI** for claude, codex and pi, and only with outbound
+  network (isobox cannot expose one port into a sandbox without network). opencode and other
+  providers (DeepSeek, ...) still need their keys through `AGENT_SANDBOX_ENV_ALLOW`. On Linux the proxy's port is on the host's address, reachable
   from the host's network for the run's lifetime, behind the per-run token.
 * The fast-LLM executor fallback (analyzer, curator, and the planner outside a session, used when
   no LLM API key is set) runs the agent CLI in a sandbox run of its own, sharing one sandbox

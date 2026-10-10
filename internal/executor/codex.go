@@ -73,7 +73,9 @@ func joinPrompt(systemPrompt, instruction string) string {
 // returns the thread ID it reports.
 func (e *CodexExecutor) run(ctx context.Context, workspacePath, prompt string, resume []string, jsonEvents bool) (*ExecutionResult, string, error) {
 	// Create temp file for output
-	tmpFile, err := os.CreateTemp("", "codex-output-*.txt")
+	// codex writes its final message to this file (-o); in a sandbox it can
+	// only write the run's scratch dir.
+	tmpFile, err := os.CreateTemp(scratchDir(ctx, e.Launcher), "codex-output-*.txt")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create temp file: %w", err)
 	}
