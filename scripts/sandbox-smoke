@@ -238,15 +238,21 @@ probe() {
 }
 
 step "runner, default policy (permissive)"
+rm -f /tmp/sandbox-smoke-escaped
 if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	# Only where the host has something there to hide.
 	[ -n "$(ls -A "$HOME/.ssh" 2>/dev/null)" ] && expect ssh_dir blocked
 	[ -n "$(ls -A "$HOME/.aws" 2>/dev/null)" ] && expect aws_dir blocked
 	[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ] && expect claude_dir blocked
 	for n in runner_env runner_env_local runner_logs other_session journal \
-		write_outside write_tmp symlink metadata_ip; do
+		write_outside symlink metadata_ip; do
 		expect $n blocked
 	done
+	# With no run dir under /tmp, gVisor gives the sandbox a private /tmp:
+	# the write succeeds there, so check the host instead.
+	if [ -e /tmp/sandbox-smoke-escaped ]; then fail "write_tmp reached the host's /tmp"
+	elif grep -q '^allowed|write_tmp|' "$REPORT"; then pass "write_tmp stayed in the sandbox's own /tmp"
+	else expect write_tmp blocked; fi
 	for n in memory write_workspace write_config internet; do expect $n allowed; done
 	expect_env home "$DATA/state/sandbox/home/*"
 	expect_env config_dir "$DATA/state/sandbox/home/*/.claude"
@@ -332,6 +338,7 @@ if [ "$BACKEND" = gvisor ]; then
 	bomb "sandbox fork bomb" AGENT_SANDBOX_MEMORY=512m
 	# Well before the 120s iteration timeout: the memory cap ended it.
 	case $RESULT in
+	*"sandbox rejected run"*) fail "the sandbox never started: ${RESULT#*|}" ;;
 	completed* | failed* | stopped*)
 		if [ "$ELAPSED" -lt 90 ]; then pass "sandbox killed after ${ELAPSED}s (${RESULT%%|*}: ${RESULT#*|})"
 		else fail "the fork bomb ran ${ELAPSED}s: ended by the timeout, not the memory cap"; fi ;;
@@ -347,6 +354,22 @@ if [ "$BACKEND" = gvisor ]; then
 	if [ -n "$BOMB" ] && grep -q "Resource temporarily unavailable" "$BOMB"; then pass "fork() failed with EAGAIN"
 	else fail "no EAGAIN from fork() (${BOMB:-no bomb.txt})"; fi
 	bomb_cleanup
+
+	# The agent is root without capabilities: a 0750 parent not owned by root
+	# (a runner installed under its user's home) must be named, not fail every
+	# session without saying why.
+	step "runner, data dir under a 0750 home"
+	PRIV=$W/private
+	install -d -o nobody -g "$(id -gn nobody)" -m 0750 "$PRIV"
+	DATA_SAVED=$DATA DATA=$PRIV/data
+	start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
+	run_task "sandbox smoke probe" 20
+	stop_runner
+	DATA=$DATA_SAVED
+	case $RESULT in
+	"failed|"*"cannot enter $PRIV "*"chmod o+x $PRIV"*) pass "rejected, naming $PRIV and chmod o+x" ;;
+	*) fail "want a rejection naming $PRIV, got: $RESULT" ;;
+	esac
 fi
 
 step "runner, no claude credentials"

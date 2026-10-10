@@ -140,6 +140,13 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 * **gVisor host requirements:** root, cgroup v2, `runsc` new enough for `runsc features`
   (oci-seccomp; 20250106.0 is too old), and `ip`, `sysctl` and `iptables` (isobox builds the
   sandbox's network namespace with them).
+* **On gVisor, every parent of `DATA_DIR`, `TMP_ROOT` and `STATE_ROOT` must be owned by root
+  or searchable by others.** Inside, the agent is uid 0 without capabilities, so a directory not
+  owned by root only gives it the "other" bits. A runner installed under a private home
+  (`/home/runner`, mode 0750) cannot start a single process there (`failed to find initial
+  working directory ... permission denied`). Every run is rejected with a message naming the
+  directory and the fix (`chmod o+x`, which allows entering without listing). This applies whenever
+  isobox resolves to gVisor, including with `AGENT_SANDBOX_BACKEND` unset on Linux.
 
 ## Fork bombs: memory and pids caps
 

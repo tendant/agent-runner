@@ -7,7 +7,8 @@ baseline, then the real runner with a fake `claude` that tries to escape, and ch
 credentials, the runner's own files, other sessions, writes outside the workspace, the network,
 and that a claude run without credentials fails up front. On gVisor they also run `strict` mode
 and a fork bomb under `AGENT_SANDBOX_MEMORY=512m` (must be killed) and one under `AGENT_SANDBOX_PIDS=256`
-(`fork()` must fail with `EAGAIN`), neither harming the host.
+(`fork()` must fail with `EAGAIN`), neither harming the host, and a data dir under a 0750
+home not owned by root (every run must be rejected, naming the directory).
 
 ## A. 自动化测试（任何机器）
 
