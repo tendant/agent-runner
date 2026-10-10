@@ -48,6 +48,7 @@ type Config struct {
 	IsoboxBackend string // "", "seatbelt", "gvisor"
 	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	Memory        string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
+	PIDs          string // optional process/thread cap for every run; overrides the policy's pids
 	EvidenceFile  string // optional conformance report; claims limited to proven caps
 	EnvAllow      []string
 	// PrivatePaths are the runner's own host files and directories (its .env
@@ -246,6 +247,13 @@ func New(cfg Config) (*Runtime, error) {
 			return nil, fmt.Errorf("sandbox memory: %w", err)
 		}
 		r.system.Resources.MemoryBytes = n
+	}
+	if cfg.PIDs != "" {
+		n, err := strconv.ParseInt(strings.TrimSpace(cfg.PIDs), 10, 64)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("sandbox pids: bad count %q", cfg.PIDs)
+		}
+		r.system.Resources.PIDs = n
 	}
 	if cfg.EvidenceFile != "" {
 		b, err := os.ReadFile(cfg.EvidenceFile)

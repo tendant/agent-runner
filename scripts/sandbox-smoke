@@ -106,6 +106,16 @@ case "\$*" in *"sandbox fork bomb"*)
 	b
 	exec sleep 600 ;;
 esac
+# The pids-cap check: report done first, then fork forever for 10s. Under the
+# cap fork() fails (EAGAIN, logged to _send/bomb.txt) and the run ends normally.
+case "\$*" in *"sandbox pids bomb"*)
+	mkdir -p "\$PWD/_send"
+	exec 2>"\$PWD/_send/bomb.txt"
+	echo '{"result":"TASK: DONE","cost_usd":0,"duration_ms":1}'
+	b() { b | b & }
+	b
+	exec sleep 10 ;;
+esac
 R="\$PWD/_send/report.txt"; mkdir -p "\$PWD/_send"
 # try: allowed when the command succeeds (writes, network).
 try() {
@@ -277,46 +287,66 @@ if [ "$BACKEND" = gvisor ]; then
 fi
 
 if [ "$BACKEND" = gvisor ]; then
-	# No process limit is set on gVisor (isobox's pids limit caps only the
-	# Sentry's host threads, and nothing sets RLIMIT_NPROC), so the memory cap
-	# is what stops a fork bomb: the sandbox is killed, the host is left alone.
-	step "runner, fork bomb under AGENT_SANDBOX_MEMORY=512m"
+	# Two fork bombs. isobox's pids limit caps only the Sentry's host threads,
+	# so on gVisor the pids cap is RLIMIT_NPROC, set by the nproc shim inside
+	# the sandbox. Either cap must contain the bomb: under the memory cap the
+	# sandbox is killed; under the pids cap fork() fails and the run finishes.
 	mem_avail() { awk '/^MemAvailable:/ { print $2 * 1024 }' /proc/meminfo; }
-	BEFORE=$(mem_avail)
-	echo "$BEFORE" >"$W/mem-low"
-	(
-		low=$BEFORE
-		while :; do
-			m=$(mem_avail)
-			[ "$m" -lt "$low" ] && low=$m && echo "$low" >"$W/mem-low"
-			sleep 0.5
-		done
-	) &
-	SAMPLER=$!
-	RUNSC_BEFORE=$(pgrep -c runsc || true)
-	start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
-		AGENT_SANDBOX_MEMORY=512m AGENT_MAX_ITERATION_SECONDS=120
-	t0=$SECONDS
-	run_task "sandbox fork bomb" 150
-	elapsed=$((SECONDS - t0))
-	if curl -sf "localhost:$PORT/health" >/dev/null; then pass "runner alive"; else fail "runner not answering after the fork bomb"; fi
-	stop_runner
-	kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null || true; SAMPLER=
-	drop=$((BEFORE - $(cat "$W/mem-low")))
+	# bomb MESSAGE ENV...: run one task with host memory sampled. Sets RESULT,
+	# ELAPSED and DROP (the largest fall in host available memory).
+	bomb() {
+		local msg=$1 before
+		shift
+		before=$(mem_avail)
+		echo "$before" >"$W/mem-low"
+		(
+			low=$before
+			while :; do
+				m=$(mem_avail)
+				[ "$m" -lt "$low" ] && low=$m && echo "$low" >"$W/mem-low"
+				sleep 0.5
+			done
+		) &
+		SAMPLER=$!
+		RUNSC_BEFORE=$(pgrep -c runsc || true)
+		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_MAX_ITERATION_SECONDS=120 "$@"
+		local t0=$SECONDS
+		run_task "$msg" 150
+		ELAPSED=$((SECONDS - t0))
+		if curl -sf "localhost:$PORT/health" >/dev/null; then pass "runner alive"; else fail "runner not answering after the fork bomb"; fi
+		stop_runner
+		kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null || true; SAMPLER=
+		DROP=$((before - $(cat "$W/mem-low")))
+	}
+	bomb_cleanup() {
+		if [ "$DROP" -lt $((1536 << 20)) ]; then pass "host available memory fell by $((DROP >> 20)) MiB at most"
+		else fail "host available memory fell by $((DROP >> 20)) MiB"; fi
+		for _ in $(seq 20); do [ "$(pgrep -c runsc || true)" -le "$RUNSC_BEFORE" ] && break; sleep 0.5; done
+		local left=$(($(pgrep -c runsc || true) - RUNSC_BEFORE)) leftover
+		[ "$left" -le 0 ] && pass "no runsc processes left" || fail "$left runsc processes left"
+		leftover=$(find "$DATA/state/sandbox/leases" -type f ! -name .lock 2>/dev/null | wc -l | tr -d ' ')
+		[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
+	}
+
+	step "runner, fork bomb under AGENT_SANDBOX_MEMORY=512m"
+	bomb "sandbox fork bomb" AGENT_SANDBOX_MEMORY=512m
 	# Well before the 120s iteration timeout: the memory cap ended it.
 	case $RESULT in
 	completed* | failed* | stopped*)
-		if [ "$elapsed" -lt 90 ]; then pass "sandbox killed after ${elapsed}s (${RESULT%%|*}: ${RESULT#*|})"
-		else fail "the fork bomb ran ${elapsed}s: ended by the timeout, not the memory cap"; fi ;;
-	*) fail "session still ${RESULT%%|*} after ${elapsed}s" ;;
+		if [ "$ELAPSED" -lt 90 ]; then pass "sandbox killed after ${ELAPSED}s (${RESULT%%|*}: ${RESULT#*|})"
+		else fail "the fork bomb ran ${ELAPSED}s: ended by the timeout, not the memory cap"; fi ;;
+	*) fail "session still ${RESULT%%|*} after ${ELAPSED}s" ;;
 	esac
-	if [ "$drop" -lt $((1536 << 20)) ]; then pass "host available memory fell by $((drop >> 20)) MiB at most"
-	else fail "host available memory fell by $((drop >> 20)) MiB (cap 512 MiB)"; fi
-	for _ in $(seq 20); do [ "$(pgrep -c runsc || true)" -le "$RUNSC_BEFORE" ] && break; sleep 0.5; done
-	left=$(($(pgrep -c runsc || true) - RUNSC_BEFORE))
-	[ "$left" -le 0 ] && pass "no runsc processes left" || fail "$left runsc processes left"
-	leftover=$(find "$DATA/state/sandbox/leases" -type f ! -name .lock 2>/dev/null | wc -l | tr -d ' ')
-	[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
+	bomb_cleanup
+
+	step "runner, fork bomb under AGENT_SANDBOX_PIDS=256 (no memory cap)"
+	bomb "sandbox pids bomb" AGENT_SANDBOX_PIDS=256
+	if [ "${RESULT%%|*}" = completed ] && [ "$ELAPSED" -lt 60 ]; then pass "session completed after ${ELAPSED}s"
+	else fail "session ${RESULT} after ${ELAPSED}s, want completed"; fi
+	BOMB=$(find "$DATA" -path "*$SESSION*" -name bomb.txt | head -1)
+	if [ -n "$BOMB" ] && grep -q "Resource temporarily unavailable" "$BOMB"; then pass "fork() failed with EAGAIN"
+	else fail "no EAGAIN from fork() (${BOMB:-no bomb.txt})"; fi
+	bomb_cleanup
 fi
 
 step "runner, no claude credentials"

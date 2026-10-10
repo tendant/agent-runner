@@ -42,12 +42,13 @@ func TestFlags(t *testing.T) {
 	}
 	j := strings.Join(f, " ")
 	for _, want := range []string{"--profile=none", "--net=disable", "--write=scope", "--writable " + r[sandbox.RootWorkspace],
-		"--read-deny " + r[sandbox.RootHome] + "/.ssh", "--memory 1073741824", "--pids 64", "--backend gvisor"} {
+		"--read-deny " + r[sandbox.RootHome] + "/.ssh", "--memory 1073741824", "--backend gvisor"} {
 		if !strings.Contains(j, want) {
 			t.Errorf("missing %q in %s", want, j)
 		}
 	}
-	if strings.Contains(j, "--allow-temp") || strings.Contains(j, "--net=enable") {
+	// On gVisor the pids cap is RLIMIT_NPROC via the nproc shim, not isobox's --pids.
+	if strings.Contains(j, "--allow-temp") || strings.Contains(j, "--net=enable") || strings.Contains(j, "--pids") {
 		t.Errorf("unexpected flag: %s", j)
 	}
 	// restricted fails safe to no network.
@@ -245,5 +246,55 @@ func TestWithSystemPath(t *testing.T) {
 	got := withSystemPath([]string{"HOME=/h", "PATH=/usr/bin:/bin:/usr/sbin"})
 	if got[0] != "HOME=/h" || got[1] != "PATH=/usr/bin:/bin:/usr/sbin:/usr/local/sbin:/sbin" {
 		t.Errorf("env = %v", got)
+	}
+}
+
+func TestPidsCapOnGVisorIsTheNprocShim(t *testing.T) {
+	s := spec(sandbox.EgressNone)
+	gv := New(Config{Binary: fakeIsobox(t), Roots: roots(t), Backend: "gvisor"})
+	sb, err := gv.Prepare(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _, err := sb.(*prepared).buildArgs(sandbox.ProcSpec{Args: []string{"claude", "--print"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, _ := os.Executable()
+	j := strings.Join(args, " ")
+	if !strings.HasSuffix(j, "-- "+self+" "+nprocShim+" 64 -- claude --print") || strings.Contains(j, "--pids") {
+		t.Errorf("gvisor argv: %s", j)
+	}
+	// The adapter enforces it there, so it is not a gap (the fake plan has no res.pids).
+	res, err := gv.Check(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range res.Gaps {
+		if g.Capability == sandbox.CapResourcePIDs {
+			t.Errorf("gvisor must not gap pids: %+v", g)
+		}
+	}
+
+	// Other backends keep isobox's --pids and run the command directly.
+	sb, _ = New(Config{Binary: fakeIsobox(t), Roots: roots(t)}).Prepare(context.Background(), s)
+	args, _, _ = sb.(*prepared).buildArgs(sandbox.ProcSpec{Args: []string{"claude"}})
+	if j := strings.Join(args, " "); !strings.Contains(j, "--pids 64") || strings.Contains(j, nprocShim) {
+		t.Errorf("default argv: %s", j)
+	}
+	// No cap, no shim.
+	s.Resources.PIDs = 0
+	sb, _ = gv.Prepare(context.Background(), s)
+	args, _, _ = sb.(*prepared).buildArgs(sandbox.ProcSpec{Args: []string{"claude"}})
+	if strings.Contains(strings.Join(args, " "), nprocShim) {
+		t.Errorf("uncapped argv: %v", args)
+	}
+}
+
+func TestNprocShimRejectsBadArgs(t *testing.T) {
+	for _, a := range [][]string{nil, {"64"}, {"64", "x", "sh"}, {"0", "--", "sh"}, {"lots", "--", "sh"}} {
+		if err := runNprocShim(a); err == nil {
+			t.Errorf("%v must fail", a)
+		}
 	}
 }

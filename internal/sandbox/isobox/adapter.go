@@ -45,6 +45,10 @@ type Config struct {
 // Backend implements sandbox.Backend over the isobox CLI.
 type Backend struct{ cfg Config }
 
+// nprocByRlimit reports whether the pids cap is applied by the adapter, as
+// RLIMIT_NPROC through the nproc shim (nproc.go), rather than by isobox.
+func (b *Backend) nprocByRlimit() bool { return b.cfg.Backend == "gvisor" }
+
 // New returns a backend.
 func New(cfg Config) *Backend {
 	if cfg.Binary == "" {
@@ -151,7 +155,7 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 	if r.MemoryBytes > 0 {
 		flags = append(flags, "--memory", strconv.FormatInt(r.MemoryBytes, 10))
 	}
-	if r.PIDs > 0 {
+	if r.PIDs > 0 && !b.nprocByRlimit() {
 		flags = append(flags, "--pids", strconv.FormatInt(r.PIDs, 10))
 	}
 	if b.cfg.Backend != "" {
@@ -202,6 +206,9 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 	}
 	for _, id := range adapterOwned {
 		declared[id] = true
+	}
+	if b.nprocByRlimit() {
+		declared[sandbox.CapResourcePIDs] = true
 	}
 	// A deny nested in a writable grant can still be written: not enforceable.
 	for _, n := range notes {
@@ -323,6 +330,13 @@ func (p *prepared) buildArgs(ps sandbox.ProcSpec) (args, env []string, err error
 		flags = append(flags, "--dir", h)
 	}
 	args = append(flags, "--")
+	if n := p.spec.Resources.PIDs; n > 0 && p.b.nprocByRlimit() {
+		shim, err := nprocPrefix(n)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, shim...)
+	}
 	args = append(args, ps.Args...)
 	return args, env, nil
 }
