@@ -13,6 +13,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
+	"github.com/agent-runner/agent-runner/internal/sandbox/codexlogin"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 )
 
@@ -64,6 +65,11 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 // path.
 func sandboxPrivatePaths(cfg *config.Config) []string {
 	paths := []string{cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot}
+	if d := codexLoginDir(cfg); d != "" {
+		// The whole directory: a refresh writes the rotated token to a temp
+		// file next to auth.json first.
+		paths = append(paths, d)
+	}
 	for _, dir := range []string{cfg.ProjectDir, cfg.DataDir} {
 		if dir == "" {
 			continue
@@ -82,6 +88,23 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		}
 	}
 	return paths
+}
+
+// codexLoginDir is the directory of AGENT_SANDBOX_CODEX_LOGIN, which the
+// sandbox must not read: "" when unset, or when it is / or the home
+// directory (hiding those would hide everything).
+func codexLoginDir(cfg *config.Config) string {
+	if cfg.Agent.SandboxCodexLogin == "" {
+		return ""
+	}
+	d, err := filepath.Abs(filepath.Dir(cfg.Agent.SandboxCodexLogin))
+	if err != nil || d == "/" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == d {
+		return ""
+	}
+	return d
 }
 
 // sandboxClaudeSeed is where a sandboxed claude CLI's settings, skills and MCP
@@ -136,8 +159,8 @@ func (h *Handlers) llmConfiner() llm.Confiner {
 //     token (the API accepts it for subscription use), or else an API key;
 //     to ANTHROPIC_BASE_URL or the Anthropic API.
 //   - OpenAI (codex, pi): OPENAI_API_KEY; to OPENAI_BASE_URL or the OpenAI API.
-//     A codex ChatGPT login (auth.json) refreshes and rotates its tokens and is
-//     not supported in the sandbox.
+//     Or, with AGENT_SANDBOX_CODEX_LOGIN, a codex ChatGPT login (the runner's
+//     own auth.json, refreshed here) to ChatGPT's codex backend: codex only.
 //
 // Nil when AGENT_SANDBOX_MODEL_PROXY is off.
 func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel {
@@ -153,6 +176,19 @@ func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel
 		case os.Getenv("ANTHROPIC_API_KEY") != "":
 			out[sandboxrt.ProviderAnthropic] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.AnthropicPaths,
 				AuthHeader: "x-api-key", AuthValue: os.Getenv("ANTHROPIC_API_KEY")}
+		}
+	}
+	if path := cfg.Agent.SandboxCodexLogin; path != "" {
+		login := &codexlogin.Login{Path: path}
+		if codexLoginDir(cfg) == "" {
+			slog.Warn("sandbox: AGENT_SANDBOX_CODEX_LOGIN must be in a directory of its own (it is hidden from the sandbox), not / or the home directory; codex has no ChatGPT channel", "path", path)
+		} else if err := login.Check(); err != nil {
+			slog.Warn("sandbox: AGENT_SANDBOX_CODEX_LOGIN unusable; codex has no ChatGPT channel", "error", err)
+		} else {
+			u, _ := url.Parse("https://chatgpt.com")
+			out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.ChatGPTPaths,
+				Credential: login.Headers, ChatGPT: true}
+			return out
 		}
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {

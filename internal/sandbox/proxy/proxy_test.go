@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -95,5 +98,40 @@ func TestLimits(t *testing.T) {
 	r3, _ := do(p, "/v1/x", p.Token(), "")
 	if r1.StatusCode != 200 || len(b1) != 100 || len(b2) >= 100 || r3.StatusCode != 429 {
 		t.Errorf("budget: %d %d %d %d", r1.StatusCode, len(b1), len(b2), r3.StatusCode)
+	}
+}
+
+func TestCredentialPerRequest(t *testing.T) {
+	n := 0
+	fail := false
+	p, _, seen := setup(t, func(c *Config) {
+		c.AuthHeader, c.AuthValue = "", ""
+		c.Credential = func(context.Context) (http.Header, error) {
+			if fail {
+				return nil, errors.New("login expired")
+			}
+			n++
+			return http.Header{"Authorization": {fmt.Sprintf("Bearer access-%d", n)}, "Chatgpt-Account-Id": {"acct"}}, nil
+		}
+	})
+	for i := 1; i <= 2; i++ {
+		resp, _ := do(p, "/v1/x", p.Token(), "{}")
+		if resp == nil || resp.StatusCode != 200 {
+			t.Fatalf("request %d: %v", i, resp)
+		}
+		h := (*seen)[i-1]
+		if h.Get("Authorization") != fmt.Sprintf("Bearer access-%d", i) || h.Get("Chatgpt-Account-Id") != "acct" {
+			t.Errorf("request %d upstream headers: %v", i, h)
+		}
+		if strings.Contains(h.Get("Authorization"), p.Token()) {
+			t.Error("run token forwarded upstream")
+		}
+	}
+	fail = true
+	if resp, body := do(p, "/v1/x", p.Token(), "{}"); resp == nil || resp.StatusCode != http.StatusBadGateway || strings.Contains(body, "login expired") {
+		t.Errorf("failing credential: %v %q", resp, body)
+	}
+	if len(*seen) != 2 {
+		t.Errorf("a request without a credential reached upstream")
 	}
 }

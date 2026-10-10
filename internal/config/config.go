@@ -130,6 +130,7 @@ type AgentConfig struct {
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
+	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — the runner's own codex ChatGPT login (auth.json); sandboxed codex uses the subscription through the proxy
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
 	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
@@ -437,6 +438,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxModelProxy = envBoolOrDefault("AGENT_SANDBOX_MODEL_PROXY", cfg.Agent.SandboxModelProxy)
+	cfg.Agent.SandboxCodexLogin = envOrDefault("AGENT_SANDBOX_CODEX_LOGIN", cfg.Agent.SandboxCodexLogin)
 	// opencode requires an explicit model; ship a two-tier default pair
 	// (pro for real work, flash for the fast tier). pi needs no forced pair:
 	// it selects a default model from its own provider catalog.
