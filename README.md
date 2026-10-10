@@ -1,457 +1,88 @@
 # Agent Runner
 
-An autonomous AI agent that executes tasks iteratively against Git repositories. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [opencode](https://github.com/sst/opencode), and other compatible CLI agents — with planning, review phases, conversational interfaces (Telegram, web), and a REST API.
+Runs coding-agent CLIs ([pi](https://pi.dev), [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
+[Codex](https://github.com/openai/codex), [opencode](https://github.com/sst/opencode)) as autonomous agents
+against Git repositories: a planner, an iteration loop and an optional reviewer, persistent memory,
+chat interfaces (Telegram, Agent Stream, WeChat), scheduled tasks and a REST API.
 
 ## Prerequisites
 
 - Go 1.25+
-- At least one supported agent CLI installed and on `$PATH`:
-  - [Pi](https://pi.dev) (default — runs via pi's RPC mode as a persistent session, authenticates with provider API keys or `~/.pi/agent/models.json`, uses skills instead of MCP)
-  - [opencode](https://github.com/sst/opencode) (set `AGENT_CLI=opencode`; pairs with DeepSeek, Anthropic, or any OpenAI-compatible provider)
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (set `AGENT_CLI=claude`)
-  - [Codex](https://github.com/openai/codex) (set `AGENT_CLI=codex`)
-- Git configured with credentials for your remote
+- Git, with credentials for your remotes
+- One agent CLI on `$PATH`: `pi` (default), `claude`, `codex` or `opencode`. `POST /bootstrap`
+  (or `/bootstrap` in chat) installs a missing one. On a headless Linux server, opencode also needs
+  `xvfb` (see [docs/agents.md](docs/agents.md#opencode-on-linux-ubuntudebian)).
 
-## Creating an agent
+## Quick start
 
-One directory is one agent. From an empty directory:
+One directory is one agent; all its state (logs, memory, workspaces, repo cache) lives there
+unless `DATA_DIR` says otherwise ([docs/agents.md](docs/agents.md)).
 
 ```bash
+go build -o ~/go/bin/agent-runner ./cmd/server   # anywhere on $PATH
 mkdir my-agent && cd my-agent
-agent-runner            # start; then from chat:
+echo 'DEEPSEEK_API_KEY=sk-...' > .env               # a provider key; pi picks a model (AGENT_MODEL pins one)
+agent-runner
+curl -X POST localhost:8080/bootstrap               # installs the CLI if missing, seeds prompts, reports readiness
 ```
 
-All runner state — logs, memory, workspaces, repo cache, `agent-home/` —
-lives in the agent directory by default (`DATA_DIR` overrides; a notice
-points at `~/.agent-runner` if state from the old default exists there).
+`AGENT_CLI=claude` needs no key when `claude login` is done on the host; any other provider is
+in [.env.example](.env.example).
 
-`/bootstrap` creates the agent's identity: `agent.md`, `prompt.md`,
-`mcp.json.example` (rename to `mcp.json` and declare the agent's MCP
-servers), and `.env` with `AGENT_ISOLATED=true`. `/config` always shows the
-agent's directory, isolation state, and declared servers; `/install-mcp`
-(or a restart) materializes declarations into `agent-home/`. `/set
-AGENT_ISOLATED true|false` applies live — no restart needed.
+For git against a self-hosted server: `GIT_HOST`, `GIT_ORG`, and `GIT_TOKEN` (or `GIT_SSH_KEY`).
 
-## Agent isolation
-
-Set `AGENT_ISOLATED=true` and spawned agents run inside `agent-home/` — a
-self-contained config universe in the runner directory. The runner
-provisions it at startup from what's already there: `mcp.json` (the agent's
-MCP servers), `skills/` (synced into the claude skills dir), and copies of
-the host CLIs' credentials. Executors are redirected into it via
-`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `XDG_CONFIG_HOME`, so agents see
-exactly the declared tools — nothing inherited from the host user's own CLI
-configs.
-
-One runner = one agent = one universe. For multiple agents (e.g. different
-mail accounts), run multiple runner directories or containers — no profile
-management. Isolation covers the tool surface, not the filesystem; for
-enforcement run the runner in a container (agent-home lives in the runner
-directory, so the volume contract is unchanged).
-
-## MCP servers for spawned agents
-
-Declare MCP servers the agent CLIs should have in `mcp.json` next to the
-runner (operator-owned; chat users can install declared servers but never
-supply commands):
-
-```json
-{
-  "servers": {
-    "maildirx": {
-      "command": "~/go/bin/maildirx",
-      "args": ["mcp"],
-      "env": { "MAIL_ROOT": "~/Mail", "MAILDIRX_MCP_MODE": "read-only" }
-    }
-  }
-}
-```
-
-On startup the runner reconciles the declaration into the active CLI's own
-config (via `claude mcp add`, `~/.codex/config.toml`, or
-`~/.config/opencode/opencode.json`) — idempotently, so a fresh host or
-container converges on boot. `/install-mcp [name]` triggers the same
-reconciliation from chat.
-
-### opencode on Linux (Ubuntu/Debian)
-
-opencode is distributed as an [AppImage](https://appimage.org/) on Linux. Because it is built on Electron, it requires a display even for basic operations. On a headless server, install `xvfb` so agent-runner can run version checks (and opencode itself) without a physical display:
-
-```bash
-sudo apt install xvfb
-```
-
-Install opencode via the bot with `/install-cli opencode`, or manually:
-
-```bash
-curl -fsSL https://opencode.ai/install | sh
-# or download the AppImage from https://github.com/sst/opencode/releases
-# and place it at ~/bin/opencode (chmod +x)
-```
-
-Make sure `~/bin` (or wherever opencode is installed) is on your `$PATH`.
-
-## Quick Start
-
-```bash
-go build -ldflags "-X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o agent-runner ./cmd/server
-cp .env.example .env   # set at minimum an API key (see below)
-./agent-runner
-curl -X POST http://localhost:8080/bootstrap   # installs the CLI if missing, seeds default prompts, reports readiness
-```
-
-**Minimum config — opencode + DeepSeek** (default, recommended):
-```bash
-DEEPSEEK_API_KEY=sk-...
-```
-(pi is the default `AGENT_CLI` and picks a default model from its own provider catalog — set `AGENT_PROVIDER`/`AGENT_MODEL` to pin one. With `AGENT_CLI=opencode`, `deepseek-v4-pro`/`deepseek-v4-flash` are the default work/fast pair.)
-
-**Minimum config — Claude Code** (if already installed and `claude login` done):
-```bash
-AGENT_CLI=claude
-# No API key needed — claude manages its own credentials
-```
-
-For git operations against a self-hosted server:
-```bash
-GIT_HOST=git.example.com
-GIT_ORG=myorg
-GIT_TOKEN=your-personal-access-token   # or GIT_SSH_KEY=/path/to/key for SSH
-```
-
-> **Tip:** If you have a bot connected (Telegram, Stream), you can configure everything without SSH using `/set KEY VALUE` — e.g. `/set DEEPSEEK_API_KEY sk-...`. Changes persist to `.env.local` and take effect immediately.
+With a chat bot connected, `/set KEY VALUE` configures a running instance (saved to `.env.local`,
+applied immediately); `/config`, `/status` and `/help` show the rest.
 
 ## Docker
 
-The image runs as a non-root `app` user (uid/gid `1000:1000` by default). Mount `/data` as a persistent volume and set `DATA_DIR=/data` so all mutable state (logs, repo-cache, memory, `.env.local`) survives image updates.
-
 ```bash
-docker run -d \
-  -v agent-data:/data \
-  -e DATA_DIR=/data \
-  -e DEEPSEEK_API_KEY=sk-... \
-  -p 8080:8080 \
-  agent-runner
+docker run -d -v agent-data:/data -e DATA_DIR=/data -e DEEPSEEK_API_KEY=sk-... -p 8080:8080 agent-runner
 ```
 
-If your host bind-mount is owned by a different uid/gid, override at build time:
-
-```bash
-docker build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) -t agent-runner .
-```
-
-Pass additional env vars (or bind-mount a `.env` file) for full configuration — see `.env.example`.
+The image runs as uid/gid `1000:1000`; for a bind mount owned by someone else, build with
+`--build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g)`.
 
 ## Configuration
 
-> **Upgrading from v0.0.x?** See [MIGRATION.md](MIGRATION.md) — legacy env
-> files keep working via aliases; the guide covers the renames and the new
-> defaults.
+Environment variables or `.env`; [.env.example](.env.example) lists every one with its default.
+Upgrading from v0.0.x: see [MIGRATION.md](MIGRATION.md). The ones most people set first:
 
-All configuration is via environment variables (or `.env` file). `.env.example` is the full reference (grouped by category, with every var's default); the table below covers the ones most people touch first.
-
-Key variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_BIND` | `127.0.0.1:8080` | API listen address |
-| `API_KEY` | | Authentication key (optional) |
-| `DATA_DIR` | `~/.agent-runner` | Base dir for all mutable state (logs, repo-cache, memory, `.env.local`) |
-| `INSTANCE` | | Instance name — loads `.env.<instance>`, scopes the default `DATA_DIR` |
-| `AGENT_CLI` | `pi` | Agent CLI backend (`pi`, `opencode`, `claude`, or `codex`) |
-| `AGENT_MODEL` | `deepseek/deepseek-v4-pro` | The model doing real work at the agent CLI, as `provider/model` |
-| `AGENT_FAST_MODEL` | `deepseek/deepseek-v4-flash` | Optional cheap tier for planning/routing/curation (defaults to `AGENT_MODEL`) |
-| `AGENT_SYSTEM_PROMPT` | | Path to base agent prompt |
-| `AGENT_PROMPT_FILE` | | Path to workflow prompt template |
-| `AGENT_SHARED_REPOS` | | Comma-separated repos pre-populated in every workspace |
-| `AGENT_SKILLS_DIR` | | Directory of agent skills pre-populated in every workspace |
-| `AGENT_PLANNER_ENABLED` | `true` | Run planner sub-agent before iteration loop |
-| `AGENT_REVIEWER_ENABLED` | `false` | Run reviewer sub-agent after iteration loop |
-| `AGENT_MAX_CONCURRENT` | `1` | Agent sessions allowed to run at once (see [Running sessions in parallel](#running-sessions-in-parallel)) |
-| `AGENT_TASKS_ENABLED` | `true` | Multi-turn tasks for chat bots (see [Multi-turn tasks](#multi-turn-tasks)) |
-| `AGENT_TASK_RETENTION` / `AGENT_TASK_IDLE_TTL` | `24h` / `168h` | How long a finished / waiting task keeps its workspace |
-| `AGENT_TASK_MAX_TURNS` / `AGENT_TASK_MAX_SECONDS` / `AGENT_TASK_MAX_COST_USD` | `10` / `4h` / unlimited | Per-task budget; reaching it pauses the task until the user says "continue" |
-| `AGENT_TASK_RESUME_BACKEND` | `true` | Continue the agent CLI's own conversation across a task's turns (pi, claude, codex) |
-| `GIT_TOKEN` / `GIT_SSH_KEY` | | Credentials for project repo git operations |
-| `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | falls back to `GIT_TOKEN` / `GIT_SSH_KEY` | Credentials for the memory repo, if it's on a different host |
-| `TELEGRAM_BOT_TOKEN` | | Telegram bot token |
-| `STREAM_SERVER_URL` | | Agent Stream server URL |
-
-### Running sessions in parallel
-
-By default one agent session runs at a time. `AGENT_MAX_CONCURRENT=N` starts N
-dispatch workers instead, so N sessions can overlap. Requires a restart — the
-pool is sized at startup.
-
-Each session already gets an isolated workspace, and the runner guards the state
-they share: the memory dir (mutex in `internal/template`) and the repo cache
-(per-repo lock in `internal/executor`).
-
-**Git is handled without locks.** Two sessions pushing to the same branch is the
-normal case, and it resolves the way it does for people:
-
-1. A rejected push is rebased onto the moved remote and pushed again, up to
-   `GIT_PUSH_RETRIES` times (the remote can move again in between).
-2. If the rebase conflicts, the rebase is left in progress and the agent gets a
-   corrective iteration naming the repo, branch and conflicted files, with the
-   exact steps (resolve markers → `git add` → `git rebase --continue` → push).
-   Up to two such iterations.
-3. If it still can't be merged, the runner aborts the rebase and pushes the
-   session's commits to `agent-rescue/<session-id>` so nothing is lost when the
-   workspace is deleted, and the session carries a warning naming that branch.
-
-The default `agent.md` tells the agent the same for pushes it does itself
-mid-task. Every git repo in the workspace is handled, not just the first.
-
-### Multi-turn tasks
-
-By default (`AGENT_TASKS_ENABLED`, set it to `false` for one-shot runs; design in
-[TASKS_DESIGN.md](TASKS_DESIGN.md)) a chat thread's work becomes a *task* that
-can span several agent runs:
-
-- The agent can stop mid-task to ask the user a question by writing
-  `"status": "needs_input"` and a `"question"` to `_progress.json`. The run ends
-  at the end of that iteration and the question is posted in the thread.
-- The user's next message in the thread is the answer: it skips the intent
-  analyzer and starts the next turn in **the same workspace** (scratch files,
-  `_progress.json` completed steps and the saved plan are kept). The turn's
-  prompt carries a task context block — goal, plan progress, decisions, earlier
-  turns' summaries and the reply — instead of the raw chat transcript.
-- A turn that hits a limit or fails leaves the task *paused* and posts the plan
-  checklist; "continue" picks it up, anything else is feedback. `/cancel`
-  cancels the task and releases its workspace.
-- **Feedback revises the plan.** Feedback on a paused task, or on a finished
-  one whose workspace is still kept, goes to the planner in revise mode with
-  the current plan: finished steps stay finished unless the feedback reopens
-  them. A large revision (it reopens finished work or adds 3+ steps) is shown
-  for approval first — "yes" proceeds, "no" asks what to change, anything
-  else revises again. The intent analyzer decides whether a message after a
-  finished task is feedback or a new request.
-- **Budgets.** Each task has a budget of turns, working time and cost
-  (`AGENT_TASK_MAX_*`). Reaching it pauses the task: "continue" resets the
-  budget and resumes, "stop" ends it. A turn that asks a question is never
-  paused for budget.
-- **Telegram and WeChat run one task per chat.** A new request that arrives
-  while the chat's task is unfinished is queued ("Queued — I'll start it when
-  the current task finishes", at most 5) and starts as a new task when the
-  current one finishes or is cancelled. In agent-stream a new request is a new
-  thread, so nothing queues.
-- Each turn still commits and pushes as usual. Repos are cached back only when
-  the task's workspace is released.
-
-The whole flow is covered end to end against a real agent-stream server by
-`e2e/tasks_stream_e2e_test.go` (set `AGENT_STREAM_SRC` to the agent-stream
-server source to run it).
-
-Task records live in `STATE_ROOT/tasks/`, workspaces in `TMP_ROOT/task-*`. A
-background sweep releases a finished task's workspace after
-`AGENT_TASK_RETENTION` and expires a task left waiting after
-`AGENT_TASK_IDLE_TTL`. A turn interrupted by a restart pauses its task.
-
-**Backend conversation resume** (`AGENT_TASK_RESUME_BACKEND`, on by default):
-the agent CLI also keeps its own conversation across turns, so it remembers
-its earlier reasoning and tool results, not just the context block.
-
-| CLI | How |
-|---|---|
-| `pi` | a durable session (`--session-dir <task>/state/backend/pi --session-id <id>`) instead of `--no-session`; each turn's process restores it |
-| `claude` | the first prompt starts `--session-id <uuid>`, later prompts `--resume` it — within a turn too, so iterations after the first get incremental prompts as with pi |
-| `codex` | the first prompt starts a thread (its ID comes from the `thread.started` event of `--json` output), later prompts `codex exec resume <id>` it; continuations don't re-inline the system prompt |
-| `opencode` | not yet; context block only |
-
-A conversation that can't be resumed is dropped with a warning and a fresh one
-starts; the context block keeps the turn correct either way. Claude keeps a
-conversation's first system prompt on resume.
-
-
-What the runner cannot resolve is state outside git — a sequential ID derived by
-listing a directory, a deploy slot, a shared config file. That's what the
-optional named lock is for; use it only when a task genuinely needs exclusive
-access to something like that:
-
-```bash
-# Acquire; blocks up to wait_seconds for the current holder.
-curl -X POST "$RUNNER_URL/lock" -H "X-API-Key: $API_KEY" \
-  -H "X-Session-ID: $SESSION_ID" -H "Content-Type: application/json" \
-  -d '{"name":"sites-config","ttl_seconds":900,"wait_seconds":600}'
-
-# Release
-curl -X DELETE "$RUNNER_URL/lock/sites-config" \
-  -H "X-API-Key: $API_KEY" -H "X-Session-ID: $SESSION_ID"
-
-# Inspect
-curl "$RUNNER_URL/locks" -H "X-API-Key: $API_KEY"
-```
-
-`200` acquired, `409` held by someone else (the body names the holder and when
-their lease expires). Locks are released automatically when the holding session
-ends and expire after their TTL regardless, so a crashed agent cannot wedge a
-name. Every prompt gets `{{RUNNER_URL}}`, `{{API_KEY}}` and `{{SESSION_ID}}`
-substituted in, so the agent can call this without extra configuration —
-`prompt.md` shows the pattern.
-
-### Memory & learning loop
-
-The agent evolves across sessions through markdown files in `MEMORY_DIR` (git-synced, human-editable). Each prompt is composed from `agent.md` + `prompt.md` + curated memory files (`user_preferences.md`, `decisions.md`, `lessons.md`, ...) + a **Recent Sessions** digest of the last `AGENT_MEMORY_DAYS` days of session logs, all bounded by `AGENT_MEMORY_CHAR_CAP`. The agent writes to its own memory files during sessions; after each session the runner appends an outcome log (including reviewer findings), and — with `AGENT_MEMORY_CURATION_ENABLED=true` — a cheap LLM pass distills durable lessons into `lessons.md` and compacts files that outgrow their budget. See DESIGN.md ("Memory & Prompt Composition") for the full pipeline and safety rails.
-
-New chat conversations get a one-time welcome message explaining what the agent does and pointing at `/help` (`WELCOME_ENABLED`, default on; customize via `MEMORY_DIR/WELCOME.md`).
-
-## Connecting to Agent Stream
-
-[Agent Stream](https://apps.apple.com/us/app/agent-stream/id6759258538) is an iOS app for conversational access to your agent. It lets you send messages, receive streaming responses, and get file attachments back from the agent.
-
-To connect agent-runner, you need three values from the app:
-
-1. **`STREAM_SERVER_URL`** — your Agent Stream server URL. Set it in the app via the gear icon on the login screen.
-
-2. **`STREAM_BOT_TOKEN`** — create a bot in the app under Menu → Bots → tap `+`. The token is shown once after creation — copy it immediately.
-
-3. **Add the bot to a channel** in the app. By default the bot follows its memberships: it listens on every channel it's a member of and notices being added to (or removed from) a channel within `STREAM_CHANNEL_DISCOVERY_INTERVAL` (default `30s`), with no restart. To pin it to specific channels instead, set **`STREAM_CHANNEL_IDS`** (IDs start with `c_`; `STREAM_CONVERSATION_IDS` is still read as a fallback).
-
-**One agent-runner per bot.** Each process names itself to agent-stream (`X-Bot-Instance`), which allows one live process per bot: if you start a second agent-runner with the same bot token, it takes over and the first one logs "another process is now running this bot" and stops its stream bot, so nothing is answered twice. To run two agents in a channel, give each its own bot.
-
-**Who the bot answers.** agent-stream decides who each message is for and lists those bots in the message's `addressees`: a mentioned bot, else the thread's assignee (for replies), else the channel's default bot (for new threads) — see agent-stream's `BOT_ADDRESSING_DESIGN.md`. The bot acts only on messages that list it, so bots sharing a channel answer only what is meant for them, and bot-to-bot exchanges happen only by mention (the server stops long chains). A run ends with its result posted as a message carrying the run's `run_id`.
-
-Each top-level message in a channel starts a Thread, and the bot keeps separate context, plan and agent session for every thread. Replies inside a thread continue that thread's work, so several tasks can run side by side in one channel.
-
-Threads are handled in parallel: messages within one thread are processed in order, while a slow step in one thread (an analyzer call, a file download) doesn't hold up another; at most 8 threads are handled at once. Agent sessions themselves are limited by `AGENT_MAX_CONCURRENT` (default `1`), so with the default a second thread's task still queues behind the first. Set it to the number of tasks you want running at the same time, e.g. `AGENT_MAX_CONCURRENT=3` (see [Running sessions in parallel](#running-sessions-in-parallel)).
-
-```bash
-STREAM_SERVER_URL=https://your-agent-stream-server
-STREAM_BOT_TOKEN=your-bot-jwt
-# STREAM_CHANNEL_IDS=c_your_channel_id   # optional: pin to these channels
-```
+| Variable | Default | |
+|---|---|---|
+| `AGENT_CLI` | `pi` | `pi`, `claude`, `codex` or `opencode` |
+| `AGENT_MODEL` / `AGENT_FAST_MODEL` | pi's choice (opencode: `deepseek/deepseek-v4-pro` / `-flash`) | Work model as `provider/model`, and a cheap one for planning and curation |
+| `DATA_DIR` | the current directory | All mutable state |
+| `API_BIND` / `API_KEY` | `127.0.0.1:8080` / none | API address and key |
+| `GIT_TOKEN` / `GIT_SSH_KEY` | | Git credentials (`MEMORY_GIT_*` for a memory repo elsewhere) |
+| `AGENT_SHARED_REPOS` | | Repos pre-cloned into every workspace |
+| `AGENT_PLANNER_ENABLED` / `AGENT_REVIEWER_ENABLED` | `true` / `false` | Planner and reviewer sub-agents |
+| `AGENT_MAX_CONCURRENT` | `1` | Sessions running at once |
+| `AGENT_SANDBOX` | `off` | Run agents in a sandbox: `permissive` or `strict` (see [docs/sandbox.md](docs/sandbox.md)) |
+| `TELEGRAM_BOT_TOKEN`, `STREAM_SERVER_URL` + `STREAM_BOT_TOKEN` | | Chat bots |
 
 ## API
 
 ```bash
-# Start an agent session
-curl -X POST http://localhost:8080/agent \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Build a landing page for a bakery"}'
-
-# Poll status
-curl http://localhost:8080/agent/{session_id}
-
-# Steer a running session (persistent backends like pi): inject a message
-# into the live run; 409 if the backend can't steer — send a new task instead
-curl -X POST http://localhost:8080/agent/{session_id}/steer \
-  -H 'Content-Type: application/json' -d '{"message": "focus on the tests first"}'
-
-# Stop
-curl -X POST http://localhost:8080/agent/{session_id}/stop
+curl -X POST localhost:8080/agent -H 'Content-Type: application/json' -d '{"message": "Build a landing page"}'
+curl localhost:8080/agent/{session_id}             # status (GET .../stream: live events)
+curl -X POST localhost:8080/agent/{session_id}/stop
 ```
 
-One-shot jobs: `POST /run` → poll `GET /job/{id}`
+## More
 
-### Observability
+| Topic | |
+|---|---|
+| [docs/api.md](docs/api.md) | Endpoints, live event stream, webhooks, audit logs, tracing, metrics, errors |
+| [docs/sessions.md](docs/sessions.md) | Parallel sessions and git conflicts, multi-turn tasks, named locks |
+| [docs/agents.md](docs/agents.md) | The agent directory, isolation (`agent-home/`), memory, MCP servers |
+| [docs/agent-stream.md](docs/agent-stream.md) | Connecting the Agent Stream app |
+| [docs/scheduler.md](docs/scheduler.md) | One-shot and cron tasks, `_schedule.json` |
+| [docs/sandbox.md](docs/sandbox.md) | Agent sandbox (Seatbelt, gVisor) |
+| [DESIGN.md](DESIGN.md) | Architecture; memory and prompt composition |
+| [TASKS_DESIGN.md](TASKS_DESIGN.md), [SECRETS.md](SECRETS.md) | Task and secrets design |
 
-You don't have to poll. Three ways to see what a session is doing and how it ended:
-
-**Live stream** — `GET /agent/{id}/stream` is Server-Sent Events. Alongside `iteration_done` frames you get an `agent_event` per tool call as the agent works (all backends, including claude — it runs `--output-format stream-json` and parses as it goes):
-
-```
-event: agent_event
-data: {"session_id":"agent-…","seq":7,"kind":"tool_start","text":"Bash: go test ./...","at":"…"}
-
-event: agent_event
-data: {"session_id":"agent-…","seq":8,"kind":"tool_end","text":"Bash error: FAIL pkg …","at":"…"}
-```
-
-Kinds: `prompt_start`, `text` (assistant prose, truncated), `tool_start`, `tool_end`, `retry`, `compaction`, `warning`, `settled`. `GET /sessions` and `GET /agent/{id}` also carry `last_event` and `events` (the most recent 50), so a fleet view can show what every parallel session is doing right now without holding N SSE connections, and a polling client still sees tool errors and warnings that happened between polls.
-
-**Webhook** — pass `callback_url` when starting a session and agent-runner POSTs the final session JSON (same shape as `GET /agent/{id}`, plus `"event": "session.completed|failed|stopped"` and `log_file`) once it reaches a terminal status. Delivery retries three times (1s/4s/16s) on 5xx or network errors; 4xx is treated as the receiver rejecting it. Sessions interrupted by a server restart are also reported this way after recovery.
-
-```bash
-curl -X POST http://localhost:8080/agent -H 'Content-Type: application/json' \
-  -d '{"message": "fix the flaky test", "callback_url": "https://ci.example.com/hooks/agent"}'
-```
-
-**Audit logs over HTTP** — every session writes a markdown audit log with each iteration's full prompt, output, error and cost (plus planner/review JSON) to `LOGS_ROOT`. These survive restarts and are now reachable without SSH:
-
-```bash
-curl http://localhost:8080/logs?limit=20         # recent sessions: status, error, cost, duration
-curl http://localhost:8080/logs/{session_id}     # the full log as text/markdown (unique prefix ok)
-```
-
-**Traces** — set `TRACING_ENABLED=true` plus the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` if your collector isn't on HTTP) and every run becomes one trace, exported over OTLP to Tempo, Jaeger, Honeycomb, Datadog, etc.:
-
-```
-agent.session            session.id, source, cli, model, status, cost_usd, iterations
-├── agent.prompt.resolve
-├── agent.workspace.prepare
-├── agent.planner        planner.steps
-├── agent.iteration      iteration.number, status, cost_usd, duration_s, commit, retry
-│   ├── agent.tool       tool.name, tool.input, tool.error
-│   └── agent.tool
-├── agent.iteration
-├── agent.review         review.score, review.issues
-└── agent.finalize
-```
-
-Failed sessions, errored iterations and errored tool calls carry error status, so "show me every trace where a `Bash` span failed inside a retry iteration" is a query, not a log grep. The trace id is returned as `trace_id` on `GET /agent/{id}`, in the webhook payload, and logged as `session trace` at start so you can jump from any of them into the trace backend. Off by default; when off the span calls are the SDK's no-ops.
-
-**Metrics** — `GET /metrics` (Prometheus): `agent_sessions_total{status,source}`, `agent_iterations_total{status,source}`, `agent_active_sessions`, `agent_queue_depth`, `agent_cost_usd_total`, `agent_iteration_duration_seconds`, and `agent_tool_calls_total{tool,outcome}` for where the time goes. `rate(agent_sessions_total{status="failed"}[15m]) > 0` is the one alert to start with.
-
-### Error handling
-
-`POST /agent` checks that the configured `AGENT_CLI` binary is actually installed before queueing a session — if it's missing, you get a `412` immediately instead of a session that fails minutes later after workspace setup:
-
-```json
-{"error": "codex CLI is not installed — install it (npm install -g @openai/codex ...) or run POST /bootstrap to auto-install"}
-```
-
-Missing credentials (e.g. no `ANTHROPIC_API_KEY` and no host `claude login`) don't block the request — some setups authenticate outside an API key env var — but are surfaced as a non-fatal `warnings` array on the `202` response and on the session itself:
-
-```json
-{"session_id": "agent-...", "status": "queued", "warnings": ["claude backend requires ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (local models), or a `claude login` on this host"]}
-```
-
-If a session does fail on a recognized misconfiguration (bad/expired key, quota exceeded, CLI missing, unknown model), `GET /agent/{id}`'s `error` field is a short actionable message with the raw CLI/API error preserved underneath, e.g. `"authentication with the LLM provider failed — check credentials with /status, or re-run /auth\n\nDetails: ..."`. These same messages reach chat clients (Telegram, Stream, WeChat) too. Check overall readiness anytime with `/status` or `POST /bootstrap`.
-
-## Scheduled Tasks
-
-agent-runner can run agent tasks in the future — once, after a delay, or on a recurring cron schedule — without any external cron daemon. This is opt-in and disabled by default; it needs a database to durably track due tasks across restarts.
-
-**Enable it:**
-```bash
-SCHEDULER_ENABLED=true
-SCHEDULER_DATABASE_URL=postgres://user:pass@host/db   # or sqlite:///path/to/agent-runner.db
-```
-
-See `.env.example` for tuning knobs (`SCHEDULER_LEASE_DURATION`, `SCHEDULER_POLL_CAP`, `SCHEDULER_HEARTBEAT_INTERVAL`, `SCHEDULER_MAX_ATTEMPTS`, `SCHEDULER_AGENT_ID`) — the defaults are sensible for a single instance. With `SCHEDULER_ENABLED=false` (the default), the endpoints below return `503 runner not enabled`.
-
-**Schedule a task via the API:**
-```bash
-curl -X POST http://localhost:8080/schedule \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Check for new PRs and summarize them", "cron": "0 9 * * *", "timezone": "America/Los_Angeles"}'
-```
-
-`message` is required; exactly one scheduling mode is required alongside it:
-- `run_after` — an absolute RFC3339 timestamp, for a one-shot task
-- `run_in_seconds` — a relative delay from now, for a one-shot task
-- `cron` — a cron expression, for a recurring task (`timezone` optional, defaults to UTC)
-
-`idempotency_key` (optional) dedupes one-shot tasks — resubmitting the same key is a no-op instead of double-scheduling.
-
-```bash
-# List active schedules
-curl http://localhost:8080/schedules
-
-# Cancel one
-curl -X DELETE http://localhost:8080/schedule/{id}
-```
-
-**Scheduling from within an agent session:** a running agent can queue its own follow-up tasks by writing a `_schedule.json` file to its workspace root (same convention as `_send/` for output files) — a JSON array of objects shaped like the `POST /schedule` body above:
-```json
-[{"message": "Check back on this deployment", "run_in_seconds": 600}]
-```
-agent-runner reads this file after the session completes and submits each entry the same way `POST /schedule` does. This is how an agent sets its own reminders or recurring checks without needing network access to call the API itself.
-
-When a schedule fires, agent-runner starts a normal agent session with `message` as the task — it goes through the same planner/iteration/reviewer pipeline and shows up in `/status`, `/sessions`, and the audit log like any other session.
-
-## Testing
+## Development
 
 ```bash
 go test -race ./...
