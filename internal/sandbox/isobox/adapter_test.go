@@ -260,10 +260,26 @@ func TestPidsCapOnGVisorIsTheNprocShim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	self, _ := os.Executable()
+	shim := filepath.Join(gv.cfg.Roots[sandbox.RootTmp], shimName)
 	j := strings.Join(args, " ")
-	if !strings.HasSuffix(j, "-- "+self+" "+nprocShim+" 64 -- claude --print") || strings.Contains(j, "--pids") {
+	if !strings.HasSuffix(j, "-- "+shim+" "+nprocShim+" 64 -- claude --print") || strings.Contains(j, "--pids") {
 		t.Errorf("gvisor argv: %s", j)
+	}
+	// A private copy of this binary in the run's tmp dir, never a link to it.
+	self, _ := os.Executable()
+	si, err1 := os.Stat(self)
+	di, err2 := os.Stat(shim)
+	if err1 != nil || err2 != nil || di.Size() != si.Size() || os.SameFile(si, di) || di.Mode().Perm() != 0o755 {
+		t.Errorf("shim copy: %v %v %+v", err1, err2, di)
+	}
+	// Whatever the agent left at the path is replaced at the next launch.
+	os.Remove(shim)
+	os.Symlink("/etc/passwd", shim)
+	if _, _, err := sb.(*prepared).buildArgs(sandbox.ProcSpec{Args: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(shim); err != nil || fi.Mode()&os.ModeSymlink != 0 || fi.Size() != si.Size() {
+		t.Errorf("shim not replaced: %v %+v", err, fi)
 	}
 	// The adapter enforces it there, so it is not a gap (the fake plan has no res.pids).
 	res, err := gv.Check(context.Background(), s)
