@@ -25,6 +25,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 	"github.com/agent-runner/agent-runner/internal/sandbox/isobox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
+	"github.com/agent-runner/agent-runner/internal/sandbox/proxy"
 )
 
 // Event is a focused observability record. It never carries environment
@@ -51,6 +52,9 @@ type Config struct {
 	// files, state, logs, ...). Every run is read-denied them, except for the
 	// parts that hold the run's own workspace, home and tmp (see readDeny).
 	PrivatePaths []string
+	// Model, when set, is the credential sandboxed claude runs reach the
+	// model with through a per-run proxy (see ModelChannel).
+	Model *ModelChannel
 	// Claude seeds a sandboxed claude CLI's config dir (see seedClaudeConfig).
 	Claude   ClaudeSeed
 	LeaseTTL time.Duration
@@ -262,6 +266,7 @@ type Run struct {
 	releaseT func()
 	started  time.Time
 	backend  string
+	model    *proxy.Proxy // the run's model channel, if any
 }
 
 // Begin prepares a run. With mode off it returns ctx unchanged.
@@ -367,15 +372,38 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		}
 	}()
 
+	// The model channel: claude gets the proxy's URL and a per-run token,
+	// never the credential. Without one (no credential, or no outbound
+	// network), a `claude setup-token` token is passed to claude itself.
+	envAllow := r.cfg.EnvAllow
+	cliEnvAllow := map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}}
+	var cliEnv map[string][]string
+	model, err := r.startModelProxy(spec, req.RunID, req.ThreadID)
+	if err != nil {
+		cancel()
+		_ = r.store.Release(name, r.owner)
+		releaseThread()
+		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "model proxy: " + err.Error()})
+		return nil, &RejectedError{fmt.Errorf("model proxy: %w", err)}
+	}
+	if model != nil {
+		run.model = model
+		envAllow = withoutModelCredentials(envAllow)
+		cliEnvAllow = nil
+		cliEnv = map[string][]string{"claude": {
+			"ANTHROPIC_BASE_URL=" + model.BaseURL(),
+			"ANTHROPIC_AUTH_TOKEN=" + model.Token(),
+		}}
+	}
+
 	launcher := &executor.SandboxLauncher{
-		Backend:  func(string) sandbox.Backend { return newBackend(roots) },
-		Spec:     spec,
-		Mode:     r.cfg.Mode,
-		EnvAllow: r.cfg.EnvAllow,
-		Tag:      req.RunID,
-		// A `claude setup-token` token reaches the claude CLI only; the host's
-		// `claude login` (Keychain, ~/.claude) is out of the sandbox's reach.
-		CLIEnvAllow: map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}},
+		Backend:     func(string) sandbox.Backend { return newBackend(roots) },
+		Spec:        spec,
+		Mode:        r.cfg.Mode,
+		EnvAllow:    envAllow,
+		Tag:         req.RunID,
+		CLIEnvAllow: cliEnvAllow,
+		CLIEnv:      cliEnv,
 		EnvOverride: []string{
 			"HOME=" + roots[sandbox.RootHome],
 			"TMPDIR=" + roots[sandbox.RootTmp],
@@ -404,6 +432,9 @@ func (run *Run) Finish() {
 		}
 		if run.cancel != nil {
 			run.cancel()
+		}
+		if run.model != nil {
+			_ = run.model.Close()
 		}
 		_ = run.rt.store.Release("sandbox:"+run.req.RunID, run.rt.owner)
 		_ = os.RemoveAll(filepath.Dir(run.roots[sandbox.RootTmp])) // runs/<id>

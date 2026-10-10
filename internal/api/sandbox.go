@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EnvAllow:      cfg.Agent.SandboxEnvAllow,
 		PrivatePaths:  sandboxPrivatePaths(cfg),
 		Claude:        sandboxClaudeSeed(cfg),
+		Model:         sandboxModelChannel(cfg),
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
@@ -45,7 +47,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend)
-	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow) {
+	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow, cfg.Agent.SandboxModelProxy) {
 		slog.Warn("sandbox: claude runs have no credentials: " + clisetup.SandboxedClaudeAuthHelp)
 	}
 	return rt
@@ -122,4 +124,31 @@ func (h *Handlers) llmConfiner() llm.Confiner {
 			os.RemoveAll(dir)
 		}, nil
 	}
+}
+
+// sandboxModelChannel is the credential the per-run model proxy attaches for a
+// sandboxed claude: a `claude setup-token` token (as a bearer token, which the
+// API accepts for subscription use) or else an API key, sent to
+// ANTHROPIC_BASE_URL or the Anthropic API. Nil when the proxy is off or there
+// is no credential.
+func sandboxModelChannel(cfg *config.Config) *sandboxrt.ModelChannel {
+	if !cfg.Agent.SandboxModelProxy {
+		return nil
+	}
+	upstream := "https://api.anthropic.com"
+	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" {
+		upstream = v
+	}
+	u, err := url.Parse(upstream)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		slog.Warn("sandbox: model proxy off: bad ANTHROPIC_BASE_URL", "value", upstream)
+		return nil
+	}
+	switch {
+	case os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "":
+		return &sandboxrt.ModelChannel{Upstream: u, AuthHeader: "Authorization", AuthValue: "Bearer " + os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")}
+	case os.Getenv("ANTHROPIC_API_KEY") != "":
+		return &sandboxrt.ModelChannel{Upstream: u, AuthHeader: "x-api-key", AuthValue: os.Getenv("ANTHROPIC_API_KEY")}
+	}
+	return nil
 }

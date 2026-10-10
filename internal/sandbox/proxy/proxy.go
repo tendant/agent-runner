@@ -25,6 +25,7 @@ import (
 // Config describes one run's model channel.
 type Config struct {
 	Upstream      *url.URL // provider base URL, e.g. https://api.anthropic.com
+	ListenHost    string   // address to listen on; "" = 127.0.0.1. A backend with its own network namespace (gVisor) needs one it can route to
 	AuthHeader    string   // header carrying the provider credential, e.g. "x-api-key" or "Authorization"
 	AuthValue     string   // full header value (secret; never logged)
 	PathPrefixes  []string // allowed request path prefixes; empty = deny all
@@ -47,7 +48,8 @@ type Proxy struct {
 	win   []time.Time
 }
 
-// Start listens on 127.0.0.1 (ephemeral port) and returns the proxy.
+// Start listens on ListenHost (127.0.0.1 by default; ephemeral port) and
+// returns the proxy.
 func Start(cfg Config) (*Proxy, error) {
 	if cfg.Upstream == nil || cfg.AuthHeader == "" || cfg.AuthValue == "" {
 		return nil, errors.New("proxy: upstream and credential required")
@@ -59,7 +61,11 @@ func Start(cfg Config) (*Proxy, error) {
 	if _, err := rand.Read(tok[:]); err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	host := cfg.ListenHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +73,7 @@ func Start(cfg Config) (*Proxy, error) {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(cfg.Upstream)
+			r.Out.Host = cfg.Upstream.Host
 			r.Out.Header.Del("Authorization")
 			r.Out.Header.Del("X-Api-Key")
 			r.Out.Header.Set(cfg.AuthHeader, cfg.AuthValue)
@@ -87,6 +94,9 @@ func Start(cfg Config) (*Proxy, error) {
 
 // BaseURL is what the agent is pointed at (e.g. via ANTHROPIC_BASE_URL).
 func (p *Proxy) BaseURL() string { return "http://" + p.ln.Addr().String() }
+
+// Addr is the proxy's listen address (host:port), for network policy.
+func (p *Proxy) Addr() string { return p.ln.Addr().String() }
 
 // Token is the per-run credential the sandbox receives instead of the provider key.
 func (p *Proxy) Token() string { return p.token }
