@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agenthome"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 )
@@ -89,4 +91,35 @@ func sandboxClaudeSeed(cfg *config.Config) sandboxrt.ClaudeSeed {
 		return sandboxrt.ClaudeSeed{}
 	}
 	return sandboxrt.ClaudeSeed{Dir: filepath.Join(home, ".claude"), StateFile: filepath.Join(home, ".claude.json")}
+}
+
+// llmConfiner confines the fast-LLM clients' executor fallback (analyzer,
+// curator, planner outside a session) when the sandbox is on: each call gets
+// a sandbox run with a throwaway workspace. The calls share one sandbox
+// thread, so they also share one sandbox home (claude's config dir) and run
+// one at a time. Nil when the sandbox is off.
+func (h *Handlers) llmConfiner() llm.Confiner {
+	rt := h.sandbox
+	if rt == nil || rt.Mode() == sandbox.ModeOff {
+		return nil
+	}
+	root := h.config.TmpRoot
+	return func(ctx context.Context) (context.Context, func(), error) {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, nil, err
+		}
+		dir, err := os.MkdirTemp(root, "llm-")
+		if err != nil {
+			return nil, nil, err
+		}
+		run, err := rt.Begin(ctx, sandboxrt.BeginReq{ThreadID: "llm-fallback", RunID: filepath.Base(dir), Workspace: dir, MaxSecond: 300})
+		if err != nil {
+			os.RemoveAll(dir)
+			return nil, nil, err
+		}
+		return run.Ctx, func() {
+			run.Finish()
+			os.RemoveAll(dir)
+		}, nil
+	}
 }

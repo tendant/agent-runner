@@ -1,5 +1,12 @@
 # 沙箱测试手册 / Sandbox testing guide
 
+**One command each:** `make sandbox-smoke` (this host: Seatbelt on macOS, gVisor on Linux as root;
+`REAL=1` adds one billed task with the real claude CLI) and `make sandbox-gvisor` (Linux gVisor in
+a privileged Docker container, from any host). Both run the conformance suite against the CI
+baseline, then the real runner with a fake `claude` that tries to escape, and check every outcome:
+credentials, the runner's own files, other sessions, writes outside the workspace, the network,
+and that a claude run without credentials fails up front. On gVisor they also run `strict` mode.
+
 ## A. 自动化测试（任何机器）
 
 ```bash

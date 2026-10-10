@@ -25,6 +25,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/llm"
 	"github.com/agent-runner/agent-runner/internal/locks"
 	"github.com/agent-runner/agent-runner/internal/logging"
+	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 	"github.com/agent-runner/agent-runner/internal/thread"
 )
@@ -62,6 +63,7 @@ func (m *MultiNotifier) SendNotification(ctx context.Context, message string) er
 // Handlers contains all HTTP handlers
 type Handlers struct {
 	config           *config.Config
+	sandbox          *sandboxrt.Runtime // nil when AGENT_SANDBOX is off
 	jobManager       *jobs.Manager
 	agentManager     *agent.Manager
 	gitOps           *git.Operations
@@ -113,7 +115,8 @@ func NewHandlers(
 	h.callbacks = callback.New()
 	h.execEngine = execution.New(cfg, agentManager, workspaceManager, runLogger, h)
 	h.execEngine.SetCallbacks(h.callbacks)
-	h.execEngine.SetSandbox(newSandboxRuntime(cfg))
+	h.sandbox = newSandboxRuntime(cfg)
+	h.execEngine.SetSandbox(h.sandbox)
 	h.execEngine.SetLockManager(h.lockManager)
 	return h
 }
@@ -275,7 +278,8 @@ func (h *Handlers) RefreshRuntime() {
 	exec := h.getExecutor()
 
 	provider, model, apiKey, baseURL := h.config.FastLLMSettings()
-	fastCfg := llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL, MaxTokens: 4096}
+	confine := h.llmConfiner()
+	fastCfg := llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL, MaxTokens: 4096, Confine: confine}
 	h.plannerClient = llm.NewClient(fastCfg, exec)
 	if h.config.Agent.MemoryCurationEnabled {
 		h.curatorClient = llm.NewClient(fastCfg, exec)
@@ -283,7 +287,7 @@ func (h *Handlers) RefreshRuntime() {
 		h.curatorClient = nil
 	}
 	if h.analyzer != nil {
-		h.analyzer.SetClient(llm.NewClient(llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL}, exec))
+		h.analyzer.SetClient(llm.NewClient(llm.Config{Provider: provider, Model: model, APIKey: apiKey, BaseURL: baseURL, Confine: confine}, exec))
 		if h.config.FastLLM.TimeoutSeconds > 0 {
 			h.analyzer.SetTimeout(time.Duration(h.config.FastLLM.TimeoutSeconds) * time.Second)
 		}
