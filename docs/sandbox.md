@@ -68,21 +68,34 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
     `/v1/responses`, `/v1/chat/completions`, `/v1/models`. codex ignores `OPENAI_BASE_URL` for its
     built-in provider, so the run's `CODEX_HOME/config.toml` defines a provider pointing at the
     proxy.
-  * **OpenAI with a ChatGPT subscription** (`codex` only): set `AGENT_SANDBOX_CODEX_LOGIN` to an
-    `auth.json` made for the runner alone, e.g.
-    `CODEX_HOME=$DATA_DIR/state/codex-login codex login --device-auth`, then
-    `AGENT_SANDBOX_CODEX_LOGIN=$DATA_DIR/state/codex-login/auth.json`. Not your own `~/.codex`
-    login: refreshing rotates the refresh token, so two holders break each other. The runner
-    keeps the login (`internal/sandbox/codexlogin`) and refreshes it as codex would (within 5
-    minutes of expiry), and the proxy forwards to `https://chatgpt.com/backend-api/codex`
-    (`/responses`, `/responses/compact`, `/models`) with the access token and `ChatGPT-Account-ID`.
-    codex's config names the provider `OpenAI` (codex keys its OpenAI request features on that
-    name) and turns websockets off. The login's directory is hidden from the sandbox, so it must be
-    a directory of its own (not `/` or the home directory; the runner refuses those). It replaces
-    `OPENAI_API_KEY` as the OpenAI channel, so pi gets no OpenAI provider then. Checked with
-    the real codex CLI (0.162) against a fake backend
-    (`AGENT_E2E_REAL_CODEX=1 go test ./internal/sandbox/runtime -run RealCodex`); against
-    chatgpt.com it is untested, including whether Cloudflare challenges the proxy.
+  * **OpenAI with a ChatGPT subscription** (`codex` only). With `AGENT_CLI=codex` and no
+    `OPENAI_API_KEY`, sandboxed codex uses the ChatGPT login codex itself uses on the host:
+    `$CODEX_HOME/auth.json` or `~/.codex/auth.json` (`agent-home/codex/auth.json` with
+    `AGENT_ISOLATED=true`), if that is a ChatGPT login (`codex login`). `AGENT_SANDBOX_CODEX_LOGIN`
+    names another `auth.json` instead (it then also applies with an API key set or another
+    `AGENT_CLI`), for example one made for the runner alone
+    (`CODEX_HOME=$DATA_DIR/state/codex-login codex login --device-auth`, then
+    `AGENT_SANDBOX_CODEX_LOGIN=$DATA_DIR/state/codex-login/auth.json`); `off` turns it off. The
+    runner keeps the login
+    (`internal/sandbox/codexlogin`), and the proxy forwards to
+    `https://chatgpt.com/backend-api/codex` (`/responses`, `/responses/compact`, `/models`) with
+    the access token and `ChatGPT-Account-ID`. codex's config names the provider `OpenAI` (codex
+    keys its OpenAI request features on that name) and turns websockets off.
+    * **Sharing `~/.codex/auth.json` with codex on the host** works the way codex shares it
+      between its own processes. Each refresh rotates the refresh token, and there is no file lock:
+      codex re-reads the file before refreshing and adopts tokens another process wrote. The runner
+      does the same: it re-reads the file on every request and writes it atomically, keeping every
+      field. It refreshes 10 minutes before expiry (codex waits until 5), so when both are active
+      the runner refreshes first and codex finds fresh tokens. After a failed refresh it adopts
+      tokens codex rotated meanwhile. Both refreshing in the same instant still fails one side
+      with "sign in again" (`refresh_token_reused`); whether OpenAI then revokes the whole login is
+      untested. A login made for the runner alone avoids the race.
+    * The login's directory is hidden from the sandbox (`~/.codex` already is), so a runner login
+      must be in a directory of its own (not `/` or the home directory; the runner refuses those).
+    * It replaces `OPENAI_API_KEY` as the OpenAI channel, so pi gets no OpenAI provider then.
+    * Checked with the real codex CLI (0.162) against a fake backend
+      (`AGENT_E2E_REAL_CODEX=1 go test ./internal/sandbox/runtime -run RealCodex`). Against
+      chatgpt.com it is untested, including whether Cloudflare challenges the proxy.
   * **pi** gets the run's `models.json` (the seed's, with each proxied built-in provider's `baseUrl`
     set to its proxy) and run tokens in env (`ANTHROPIC_OAUTH_TOKEN` for a setup-token).
 
