@@ -8,7 +8,7 @@ import (
 )
 
 // envLocalPath is the absolute path to .env.local. Set by LoadFromEnv to
-// DATA_DIR/.env.local (default: ~/.agent-runner/.env.local).
+// DATA_DIR/.env.local (by default in the working directory).
 var envLocalPath = ".env.local"
 
 // SetEnvLocal writes or updates a single key in the data-dir .env.local.

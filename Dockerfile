@@ -51,8 +51,8 @@ COPY --from=builder /agent-cli    /usr/local/bin/agent-cli
 
 USER app
 # Set HOME=/data so every tool that writes to ~ (claude, codex, opencode, npm)
-# lands on the persistent volume automatically. DATA_DIR then defaults to
-# ~/.agent-runner = /data/.agent-runner with no extra env vars needed.
+# lands on the persistent volume automatically. DATA_DIR defaults to the
+# working directory, /data, with no extra env vars needed.
 ENV HOME=/data
 # Direct runtime npm installs (via /install-cli) to a user-writable prefix under HOME.
 # Build-time installs (ARG AGENT_CLI) run as root above and use the system prefix.
@@ -61,7 +61,7 @@ ENV PATH="${PATH}:/data/.npm-global/bin"
 WORKDIR /data
 
 # Mount /data as a persistent volume so all mutable data survives image updates:
-#   /data/.agent-runner/ — agent-runner data (logs, repo-cache, tmp, memory, outputs, uploads, .env.local)
+#   /data/               — agent-runner data (logs, repo-cache, tmp, memory, outputs, uploads, .env.local)
 #   /data/.claude/       — claude auth + config
 #   /data/.codex/        — codex auth + config
 #   /data/.config/opencode/ — opencode config

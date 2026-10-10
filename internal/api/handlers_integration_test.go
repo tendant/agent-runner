@@ -49,7 +49,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	os.MkdirAll(repoCacheDir, 0755)
 
 	// Pin DATA_DIR so any config.ReloadFromEnv triggered by /set during tests
-	// resolves inside the test sandbox — never the real ~/.agent-runner.
+	// resolves inside the test sandbox — never the real agent directory.
 	t.Setenv("DATA_DIR", dir)
 
 	cfg := config.DefaultConfig()
@@ -57,7 +57,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.LogsRoot = logsDir
 	cfg.TmpRoot = tmpDir
 	// Relative so tests that chdir into a temp CWD (withTempCWD) get an
-	// isolated memory dir — never the real ~/.agent-runner default.
+	// isolated memory dir — never the real agent directory.
 	cfg.MemoryDir = "memory"
 	cfg.OutputsRoot = filepath.Join(dir, "outputs")
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")

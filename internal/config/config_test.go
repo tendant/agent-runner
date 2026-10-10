@@ -61,10 +61,10 @@ func TestLoadFromEnv_ExplicitDataDirWins(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnv_LegacyLayoutFallsBackToCWD(t *testing.T) {
+func TestLoadFromEnv_StateDefaultsToCWD(t *testing.T) {
 	defer chtempdir(t)()
 	t.Setenv("DATA_DIR", "")
-	// Simulate the old CWD-based layout: a non-empty repo-cache/ in CWD.
+	// Existing state in CWD is used as is.
 	if err := os.MkdirAll("repo-cache/somerepo", 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestLoadFromEnv_LegacyLayoutFallsBackToCWD(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.RepoCacheRoot != filepath.Join(".", "repo-cache") {
-		t.Errorf("legacy layout should keep DATA_DIR=. for this run, got %s", cfg.RepoCacheRoot)
+		t.Errorf("state should default to the working directory, got %s", cfg.RepoCacheRoot)
 	}
 }
 

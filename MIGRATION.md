@@ -10,33 +10,13 @@ warnings, act on them when convenient. Nothing breaks on day one.
 
 ---
 
-## 1. Data directory default moved (`DATA_DIR`)
+## 1. Data directory (`DATA_DIR`)
 
-**Before:** all mutable state (repo-cache/, runs/, workspaces/, logs/, memory/,
-.env.local) defaulted to the **process working directory**.
+All mutable state (repo-cache/, runs/, workspaces/, logs/, memory/, tmp/,
+outputs/, uploads/, .env.local) lives in the **current folder**, as before, unless
+`DATA_DIR` is set (in the environment or `.env`). One directory is one agent.
 
-**After:** the default is **`~/.agent-runner`** (or `~/.agent-runner/<instance>`
-when `INSTANCE` is set).
-
-**Auto-migration:** if `DATA_DIR` is unset and the working directory contains
-state from the old layout (a non-empty `repo-cache/`, `runs/`, or
-`workspaces/`), that layout keeps being used with a startup warning:
-
-```
-WARN config: found legacy data layout in the working directory; using it for
-this run — set DATA_DIR=. to keep state here permanently, or move
-repo-cache/, runs/, workspaces/ etc. to ~/.agent-runner
-```
-
-**Action (pick one):**
-
-- Keep state where it is: add `DATA_DIR=.` to `.env`. The warning stops.
-- Adopt the new default: stop the server, move the state dirs, restart:
-
-  ```bash
-  mkdir -p ~/.agent-runner
-  mv repo-cache runs workspaces logs memory tmp outputs uploads .env.local ~/.agent-runner/ 2>/dev/null
-  ```
+**Action:** none. To keep state elsewhere, set `DATA_DIR`.
 
 **Docker deployments:** no action — `DATA_DIR=/data` is explicit.
 
