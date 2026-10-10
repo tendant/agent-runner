@@ -468,14 +468,19 @@ func codexHasOAuthCredentials() bool {
 // SandboxedClaudeAuthHelp says how to give a sandboxed claude CLI credentials.
 const SandboxedClaudeAuthHelp = "the sandbox hides this host's `claude login` (~/.claude, the macOS Keychain). " +
 	"Run `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN, or set ANTHROPIC_API_KEY " +
-	"(or ANTHROPIC_AUTH_TOKEN) and list it in AGENT_SANDBOX_ENV_ALLOW"
+	"(with AGENT_SANDBOX_MODEL_PROXY=false, also list it in AGENT_SANDBOX_ENV_ALLOW)"
 
 // SandboxedClaudeAuth reports whether a claude CLI inside the sandbox can
-// authenticate: the sandbox passes CLAUDE_CODE_OAUTH_TOKEN to claude itself,
-// and an API key or auth token only when envAllow lists it. A `claude login`
-// does not count: its credentials stay outside the sandbox.
-func SandboxedClaudeAuth(envAllow []string) bool {
+// authenticate. With the model proxy (modelProxy), the runner holds a
+// CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY and the CLI gets a per-run
+// token. Without it, the sandbox passes CLAUDE_CODE_OAUTH_TOKEN to claude, and
+// an API key or auth token only when envAllow lists it. A `claude login` never
+// counts: its credentials stay outside the sandbox.
+func SandboxedClaudeAuth(envAllow []string, modelProxy bool) bool {
 	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		return true
+	}
+	if modelProxy && os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return true
 	}
 	for _, k := range envAllow {

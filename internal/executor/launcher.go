@@ -84,6 +84,9 @@ type SandboxLauncher struct {
 	// CLI, keyed by its binary name (e.g. "claude": CLAUDE_CODE_OAUTH_TOKEN),
 	// so a credential reaches the CLI it is for and no other.
 	CLIEnvAllow map[string][]string
+	// CLIEnv sets KEY=VALUE pairs for one CLI only, keyed like CLIEnvAllow
+	// (e.g. "claude": the per-run model proxy's URL and token).
+	CLIEnv map[string][]string
 	// EnvOverride is applied after the base env (e.g. HOME/TMPDIR inside the
 	// sandbox) and before the executor's own overlay.
 	EnvOverride []string
@@ -151,6 +154,7 @@ func (l *SandboxLauncher) env(s LaunchSpec) []string {
 	}
 	env = append(env, l.EnvOverride...)
 	env = append(env, s.ExtraEnv...)
+	env = append(env, l.CLIEnv[filepath.Base(s.Name)]...)
 	return append(env, l.EnvForce...)
 }
 

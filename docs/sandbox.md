@@ -23,7 +23,8 @@ Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor`), `AGENT_SANDB
 JSON file, or the JSON itself when it starts with `{`; fields it leaves unset keep the default
 policy's values, so `{"version":1,"network":{"egress":"none"}}` still grants the workspace,
 home and tmp; a field it sets replaces the default's), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
-(comma-separated host env var names to pass in, e.g. a model API key; interim until the model proxy is wired).
+(comma-separated host env var names to pass in; model credentials are never passed while the model
+proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below).
 
 ## How a run is confined
 
@@ -51,9 +52,19 @@ The sandbox hides the host's `claude login` (`~/.claude`, and on macOS the Keych
 its `.credentials.json` would break the host login when a copy refreshes the rotating token. So:
 
 * **Credentials:** run `claude setup-token` (a long-lived subscription token, no refresh) and set
-  `CLAUDE_CODE_OAUTH_TOKEN` in the runner's env. It is passed to the `claude` CLI only
-  (`SandboxLauncher.CLIEnvAllow`), never to other CLIs. An API key works too, listed in
-  `AGENT_SANDBOX_ENV_ALLOW`. With neither, a claude run fails before it starts, saying so.
+  `CLAUDE_CODE_OAUTH_TOKEN` in the runner's env, or set `ANTHROPIC_API_KEY`. With neither, a claude
+  run fails before it starts, saying so.
+* **Model proxy** (`AGENT_SANDBOX_MODEL_PROXY`, default on): the credential stays in the runner.
+  Each sandbox run starts a proxy (`internal/sandbox/proxy`) that attaches it (the token as
+  `Authorization: Bearer`, or the key as `x-api-key`) and forwards to `ANTHROPIC_BASE_URL` or the
+  Anthropic API; the `claude` CLI gets only `ANTHROPIC_BASE_URL` (the proxy) and
+  `ANTHROPIC_AUTH_TOKEN` (a per-run token), and the credential variables are stripped from the
+  sandbox whatever `AGENT_SANDBOX_ENV_ALLOW` lists. The proxy accepts `/v1/messages` and
+  `/api/hello` only, 600 requests a minute, 64 MiB a request, and stops with the run. It listens on
+  127.0.0.1 on macOS (Seatbelt shares the host's network) and on the host's address on Linux
+  (gVisor has its own loopback). It needs outbound network: with egress `none` or `restricted`
+  isobox cannot open it a port, so no proxy starts and the token is passed to `claude` directly
+  (as with `AGENT_SANDBOX_MODEL_PROXY=false`); the model API is unreachable then anyway.
 * **Config:** `CLAUDE_CONFIG_DIR` is `/home/agent/.claude` (the thread's sandbox home: writable,
   kept across a task's turns so `--resume` works). Before each run it is refreshed from
   `~/.claude` (or `agent-home/claude` with `AGENT_ISOLATED=true`), copying only `settings.json`,
@@ -94,8 +105,10 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   not denied to it.
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
-* **Model proxy** (`internal/sandbox/proxy`) is implemented but not wired; provider keys still
-  enter via `AGENT_SANDBOX_ENV_ALLOW`.
+* **The model proxy is for claude only**, and only with outbound network (isobox cannot expose one
+  port into a sandbox without network). Other CLIs (codex, opencode, pi) still need their keys
+  through `AGENT_SANDBOX_ENV_ALLOW`. On Linux the proxy's port is on the host's address, reachable
+  from the host's network for the run's lifetime, behind the per-run token.
 * The fast-LLM executor fallback (analyzer, curator, and the planner outside a session, used when
   no LLM API key is set) runs the agent CLI in a sandbox run of its own, sharing one sandbox
   thread (`llm-fallback`). Before, it ran on the host: `make sandbox-smoke` caught it writing

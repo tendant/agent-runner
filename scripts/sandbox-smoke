@@ -10,8 +10,9 @@
 #    macOS, gVisor on Linux), gated on .github/sandbox-baselines/<backend>.json.
 # 2. Runner probes: the real agent-runner, with a fake `claude` that tries to
 #    escape (read ~/.ssh and the runner's .env, write outside the workspace,
-#    reach the network, ...). Every outcome is checked against what the
-#    sandbox should allow, under the default policy and with egress "none".
+#    reach the network, ...) and checks it reaches the model only through the
+#    per-run proxy. Every outcome is checked against what the sandbox should
+#    allow, under the default policy and with egress "none".
 #
 # Env:
 #   ISOBOX       isobox binary; default: built at the ref CI pins, cached
@@ -115,6 +116,13 @@ tryread() {
 	echo "env|home|\$HOME"
 	echo "env|config_dir|\$CLAUDE_CONFIG_DIR"
 	echo "env|token|\${CLAUDE_CODE_OAUTH_TOKEN:+present}"
+	echo "env|proxy_url|\${ANTHROPIC_BASE_URL:+present}"
+	echo "env|proxy_token|\${ANTHROPIC_AUTH_TOKEN:+present}"
+	# The model proxy answers (any HTTP status: the smoke's credential is fake).
+	if [ -n "\$ANTHROPIC_BASE_URL" ]; then
+		code=\$(curl -sS -m 10 -o /dev/null -w "%{http_code}" -I -H "Authorization: Bearer \$ANTHROPIC_AUTH_TOKEN" "\$ANTHROPIC_BASE_URL/api/hello" 2>&1)
+		case \$code in [1-5]??) echo "allowed|model_proxy|HTTP \$code" ;; *) echo "blocked|model_proxy|\$code" ;; esac
+	fi
 	echo "env|host_secret|\${FAKE_SECRET_TOKEN:+present}"
 	tryread ssh_dir ls $HOME/.ssh
 	tryread aws_dir ls $HOME/.aws
@@ -220,7 +228,11 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	for n in memory write_workspace write_config internet; do expect $n allowed; done
 	expect_env home "$DATA/state/sandbox/home/*"
 	expect_env config_dir "$DATA/state/sandbox/home/*/.claude"
-	expect_env token present
+	# The model proxy holds the token; claude gets its URL and a run token.
+	expect_env token ""
+	expect_env proxy_url present
+	expect_env proxy_token present
+	expect model_proxy allowed
 	expect_env host_secret ""
 	[ ! -e "$W/escaped" ] || fail "a file was written outside the workspace"
 	leftover=$(find "$DATA/state/sandbox/leases" -type f ! -name .lock 2>/dev/null | wc -l | tr -d ' ')
@@ -233,6 +245,9 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
 	expect internet blocked
 	expect metadata_ip blocked
 	expect write_workspace allowed # unset grants inherit the default policy
+	# No network, so no reachable proxy: the token is passed to claude instead.
+	expect_env proxy_url ""
+	expect_env token present
 fi
 
 if [ "$BACKEND" = gvisor ]; then

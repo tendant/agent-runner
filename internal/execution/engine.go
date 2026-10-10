@@ -169,7 +169,7 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 		return ctx, func() {}, false
 	}
 	// Fail now, in words, rather than deep in the CLI with an auth error.
-	if clisetup.ResolveCLI(h.config.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(h.config.Agent.SandboxEnvAllow) {
+	if clisetup.ResolveCLI(h.config.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(h.config.Agent.SandboxEnvAllow, h.config.Agent.SandboxModelProxy) {
 		h.FailSession(sessionID, "sandbox: claude has no credentials: "+clisetup.SandboxedClaudeAuthHelp)
 		return ctx, func() {}, true
 	}
