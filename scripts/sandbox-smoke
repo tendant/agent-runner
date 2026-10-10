@@ -277,8 +277,8 @@ if [ "$BACKEND" = gvisor ]; then
 fi
 
 if [ "$BACKEND" = gvisor ]; then
-	# gVisor does not enforce a process limit (RLIMIT_NPROC is ignored, and
-	# isobox's pids limit caps only the Sentry's threads), so the memory cap
+	# No process limit is set on gVisor (isobox's pids limit caps only the
+	# Sentry's host threads, and nothing sets RLIMIT_NPROC), so the memory cap
 	# is what stops a fork bomb: the sandbox is killed, the host is left alone.
 	step "runner, fork bomb under AGENT_SANDBOX_MEMORY=512m"
 	mem_avail() { awk '/^MemAvailable:/ { print $2 * 1024 }' /proc/meminfo; }

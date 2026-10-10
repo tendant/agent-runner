@@ -134,8 +134,8 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   `process.cross_run_isolation`; not `resource.pids` (isobox puts the limit on the Sentry's host
   cgroup, which does not cap sandboxed processes, and a small limit stops runsc starting) and not
   `fs.virtual_paths` (no `/workspace` remap on either backend).
-* **No process limit on gVisor** (see below): `resource.pids` is unproven, and nothing makes
-  `fork()` fail inside the sandbox.
+* **No process limit on gVisor** (see below): `resource.pids` is unproven (isobox's `--pids` caps
+  the Sentry's host threads and crashes runsc under a fork bomb), and nothing sets `RLIMIT_NPROC`.
 * **gVisor host requirements:** root, cgroup v2, `runsc` new enough for `runsc features`
   (oci-seccomp; 20250106.0 is too old), and `ip`, `sysctl` and `iptables` (isobox builds the
   sandbox's network namespace with them).
@@ -146,23 +146,30 @@ On gVisor the memory cap, not a process limit, is what stops a fork bomb. Set
 `AGENT_SANDBOX_MEMORY` in production (`4g` is a reasonable start: agent CLIs plus `go build` or
 `npm` can need a few GB).
 
-* **No process limit works.** gVisor ignores `RLIMIT_NPROC` (google/gvisor#169) and does not set
-  its internal pids controller from the OCI spec; the sandbox cannot mount cgroupfs itself; and
-  isobox's `--pids` caps only the Sentry's own host threads. Under a fork bomb `--pids 256` ends
-  with runsc crashing (exit 2), never with `fork()` failing with `EAGAIN`.
-* **The memory cap contains it.** A fork bomb uses up memory, so the sandbox is killed within
-  seconds and the host is left alone. When the run's main process exits, gVisor also kills every
-  process left in the sandbox.
-* **Without a cap**, only the run timeout ends it, and until then it can take most of the host's
+* **isobox's `--pids` does not limit sandboxed processes.** It sets `pids.max` on the sandbox's
+  host cgroup, which counts the Sentry's own host threads (an idle run already uses ~29). A small
+  value stops runsc from starting (8 or 16 do; 32 works), and under a fork bomb `--pids 256`
+  makes runsc exit with status 2 within a second; `fork()` never fails with `EAGAIN`.
+* **`RLIMIT_NPROC` does work inside gVisor** (runsc 20261005.0, although google/gvisor#169 is
+  still open): with soft and hard limits of 256 set before the bomb, `fork()` fails with `EAGAIN`
+  and the sandbox survives. Nothing sets it today: the limits default to unlimited and the agent
+  runs as uid 0, so it would have to come from isobox (or the runner) before the agent starts.
+  The sandbox cannot mount cgroupfs itself (`permission denied`).
+* **The memory cap contains a fork bomb.** The bomb uses up memory, so the sandbox is killed
+  within seconds and the host is left alone. When the run's main process exits, gVisor also kills
+  every process left in the sandbox.
+* **Without a cap**, only the run timeout ends it, and until then it can take all of the host's
   memory.
 
-Measured on gVisor in Docker (infinite fork bomb, main process kept alive, 20 s timeout):
+Measured on gVisor in Docker (isobox `c7bbd19`, infinite fork bomb with the main process kept
+alive, 20 s isobox timeout, host `MemAvailable` sampled every 0.5 s):
 
-| Limit | Outcome | Host free memory during the bomb |
+| Limit | Outcome | Host `MemAvailable` |
 |---|---|---|
-| none | killed by the timeout after 16 s | 5.8 GB → 1.3 GB |
-| `--memory 1g` | killed in ~8 s | stayed ~5.6 GB |
-| `--pids 256` | runsc crashed (exit 2) in ~10 s | fell to ~2.6 GB |
+| none | exit 137 after ~17 s, before the timeout: the host ran out of memory | 2.9 GB → 0 |
+| `--memory 1g` | exit 137 in ~2.3–3.2 s | 6.3 GB → 5.1 GB at the lowest |
+| `--pids 256` | runsc exits 2 in ~0.6 s | unchanged |
+| `RLIMIT_NPROC` 256 | `fork()` fails with `EAGAIN`; sandbox still running at 12 s | 3.0 GB → 2.8 GB |
 
 `make sandbox-gvisor` checks this: a fork bomb under `AGENT_SANDBOX_MEMORY=512m` must be killed
 well before the iteration timeout, with the host's available memory and the runner unharmed.
