@@ -1,11 +1,13 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -35,6 +37,12 @@ type ModelChannel struct {
 	// OAuth marks a subscription token (`claude setup-token`) rather than an
 	// API key: pi must then send its run token as an OAuth token.
 	OAuth bool
+	// Credential, instead of AuthHeader/AuthValue, gives the headers per
+	// request: a login that refreshes (internal/sandbox/codexlogin).
+	Credential func(context.Context) (http.Header, error)
+	// ChatGPT marks an OpenAI channel holding a codex ChatGPT login: its
+	// upstream is ChatGPT's codex backend, which only codex speaks.
+	ChatGPT bool
 }
 
 // Request paths per provider: the claude CLI checks /api/hello and posts
@@ -43,7 +51,13 @@ type ModelChannel struct {
 var (
 	AnthropicPaths = []string{"/v1/messages", "/api/hello"}
 	OpenAIPaths    = []string{"/v1/responses", "/v1/chat/completions", "/v1/models"}
+	// ChatGPTPaths: codex in ChatGPT mode posts responses (and
+	// responses/compact) and lists models under this base.
+	ChatGPTPaths = []string{chatgptBase + "/responses", chatgptBase + "/models"}
 )
+
+// chatgptBase is the path of ChatGPT's codex backend (https://chatgpt.com).
+const chatgptBase = "/backend-api/codex"
 
 // modelCredentialEnv are the host variables that would hand the sandbox a
 // provider credential or route around the proxy; with a channel on they are
@@ -56,6 +70,7 @@ var modelCredentialEnv = map[string][]string{
 // modelRun is a run's started channels: per provider, the proxy.
 type modelRun struct {
 	proxies map[string]*proxy.Proxy
+	chatgpt bool // the OpenAI channel is a ChatGPT login (codex only)
 }
 
 func (m *modelRun) close() {
@@ -78,6 +93,7 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 			ListenHost:    modelListenHost(),
 			AuthHeader:    ch.AuthHeader,
 			AuthValue:     ch.AuthValue,
+			Credential:    ch.Credential,
 			PathPrefixes:  ch.Paths,
 			MaxRequestB:   64 << 20, // a long conversation's request is several MB
 			RatePerMinute: 600,
@@ -92,6 +108,9 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 			return nil, err
 		}
 		m.proxies[name] = p
+		if name == ProviderOpenAI && ch.ChatGPT {
+			m.chatgpt = true
+		}
 	}
 	return m, nil
 }
@@ -125,7 +144,9 @@ func (m *modelRun) cliEnv(channels map[string]*ModelChannel) map[string][]string
 		// codex reads its run token from the env var its config names
 		// (writeCodexConfig).
 		env["codex"] = []string{codexKeyEnv + "=" + p.Token()}
-		env["pi"] = append(env["pi"], "OPENAI_API_KEY="+p.Token())
+		if !m.chatgpt { // pi speaks the public API, not ChatGPT's backend
+			env["pi"] = append(env["pi"], "OPENAI_API_KEY="+p.Token())
+		}
 	}
 	return env
 }
@@ -161,6 +182,22 @@ base_url = %q
 env_key = %q
 wire_api = "responses"
 `, codexProvider, codexProvider, p.BaseURL()+"/v1", codexKeyEnv)
+	if m.chatgpt {
+		// The proxy holds a ChatGPT login and adds its token and account id.
+		// name "OpenAI" keeps codex's OpenAI-only request features (codex
+		// matches the provider by that name); no websockets through the proxy.
+		cfg = fmt.Sprintf(`# Written by agent-runner for this sandbox run: codex reaches ChatGPT only
+# through the run's model proxy, which holds the ChatGPT login.
+model_provider = %q
+
+[model_providers.%s]
+name = "OpenAI"
+base_url = %q
+env_key = %q
+wire_api = "responses"
+supports_websockets = false
+`, codexProvider, codexProvider, p.BaseURL()+chatgptBase, codexKeyEnv)
+	}
 	if err := os.MkdirAll(codexDir, 0o700); err != nil {
 		return err
 	}
@@ -187,6 +224,9 @@ func (m *modelRun) writePiModels(seedDir, piDir string) error {
 		providers = map[string]any{}
 	}
 	for name, p := range m.proxies {
+		if name == ProviderOpenAI && m.chatgpt {
+			continue // ChatGPT's codex backend is not an API pi speaks
+		}
 		pc, _ := providers[name].(map[string]any)
 		if pc == nil {
 			pc = map[string]any{}

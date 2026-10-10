@@ -6,6 +6,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -24,10 +25,14 @@ import (
 
 // Config describes one run's model channel.
 type Config struct {
-	Upstream      *url.URL // provider base URL, e.g. https://api.anthropic.com
-	ListenHost    string   // address to listen on; "" = 127.0.0.1. A backend with its own network namespace (gVisor) needs one it can route to
-	AuthHeader    string   // header carrying the provider credential, e.g. "x-api-key" or "Authorization"
-	AuthValue     string   // full header value (secret; never logged)
+	Upstream   *url.URL // provider base URL, e.g. https://api.anthropic.com
+	ListenHost string   // address to listen on; "" = 127.0.0.1. A backend with its own network namespace (gVisor) needs one it can route to
+	AuthHeader string   // header carrying the provider credential, e.g. "x-api-key" or "Authorization"
+	AuthValue  string   // full header value (secret; never logged)
+	// Credential, when set, replaces AuthHeader/AuthValue: it is called per
+	// request for the headers to attach (a refreshing login, e.g. ChatGPT's
+	// bearer token and account id). An error fails the request with 502.
+	Credential    func(context.Context) (http.Header, error)
 	PathPrefixes  []string // allowed request path prefixes; empty = deny all
 	MaxRequestB   int64    // per-request body cap (0 = 1 MiB default)
 	MaxTotalB     int64    // total bytes (request+response) for the run; 0 = unlimited
@@ -51,7 +56,7 @@ type Proxy struct {
 // Start listens on ListenHost (127.0.0.1 by default; ephemeral port) and
 // returns the proxy.
 func Start(cfg Config) (*Proxy, error) {
-	if cfg.Upstream == nil || cfg.AuthHeader == "" || cfg.AuthValue == "" {
+	if cfg.Upstream == nil || (cfg.Credential == nil && (cfg.AuthHeader == "" || cfg.AuthValue == "")) {
 		return nil, errors.New("proxy: upstream and credential required")
 	}
 	if cfg.MaxRequestB == 0 {
@@ -76,6 +81,12 @@ func Start(cfg Config) (*Proxy, error) {
 			r.Out.Host = cfg.Upstream.Host
 			r.Out.Header.Del("Authorization")
 			r.Out.Header.Del("X-Api-Key")
+			if h, ok := r.In.Context().Value(credKey{}).(http.Header); ok {
+				for k, v := range h {
+					r.Out.Header[k] = v
+				}
+				return
+			}
 			r.Out.Header.Set(cfg.AuthHeader, cfg.AuthValue)
 		},
 		Transport: cfg.Transport,
@@ -144,10 +155,22 @@ func (p *Proxy) guard(next http.Handler) http.Handler {
 			}
 			p.total.Add(max0(r.ContentLength))
 		}
+		if p.cfg.Credential != nil {
+			h, err := p.cfg.Credential(r.Context())
+			if err != nil {
+				p.event("credential_error")
+				http.Error(w, "model credential unavailable", http.StatusBadGateway)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), credKey{}, h))
+		}
 		p.event("forwarded")
 		next.ServeHTTP(w, r)
 	})
 }
+
+// credKey carries a request's Credential headers from guard to Rewrite.
+type credKey struct{}
 
 func max0(n int64) int64 {
 	if n < 0 {

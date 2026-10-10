@@ -165,3 +165,67 @@ func TestNoModelChannelsWithoutOutboundNetwork(t *testing.T) {
 		t.Errorf("egress none: %v, %v; want no channels (they would be unreachable)", m, err)
 	}
 }
+
+func TestChatGPTChannelIsCodexOnly(t *testing.T) {
+	var gotPath, gotAuth, gotAcct string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth, gotAcct = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("ChatGPT-Account-ID")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	cred := func(context.Context) (http.Header, error) {
+		return http.Header{"Authorization": {"Bearer real-chatgpt-access"}, "Chatgpt-Account-Id": {"acct-1"}}, nil
+	}
+
+	got := &sandbox.ProcSpec{}
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
+		Models:     map[string]*ModelChannel{ProviderOpenAI: {Upstream: u, Paths: ChatGPTPaths, Credential: cred, ChatGPT: true}},
+		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Finish()
+
+	codex := launch(t, run, got, "codex")
+	conf, err := os.ReadFile(filepath.Join(codex["CODEX_HOME"], "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base string
+	for _, line := range strings.Split(string(conf), "\n") {
+		if v, ok := strings.CutPrefix(line, "base_url = "); ok {
+			base = strings.Trim(v, `"`)
+		}
+	}
+	for _, want := range []string{`name = "OpenAI"`, "supports_websockets = false", `env_key = "` + codexKeyEnv + `"`} {
+		if !strings.Contains(string(conf), want) {
+			t.Errorf("codex config.toml lacks %s:\n%s", want, conf)
+		}
+	}
+	if !strings.HasSuffix(base, "/backend-api/codex") {
+		t.Fatalf("base_url %q", base)
+	}
+	for _, p := range []string{"/responses", "/responses/compact", "/models"} {
+		if code := post(t, base+p, codex[codexKeyEnv]); code != 200 || gotPath != "/backend-api/codex"+p ||
+			gotAuth != "Bearer real-chatgpt-access" || gotAcct != "acct-1" {
+			t.Errorf("%s: %d, upstream got %s %q %q", p, code, gotPath, gotAuth, gotAcct)
+		}
+	}
+	if code := post(t, strings.TrimSuffix(base, "/codex")+"/wham/usage", codex[codexKeyEnv]); code < 400 {
+		t.Errorf("a ChatGPT path off the allowlist: %d, want refused", code)
+	}
+
+	// pi cannot use ChatGPT's backend: no run token, no openai provider.
+	pi := launch(t, run, got, "pi")
+	if pi["OPENAI_API_KEY"] != "" {
+		t.Errorf("pi got an OpenAI run token for a ChatGPT channel")
+	}
+	if b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json")); err == nil && strings.Contains(string(b), base) {
+		t.Errorf("pi models.json points at the ChatGPT proxy: %s", b)
+	}
+}
