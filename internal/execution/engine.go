@@ -65,6 +65,12 @@ type errorGuidance struct {
 
 var errorGuidanceTable = []errorGuidance{
 	{
+		// Before the generic not-found entry: isobox, not the agent CLI.
+		match: []string{"isobox --print: exec:"},
+		title: "the sandbox (isobox) is not installed or not runnable",
+		hint:  "install isobox (docs/sandbox.md) or set AGENT_SANDBOX_ISOBOX to its path; AGENT_SANDBOX=off runs without the sandbox",
+	},
+	{
 		match: []string{"executable file not found in $path"},
 		title: "the coding agent CLI is not installed",
 		hint:  "run POST /bootstrap or /install-cli to install it",

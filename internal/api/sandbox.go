@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -52,6 +53,13 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend)
+	bin := cfg.Agent.SandboxIsobox
+	if bin == "" {
+		bin = "isobox"
+	}
+	if _, err := exec.LookPath(bin); err != nil {
+		slog.Warn("sandbox: isobox not found; every agent run will be rejected until it is installed (docs/sandbox.md) or AGENT_SANDBOX_ISOBOX names it", "isobox", bin)
+	}
 	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow, cfg.Agent.SandboxModelProxy) {
 		slog.Warn("sandbox: claude runs have no credentials: " + clisetup.SandboxedClaudeAuthHelp)
 	}

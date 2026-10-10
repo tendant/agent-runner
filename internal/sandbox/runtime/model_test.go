@@ -229,3 +229,48 @@ func TestChatGPTChannelIsCodexOnly(t *testing.T) {
 		t.Errorf("pi models.json points at the ChatGPT proxy: %s", b)
 	}
 }
+
+// DATA_DIR defaults to ".", so the runner's paths are relative; the sandbox's
+// processes run in the workspace, so everything it is given must be absolute.
+func TestRelativeRunnerPathsReachTheSandboxAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(wd) })
+	os.MkdirAll("tmp/session-1/workspace", 0o755)
+
+	u, _ := url.Parse("http://127.0.0.1:1")
+	got := &sandbox.ProcSpec{}
+	var roots map[string]string
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: "state/sandbox", Instance: "test", LeaseTTL: time.Second,
+		PrivatePaths: []string{"logs", ".env"},
+		Models:       map[string]*ModelChannel{ProviderOpenAI: {Upstream: u, AuthHeader: "Authorization", AuthValue: "Bearer k", Paths: OpenAIPaths}},
+		NewBackend:   func(r map[string]string) sandbox.Backend { roots = r; return fakeBackend{nil, got} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: "tmp/session-1/workspace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Finish()
+	env := launch(t, run, got, "codex")
+	for _, k := range []string{"HOME", "TMPDIR", "CODEX_HOME"} {
+		if !filepath.IsAbs(env[k]) {
+			t.Errorf("%s = %q, want absolute", k, env[k])
+		}
+	}
+	if fi, err := os.Stat(env["CODEX_HOME"]); err != nil || !fi.IsDir() {
+		t.Errorf("CODEX_HOME %q: %v", env["CODEX_HOME"], err)
+	}
+	for k, v := range roots {
+		if !filepath.IsAbs(v) {
+			t.Errorf("root %s = %q, want absolute", k, v)
+		}
+	}
+	for _, p := range rt.cfg.PrivatePaths {
+		if !filepath.IsAbs(p) {
+			t.Errorf("private path %q, want absolute", p)
+		}
+	}
+}
