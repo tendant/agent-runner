@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -353,11 +354,36 @@ if os.fork()==0:
 			if err := need("python3"); err != nil {
 				return err
 			}
+			// What matters is that nothing outside the sandbox can connect in.
+			// A listener on the sandbox's own loopback is fine where the
+			// sandbox has its own network namespace (agentbox's model
+			// forwarder needs one); one the host can reach is not.
 			s := t.baseSpec()
 			s.Network.Egress = sandbox.EgressOutbound
-			out, _ := t.exec(s, `python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);print('LISTEN_OK')" 2>&1`)
-			if strings.Contains(out, "LISTEN_OK") {
-				return errors.New("listener created")
+			port := 40000 + int(time.Now().UnixNano()%10000)
+			reached := make(chan string, 1)
+			go func() {
+				deadline := time.Now().Add(6 * time.Second)
+				for time.Now().Before(deadline) {
+					for _, h := range []string{"127.0.0.1", hostIP()} {
+						if c, err := net.DialTimeout("tcp", net.JoinHostPort(h, strconv.Itoa(port)), 300*time.Millisecond); err == nil {
+							c.Close()
+							reached <- h
+							return
+						}
+					}
+					time.Sleep(200 * time.Millisecond)
+				}
+				reached <- ""
+			}()
+			t.exec(s, fmt.Sprintf(`python3 -c "
+import socket
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0',%d)); s.listen(1); s.settimeout(6)
+try: s.accept()
+except Exception: pass" 2>&1`, port))
+			if h := <-reached; h != "" {
+				return fmt.Errorf("a listener in the sandbox was reachable from the host at %s:%d", h, port)
 			}
 			return nil
 		}},

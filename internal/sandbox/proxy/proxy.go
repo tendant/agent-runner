@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,8 +38,11 @@ type Config struct {
 	MaxRequestB   int64    // per-request body cap (0 = 1 MiB default)
 	MaxTotalB     int64    // total bytes (request+response) for the run; 0 = unlimited
 	RatePerMinute int      // requests per minute; 0 = unlimited
-	Transport     http.RoundTripper
-	OnEvent       func(kind string) // "denied", "limit", "forwarded" (no payloads)
+	// UnixSocket, when set, is a path the proxy also listens on: the channel
+	// for a sandbox without network (agentbox), mounted into it.
+	UnixSocket string
+	Transport  http.RoundTripper
+	OnEvent    func(kind string) // "denied", "limit", "forwarded" (no payloads)
 }
 
 // Proxy is a running per-run channel.
@@ -99,6 +103,18 @@ func Start(cfg Config) (*Proxy, error) {
 		},
 	}
 	p.srv = &http.Server{Handler: p.guard(rp), ReadHeaderTimeout: 10 * time.Second}
+	if cfg.UnixSocket != "" {
+		os.Remove(cfg.UnixSocket)
+		ul, err := net.Listen("unix", cfg.UnixSocket)
+		if err != nil {
+			ln.Close()
+			return nil, fmt.Errorf("proxy: unix socket: %w", err)
+		}
+		// The sandbox reaches it as the runner's own user (rootless), and the
+		// per-run token still guards it; owner-only keeps other users out.
+		os.Chmod(cfg.UnixSocket, 0o600)
+		go p.srv.Serve(ul)
+	}
 	go p.srv.Serve(ln)
 	return p, nil
 }

@@ -35,10 +35,19 @@ Darwin) BACKEND=seatbelt ;;
 Linux) BACKEND=gvisor ;;
 *) echo "unsupported OS: $(uname -s)" >&2; exit 2 ;;
 esac
+# SANDBOX_BACKEND=agentbox: rootless gVisor through agentbox (Linux, as a
+# normal user; scripts/sandbox-agentbox runs it in Docker).
+BACKEND=${SANDBOX_BACKEND:-$BACKEND}
 if [ "$BACKEND" = gvisor ] && [ "$(id -u)" != 0 ]; then
-	echo "gVisor needs root: run as root, or use scripts/sandbox-gvisor (Docker)" >&2
+	echo "gVisor through isobox needs root: run as root, or use scripts/sandbox-gvisor (Docker)" >&2
 	exit 2
 fi
+if [ "$BACKEND" = agentbox ] && [ "$(id -u)" = 0 ]; then
+	echo "agentbox is rootless: run as a normal user" >&2
+	exit 2
+fi
+# GV: the gVisor checks (strict, fork bombs, ...) apply to both gVisor paths.
+GV=0; case $BACKEND in gvisor | agentbox) GV=1 ;; esac
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-smoke.XXXXXX")
 W=$(cd "$W" && pwd -P)
@@ -67,7 +76,7 @@ step() { printf '\n== %s\n' "$*"; }
 # --- binaries ----------------------------------------------------------------
 
 step "build"
-if [ -z "${ISOBOX:-}" ]; then
+if [ -z "${ISOBOX:-}" ] && [ "$BACKEND" != agentbox ]; then
 	REF=$(sed -n 's/^  ISOBOX_REF: \([0-9a-f]*\).*/\1/p' .github/workflows/sandbox.yml)
 	ISOBOX_URL=$(sed -n 's/^  ISOBOX_REPO: \([^ ]*\).*/\1/p' .github/workflows/sandbox.yml)
 	[ -n "$REF" ] || { echo "no ISOBOX_REF in .github/workflows/sandbox.yml" >&2; exit 2; }
@@ -84,12 +93,12 @@ AGENT_RUNNER_BIN=${AGENT_RUNNER_BIN:-$W/agent-runner}
 CONFORMANCE_BIN=${CONFORMANCE_BIN:-$W/sandbox-conformance}
 [ -x "$AGENT_RUNNER_BIN" ] || go build -o "$AGENT_RUNNER_BIN" ./cmd/server
 [ -x "$CONFORMANCE_BIN" ] || go build -o "$CONFORMANCE_BIN" ./cmd/sandbox-conformance
-echo "isobox: $ISOBOX"
+[ "$BACKEND" = agentbox ] && echo "agentbox: rootless runsc $(runsc --version 2>/dev/null | head -1)" || echo "isobox: $ISOBOX"
 
 # --- 1. conformance ------------------------------------------------------------
 
 step "conformance ($BACKEND)"
-if (cd "$W" && "$CONFORMANCE_BIN" --isobox "$ISOBOX" --backend "$BACKEND" \
+if (cd "$W" && "$CONFORMANCE_BIN" --isobox "${ISOBOX:-}" --backend "$BACKEND" \
 	--report "report-$BACKEND.json" --manifest "manifest-$BACKEND.json" \
 	--require-file "$REPO/.github/sandbox-baselines/$BACKEND.json" 2>&1 | grep -v notrun); then
 	pass "baseline capabilities proven"
@@ -195,7 +204,7 @@ start_runner() {
 	(cd "$RUN" && exec env -i PATH="$PATH_FOR_RUNNER" HOME="$HOME" \
 		DATA_DIR="$DATA" API_BIND="127.0.0.1:$PORT" AGENT_CLI=claude \
 		AGENT_PLANNER_ENABLED=false AGENT_REVIEWER_ENABLED=false AGENT_MEMORY_CURATION_ENABLED=false \
-		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" AGENT_SANDBOX_ISOBOX="$ISOBOX" AGENT_SANDBOX_BACKEND="$BACKEND" \
+		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" AGENT_SANDBOX_ISOBOX="${ISOBOX:-}" AGENT_SANDBOX_BACKEND="$BACKEND" \
 		FAKE_SECRET_TOKEN=leak-me "$@" "$AGENT_RUNNER_BIN" >"$W/runner-$mode.log" 2>&1) &
 	RUNNER_PID=$!
 	for _ in $(seq 100); do curl -sf "localhost:$PORT/health" >/dev/null && return 0; sleep 0.1; done
@@ -246,6 +255,10 @@ probe() {
 	stop_runner
 	if [ -z "$REPORT" ]; then
 		fail "no probe report (session: $RESULT)"
+		# The last iteration's own error/output says why.
+		printf '%s' "$LAST_BODY" | python3 -c 'import json,sys
+d=json.load(sys.stdin); it=(d.get("iterations") or [{}])[-1]
+print("        iteration:", ((it.get("error") or "") + " " + (it.get("output") or ""))[-600:].replace("\n"," | "))' 2>/dev/null || true
 		return 1
 	fi
 	pass "session ${RESULT%%|*}"
@@ -267,7 +280,10 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	if [ -e /tmp/sandbox-smoke-escaped ]; then fail "write_tmp reached the host's /tmp"
 	elif grep -q '^allowed|write_tmp|' "$REPORT"; then pass "write_tmp stayed in the sandbox's own /tmp"
 	else expect write_tmp blocked; fi
-	for n in memory write_workspace write_config internet; do expect $n allowed; done
+	for n in memory write_workspace write_config; do expect $n allowed; done
+	# agentbox sandboxes have no network; the model proxy is reached through
+	# the forwarder (model_proxy below).
+	if [ "$BACKEND" = agentbox ]; then expect internet blocked; else expect internet allowed; fi
 	[ -e /etc/shadow ] && expect etc_shadow blocked
 	if [ "$SCOPED" = 1 ]; then # what scoped reads hide, and what they must not break
 		for n in host_home other_project; do expect $n blocked; done
@@ -291,8 +307,9 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
 fi
 
-step "runner, egress none"
-if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
+# agentbox: the default above already has no network.
+[ "$BACKEND" = agentbox ] || step "runner, egress none"
+[ "$BACKEND" = agentbox ] || if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
 	AGENT_SANDBOX_POLICY='{"version":1,"network":{"egress":"none"}}'; then
 	expect internet blocked
 	expect metadata_ip blocked
@@ -302,7 +319,7 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
 	expect_env token present
 fi
 
-if [ "$BACKEND" = gvisor ]; then
+if [ "$GV" = 1 ]; then
 	# gVisor proves process.containment, which every run requires, so strict
 	# mode can run here (on Seatbelt it rejects every run).
 	step "runner, strict (evidence from the conformance run)"
@@ -313,7 +330,7 @@ if [ "$BACKEND" = gvisor ]; then
 	fi
 fi
 
-if [ "$BACKEND" = gvisor ]; then
+if [ "$GV" = 1 ]; then
 	# Two fork bombs. isobox's pids limit caps only the Sentry's host threads,
 	# so on gVisor the pids cap is RLIMIT_NPROC, set by the nproc shim inside
 	# the sandbox. Either cap must contain the bomb: under the memory cap the
@@ -356,6 +373,11 @@ if [ "$BACKEND" = gvisor ]; then
 	}
 
 	step "runner, fork bomb under AGENT_SANDBOX_MEMORY=512m"
+	if [ "$BACKEND" = agentbox ] && ! systemd-run --user --scope --quiet true 2>/dev/null; then
+		# agentbox caps memory through a systemd user scope and refuses a
+		# memory limit without one (checked by its own tests).
+		echo "  skip  no systemd user scope here"
+	else
 	bomb "sandbox fork bomb" AGENT_SANDBOX_MEMORY=512m
 	# Well before the 120s iteration timeout: the memory cap ended it.
 	case $RESULT in
@@ -366,6 +388,7 @@ if [ "$BACKEND" = gvisor ]; then
 	*) fail "session still ${RESULT%%|*} after ${ELAPSED}s" ;;
 	esac
 	bomb_cleanup
+	fi
 
 	step "runner, fork bomb under AGENT_SANDBOX_PIDS=256 (no memory cap)"
 	bomb "sandbox pids bomb" AGENT_SANDBOX_PIDS=256
@@ -376,21 +399,33 @@ if [ "$BACKEND" = gvisor ]; then
 	else fail "no EAGAIN from fork() (${BOMB:-no bomb.txt})"; fi
 	bomb_cleanup
 
-	# The agent is root without capabilities: a 0750 parent not owned by root
-	# (a runner installed under its user's home) must be named, not fail every
-	# session without saying why.
-	step "runner, data dir under a 0750 home"
+	step "runner, data dir under a private home"
 	PRIV=$W/private
-	install -d -o nobody -g "$(id -gn nobody)" -m 0750 "$PRIV"
-	DATA_SAVED=$DATA DATA=$PRIV/data
-	start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
-	run_task "sandbox smoke probe" 20
-	stop_runner
-	DATA=$DATA_SAVED
-	case $RESULT in
-	"failed|"*"cannot enter $PRIV "*"chmod o+x $PRIV"*) pass "rejected, naming $PRIV and chmod o+x" ;;
-	*) fail "want a rejection naming $PRIV, got: $RESULT" ;;
-	esac
+	if [ "$BACKEND" = agentbox ]; then
+		# Rootless: the sandbox runs as the runner's own user, so a private
+		# (0700) home is no obstacle.
+		install -d -m 0700 "$PRIV"
+		DATA_SAVED=$DATA DATA=$PRIV/data
+		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
+		run_task "sandbox smoke probe" 60
+		stop_runner
+		DATA=$DATA_SAVED
+		if [ "${RESULT%%|*}" = completed ]; then pass "runs under a 0700 home owned by the runner"
+		else fail "under a 0700 home: $RESULT"; fi
+	else
+		# isobox: the agent is root without capabilities, so a 0750 parent not
+		# owned by root must be named, not fail every session without saying why.
+		install -d -o nobody -g "$(id -gn nobody)" -m 0750 "$PRIV"
+		DATA_SAVED=$DATA DATA=$PRIV/data
+		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
+		run_task "sandbox smoke probe" 20
+		stop_runner
+		DATA=$DATA_SAVED
+		case $RESULT in
+		"failed|"*"cannot enter $PRIV "*"chmod o+x $PRIV"*) pass "rejected, naming $PRIV and chmod o+x" ;;
+		*) fail "want a rejection naming $PRIV, got: $RESULT" ;;
+		esac
+	fi
 
 	# The real codex CLI on a ChatGPT login, through the model proxy, against
 	# a fake ChatGPT backend: codex must start under scoped reads (node and

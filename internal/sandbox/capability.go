@@ -57,7 +57,7 @@ var Registry = func() map[CapabilityID]CapabilityDef {
 		def(CapProcessCrossRunIsolation, "one run cannot signal another run's processes", "proc.cross_run_signal"),
 		def(CapNetworkDirectNone, "no direct network, including loopback to host services, raw IPs and metadata endpoints", "net.none_loopback", "net.none_raw_ip", "net.none_metadata"),
 		def(CapNetworkOutbound, "outbound connections allowed", "net.outbound_connect"),
-		def(CapNetworkNoListen, "inbound listeners are blocked", "net.no_listen"),
+		def(CapNetworkNoListen, "nothing outside the sandbox can connect to a listener in it", "net.no_listen"),
 		def(CapNetworkRestrictedEgress, "egress limited to granted hosts/CIDRs via a gateway behind default-deny networking", "net.restricted_allow", "net.restricted_deny"),
 		def(CapNetworkControlledDNS, "name resolution is served by the runner and honours egress policy", "net.controlled_dns"),
 		def(CapResourceCPU, "CPU capped", "res.cpu"),
