@@ -67,8 +67,8 @@ var errorGuidanceTable = []errorGuidance{
 	{
 		// Before the generic not-found entry: isobox, not the agent CLI.
 		match: []string{"isobox --print: exec:"},
-		title: "the sandbox (isobox) is not installed or not runnable",
-		hint:  "install isobox (docs/sandbox.md) or set AGENT_SANDBOX_ISOBOX to its path; AGENT_SANDBOX=off runs without the sandbox",
+		title: "the sandbox is on (AGENT_SANDBOX) but isobox is not installed or not runnable",
+		hint:  clisetup.IsoboxInstallHelp(),
 	},
 	{
 		match: []string{"executable file not found in $path"},
