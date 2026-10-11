@@ -42,7 +42,7 @@ docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconf
 	-v "$REPO:/repo:ro" -v "$W:/w" ubuntu:24.04 bash -euc '
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq >/dev/null
-	apt-get install -y -qq procps python3 curl bzip2 xz-utils ca-certificates git >/dev/null
+	apt-get install -y -qq procps python3 curl bzip2 xz-utils ca-certificates git iproute2 nftables >/dev/null
 	bash /w/install-runsc.sh | tail -1
 	chmod -R a+rX /w
 	# As the normal user agent-runner runs as: codex installed with npm under

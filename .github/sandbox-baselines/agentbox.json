@@ -1,5 +1,5 @@
 {
- "_note": "Rootless gVisor through agentbox (github.com/tendant/agentbox), as a normal user. No direct network: egress is restricted through the run's gateway (an HTTP proxy over a mounted socket; network.outbound, raw connections, is not claimed), model proxies over mounted sockets. resource.memory and resource.cpu need a systemd user scope, absent in CI containers; qualify them on the host with agentbox's scripts/phase0.sh.",
+ "_note": "Rootless gVisor through agentbox (github.com/tendant/agentbox), as a normal user. No direct network: egress is restricted through the run's gateway (every TCP connection through agentbox's gateway network where the host supports it, else an HTTP proxy over a mounted socket; network.outbound, unmediated connections, is not claimed), model proxies over mounted sockets. resource.memory and resource.cpu need a systemd user scope, absent in CI containers; qualify them on the host with agentbox's scripts/phase0.sh.",
  "require": [
   "env.scrub",
   "fs.deny",

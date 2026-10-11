@@ -3,9 +3,11 @@
 //
 // Each Prepare creates one agentbox sandbox; policy grants are mounted at
 // their own host paths, so the CLIs see the same HOME, workspace and tmp
-// paths as with isobox. The sandbox has no network: model proxies listen on
-// Unix sockets mounted into it, and a forwarder (fwd.go) gives the CLIs the
-// http://127.0.0.1:<port> they expect.
+// paths as with isobox. Model proxies listen on Unix sockets mounted into
+// the sandbox, and a forwarder (fwd.go) gives the CLIs the
+// http://127.0.0.1:<port> they expect. Egress goes to the run's gateway:
+// every TCP connection, through agentbox's gateway network where the host
+// supports it ("transparent"), else only what honours HTTPS_PROXY ("proxy").
 package agentbox
 
 import (
@@ -47,9 +49,20 @@ type Config struct {
 	Evidence *conformance.Report
 	Runsc    string // default: agentbox's (/usr/local/bin/runsc, else PATH)
 	StateDir string // agentbox state (runsc state, bundles); private to the runner
+	// EgressMode is how restricted egress reaches the gateway: "auto"
+	// (default: transparent where the host supports it, else proxy),
+	// "transparent" (required), or "proxy".
+	EgressMode string
 	// Backend overrides the agentbox backend (tests).
 	Backend ab.Backend
 }
+
+// Egress modes (Config.EgressMode).
+const (
+	EgressAuto        = "auto"
+	EgressTransparent = "transparent"
+	EgressProxy       = "proxy"
+)
 
 // Backend implements sandbox.Backend over agentbox.
 type Backend struct {
@@ -108,6 +121,9 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 	if !c.Rootless {
 		return sandbox.CheckResult{}, fmt.Errorf("agentbox: rootless gVisor is unavailable here: %s", strings.Join(c.Notes, "; "))
 	}
+	if b.cfg.EgressMode == EgressTransparent && !c.Gateway && spec.Network.Egress == sandbox.EgressRestricted {
+		return sandbox.CheckResult{}, fmt.Errorf("agentbox: transparent egress is unavailable here: %s", strings.Join(c.Notes, "; "))
+	}
 	declared := []sandbox.CapabilityID{
 		sandbox.CapEnvScrub,                 // the environment is built from scratch
 		sandbox.CapFSWriteScope,             // only granted paths are mounted writable
@@ -118,8 +134,8 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 		sandbox.CapKernelIsolation,
 		sandbox.CapNetworkDirectNone, // no network namespace beyond loopback
 		sandbox.CapNetworkNoListen,   // nothing outside can connect in
-		// Restricted egress: only through the run's gateway (an HTTP proxy
-		// over a mounted socket), which resolves names itself.
+		// Restricted egress: only through the run's gateway, which resolves
+		// names itself (transparent: the sandbox's DNS answers are stand-ins).
 		sandbox.CapNetworkRestrictedEgress,
 		sandbox.CapNetworkControlledDNS,
 	}
@@ -152,6 +168,9 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 		caveats = append(caveats, "capabilities are agentbox-declared and NOT verified by conformance evidence")
 	}
 	caveats = append(caveats, c.Notes...)
+	if spec.Network.Egress == sandbox.EgressRestricted && !b.transparent(c) {
+		caveats = append(caveats, "egress through HTTPS_PROXY only: programs ignoring it get no network")
+	}
 	res := sandbox.Evaluate("agentbox:gvisor", spec, enforced, caveats)
 	for i, g := range res.Gaps {
 		if g.Capability == sandbox.CapNetworkOutbound {
@@ -202,16 +221,21 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		s.ModelSockets = append(s.ModelSockets, sock)
 		routes[addr] = "/run/agentbox/" + filepath.Base(sock)
 	}
-	// Restricted egress: the run's gateway on a private socket, reached
-	// through the forwarder at egressAddr.
+	// Restricted egress: the run's gateway on a private socket. Transparent:
+	// agentbox hands it every TCP connection; proxy: reached through the
+	// forwarder at egressAddr by what honours HTTPS_PROXY.
 	var gw *egress.Gateway
 	var gwDir string
+	proxy := false
 	if spec.Network.Egress == sandbox.EgressRestricted {
+		c, err := b.caps(ctx)
+		if err != nil {
+			return nil, err
+		}
 		base := os.Getenv("XDG_RUNTIME_DIR")
 		if base == "" {
 			base = os.TempDir()
 		}
-		var err error
 		if gwDir, err = os.MkdirTemp(base, "are-"); err != nil {
 			return nil, err
 		}
@@ -220,8 +244,13 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 			os.RemoveAll(gwDir)
 			return nil, fmt.Errorf("agentbox: egress gateway: %w", err)
 		}
-		s.ModelSockets = append(s.ModelSockets, sock)
-		routes[egressAddr] = "/run/agentbox/egress.sock"
+		if b.transparent(c) {
+			s.Network = ab.NetworkPolicy{Mode: ab.NetworkGateway, Gateway: sock}
+		} else {
+			s.ModelSockets = append(s.ModelSockets, sock)
+			routes[egressAddr] = "/run/agentbox/egress.sock"
+			proxy = true
+		}
 	}
 	closeGW := func() {
 		if gw != nil {
@@ -268,8 +297,14 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	if grace == 0 {
 		grace = 5 * time.Second
 	}
-	return &prepared{b: b, sb: sb, fwd: fwd, routes: routes, closeGW: closeGW, egress: gw != nil,
+	return &prepared{b: b, sb: sb, fwd: fwd, routes: routes, closeGW: closeGW, egress: proxy,
 		timeout: time.Duration(r.TimeoutSec) * time.Second, grace: grace}, nil
+}
+
+// transparent reports whether restricted egress uses agentbox's gateway
+// network (every TCP connection) rather than HTTPS_PROXY.
+func (b *Backend) transparent(c ab.Capabilities) bool {
+	return b.cfg.EgressMode != EgressProxy && c.Gateway
 }
 
 func underAny(p string, dirs map[string]bool) bool {
@@ -322,7 +357,7 @@ type prepared struct {
 	sb       ab.Sandbox
 	fwd      string
 	routes   map[string]string
-	egress   bool          // commands get the proxy variables for the run's gateway
+	egress   bool          // commands get the proxy variables for the run's gateway (proxy mode)
 	closeGW  func()        // stops the gateway with the sandbox
 	timeout  time.Duration // the spec's wall timeout (0: none)
 	grace    time.Duration // TERM to KILL

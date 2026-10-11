@@ -19,6 +19,10 @@
 #   KEEP=1       keep the work dir (runner logs, probe reports)
 #   SMOKE_PORT   runner port (default 18093)
 #   AGENT_RUNNER_BIN, CONFORMANCE_BIN   prebuilt binaries (scripts/sandbox-gvisor)
+#   AGENTBOX_EGRESS  agentbox egress mode required of this host: transparent
+#                (default: every connection reaches the gateway; needs ip, nft
+#                and agentbox-unshare where AppArmor restricts user
+#                namespaces) or proxy
 #
 # The probes record outcomes and byte counts only, never file contents.
 
@@ -48,6 +52,8 @@ if [ "$BACKEND" = agentbox ] && [ "$(id -u)" = 0 ]; then
 fi
 # GV: the gVisor checks (strict, fork bombs, ...) apply to both gVisor paths.
 GV=0; case $BACKEND in gvisor | agentbox) GV=1 ;; esac
+AGENTBOX_EGRESS=${AGENTBOX_EGRESS:-transparent}
+EGRESS_MODE=; [ "$BACKEND" = agentbox ] && EGRESS_MODE=$AGENTBOX_EGRESS
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-smoke.XXXXXX")
 W=$(cd "$W" && pwd -P)
@@ -203,6 +209,8 @@ tryread() {
 	try git_https      git ls-remote https://github.com/tendant/agentbox.git HEAD
 	try egress_bypass  curl -sS -m 5 -o /dev/null --noproxy '*' https://example.com
 	tryhttp private_net --proxy "\${HTTPS_PROXY:-}" http://$HOSTIP:$PORT/health
+	tryhttp private_direct --noproxy '*' http://$HOSTIP:$PORT/health
+	tryhttp metadata_direct --noproxy '*' http://169.254.169.254/
 	nohup sleep 9997 >/dev/null 2>&1 &
 } >"\$R" 2>&1
 echo '{"result":"TASK: DONE","cost_usd":0,"duration_ms":1}'
@@ -222,7 +230,7 @@ start_runner() {
 		DATA_DIR="$DATA" API_BIND="127.0.0.1:$PORT" AGENT_CLI=claude \
 		AGENT_PLANNER_ENABLED=false AGENT_REVIEWER_ENABLED=false AGENT_MEMORY_CURATION_ENABLED=false \
 		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" AGENT_SANDBOX_ISOBOX="${ISOBOX:-}" AGENT_SANDBOX_BACKEND="$BACKEND" \
-		FAKE_SECRET_TOKEN=leak-me "$@" "$AGENT_RUNNER_BIN" >"$W/runner-$mode.log" 2>&1) &
+		AGENT_SANDBOX_EGRESS_MODE="$EGRESS_MODE" FAKE_SECRET_TOKEN=leak-me "$@" "$AGENT_RUNNER_BIN" >"$W/runner-$mode.log" 2>&1) &
 	RUNNER_PID=$!
 	for _ in $(seq 100); do curl -sf "localhost:$PORT/health" >/dev/null && return 0; sleep 0.1; done
 	echo "runner did not start; log:" >&2; tail -20 "$W/runner-$mode.log" >&2; exit 1
@@ -302,13 +310,21 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	# the forwarder (model_proxy below).
 	expect internet allowed
 	if [ "$BACKEND" = agentbox ]; then
-		# Egress only through the run's gateway (HTTPS_PROXY): git over HTTPS
-		# works; a direct connection gets none; the host's private address is
-		# refused (as are metadata and loopback).
+		# Egress only through the run's gateway: git over HTTPS works; the
+		# host's private address and metadata are refused, proxy settings
+		# honoured or not. Transparent: a program ignoring them still gets
+		# public hosts, through the gateway; proxy: it gets nothing.
 		expect git_https allowed
-		expect egress_bypass blocked
 		[ -n "$HOSTIP" ] && expect private_net blocked
-		expect_env egress_proxy present
+		[ -n "$HOSTIP" ] && expect private_direct blocked
+		expect metadata_direct blocked
+		if [ "$AGENTBOX_EGRESS" = transparent ]; then
+			expect egress_bypass allowed
+			expect_env egress_proxy ""
+		else
+			expect egress_bypass blocked
+			expect_env egress_proxy present
+		fi
 	fi
 	[ -e /etc/shadow ] && expect etc_shadow blocked
 	if [ "$SCOPED" = 1 ]; then # what scoped reads hide, and what they must not break
@@ -331,6 +347,17 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	[ ! -e "$W/escaped" ] || fail "a file was written outside the workspace"
 	leftover=$(find "$DATA/state/sandbox/leases" -type f ! -name .lock 2>/dev/null | wc -l | tr -d ' ')
 	[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
+fi
+
+# agentbox: the other egress mode, the gateway's proxy path.
+if [ "$BACKEND" = agentbox ] && [ "$AGENTBOX_EGRESS" = transparent ]; then
+	step "runner, agentbox egress through HTTPS_PROXY only"
+	if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_SANDBOX_EGRESS_MODE=proxy; then
+		expect internet allowed
+		expect egress_bypass blocked
+		expect metadata_direct blocked
+		expect_env egress_proxy present
+	fi
 fi
 
 # agentbox: the default above already has no network.
