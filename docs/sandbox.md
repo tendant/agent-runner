@@ -48,6 +48,8 @@ proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below), `AGENT_SA
   `AGENT_SANDBOX_READ_ALLOW` (comma-separated host paths, e.g. a toolchain under your home:
   `~/go,~/.cargo`). The home directory and other projects are not readable.
 * **`host`**: the host is readable minus the denied paths below. Other projects are readable.
+* **macOS:** `scoped` does not work on Seatbelt yet (CI's conformance shows the workspace itself
+  unreadable under it); keep the macOS default, `host`.
 * **Denied in both modes:** the host user's credential directories (`~/.ssh`, `~/.aws`,
   `~/.codex`, ...), the runner's own files (`.env`, state, logs, repo cache, other sessions), and
   system secrets: `/etc/shadow`, `/etc/gshadow`, sudoers and the SSH host keys. A gVisor sandbox
@@ -121,6 +123,8 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
     * The login's directory is hidden from the sandbox (`~/.codex` already is), so a runner login
       must be in a directory of its own (not `/` or the home directory; the runner refuses those).
     * It replaces `OPENAI_API_KEY` as the OpenAI channel, so pi gets no OpenAI provider then.
+    * `AGENT_SANDBOX_CHATGPT_URL` sends it to another endpoint than `https://chatgpt.com` (the
+      smoke test's fake backend).
     * Checked with the real codex CLI (0.162) against a fake backend
       (`AGENT_E2E_REAL_CODEX=1 go test ./internal/sandbox/runtime -run RealCodex`). Against
       chatgpt.com it is untested, including whether Cloudflare challenges the proxy.

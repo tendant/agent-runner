@@ -257,10 +257,12 @@ func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel
 			if !explicit {
 				slog.Info("sandbox: codex uses its ChatGPT login through the model proxy (AGENT_SANDBOX_CODEX_LOGIN=off to stop)", "path", path)
 			}
-			u, _ := url.Parse("https://chatgpt.com")
-			out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.ChatGPTPaths,
-				Credential: login.Headers, ChatGPT: true}
-			return out
+			// AGENT_SANDBOX_CHATGPT_URL: another ChatGPT endpoint (a test backend).
+			if u := upstreamURL("AGENT_SANDBOX_CHATGPT_URL", "https://chatgpt.com"); u != nil {
+				out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.ChatGPTPaths,
+					Credential: login.Headers, ChatGPT: true}
+				return out
+			}
 		}
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
