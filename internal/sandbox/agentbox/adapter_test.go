@@ -206,3 +206,56 @@ func TestRestrictedEgress(t *testing.T) {
 		t.Errorf("egress none started a gateway: %v", f2.specs[0].ModelSockets)
 	}
 }
+
+// Transparent egress: where the host supports agentbox's gateway network,
+// the gateway gets every TCP connection; no proxy route or variables.
+func TestTransparentEgress(t *testing.T) {
+	caps := ab.Capabilities{Rootless: true, PIDLimit: true, Gateway: true}
+	s := spec()
+	s.Resources = sandbox.ResourcePolicy{}
+	s.Network.Egress, s.Network.EgressAllow = sandbox.EgressRestricted, []string{"*"}
+
+	f := &fakeAB{caps: caps}
+	ps, err := New(Config{Roots: roots(t), Backend: f}).Prepare(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := f.specs[0]
+	if sp.Network.Mode != ab.NetworkGateway || filepath.Base(sp.Network.Gateway) != "egress.sock" {
+		t.Errorf("network %+v", sp.Network)
+	}
+	if _, err := os.Stat(sp.Network.Gateway); err != nil {
+		t.Errorf("gateway socket: %v", err)
+	}
+	if len(sp.ModelSockets) != 0 {
+		t.Errorf("the gateway is not mounted in transparent mode: %v", sp.ModelSockets)
+	}
+	ps.(sandbox.Commander).Command(context.Background(), sandbox.ProcSpec{Args: []string{"git", "fetch"}})
+	for _, e := range f.cmds[0].Env {
+		if strings.HasPrefix(e, "HTTPS_PROXY=") {
+			t.Errorf("proxy variables in transparent mode: %v", f.cmds[0].Env)
+		}
+	}
+	if slices.Contains(f.cmds[0].Args, "127.0.0.1:3128=/run/agentbox/egress.sock") {
+		t.Errorf("proxy route in transparent mode: %v", f.cmds[0].Args)
+	}
+	ps.Destroy(context.Background())
+
+	// EgressMode proxy keeps the proxy path on such a host.
+	f2 := &fakeAB{caps: caps}
+	b2 := New(Config{Roots: roots(t), Backend: f2, EgressMode: EgressProxy})
+	ps, _ = b2.Prepare(context.Background(), s)
+	if f2.specs[0].Network.Mode == ab.NetworkGateway {
+		t.Error("proxy mode used the gateway network")
+	}
+	ps.Destroy(context.Background())
+	if res, _ := b2.Check(context.Background(), s); !slices.ContainsFunc(res.Caveats, func(c string) bool { return strings.Contains(c, "HTTPS_PROXY only") }) {
+		t.Errorf("proxy mode must say what it misses: %v", res.Caveats)
+	}
+
+	// Required but unavailable: refused before anything runs.
+	f3 := &fakeAB{caps: ab.Capabilities{Rootless: true, Notes: []string{"no nft"}}}
+	if _, err := New(Config{Roots: roots(t), Backend: f3, EgressMode: EgressTransparent}).Check(context.Background(), s); err == nil || !strings.Contains(err.Error(), "no nft") {
+		t.Errorf("transparent required: %v", err)
+	}
+}

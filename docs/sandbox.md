@@ -50,19 +50,29 @@ scripts/phase0.sh          # as the runner's user: what this host supports
 
 What changes against isobox:
 
-* **No direct network; egress through a gateway.** The sandbox has no network interface. Its only
-  ways out are Unix sockets mounted into it, served by a forwarder inside (agent-runner's own
-  binary, `__agent-runner-fwd`):
-  * **Model proxies:** the CLIs get `http://127.0.0.1:4801` (Anthropic) / `:4802` (OpenAI) with
-    per-run tokens, as before.
+* **No direct network; egress through a gateway.** Nothing leaves the sandbox except through the
+  runner:
+  * **Model proxies:** Unix sockets mounted into the sandbox, served by a forwarder inside
+    (agent-runner's own binary, `__agent-runner-fwd`): the CLIs get `http://127.0.0.1:4801`
+    (Anthropic) / `:4802` (OpenAI) with per-run tokens, as before.
   * **Egress:** policy `outbound` becomes `restricted` egress through the run's gateway
-    (`internal/sandbox/egress`) at `127.0.0.1:3128`; commands get `HTTPS_PROXY`/`HTTP_PROXY`
-    (and `NO_PROXY=127.0.0.1,localhost`), which git over HTTPS, npm, pip, go and curl honor. The
-    gateway resolves names itself (the sandbox has no DNS) and allows ports 443 and 80. By
+    (`internal/sandbox/egress`). The gateway resolves names itself and allows ports 443 and 80. By
     default it allows **any public host**; `AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...`
     narrows that to listed hosts. Private, loopback, link-local and metadata addresses are refused
-    either way, also when a name resolves to one. A tool that ignores the proxy variables gets no
-    connection at all (no bypass), and git over SSH does not work: use HTTPS remotes.
+    either way, also when a name resolves to one. git over SSH (port 22) is refused: use HTTPS
+    remotes. How connections reach the gateway, `AGENT_SANDBOX_EGRESS_MODE`:
+    * **`transparent`** (what `auto`, the default, picks where the host supports it): agentbox's
+      gateway network. The sandbox gets a private network namespace in which **every** TCP
+      connection, whether or not the program honours proxy settings, is handed to the gateway
+      for the host it was made for. DNS is answered inside with stand-in addresses
+      (198.18.0.0/15; nothing is resolved in the sandbox or leaks over DNS); other UDP, ICMP and
+      IPv6 are dropped. Needs `ip` and `nft` (`apt install iproute2 nftables`) and, where AppArmor
+      restricts user namespaces (Ubuntu 23.10+), `agentbox-unshare` from agentbox's
+      `scripts/install-runsc.sh`. `transparent` set explicitly refuses to run without them.
+    * **`proxy`** (what `auto` falls back to): the gateway mounted as a socket and served at
+      `127.0.0.1:3128`; commands get `HTTPS_PROXY`/`HTTP_PROXY` (and
+      `NO_PROXY=127.0.0.1,localhost`), which git over HTTPS, npm, pip, go and curl honor. A program
+      that ignores them gets no connection at all (no bypass, but no network for it either).
 * **Reads are an allowlist by construction:** only the run's grants (mounted at their own host
   paths, so `HOME`, `CODEX_HOME` and the workspace keep their paths), the memory dir, uploads,
   the agent CLIs' installs and `AGENT_SANDBOX_READ_ALLOW`, plus the host's system directories
@@ -75,9 +85,9 @@ What changes against isobox:
   survives); memory and CPU through a systemd user scope (`AGENT_SANDBOX_MEMORY`), refused when
   no user session can create one.
 * **Proof:** `scripts/sandbox-agentbox` runs the conformance suite (baseline
-  `.github/sandbox-baselines/agentbox.json`, 12 capabilities in a container, all but
-  `network.outbound`) and the runner smoke, codex included, as a normal user in an unprivileged
-  container. On a Linux host with runsc installed: `SANDBOX_BACKEND=agentbox scripts/sandbox-smoke`.
+  `.github/sandbox-baselines/agentbox.json`, 14 capabilities in a container, all but
+  `network.outbound`) and the runner smoke, codex and both egress modes included, as a normal
+  user in an unprivileged container. On a Linux host with runsc installed: `SANDBOX_BACKEND=agentbox scripts/sandbox-smoke`.
 
 ## What the sandbox can read
 

@@ -116,6 +116,7 @@ type AgentConfig struct {
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (default on Linux) | "host": what the sandbox may read
 	SandboxReadAllow    []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
 	SandboxEgressAllow  []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
+	SandboxEgressMode   string   // AGENT_SANDBOX_EGRESS_MODE — agentbox: auto (default) | transparent | proxy
 	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
 	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — a codex ChatGPT login (auth.json) for sandboxed codex, through the proxy; unset: codex's own when AGENT_CLI=codex without OPENAI_API_KEY; "off": none
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
@@ -412,6 +413,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)
 	cfg.Agent.SandboxEgressAllow = envSliceOrDefault("AGENT_SANDBOX_EGRESS_ALLOW", cfg.Agent.SandboxEgressAllow)
+	cfg.Agent.SandboxEgressMode = envOrDefault("AGENT_SANDBOX_EGRESS_MODE", cfg.Agent.SandboxEgressMode)
 	cfg.Agent.SandboxModelProxy = envBoolOrDefault("AGENT_SANDBOX_MODEL_PROXY", cfg.Agent.SandboxModelProxy)
 	cfg.Agent.SandboxCodexLogin = envOrDefault("AGENT_SANDBOX_CODEX_LOGIN", cfg.Agent.SandboxCodexLogin)
 	// opencode requires an explicit model; ship a two-tier default pair

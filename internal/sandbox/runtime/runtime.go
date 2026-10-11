@@ -53,9 +53,13 @@ type Config struct {
 	// restricted egress through the run's gateway to these hosts (default
 	// "*": any public host; private and metadata addresses never).
 	EgressAllow []string
-	PolicyFile  string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
-	Memory      string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
-	PIDs        string // optional process/thread cap for every run; overrides the policy's pids
+	// EgressMode, with agentbox: "auto" (default; transparent where the host
+	// supports it), "transparent" (every TCP connection reaches the gateway;
+	// required) or "proxy" (only what honours HTTPS_PROXY).
+	EgressMode string
+	PolicyFile string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
+	Memory     string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
+	PIDs       string // optional process/thread cap for every run; overrides the policy's pids
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
 	ScopedReads  bool
@@ -299,6 +303,11 @@ func New(cfg Config) (*Runtime, error) {
 			return nil, fmt.Errorf("sandbox egress allow: %w", err)
 		}
 	}
+	switch cfg.EgressMode {
+	case "", abadapter.EgressAuto, abadapter.EgressTransparent, abadapter.EgressProxy:
+	default:
+		return nil, fmt.Errorf("sandbox egress mode %q: want auto, transparent or proxy", cfg.EgressMode)
+	}
 	if cfg.ScopedReads {
 		r.system.Filesystem.ScopedReads = true // a policy can scope reads too, never unscope
 	}
@@ -443,7 +452,8 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		}
 		if r.agentbox() {
 			return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
-				Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc, StateDir: filepath.Join(r.cfg.StateDir, "agentbox")})
+				Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc, StateDir: filepath.Join(r.cfg.StateDir, "agentbox"),
+				EgressMode: r.cfg.EgressMode})
 		}
 		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence,
 			ReadDeny: deny, Readable: readable})

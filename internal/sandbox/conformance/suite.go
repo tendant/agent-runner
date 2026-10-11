@@ -350,9 +350,10 @@ if os.fork()==0:
 			}
 			return nil
 		}},
-		// Restricted egress goes through the backend's gateway only (proxy
-		// variables in the sandbox). Real internet, skipped without it: the
-		// gateway allows ports 443 and 80, which a test server cannot use.
+		// Restricted egress goes through the backend's gateway only: proxy
+		// variables, or (agentbox's gateway network) every connection. Real
+		// internet, skipped without it: the gateway allows ports 443 and 80,
+		// which a test server cannot use.
 		{"net.restricted_allow", func(t *x) error {
 			if err := needInternet(); err != nil {
 				return err
@@ -369,11 +370,15 @@ if os.fork()==0:
 			}
 			out, _ := t.exec(restricted(t, "example.com"), `
 				curl -sS -m 10 -o /dev/null https://www.iana.org/ 2>/dev/null && echo UNGRANTED_REACHED
-				curl -sS -m 10 -o /dev/null --noproxy '*' https://example.com/ 2>/dev/null && echo BYPASS_REACHED
+				# Ignoring the proxy settings reaches nothing ungranted either (a
+				# transparent gateway still sees, and refuses, the connection).
+				curl -sS -m 10 -o /dev/null --noproxy '*' https://www.iana.org/ 2>/dev/null && echo BYPASS_REACHED
 				# Plain http through a proxy: curl exits 0 on the gateway's own 403,
 				# so reached means an answer that is not the gateway's refusal.
-				code=$(curl -s -m 5 -o /tmp/meta -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
-				[ "$code" != 000 ] && ! grep -q 'egress Forbidden' /tmp/meta 2>/dev/null && echo METADATA_REACHED
+				for np in "" "*"; do
+					code=$(curl -s -m 5 --noproxy "$np" -o /tmp/meta -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
+					[ "$code" != 000 ] && ! grep -q 'egress Forbidden' /tmp/meta 2>/dev/null && echo METADATA_REACHED
+				done
 				echo DONE`)
 			for _, bad := range []string{"UNGRANTED_REACHED", "BYPASS_REACHED", "METADATA_REACHED"} {
 				if strings.Contains(out, bad) {
@@ -389,10 +394,15 @@ if os.fork()==0:
 			if err := needInternet(); err != nil {
 				return err
 			}
-			// The sandbox resolves nothing itself (no DNS to exfiltrate over);
-			// names are resolved by the gateway, so a granted one still works.
+			// The sandbox resolves nothing itself (no DNS to exfiltrate over):
+			// no answer, or (agentbox's gateway network) stand-in addresses in
+			// 198.18.0.0/15 answered inside. Names are resolved by the gateway,
+			// so a granted one still works.
 			out, _ := t.exec(restricted(t, "example.com"), `
-				python3 -c 'import socket; socket.getaddrinfo("example.com", 443); print("SANDBOX_RESOLVED")' 2>/dev/null
+				python3 -c '
+import socket, ipaddress
+addrs = {a[4][0] for a in socket.getaddrinfo("example.com", 443)}
+if any(ipaddress.ip_address(a) not in ipaddress.ip_network("198.18.0.0/15") for a in addrs): print("SANDBOX_RESOLVED", addrs)' 2>/dev/null
 				curl -sS -m 15 -o /dev/null -w 'HTTP%{http_code}' https://example.com/ 2>&1`)
 			if strings.Contains(out, "SANDBOX_RESOLVED") {
 				return errors.New("the sandbox resolved a name itself")
