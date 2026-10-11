@@ -93,7 +93,7 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		return nil, nil
 	}
 	m := &modelRun{proxies: map[string]*proxy.Proxy{}}
-	if goruntime.GOOS == "linux" {
+	if modelSockets {
 		// A short private directory: Unix socket paths are limited to ~108
 		// bytes, which a run's state directory can come close to.
 		base := os.Getenv("XDG_RUNTIME_DIR")
@@ -140,6 +140,11 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 	}
 	return m, nil
 }
+
+// modelSockets: the proxies are reached over Unix sockets and a forwarder
+// (Linux: gVisor has its own network stack), else at their loopback ports
+// (macOS). A var so tests cover both paths on any OS.
+var modelSockets = goruntime.GOOS == "linux"
 
 // agentboxAddr is where the forwarder inside an agentbox sandbox serves each
 // provider's proxy (the sandbox's own loopback).

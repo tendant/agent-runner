@@ -50,6 +50,34 @@ func launch(t *testing.T, run *Run, got *sandbox.ProcSpec, cli string) map[strin
 	return envOf(got)
 }
 
+// bothPaths runs a model-channel test with the proxies on Unix sockets and
+// a forwarder (Linux) and on loopback ports (macOS), whatever this OS is.
+func bothPaths(t *testing.T, f func(*testing.T)) {
+	for _, sockets := range []bool{true, false} {
+		name := "ports"
+		if sockets {
+			name = "sockets"
+		}
+		t.Run(name, func(t *testing.T) {
+			saved := modelSockets
+			modelSockets = sockets
+			defer func() { modelSockets = saved }()
+			f(t)
+		})
+	}
+}
+
+// fromHost turns a URL a CLI in the sandbox gets into one the test can use:
+// a forwarder address inside the sandbox becomes its proxy's host address.
+func fromHost(run *Run, u string) string {
+	for name, a := range run.model.inSandbox {
+		if rest, ok := strings.CutPrefix(u, "http://"+a); ok {
+			return run.model.proxies[name].BaseURL() + rest
+		}
+	}
+	return u
+}
+
 func post(t *testing.T, url, auth string) int {
 	t.Helper()
 	req, _ := http.NewRequest("POST", url, strings.NewReader("{}"))
@@ -63,6 +91,10 @@ func post(t *testing.T, url, auth string) int {
 }
 
 func TestModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
+	bothPaths(t, testModelChannelsKeepCredentialsOutOfTheSandbox)
+}
+
+func testModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	anthropic, anthropicGot := upstream(t, "Authorization")
 	openai, openaiGot := upstream(t, "Authorization")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "real-claude-token")
@@ -98,7 +130,7 @@ func TestModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	}
 
 	claude := launch(t, run, got, "claude")
-	if code := post(t, claude["ANTHROPIC_BASE_URL"]+"/v1/messages", claude["ANTHROPIC_AUTH_TOKEN"]); code != 200 || *anthropicGot != "Bearer real-claude-token" {
+	if code := post(t, fromHost(run, claude["ANTHROPIC_BASE_URL"])+"/v1/messages", claude["ANTHROPIC_AUTH_TOKEN"]); code != 200 || *anthropicGot != "Bearer real-claude-token" {
 		t.Errorf("claude through its proxy: %d, upstream got %q", code, *anthropicGot)
 	}
 	codex := launch(t, run, got, "codex")
@@ -116,10 +148,10 @@ func TestModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	if !strings.Contains(string(conf), `model_provider = "`+codexProvider+`"`) || !strings.HasSuffix(codexBase, "/v1") {
 		t.Fatalf("codex config.toml:\n%s", conf)
 	}
-	if code := post(t, codexBase+"/responses", codexToken); code != 200 || *openaiGot != "Bearer real-openai-key" {
+	if code := post(t, fromHost(run, codexBase)+"/responses", codexToken); code != 200 || *openaiGot != "Bearer real-openai-key" {
 		t.Errorf("codex through its proxy: %d, upstream got %q", code, *openaiGot)
 	}
-	if code := post(t, codexBase+"/files", codexToken); code < 400 {
+	if code := post(t, fromHost(run, codexBase)+"/files", codexToken); code < 400 {
 		t.Errorf("a path off the allowlist: %d, want refused", code)
 	}
 	if !strings.HasPrefix(codex["CODEX_HOME"], "/") || !strings.Contains(codex["CODEX_HOME"], filepath.Join("home", "t1")) {
@@ -173,7 +205,9 @@ func TestModelChannelsWithoutNetwork(t *testing.T) {
 	}
 }
 
-func TestChatGPTChannelIsCodexOnly(t *testing.T) {
+func TestChatGPTChannelIsCodexOnly(t *testing.T) { bothPaths(t, testChatGPTChannelIsCodexOnly) }
+
+func testChatGPTChannelIsCodexOnly(t *testing.T) {
 	var gotPath, gotAuth, gotAcct string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth, gotAcct = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("ChatGPT-Account-ID")
@@ -218,12 +252,12 @@ func TestChatGPTChannelIsCodexOnly(t *testing.T) {
 		t.Fatalf("base_url %q", base)
 	}
 	for _, p := range []string{"/responses", "/responses/compact", "/models"} {
-		if code := post(t, base+p, codex[codexKeyEnv]); code != 200 || gotPath != "/backend-api/codex"+p ||
+		if code := post(t, fromHost(run, base)+p, codex[codexKeyEnv]); code != 200 || gotPath != "/backend-api/codex"+p ||
 			gotAuth != "Bearer real-chatgpt-access" || gotAcct != "acct-1" {
 			t.Errorf("%s: %d, upstream got %s %q %q", p, code, gotPath, gotAuth, gotAcct)
 		}
 	}
-	if code := post(t, strings.TrimSuffix(base, "/codex")+"/wham/usage", codex[codexKeyEnv]); code < 400 {
+	if code := post(t, fromHost(run, strings.TrimSuffix(base, "/codex"))+"/wham/usage", codex[codexKeyEnv]); code < 400 {
 		t.Errorf("a ChatGPT path off the allowlist: %d, want refused", code)
 	}
 
