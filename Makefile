@@ -104,7 +104,7 @@ help:
 	@echo "  test                Run tests with race detector"
 	@echo "  test-integration    Run integration tests against a real CLI backend"
 	@echo "  sandbox-smoke       Check the sandbox on this host (REAL=1 adds a billed real-claude run)"
-	@echo "  sandbox-gvisor      Check the sandbox on Linux gVisor, in Docker"
+	@echo "  sandbox-agentbox    Check the Linux sandbox (gVisor) in Docker, from any host"
 	@echo "                        INTEGRATION_CLI=opencode|claude|codex (default: opencode)"
 	@echo "                        INTEGRATION_MODEL=<model>    (optional)"
 	@echo "                        INTEGRATION_PROVIDER=<prov>  (optional)"
@@ -135,13 +135,13 @@ help:
 
 # --- Sandbox checks (docs/sandbox.md) ------------------------------------------
 
-.PHONY: sandbox-smoke sandbox-gvisor
+.PHONY: sandbox-smoke sandbox-agentbox
 
 sandbox-smoke:  ## conformance + runner probes on this host's sandbox (REAL=1: also the real claude, billed)
 	./scripts/sandbox-smoke $(if $(REAL),--real)
 
-sandbox-gvisor: ## the same on Linux gVisor, in a privileged Docker container
-	./scripts/sandbox-gvisor
+sandbox-agentbox: ## the same on Linux gVisor, in an unprivileged Docker container
+	./scripts/sandbox-agentbox
 
 .PHONY: secrets-decrypt secrets-encrypt secrets-authorize secrets-check
 

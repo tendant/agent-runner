@@ -2,6 +2,7 @@ package agentbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,7 @@ func spec() sandbox.SandboxSpec {
 }
 
 func TestCheck(t *testing.T) {
-	f := &fakeAB{caps: ab.Capabilities{Rootless: true, NetworkNone: true, PIDLimit: true, MemoryLimit: true, CPULimit: true}}
+	f := &fakeAB{caps: ab.Capabilities{Rootless: true, NetworkNone: true, PIDLimit: true, MemoryLimit: true, CPULimit: true, KernelIsolation: true, ModelSocket: true}}
 	b := New(Config{Roots: roots(t), Backend: f})
 	res, err := b.Check(context.Background(), spec())
 	if err != nil {
@@ -102,7 +103,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestPrepareMapsPolicy(t *testing.T) {
-	f := &fakeAB{caps: ab.Capabilities{Rootless: true}}
+	f := &fakeAB{caps: ab.Capabilities{Rootless: true, ModelSocket: true, PIDLimit: true, MemoryLimit: true}}
 	r := roots(t)
 	extra := filepath.Join(t.TempDir(), "memory")
 	mkdir(t, extra)
@@ -160,7 +161,7 @@ func TestPrepareMapsPolicy(t *testing.T) {
 // Restricted egress: a gateway per run on a private socket, routed at
 // 127.0.0.1:3128, proxy variables for commands, gone with the sandbox.
 func TestRestrictedEgress(t *testing.T) {
-	f := &fakeAB{caps: ab.Capabilities{Rootless: true, PIDLimit: true}}
+	f := &fakeAB{caps: ab.Capabilities{Rootless: true, PIDLimit: true, ModelSocket: true}}
 	r := roots(t)
 	b := New(Config{Roots: r, Backend: f})
 	s := spec()
@@ -257,5 +258,40 @@ func TestTransparentEgress(t *testing.T) {
 	f3 := &fakeAB{caps: ab.Capabilities{Rootless: true, Notes: []string{"no nft"}}}
 	if _, err := New(Config{Roots: roots(t), Backend: f3, EgressMode: EgressTransparent}).Check(context.Background(), s); err == nil || !strings.Contains(err.Error(), "no nft") {
 		t.Errorf("transparent required: %v", err)
+	}
+}
+
+// Seatbelt-like backends share the host's network stack: model proxies and
+// the gateway on the host's loopback, reachable at exactly their ports;
+// HTTPS_PROXY points at the gateway; limits the backend lacks are not asked
+// for (Check reports them).
+func TestHostPortsBackend(t *testing.T) {
+	f := &fakeAB{caps: ab.Capabilities{Backend: "seatbelt", Rootless: true, NetworkNone: true, HostPorts: true}}
+	s := spec()
+	s.Network.Egress, s.Network.EgressAllow = sandbox.EgressRestricted, []string{"*"}
+	b := New(Config{Roots: roots(t), Backend: f, HostPorts: []int{4801}})
+	res, err := b.Check(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Backend != "agentbox:seatbelt" || slices.Contains(res.Enforced, sandbox.CapKernelIsolation) || slices.Contains(res.Enforced, sandbox.CapResourceMemory) {
+		t.Errorf("check %+v", res)
+	}
+	ps, err := b.Prepare(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Destroy(context.Background())
+	sp := f.specs[0]
+	if len(sp.HostPorts) != 2 || sp.HostPorts[0] != 4801 || len(sp.ModelSockets) != 0 || sp.Network.Mode == ab.NetworkGateway {
+		t.Errorf("spec %+v", sp)
+	}
+	if sp.Limits != (ab.Limits{}) {
+		t.Errorf("limits the backend lacks were asked for: %+v", sp.Limits)
+	}
+	ps.(sandbox.Commander).Command(context.Background(), sandbox.ProcSpec{Args: []string{"git", "fetch"}})
+	want := fmt.Sprintf("HTTPS_PROXY=http://127.0.0.1:%d", sp.HostPorts[1])
+	if !slices.Contains(f.cmds[0].Env, want) || slices.Contains(f.cmds[0].Args, "--") {
+		t.Errorf("command %+v, want %s and no forwarder", f.cmds[0], want)
 	}
 }

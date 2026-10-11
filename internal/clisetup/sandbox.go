@@ -2,126 +2,86 @@ package clisetup
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
 )
 
-// The isobox build the sandbox needs, as pinned in
-// .github/workflows/sandbox.yml (a test keeps them in step): the tendant
-// fork, upstream plus the fix keeping /bin in gVisor's scoped-read views.
-const (
-	IsoboxRepo = "https://github.com/tendant/isobox"
-	IsoboxRef  = "2145756b9672559615f1605d4c2cec8a19011cf7"
-)
+// AgentboxInstallHelp says how an admin sets a Linux host up for the
+// sandbox: agentbox's installer puts runsc (gVisor) and the AppArmor
+// profiles Ubuntu 23.10+ needs in place, with sudo; agent-runner itself
+// never runs as root.
+const AgentboxInstallHelp = "an admin installs it once: `git clone https://github.com/tendant/agentbox && cd agentbox && make install` " +
+	"(runsc and, on Ubuntu 23.10+, its AppArmor profiles; `make check` verifies the host); AGENT_SANDBOX=off runs agents without the sandbox"
 
-// IsoboxInstallHelp says how to install the pinned isobox: built as the
-// user (Go lives there), installed with sudo where root finds it (gVisor
-// runs agent-runner as root, and root's PATH has no ~/go/bin).
-func IsoboxInstallHelp() string {
-	return "install it: `git clone " + IsoboxRepo + " && cd isobox && git checkout " + IsoboxRef[:7] +
-		" && go build -o isobox ./cmd/isobox && sudo install -m 0755 isobox /usr/local/bin/` " +
-		"(or set AGENT_SANDBOX_ISOBOX to the binary's absolute path; AGENT_SANDBOX=off runs agents without the sandbox)"
-}
-
-// SandboxScopedReads parses AGENT_SANDBOX_READ: "scoped" limits reads to an
-// allowlist, "host" leaves the host readable minus denied paths. Unset:
-// scoped on Linux (where the sandbox is uid 0 and production runs), host
-// elsewhere.
+// SandboxScopedReads parses AGENT_SANDBOX_READ. Reads are always scoped: the
+// sandbox sees the system's directories, its own roots and the configured
+// paths (AGENT_SANDBOX_READ_ALLOW), nothing else of the host.
 func SandboxScopedReads(v string) (bool, error) {
 	switch v {
-	case "scoped":
+	case "", "scoped":
 		return true, nil
 	case "host":
-		return false, nil
-	case "":
-		return goruntime.GOOS == "linux", nil
+		return false, fmt.Errorf("AGENT_SANDBOX_READ=host is no longer supported: the sandbox reads only what it is given (add paths with AGENT_SANDBOX_READ_ALLOW)")
 	}
-	return false, fmt.Errorf("AGENT_SANDBOX_READ: bad value %q (want scoped|host)", v)
+	return false, fmt.Errorf("AGENT_SANDBOX_READ: bad value %q (want scoped)", v)
 }
 
-// SandboxGVisor reports whether runs use gVisor: asked for, or left to
-// isobox on Linux (where it picks gVisor).
-func SandboxGVisor(backend string) bool {
-	return backend == "gvisor" || (backend == "" && goruntime.GOOS == "linux")
+// SandboxBackendName is the agentbox backend this OS uses.
+func SandboxBackendName() string {
+	switch goruntime.GOOS {
+	case "linux":
+		return "gvisor"
+	case "darwin":
+		return "seatbelt"
+	}
+	return "none"
 }
 
-// lookPath and euid are vars so tests can fake a host.
+// lookPath and goos are vars so tests can fake a host.
 var (
 	lookPath = exec.LookPath
-	euid     = os.Geteuid
+	goos     = goruntime.GOOS
 )
 
 // SandboxProblems lists what keeps the sandbox from running on this host,
 // each with its fix; nil when the sandbox is off or nothing is missing.
-func SandboxProblems(mode, isobox, backend string) []string {
+func SandboxProblems(mode, backend string) []string {
 	if mode == "" || mode == "off" {
 		return nil
 	}
 	var out []string
-	if backend == "agentbox" {
-		// Rootless gVisor through agentbox: no isobox, no root; runsc with,
-		// on Ubuntu 23.10+, its AppArmor profile.
-		runsc := "/usr/local/bin/runsc"
-		if _, err := lookPath(runsc); err != nil {
+	if backend != "" && backend != "agentbox" {
+		out = append(out, fmt.Sprintf("AGENT_SANDBOX_BACKEND=%s is no longer supported: isobox was removed, agentbox is the sandbox (unset AGENT_SANDBOX_BACKEND)", backend))
+	}
+	switch goos {
+	case "linux":
+		if _, err := lookPath("/usr/local/bin/runsc"); err != nil {
 			if _, err := lookPath("runsc"); err != nil {
-				out = append(out, "runsc (gVisor) not found: an admin installs it once with agentbox's scripts/install-runsc.sh "+
-					"(https://github.com/tendant/agentbox), which also adds the AppArmor profile Ubuntu 23.10+ needs")
+				out = append(out, "runsc (gVisor) not found: "+AgentboxInstallHelp)
 			}
 		}
-		if goruntime.GOOS != "linux" {
-			out = append(out, "agentbox runs on Linux only")
+	case "darwin":
+		if _, err := lookPath("/usr/bin/sandbox-exec"); err != nil {
+			out = append(out, "/usr/bin/sandbox-exec not found: the macOS sandbox (Seatbelt) needs it")
 		}
-		return out
-	}
-	if isobox == "" {
-		isobox = "isobox"
-	}
-	if _, err := lookPath(isobox); err != nil {
-		out = append(out, fmt.Sprintf("isobox not found (%s): %s", isobox, IsoboxInstallHelp()))
-	}
-	if SandboxGVisor(backend) {
-		if _, err := lookPath("runsc"); err != nil {
-			out = append(out, "runsc (gVisor) not found: install release 20261005.0 (https://gvisor.dev/docs/user_guide/install/)")
-		}
-		var missing []string
-		for _, tool := range []string{"ip", "sysctl", "iptables"} {
-			if _, err := lookPath(tool); err != nil {
-				missing = append(missing, tool)
-			}
-		}
-		if len(missing) > 0 {
-			out = append(out, "missing "+strings.Join(missing, ", ")+" (isobox builds the gVisor sandbox's network with them): "+
-				"install iproute2, procps and iptables")
-		}
-		if euid() != 0 {
-			out = append(out, "gVisor needs agent-runner to run as root")
-		}
+	default:
+		out = append(out, "no sandbox on "+goos+": agentbox runs on Linux (gVisor) and macOS (Seatbelt)")
 	}
 	return out
 }
 
 // SandboxStatus is the /status line for the sandbox.
-func SandboxStatus(mode, isobox, backend, read string) string {
+func SandboxStatus(mode, backend, read string) string {
 	if mode == "" || mode == "off" {
 		return "off"
 	}
-	b := backend
-	if b == "" {
-		b = "auto"
-		if SandboxGVisor(backend) {
-			b = "auto (gvisor)"
-		}
+	line := fmt.Sprintf("%s, agentbox (%s)", mode, SandboxBackendName())
+	p := SandboxProblems(mode, backend)
+	if _, err := SandboxScopedReads(read); err != nil {
+		p = append(p, err.Error())
 	}
-	reads := "host reads"
-	if scoped, err := SandboxScopedReads(read); err != nil {
-		reads = err.Error()
-	} else if scoped {
-		reads = "scoped reads"
-	}
-	line := fmt.Sprintf("%s, %s, %s", mode, b, reads)
-	if p := SandboxProblems(mode, isobox, backend); len(p) > 0 {
+	if len(p) > 0 {
 		return line + " ✗ every run will be rejected:\n  - " + strings.Join(p, "\n  - ")
 	}
 	return line + " ✓"

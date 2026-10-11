@@ -153,7 +153,9 @@ func TestModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	}
 }
 
-func TestNoModelChannelsWithoutOutboundNetwork(t *testing.T) {
+// The channels need no network: a sandbox with egress "none" still reaches
+// its model (a mounted socket on Linux, a loopback port on macOS).
+func TestModelChannelsWithoutNetwork(t *testing.T) {
 	u, _ := url.Parse("https://api.anthropic.com")
 	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
 		Models: map[string]*ModelChannel{ProviderAnthropic: {Upstream: u, AuthHeader: "x-api-key", AuthValue: "k", Paths: AnthropicPaths}}})
@@ -161,8 +163,13 @@ func TestNoModelChannelsWithoutOutboundNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	none := sandbox.SandboxSpec{Network: sandbox.NetworkPolicy{Egress: sandbox.EgressNone}}
-	if m, err := rt.startModels(none, "r", "t"); m != nil || err != nil {
-		t.Errorf("egress none: %v, %v; want no channels (they would be unreachable)", m, err)
+	m, err := rt.startModels(none, "r", "t")
+	if m == nil || err != nil {
+		t.Fatalf("egress none: %v, %v; want the channel", m, err)
+	}
+	defer m.close()
+	if len(m.routes())+len(m.ports()) == 0 {
+		t.Errorf("no way into the sandbox: routes %v ports %v", m.routes(), m.ports())
 	}
 }
 

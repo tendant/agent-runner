@@ -1,8 +1,9 @@
-// Command sandbox-conformance runs the shared conformance suite against the
-// isobox backend on THIS host and writes the evidence report plus a capability
-// manifest containing only proven capabilities.
+// Command sandbox-conformance runs the shared conformance suite against
+// agentbox on THIS host (gVisor on Linux, Seatbelt on macOS) and writes the
+// evidence report plus a capability manifest containing only proven
+// capabilities.
 //
-//	sandbox-conformance --isobox ./isobox --backend gvisor --report gvisor-linux.json --manifest production.json
+//	sandbox-conformance --report agentbox-linux.json --manifest production.json
 //
 // Point AGENT_SANDBOX_EVIDENCE at the report (so only proven capabilities are
 // claimed) and use the manifest for offline checks on other machines.
@@ -17,15 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	abadapter "github.com/agent-runner/agent-runner/internal/sandbox/agentbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
-	"github.com/agent-runner/agent-runner/internal/sandbox/isobox"
 )
 
 func main() {
-	bin := flag.String("isobox", "isobox", "path to the isobox binary")
-	backend := flag.String("backend", "", "isobox backend: seatbelt | gvisor (empty = native), or agentbox (rootless gVisor, not isobox)")
 	report := flag.String("report", "conformance-report.json", "evidence report output")
 	manifest := flag.String("manifest", "", "capability manifest output (proven capabilities only)")
 	require := flag.String("require", "", "comma-separated capabilities that must be proven; exit 3 otherwise")
@@ -34,21 +33,15 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	name := "isobox:" + *backend
-	factory := func(e conformance.Env) sandbox.Backend {
-		return isobox.New(isobox.Config{Binary: *bin, Backend: *backend, Roots: e.Roots})
+	name := "agentbox:" + clisetup.SandboxBackendName()
+	state, err := os.MkdirTemp("", "agentbox-conformance-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	if *backend == "agentbox" { // rootless gVisor through agentbox, not isobox
-		name = "agentbox:gvisor"
-		state, err := os.MkdirTemp("", "agentbox-conformance-")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		defer os.RemoveAll(state)
-		factory = func(e conformance.Env) sandbox.Backend {
-			return abadapter.New(abadapter.Config{Roots: e.Roots, StateDir: state})
-		}
+	defer os.RemoveAll(state)
+	factory := func(e conformance.Env) sandbox.Backend {
+		return abadapter.New(abadapter.Config{Roots: e.Roots, StateDir: state})
 	}
 	rep, err := conformance.Run(ctx, name, factory)
 	if err != nil {

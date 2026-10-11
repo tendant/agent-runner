@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,16 +13,6 @@ import (
 
 	"github.com/joho/godotenv"
 )
-
-// defaultSandboxBackend is agentbox (rootless gVisor) on Linux, where
-// agent-runner runs as a normal user and isobox's gVisor needs root; isobox's
-// native backend (Seatbelt) elsewhere.
-func defaultSandboxBackend() string {
-	if goruntime.GOOS == "linux" {
-		return "agentbox"
-	}
-	return ""
-}
 
 // defaultDataDir returns the default base directory for all mutable
 // agent-runner data: the process working directory. One runner directory is
@@ -117,14 +106,13 @@ type AgentConfig struct {
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
 	SandboxMode         string   // AGENT_SANDBOX — off (default) | permissive | strict
-	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — agentbox (default on Linux) | "" (isobox native) | seatbelt | gvisor (isobox, root)
-	SandboxIsobox       string   // AGENT_SANDBOX_ISOBOX — path to the isobox binary (default "isobox")
+	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — "" or agentbox (the only one: gVisor on Linux, Seatbelt on macOS)
 	SandboxPolicyFile   string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
-	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (default on Linux) | "host": what the sandbox may read
+	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
 	SandboxReadAllow    []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
 	SandboxEgressAllow  []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
 	SandboxEgressMode   string   // AGENT_SANDBOX_EGRESS_MODE — agentbox: auto (default) | transparent | proxy
@@ -268,7 +256,6 @@ func defaultConfigForDataDir(data string) *Config {
 			CLI:                 "pi",
 			PlannerEnabled:      true,
 			SandboxModelProxy:   true,
-			SandboxBackend:      defaultSandboxBackend(),
 			MaxQueueSize:        10,
 			MaxConcurrent:       1,
 			TasksEnabled:        true,
@@ -416,7 +403,6 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.Isolated = envOrDefault("AGENT_ISOLATED", "") == "true"
 	cfg.Agent.SandboxMode = envOrDefault("AGENT_SANDBOX", cfg.Agent.SandboxMode)
 	cfg.Agent.SandboxBackend = envOrDefault("AGENT_SANDBOX_BACKEND", cfg.Agent.SandboxBackend)
-	cfg.Agent.SandboxIsobox = envOrDefault("AGENT_SANDBOX_ISOBOX", cfg.Agent.SandboxIsobox)
 	cfg.Agent.SandboxPolicyFile = envOrDefault("AGENT_SANDBOX_POLICY", cfg.Agent.SandboxPolicyFile)
 	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)

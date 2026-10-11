@@ -3,7 +3,6 @@ package api
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
 
@@ -151,12 +150,14 @@ func TestSandboxCodexLoginDefault(t *testing.T) {
 }
 
 func TestSandboxScopedReadsSetting(t *testing.T) {
-	for v, want := range map[string]bool{"scoped": true, "host": false, "": runtime.GOOS == "linux"} {
-		if got, err := clisetup.SandboxScopedReads(v); err != nil || got != want {
+	for _, v := range []string{"scoped", ""} {
+		if got, err := clisetup.SandboxScopedReads(v); err != nil || !got {
 			t.Errorf("%q: %v %v", v, got, err)
 		}
 	}
-	if _, err := clisetup.SandboxScopedReads("everything"); err == nil {
-		t.Error("a bad value must fail closed")
+	for _, v := range []string{"host", "everything"} {
+		if _, err := clisetup.SandboxScopedReads(v); err == nil {
+			t.Errorf("%q must fail closed", v)
+		}
 	}
 }

@@ -376,8 +376,8 @@ if os.fork()==0:
 				# Plain http through a proxy: curl exits 0 on the gateway's own 403,
 				# so reached means an answer that is not the gateway's refusal.
 				for np in "" "*"; do
-					code=$(curl -s -m 5 --noproxy "$np" -o /tmp/meta -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
-					[ "$code" != 000 ] && ! grep -q 'egress Forbidden' /tmp/meta 2>/dev/null && echo METADATA_REACHED
+					code=$(curl -s -m 5 --noproxy "$np" -o "${TMPDIR:-/tmp}/meta" -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
+					[ "$code" != 000 ] && ! grep -q 'egress Forbidden' "${TMPDIR:-/tmp}/meta" 2>/dev/null && echo METADATA_REACHED
 				done
 				echo DONE`)
 			for _, bad := range []string{"UNGRANTED_REACHED", "BYPASS_REACHED", "METADATA_REACHED"} {

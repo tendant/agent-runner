@@ -1,0 +1,16 @@
+{
+ "_note": "agentbox's Seatbelt backend on macOS (sandbox-exec), as a normal user. The host's kernel and network stack: no kernel.isolation, no memory/cpu/pids limits (macOS has no per-sandbox cap), no network.outbound; egress is restricted through the run's gateway on a loopback port (HTTPS_PROXY), model proxies on loopback ports, nothing else reachable. Containment kills the commands' process groups and every process still under the sandbox's profile (cgo build).",
+ "require": [
+  "env.scrub",
+  "fs.deny",
+  "fs.read_scope",
+  "fs.write_scope",
+  "network.controlled_dns",
+  "network.direct_none",
+  "network.no_listen",
+  "network.restricted_egress",
+  "process.containment",
+  "process.cross_run_isolation",
+  "resource.timeout"
+ ]
+}
