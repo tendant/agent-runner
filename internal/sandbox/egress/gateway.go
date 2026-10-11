@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,9 @@ type Config struct {
 	Dial    func(ctx context.Context, network, addr string) (net.Conn, error)
 	Ports   []int                   // allowed destination ports; nil = 443 and 80
 	OnEvent func(kind, host string) // "allowed" | "denied"; never payloads
+	// UnixSocket, when set, is where the gateway listens instead of
+	// 127.0.0.1: a sandbox with no network reaches it mounted (agentbox).
+	UnixSocket string
 }
 
 // Gateway is a running egress proxy.
@@ -59,8 +63,14 @@ func Start(cfg Config) (*Gateway, error) {
 	if cfg.Ports == nil {
 		cfg.Ports = []int{443, 80}
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
+	var ln net.Listener
+	if cfg.UnixSocket != "" {
+		os.Remove(cfg.UnixSocket)
+		if ln, err = net.Listen("unix", cfg.UnixSocket); err != nil {
+			return nil, err
+		}
+		os.Chmod(cfg.UnixSocket, 0o600) // the runner's user only (the sandbox is that user)
+	} else if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, m: m, ln: ln}
@@ -69,7 +79,7 @@ func Start(cfg Config) (*Gateway, error) {
 	return g, nil
 }
 
-// Addr is host:port for HTTP(S)_PROXY.
+// Addr is host:port for HTTP(S)_PROXY (the socket path with UnixSocket).
 func (g *Gateway) Addr() string { return g.ln.Addr().String() }
 
 // Close stops the gateway.

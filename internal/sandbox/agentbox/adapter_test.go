@@ -2,6 +2,7 @@ package agentbox
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -85,7 +86,7 @@ func TestCheck(t *testing.T) {
 	s := spec()
 	s.Network.Egress = sandbox.EgressOutbound
 	res, _ = b.Check(context.Background(), s)
-	if len(res.Gaps) != 1 || res.Gaps[0].Capability != sandbox.CapNetworkOutbound || !strings.Contains(res.Gaps[0].Reason, "no network") {
+	if len(res.Gaps) != 1 || res.Gaps[0].Capability != sandbox.CapNetworkOutbound || !strings.Contains(res.Gaps[0].Reason, "restricted") {
 		t.Errorf("outbound: %+v", res.Gaps)
 	}
 	// Without a scope, a memory limit is a gap.
@@ -153,5 +154,55 @@ func TestPrepareMapsPolicy(t *testing.T) {
 	}
 	if err := ps.Destroy(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Restricted egress: a gateway per run on a private socket, routed at
+// 127.0.0.1:3128, proxy variables for commands, gone with the sandbox.
+func TestRestrictedEgress(t *testing.T) {
+	f := &fakeAB{caps: ab.Capabilities{Rootless: true, PIDLimit: true}}
+	r := roots(t)
+	b := New(Config{Roots: r, Backend: f})
+	s := spec()
+	s.Resources = sandbox.ResourcePolicy{}
+	s.Network.Egress, s.Network.EgressAllow = sandbox.EgressRestricted, []string{"*"}
+	res, _ := b.Check(context.Background(), s)
+	if len(res.Gaps) != 0 {
+		t.Errorf("restricted egress is enforced: %+v", res.Gaps)
+	}
+	ps, err := b.Prepare(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := f.specs[0]
+	var sock string
+	for _, m := range sp.ModelSockets {
+		if filepath.Base(m) == "egress.sock" {
+			sock = m
+		}
+	}
+	if sock == "" {
+		t.Fatalf("no gateway socket mounted: %v", sp.ModelSockets)
+	}
+	if _, err := os.Stat(sock); err != nil {
+		t.Errorf("gateway socket: %v", err)
+	}
+	ps.(sandbox.Commander).Command(context.Background(), sandbox.ProcSpec{Args: []string{"git", "fetch"}})
+	got := f.cmds[0]
+	if !slices.Contains(got.Args, "127.0.0.1:3128=/run/agentbox/egress.sock") {
+		t.Errorf("no egress route: %v", got.Args)
+	}
+	if !slices.Contains(got.Env, "HTTPS_PROXY=http://127.0.0.1:3128") || !slices.Contains(got.Env, "NO_PROXY=127.0.0.1,localhost") {
+		t.Errorf("proxy env: %v", got.Env)
+	}
+	ps.Destroy(context.Background())
+	if _, err := os.Stat(filepath.Dir(sock)); !os.IsNotExist(err) {
+		t.Errorf("gateway dir left: %v", err)
+	}
+	// No egress: no gateway.
+	f2 := &fakeAB{caps: f.caps}
+	New(Config{Roots: r, Backend: f2}).Prepare(context.Background(), spec())
+	if len(f2.specs[0].ModelSockets) != 0 {
+		t.Errorf("egress none started a gateway: %v", f2.specs[0].ModelSockets)
 	}
 }

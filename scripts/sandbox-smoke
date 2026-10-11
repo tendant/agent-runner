@@ -114,6 +114,8 @@ mkdir -p "$W/bin" "$RUN"
 echo "FAKE_RUNNER_SECRET=1" >"$RUN/.env"
 
 # The fake claude. Paths are baked in: the sandbox passes no host env through.
+# The host's own private address: egress through a gateway must not reach it.
+HOSTIP=$( (hostname -I 2>/dev/null || ipconfig getifaddr en0 2>/dev/null) | awk '{print $1}')
 cat >"$W/bin/claude" <<EOF
 #!/bin/bash
 # The fork-bomb check: fork forever while the main process stays alive (when
@@ -140,6 +142,17 @@ try() {
 	if out=\$("\$@" 2>&1); then echo "allowed|\$name|\$(printf %s "\$out" | wc -c | tr -d ' ') bytes"
 	else echo "blocked|\$name|\$(printf %s "\$out" | tail -c 80 | tr '\n' ' ')"; fi
 }
+# tryhttp: allowed when an http:// URL answers with anything but the egress
+# gateway's own refusal (curl exits 0 on any HTTP answer, the gateway's 403
+# included).
+tryhttp() {
+	local name="\$1"; shift
+	local code
+	code=\$(curl -s -m 5 -o "\$PWD/.tryhttp" -w '%{http_code}' "\$@" 2>/dev/null)
+	if [ "\$code" != 000 ] && ! grep -q 'egress Forbidden' "\$PWD/.tryhttp" 2>/dev/null; then echo "allowed|\$name|HTTP \$code"
+	else echo "blocked|\$name|HTTP \$code"; fi
+	rm -f "\$PWD/.tryhttp"
+}
 # tryread: allowed only when the read returns something. gVisor hides a
 # denied path behind an empty one rather than failing the read, so every
 # target is non-empty on the host.
@@ -162,6 +175,7 @@ tryread() {
 		case \$code in [1-5]??) echo "allowed|model_proxy|HTTP \$code" ;; *) echo "blocked|model_proxy|\$code" ;; esac
 	fi
 	echo "env|host_secret|\${FAKE_SECRET_TOKEN:+present}"
+	echo "env|egress_proxy|\${HTTPS_PROXY:+present}"
 	tryread ssh_dir ls $HOME/.ssh
 	tryread aws_dir ls $HOME/.aws
 	tryread claude_dir ls $HOME/.claude
@@ -184,8 +198,11 @@ tryread() {
 	tryread pi_auth    cat $HOME/.pi/agent/auth.json
 	ln -sf $W/run/.env link 2>/dev/null
 	tryread symlink cat link
-	try metadata_ip    curl -sS -m 3 http://169.254.169.254/
+	tryhttp metadata_ip http://169.254.169.254/
 	try internet       curl -sS -m 5 -o /dev/null https://example.com
+	try git_https      git ls-remote https://github.com/tendant/agentbox.git HEAD
+	try egress_bypass  curl -sS -m 5 -o /dev/null --noproxy '*' https://example.com
+	tryhttp private_net --proxy "\${HTTPS_PROXY:-}" http://$HOSTIP:$PORT/health
 	nohup sleep 9997 >/dev/null 2>&1 &
 } >"\$R" 2>&1
 echo '{"result":"TASK: DONE","cost_usd":0,"duration_ms":1}'
@@ -283,7 +300,16 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	for n in memory write_workspace write_config; do expect $n allowed; done
 	# agentbox sandboxes have no network; the model proxy is reached through
 	# the forwarder (model_proxy below).
-	if [ "$BACKEND" = agentbox ]; then expect internet blocked; else expect internet allowed; fi
+	expect internet allowed
+	if [ "$BACKEND" = agentbox ]; then
+		# Egress only through the run's gateway (HTTPS_PROXY): git over HTTPS
+		# works; a direct connection gets none; the host's private address is
+		# refused (as are metadata and loopback).
+		expect git_https allowed
+		expect egress_bypass blocked
+		[ -n "$HOSTIP" ] && expect private_net blocked
+		expect_env egress_proxy present
+	fi
 	[ -e /etc/shadow ] && expect etc_shadow blocked
 	if [ "$SCOPED" = 1 ]; then # what scoped reads hide, and what they must not break
 		for n in host_home other_project; do expect $n blocked; done
@@ -392,7 +418,9 @@ if [ "$GV" = 1 ]; then
 
 	step "runner, fork bomb under AGENT_SANDBOX_PIDS=256 (no memory cap)"
 	bomb "sandbox pids bomb" AGENT_SANDBOX_PIDS=256
-	if [ "${RESULT%%|*}" = completed ] && [ "$ELAPSED" -lt 60 ]; then pass "session completed after ${ELAPSED}s"
+	# Under 90s: well before the 120s iteration timeout. Tearing down the
+	# bomb's processes inside gVisor takes a while (46-60s under agentbox).
+	if [ "${RESULT%%|*}" = completed ] && [ "$ELAPSED" -lt 90 ]; then pass "session completed after ${ELAPSED}s"
 	else fail "session ${RESULT} after ${ELAPSED}s, want completed"; fi
 	BOMB=$(find "$DATA" -path "*$SESSION*" -name bomb.txt | head -1)
 	if [ -n "$BOMB" ] && grep -q "Resource temporarily unavailable" "$BOMB"; then pass "fork() failed with EAGAIN"

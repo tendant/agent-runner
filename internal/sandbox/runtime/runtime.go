@@ -49,9 +49,13 @@ type Config struct {
 	IsoboxBin     string
 	IsoboxBackend string // "", "seatbelt", "gvisor", or "agentbox" (not isobox: rootless gVisor through agentbox)
 	AgentboxRunsc string // agentbox's runsc (default /usr/local/bin/runsc, else PATH)
-	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
-	Memory        string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
-	PIDs          string // optional process/thread cap for every run; overrides the policy's pids
+	// EgressAllow, with agentbox, is what "outbound" policy becomes:
+	// restricted egress through the run's gateway to these hosts (default
+	// "*": any public host; private and metadata addresses never).
+	EgressAllow []string
+	PolicyFile  string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
+	Memory      string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
+	PIDs        string // optional process/thread cap for every run; overrides the policy's pids
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
 	ScopedReads  bool
@@ -282,10 +286,18 @@ func New(cfg Config) (*Runtime, error) {
 		r.system.Resources.PIDs = n
 	}
 	if r.agentbox() && r.system.Network.Egress == sandbox.EgressOutbound {
-		// agentbox sandboxes have no network; the model proxies are reached
-		// over mounted sockets, so a policy asking for outbound would only
-		// gap (strict: reject) every run.
-		r.system.Network.Egress = sandbox.EgressNone
+		// agentbox has no direct network: "outbound" is restricted egress
+		// through the run's gateway, to any public host unless EgressAllow
+		// lists hosts. Private, loopback, link-local and metadata addresses
+		// are refused either way.
+		r.system.Network.Egress = sandbox.EgressRestricted
+		r.system.Network.EgressAllow = cfg.EgressAllow
+		if len(r.system.Network.EgressAllow) == 0 {
+			r.system.Network.EgressAllow = []string{"*"}
+		}
+		if _, err := sandbox.NewHostMatcher(r.system.Network.EgressAllow, nil); err != nil {
+			return nil, fmt.Errorf("sandbox egress allow: %w", err)
+		}
 	}
 	if cfg.ScopedReads {
 		r.system.Filesystem.ScopedReads = true // a policy can scope reads too, never unscope

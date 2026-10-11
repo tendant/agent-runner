@@ -13,6 +13,10 @@ const (
 	hostWildcard
 	hostPrefix // CIDR or single IP
 	hostSet    // @name trusted set, opaque
+	// hostAny ("*") is any public host or IP. It never grants a sensitive
+	// address (private, loopback, link-local, metadata): MatchIP ignores it,
+	// so only an explicit CIDR/IP grant reaches those.
+	hostAny
 )
 
 type hostPattern struct {
@@ -28,6 +32,8 @@ func parseHostPattern(s string) (hostPattern, error) {
 	switch {
 	case s == "":
 		return hostPattern{}, fmt.Errorf("empty host pattern")
+	case s == "*":
+		return hostPattern{kind: hostAny}, nil
 	case strings.HasPrefix(s, "@"):
 		if len(s) == 1 || strings.ContainsAny(s[1:], "@*/ ") {
 			return hostPattern{}, fmt.Errorf("bad set %q", s)
@@ -139,14 +145,24 @@ func NewHostMatcher(patterns []string, sets map[string][]string) (*HostMatcher, 
 }
 
 // Match reports whether host (a name or IP literal, no port) is granted.
-func (m *HostMatcher) Match(host string) bool {
+func (m *HostMatcher) Match(host string) bool { return m.match(host, true) }
+
+// MatchIP reports whether ip is granted explicitly (a CIDR/IP grant, possibly
+// in a set): what a sensitive address needs. "*" does not count.
+func (m *HostMatcher) MatchIP(ip netip.Addr) bool { return m.match(ip.Unmap().String(), false) }
+
+func (m *HostMatcher) match(host string, any bool) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	addr, err := netip.ParseAddr(host)
 	isIP := err == nil
 	for _, p := range m.pats {
 		switch p.kind {
+		case hostAny:
+			if any {
+				return true
+			}
 		case hostSet:
-			if m.sets[p.name].Match(host) {
+			if m.sets[p.name].match(host, any) {
 				return true
 			}
 		case hostPrefix:
@@ -169,4 +185,3 @@ func (m *HostMatcher) Match(host string) bool {
 }
 
 // MatchIP reports whether ip is covered by an explicit CIDR/IP grant.
-func (m *HostMatcher) MatchIP(ip netip.Addr) bool { return m.Match(ip.Unmap().String()) }

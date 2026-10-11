@@ -50,10 +50,19 @@ scripts/phase0.sh          # as the runner's user: what this host supports
 
 What changes against isobox:
 
-* **No network.** Policy egress becomes `none`. The model proxies still work: each also listens on
-  a Unix socket mounted into the sandbox, and a forwarder (agent-runner's own binary,
-  `__agent-runner-fwd`) gives the CLIs `http://127.0.0.1:4801` (Anthropic) / `:4802` (OpenAI)
-  with the same per-run tokens. `git push`, `npm install` and web access fail inside the sandbox.
+* **No direct network; egress through a gateway.** The sandbox has no network interface. Its only
+  ways out are Unix sockets mounted into it, served by a forwarder inside (agent-runner's own
+  binary, `__agent-runner-fwd`):
+  * **Model proxies:** the CLIs get `http://127.0.0.1:4801` (Anthropic) / `:4802` (OpenAI) with
+    per-run tokens, as before.
+  * **Egress:** policy `outbound` becomes `restricted` egress through the run's gateway
+    (`internal/sandbox/egress`) at `127.0.0.1:3128`; commands get `HTTPS_PROXY`/`HTTP_PROXY`
+    (and `NO_PROXY=127.0.0.1,localhost`), which git over HTTPS, npm, pip, go and curl honor. The
+    gateway resolves names itself (the sandbox has no DNS) and allows ports 443 and 80. By
+    default it allows **any public host**; `AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...`
+    narrows that to listed hosts. Private, loopback, link-local and metadata addresses are refused
+    either way, also when a name resolves to one. A tool that ignores the proxy variables gets no
+    connection at all (no bypass), and git over SSH does not work: use HTTPS remotes.
 * **Reads are an allowlist by construction:** only the run's grants (mounted at their own host
   paths, so `HOME`, `CODEX_HOME` and the workspace keep their paths), the memory dir, uploads,
   the agent CLIs' installs and `AGENT_SANDBOX_READ_ALLOW`, plus the host's system directories
@@ -203,9 +212,9 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 
 ## Known gaps (be honest in strict deployments)
 
-* **Restricted egress is not enforceable yet.** isobox has no allowlist; the egress gateway
-  (`internal/sandbox/egress`) exists but no backend forces the sandbox through it. Restricted
-  policies translate to no network and report `network.restricted_egress` as a gap.
+* **Restricted egress is enforced only with agentbox**, whose sandboxes reach the network solely
+  through the gateway. isobox has no allowlist: restricted policies there translate to no network
+  and report `network.restricted_egress` as a gap.
 * **Seatbelt** has no CPU/memory/pids limits and blocks loopback with `net=disable`.
 * **No disk quota** from isobox: `WatchDisk`/`LimitedWriter` exist but are not wired into runs.
 * **Reads are broad with `AGENT_SANDBOX_READ=host`** (the default on macOS): host files minus the

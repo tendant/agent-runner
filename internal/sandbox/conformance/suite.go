@@ -350,6 +350,58 @@ if os.fork()==0:
 			}
 			return nil
 		}},
+		// Restricted egress goes through the backend's gateway only (proxy
+		// variables in the sandbox). Real internet, skipped without it: the
+		// gateway allows ports 443 and 80, which a test server cannot use.
+		{"net.restricted_allow", func(t *x) error {
+			if err := needInternet(); err != nil {
+				return err
+			}
+			out, _ := t.exec(restricted(t, "example.com"), `curl -sS -m 15 -o /dev/null -w 'HTTP%{http_code}' https://example.com/ 2>&1`)
+			if !strings.Contains(out, "HTTP200") {
+				return fmt.Errorf("granted host unreachable: %s", tail(out, 200))
+			}
+			return nil
+		}},
+		{"net.restricted_deny", func(t *x) error {
+			if err := needInternet(); err != nil {
+				return err
+			}
+			out, _ := t.exec(restricted(t, "example.com"), `
+				curl -sS -m 10 -o /dev/null https://www.iana.org/ 2>/dev/null && echo UNGRANTED_REACHED
+				curl -sS -m 10 -o /dev/null --noproxy '*' https://example.com/ 2>/dev/null && echo BYPASS_REACHED
+				# Plain http through a proxy: curl exits 0 on the gateway's own 403,
+				# so reached means an answer that is not the gateway's refusal.
+				code=$(curl -s -m 5 -o /tmp/meta -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
+				[ "$code" != 000 ] && ! grep -q 'egress Forbidden' /tmp/meta 2>/dev/null && echo METADATA_REACHED
+				echo DONE`)
+			for _, bad := range []string{"UNGRANTED_REACHED", "BYPASS_REACHED", "METADATA_REACHED"} {
+				if strings.Contains(out, bad) {
+					return errors.New(strings.ToLower(strings.TrimSuffix(bad, "_REACHED")) + " egress was allowed")
+				}
+			}
+			if !strings.Contains(out, "DONE") {
+				return fmt.Errorf("probe did not run: %s", tail(out, 200))
+			}
+			return nil
+		}},
+		{"net.controlled_dns", func(t *x) error {
+			if err := needInternet(); err != nil {
+				return err
+			}
+			// The sandbox resolves nothing itself (no DNS to exfiltrate over);
+			// names are resolved by the gateway, so a granted one still works.
+			out, _ := t.exec(restricted(t, "example.com"), `
+				python3 -c 'import socket; socket.getaddrinfo("example.com", 443); print("SANDBOX_RESOLVED")' 2>/dev/null
+				curl -sS -m 15 -o /dev/null -w 'HTTP%{http_code}' https://example.com/ 2>&1`)
+			if strings.Contains(out, "SANDBOX_RESOLVED") {
+				return errors.New("the sandbox resolved a name itself")
+			}
+			if !strings.Contains(out, "HTTP200") {
+				return fmt.Errorf("a granted name did not resolve through the gateway: %s", tail(out, 200))
+			}
+			return nil
+		}},
 		{"net.no_listen", func(t *x) error {
 			if err := need("python3"); err != nil {
 				return err
@@ -443,8 +495,7 @@ func denyDial(t *x, host string, port int) error {
 // pending are registry tests whose cases need later steps (gateway, supervisor,
 // launcher/proxy). They are reported NotRun so their capabilities stay unproven.
 var pending = map[string]string{
-	"net.restricted_allow": "needs egress gateway (step 8)", "net.restricted_deny": "needs egress gateway (step 8)",
-	"net.controlled_dns": "needs controlled DNS (step 8)", "res.cpu": "not implemented", "res.disk": "needs disk quota (step 8)",
+	"res.cpu": "not implemented", "res.disk": "needs disk quota (step 8)",
 	"res.output": "needs launcher output cap (step 7)", "res.deadline_runner_crash": "needs supervisor (step 10)",
 	"rt.orphan_recovery": "needs supervisor (step 10)", "kernel.isolation": "not implemented",
 	// Non-registry safety tests required by the design.
@@ -528,4 +579,23 @@ func tail(s string, n int) string {
 		s = s[len(s)-n:]
 	}
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// restricted is the base spec with restricted egress to allow.
+func restricted(t *x, allow ...string) sandbox.SandboxSpec {
+	s := t.baseSpec()
+	s.Network.Egress = sandbox.EgressRestricted
+	s.Network.EgressAllow = allow
+	return s
+}
+
+// needInternet skips a probe when this host cannot reach the internet itself.
+func needInternet() error {
+	if err := need("curl"); err != nil {
+		return err
+	}
+	if exec.Command("curl", "-sS", "-m", "10", "-o", "/dev/null", "https://example.com/").Run() != nil {
+		return fmt.Errorf("%w: no internet from this host", ErrSkip)
+	}
+	return nil
 }

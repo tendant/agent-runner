@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -309,4 +310,30 @@ func containsCap(caps []sandbox.CapabilityID, c sandbox.CapabilityID) bool {
 		}
 	}
 	return false
+}
+
+// With agentbox, "outbound" policy is restricted egress through the gateway:
+// any public host by default, or the configured hosts.
+func TestAgentboxEgressMapping(t *testing.T) {
+	for _, tc := range []struct {
+		allow []string
+		want  []string
+	}{{nil, []string{"*"}}, {[]string{"github.com", "*.npmjs.org"}, []string{"github.com", "*.npmjs.org"}}} {
+		r, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", IsoboxBackend: "agentbox", EgressAllow: tc.allow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := r.system.Network
+		if n.Egress != sandbox.EgressRestricted || !slices.Equal(n.EgressAllow, tc.want) {
+			t.Errorf("allow %v: egress %s %v, want restricted %v", tc.allow, n.Egress, n.EgressAllow, tc.want)
+		}
+	}
+	if _, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", IsoboxBackend: "agentbox", EgressAllow: []string{"*.*.com"}}); err == nil {
+		t.Error("a bad egress pattern must fail closed")
+	}
+	// isobox keeps outbound as it is.
+	r, _ := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test"})
+	if r.system.Network.Egress != sandbox.EgressOutbound {
+		t.Errorf("isobox: %s", r.system.Network.Egress)
+	}
 }
