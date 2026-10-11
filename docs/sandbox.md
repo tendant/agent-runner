@@ -198,7 +198,7 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
 * **The pids cap uses `RLIMIT_NPROC` only with `AGENT_SANDBOX_BACKEND=gvisor`.** With the
   backend left to isobox (`""`) the cap goes to isobox's `--pids`, which on gVisor caps the
   Sentry's host threads instead (see below).
-* **gVisor host requirements:** root, cgroup v2, `runsc` new enough for `runsc features`
+* **gVisor host requirements:** root (isobox's gVisor setup needs it: network namespaces, iptables, cgroups, `runsc run`; a non-root runner cannot use it, see [agentbox](https://github.com/tendant/agentbox)), cgroup v2, `runsc` new enough for `runsc features`
   (oci-seccomp; 20250106.0 is too old), and `ip`, `sysctl` and `iptables` (isobox builds the
   sandbox's network namespace with them).
 * **On gVisor, every parent of `DATA_DIR`, `TMP_ROOT` and `STATE_ROOT` must be owned by root

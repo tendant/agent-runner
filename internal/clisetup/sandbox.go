@@ -16,11 +16,13 @@ const (
 	IsoboxRef  = "2145756b9672559615f1605d4c2cec8a19011cf7"
 )
 
-// IsoboxInstallHelp says how to install the pinned isobox.
+// IsoboxInstallHelp says how to install the pinned isobox: built as the
+// user (Go lives there), installed with sudo where root finds it (gVisor
+// runs agent-runner as root, and root's PATH has no ~/go/bin).
 func IsoboxInstallHelp() string {
 	return "install it: `git clone " + IsoboxRepo + " && cd isobox && git checkout " + IsoboxRef[:7] +
-		" && go build -o /usr/local/bin/isobox ./cmd/isobox` (or set AGENT_SANDBOX_ISOBOX to its path; " +
-		"AGENT_SANDBOX=off runs agents without the sandbox)"
+		" && go build -o isobox ./cmd/isobox && sudo install -m 0755 isobox /usr/local/bin/` " +
+		"(or set AGENT_SANDBOX_ISOBOX to the binary's absolute path; AGENT_SANDBOX=off runs agents without the sandbox)"
 }
 
 // SandboxScopedReads parses AGENT_SANDBOX_READ: "scoped" limits reads to an

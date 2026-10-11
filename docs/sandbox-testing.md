@@ -40,7 +40,7 @@ AGENT_SANDBOX=bogus      ./agent-runner   # 每个 run 都被拒绝；绝不回�
 ## C. 真实主机验证（关闭步骤 6 / 12）
 
 ```bash
-git clone https://github.com/tendant/isobox && (cd isobox && git checkout 2145756 && go build -o isobox ./cmd/isobox)  # Go 1.26; ISOBOX_REPO/ISOBOX_REF in .github/workflows/sandbox.yml
+git clone https://github.com/tendant/isobox && (cd isobox && git checkout 2145756 && go build -o isobox ./cmd/isobox)  # Go 1.26, as your user; ISOBOX_REPO/ISOBOX_REF in .github/workflows/sandbox.yml
 go build -o sandbox-conformance ./cmd/sandbox-conformance
 
 # macOS (Seatbelt)
