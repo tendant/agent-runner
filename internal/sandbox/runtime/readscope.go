@@ -14,9 +14,11 @@ var agentTools = []string{"claude", "codex", "pi", "opencode", "node"}
 
 // toolReadable returns the directories the agent tools found on PATH run
 // from: each executable's directory, the install prefix of a bin/ directory
-// (nvm, ~/.local), and a node_modules tree (npm installs; codex's native
+// (nvm, ~/.local/node), and a node_modules tree (npm installs; codex's native
 // binary is a sibling package there). System prefixes like /usr are readable
-// anyway; these matter for tools installed under a home directory.
+// anyway; these matter for tools installed under a home directory. A prefix
+// directly in the home directory (~/.local, ~/.opencode) is never added:
+// ~/.local/share holds other programs' credentials (opencode's auth.json).
 func toolReadable() []string {
 	var homes []string // as set and with symlinks resolved (macOS /var -> /private/var)
 	if h, err := os.UserHomeDir(); err == nil && h != "" {
@@ -52,7 +54,7 @@ func toolReadable() []string {
 		}
 		dir := filepath.Dir(r)
 		add(dir)
-		if filepath.Base(dir) == "bin" {
+		if filepath.Base(dir) == "bin" && !inHome(filepath.Dir(dir), homes) {
 			add(filepath.Dir(dir))
 		}
 		if i := strings.LastIndex(r, string(filepath.Separator)+"node_modules"+string(filepath.Separator)); i >= 0 {
@@ -60,4 +62,14 @@ func toolReadable() []string {
 		}
 	}
 	return out
+}
+
+// inHome reports whether p is directly inside one of the home directories.
+func inHome(p string, homes []string) bool {
+	for _, h := range homes {
+		if filepath.Dir(p) == h {
+			return true
+		}
+	}
+	return false
 }
