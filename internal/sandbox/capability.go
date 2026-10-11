@@ -8,6 +8,7 @@ type CapabilityID string
 const (
 	CapFSDeny                   CapabilityID = "fs.deny"
 	CapFSWriteScope             CapabilityID = "fs.write_scope"
+	CapFSReadScope              CapabilityID = "fs.read_scope"
 	CapFSPathVirtualization     CapabilityID = "fs.path_virtualization"
 	CapEnvScrub                 CapabilityID = "env.scrub"
 	CapProcessContainment       CapabilityID = "process.containment"
@@ -49,6 +50,7 @@ var Registry = func() map[CapabilityID]CapabilityDef {
 	for _, d := range []CapabilityDef{
 		def(CapFSDeny, "denied paths are unreadable and unwritable, including via symlinks", "fs.ssh_unreadable", "fs.symlink_escape"),
 		def(CapFSWriteScope, "writes succeed only under granted writable paths", "fs.no_write_outside_workspace"),
+		def(CapFSReadScope, "reads succeed only under granted paths and the system paths programs need", "fs.read_scope"),
 		def(CapFSPathVirtualization, "sandbox sees logical roots (/workspace) rather than host paths", "fs.virtual_paths"),
 		def(CapEnvScrub, "inherited env is allowlisted; credentials are not passed", "env.no_credentials"),
 		def(CapProcessContainment, "all descendants die at teardown, including daemonized children", "proc.daemon_killed"),
@@ -97,6 +99,9 @@ func Required(s SandboxSpec) []CapabilityID {
 		add(CapFSDeny)
 	}
 	add(CapFSWriteScope)
+	if s.Filesystem.ScopedReads {
+		add(CapFSReadScope)
+	}
 	switch effEgress(s.Network.Egress) {
 	case EgressNone:
 		add(CapNetworkDirectNone)

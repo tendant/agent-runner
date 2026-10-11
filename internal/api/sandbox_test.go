@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -145,5 +146,16 @@ func TestSandboxCodexLoginDefault(t *testing.T) {
 		cfg.Agent.CLI, cfg.Agent.SandboxCodexLogin = "codex", ""
 		t.Setenv("OPENAI_API_KEY", "")
 		put(filepath.Join(home, ".codex"), chatgpt)
+	}
+}
+
+func TestSandboxScopedReadsSetting(t *testing.T) {
+	for v, want := range map[string]bool{"scoped": true, "host": false, "": runtime.GOOS == "linux"} {
+		if got, err := sandboxScopedReads(v); err != nil || got != want {
+			t.Errorf("%q: %v %v", v, got, err)
+		}
+	}
+	if _, err := sandboxScopedReads("everything"); err == nil {
+		t.Error("a bad value must fail closed")
 	}
 }

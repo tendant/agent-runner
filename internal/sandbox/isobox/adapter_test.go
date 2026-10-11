@@ -323,3 +323,62 @@ func TestNprocShimRejectsBadArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedReadsFlags(t *testing.T) {
+	r := roots(t)
+	extra := openTempDir(t)
+	b := New(Config{Roots: r, Readable: []string{extra, filepath.Join(extra, "missing")}})
+	s := spec(sandbox.EgressNone)
+	f, notes, err := b.flags(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(f, " "), "--readable") {
+		t.Errorf("host reads must not scope: %v", f)
+	}
+	if !strings.Contains(strings.Join(notes, " "), "broad host reads") {
+		t.Errorf("host reads must be noted: %v", notes)
+	}
+	s.Filesystem.ScopedReads = true
+	f, notes, _ = b.flags(s)
+	readable := map[string]bool{}
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "--readable" {
+			readable[f[i+1]] = true
+		}
+	}
+	for _, want := range []string{r[sandbox.RootWorkspace], r[sandbox.RootHome], r[sandbox.RootTmp], extra, "/usr"} {
+		if !readable[want] {
+			t.Errorf("not readable: %s (have %v)", want, readable)
+		}
+	}
+	if readable[filepath.Join(extra, "missing")] {
+		t.Error("a missing path must be dropped")
+	}
+	if home, _ := os.UserHomeDir(); readable[home] {
+		t.Error("the home directory must not be readable")
+	}
+	if strings.Contains(strings.Join(notes, " "), "broad host reads") {
+		t.Errorf("scoped reads noted as broad: %v", notes)
+	}
+	// The host user's credential dirs are outside every readable path, so
+	// scoped reads leave them out (a deny would put the home into the view).
+	home, _ := os.UserHomeDir()
+	if strings.Contains(strings.Join(f, " "), "--read-deny "+filepath.Join(home, ".ssh")) {
+		t.Error("scoped reads must not deny paths that are not readable anyway")
+	}
+	// A deny inside a readable root is kept.
+	if !strings.Contains(strings.Join(f, " "), "--read-deny "+r[sandbox.RootHome]+"/.ssh") {
+		t.Error("deny inside the sandbox home dropped")
+	}
+	hostFlags, _, _ := b.flags(spec(sandbox.EgressNone))
+	if !strings.Contains(strings.Join(hostFlags, " "), "--read-deny "+filepath.Join(home, ".ssh")) {
+		t.Error("host reads must deny the credential dirs")
+	}
+	// System secrets are denied in both modes, where they exist.
+	for _, d := range systemDeny() {
+		if !strings.Contains(strings.Join(f, " "), "--read-deny "+d) {
+			t.Errorf("%s not denied", d)
+		}
+	}
+}

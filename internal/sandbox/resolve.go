@@ -78,6 +78,7 @@ func tighten(p, c SandboxSpec) (SandboxSpec, error) {
 		out.Filesystem.Grants = c.Filesystem.Grants
 	}
 	out.Filesystem.Deny = unionSorted(p.Filesystem.Deny, c.Filesystem.Deny)
+	out.Filesystem.ScopedReads = p.Filesystem.ScopedReads || c.Filesystem.ScopedReads // only tightens
 
 	// Network.
 	pe, ce := effEgress(p.Network.Egress), c.Network.Egress

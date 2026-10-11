@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/agenthome"
@@ -26,6 +28,11 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	if mode == "" || mode == sandbox.ModeOff {
 		return nil
 	}
+	scoped, err := sandboxScopedReads(cfg.Agent.SandboxRead)
+	if err != nil {
+		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
+		return sandboxrt.Failed(err)
+	}
 	host, _ := os.Hostname()
 	rt, err := sandboxrt.New(sandboxrt.Config{
 		Mode:          mode,
@@ -36,13 +43,16 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		PolicyFile:    cfg.Agent.SandboxPolicyFile,
 		Memory:        cfg.Agent.SandboxMemory,
 		PIDs:          cfg.Agent.SandboxPIDs,
-		EvidenceFile:  cfg.Agent.SandboxEvidence,
-		EnvAllow:      cfg.Agent.SandboxEnvAllow,
-		PrivatePaths:  sandboxPrivatePaths(cfg),
-		Claude:        sandboxClaudeSeed(cfg),
-		Models:        sandboxModelChannels(cfg),
-		CodexSeed:     sandboxSeedDir(cfg, ".codex", "codex"),
-		PiSeed:        sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
+		ScopedReads:   scoped,
+		// Prompts point agents at memory, and uploads reach them by path.
+		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
+		EvidenceFile: cfg.Agent.SandboxEvidence,
+		EnvAllow:     cfg.Agent.SandboxEnvAllow,
+		PrivatePaths: sandboxPrivatePaths(cfg),
+		Claude:       sandboxClaudeSeed(cfg),
+		Models:       sandboxModelChannels(cfg),
+		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
+		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
@@ -52,7 +62,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
 	}
-	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend)
+	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend, "scoped_reads", scoped)
 	bin := cfg.Agent.SandboxIsobox
 	if bin == "" {
 		bin = "isobox"
@@ -64,6 +74,23 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		slog.Warn("sandbox: claude runs have no credentials: " + clisetup.SandboxedClaudeAuthHelp)
 	}
 	return rt
+}
+
+// sandboxScopedReads parses AGENT_SANDBOX_READ: "scoped" limits reads to the
+// run's roots, system paths, the agent CLIs and AGENT_SANDBOX_READ_ALLOW;
+// "host" leaves the host readable minus credentials and the runner's files.
+// Unset: scoped on Linux (where the sandbox is uid 0 and production runs),
+// host elsewhere.
+func sandboxScopedReads(v string) (bool, error) {
+	switch v {
+	case "scoped":
+		return true, nil
+	case "host":
+		return false, nil
+	case "":
+		return goruntime.GOOS == "linux", nil
+	}
+	return false, fmt.Errorf("AGENT_SANDBOX_READ: bad value %q (want scoped|host)", v)
 }
 
 // sandboxPrivatePaths lists the runner's own files a sandboxed agent must not

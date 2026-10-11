@@ -8,7 +8,8 @@
 #   scripts/sandbox-gvisor
 #
 # Env: GVISOR_RELEASE (default: the one .github/workflows/sandbox.yml installs),
-# KEEP=1 to keep the work dir.
+# ISOBOX_SRC (an isobox checkout to build instead of the pinned commit, to
+# test an isobox change), KEEP=1 to keep the work dir.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,6 +24,7 @@ x86_64 | amd64) GOARCH=amd64 GVARCH=x86_64 ;;
 esac
 
 REF=$(sed -n 's/^  ISOBOX_REF: \([0-9a-f]*\).*/\1/p' .github/workflows/sandbox.yml)
+ISOBOX_URL=$(sed -n 's/^  ISOBOX_REPO: \([^ ]*\).*/\1/p' .github/workflows/sandbox.yml)
 GVISOR_RELEASE=${GVISOR_RELEASE:-$(sed -n 's|.*gvisor/releases/release/\([0-9.]*\)/.*|\1|p' .github/workflows/sandbox.yml | head -1)}
 [ -n "$REF" ] && [ -n "$GVISOR_RELEASE" ] || { echo "cannot read pins from .github/workflows/sandbox.yml" >&2; exit 2; }
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner
@@ -30,12 +32,18 @@ CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner
 W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-gvisor.XXXXXX")
 trap 'if [ "${KEEP:-}" = 1 ]; then echo "kept $W"; else rm -rf "$W"; fi' EXIT
 
-echo "== build (linux/$GOARCH; isobox $REF)"
-if [ ! -d "$CACHE/isobox-$REF" ]; then
-	git clone -q https://github.com/can1357/isobox "$CACHE/isobox-$REF"
-	git -C "$CACHE/isobox-$REF" checkout -q "$REF"
+if [ -n "${ISOBOX_SRC:-}" ]; then
+	SRC=$ISOBOX_SRC
+	echo "== build (linux/$GOARCH; isobox from $SRC, $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null))"
+else
+	SRC=$CACHE/isobox-$REF
+	echo "== build (linux/$GOARCH; isobox $REF)"
+	if [ ! -d "$SRC" ]; then
+		git clone -q "$ISOBOX_URL" "$SRC"
+		git -C "$SRC" checkout -q "$REF"
+	fi
 fi
-(cd "$CACHE/isobox-$REF" && CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/isobox" ./cmd/isobox)
+(cd "$SRC" && CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/isobox" ./cmd/isobox)
 CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/agent-runner" ./cmd/server
 CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/sandbox-conformance" ./cmd/sandbox-conformance
 
@@ -51,7 +59,7 @@ docker run --rm --privileged --cgroupns=host -e KEEP="${KEEP:-}" \
 	-v "$REPO:/repo:ro" -v "$W:/w" ubuntu:24.04 bash -euc '
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update -qq >/dev/null
-	apt-get install -y -qq iproute2 iptables procps python3 curl bzip2 ca-certificates >/dev/null
+	apt-get install -y -qq iproute2 iptables procps python3 curl bzip2 ca-certificates git >/dev/null
 	cd /w && sha512sum -c gvisor.tar.bz2.sha512 >/dev/null && tar -xjf gvisor.tar.bz2
 	install -m 0755 runsc /usr/local/bin/runsc && cp -r gvisor-bin /usr/local/bin/
 	runsc --version | head -1

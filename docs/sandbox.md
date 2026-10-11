@@ -4,6 +4,12 @@ agent-runner can run every agent CLI (pi, claude, codex, opencode) and all of th
 it starts inside one isolation boundary, provided by [isobox](https://github.com/can1357/isobox)
 (macOS Seatbelt, Linux gVisor). **Policy lives in agent-runner; isobox only enforces.**
 
+> **Use the pinned isobox** (`ISOBOX_REPO` and `ISOBOX_REF` in `.github/workflows/sandbox.yml`):
+> the [tendant/isobox](https://github.com/tendant/isobox) fork at `2145756`, upstream `c7bbd19`
+> plus a fix that keeps `/bin`, `/sbin` and `/lib64` in gVisor's scoped-read views. Without it,
+> scoped reads (the Linux default) stop every `#!/bin/sh` script on usrmerge hosts (Debian,
+> Ubuntu, Fedora). `make sandbox-smoke` and `make sandbox-gvisor` build it for you.
+
 > If the backend cannot enforce a required property, a `strict` run does not start.
 
 ## Modes
@@ -27,7 +33,29 @@ every run, e.g. `4g`; overrides the policy's `resources.memory_bytes`), `AGENT_S
 (process and thread cap for every run, e.g. `1024`; overrides the policy's `resources.pids`; see
 [Fork bombs](#fork-bombs-memory-and-pids-caps)), `AGENT_SANDBOX_EVIDENCE` (conformance report), `AGENT_SANDBOX_ENV_ALLOW`
 (comma-separated host env var names to pass in; model credentials are never passed while the model
-proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below).
+proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below), `AGENT_SANDBOX_READ` and
+`AGENT_SANDBOX_READ_ALLOW` (see [What the sandbox can read](#what-the-sandbox-can-read)).
+
+## What the sandbox can read
+
+`AGENT_SANDBOX_READ` = `scoped` (default on Linux) | `host` (default elsewhere).
+
+* **`scoped`** (`fs.read_scope`): a run reads only its own workspace, sandbox home and tmp, the
+  memory dir and uploads, the system paths programs need (Linux: `/usr`, `/bin`, `/sbin`, `/lib*`,
+  `/etc`, `/opt`; gVisor also exposes the dynamic linker and `/usr/lib`), the agent CLIs'
+  installs (each of `claude`, `codex`, `pi`, `opencode` and `node` found on `PATH`: its directory,
+  a `bin/` directory's prefix, an npm `node_modules` tree; never the home directory itself), and
+  `AGENT_SANDBOX_READ_ALLOW` (comma-separated host paths, e.g. a toolchain under your home:
+  `~/go,~/.cargo`). The home directory and other projects are not readable.
+* **`host`**: the host is readable minus the denied paths below. Other projects are readable.
+* **Denied in both modes:** the host user's credential directories (`~/.ssh`, `~/.aws`,
+  `~/.codex`, ...), the runner's own files (`.env`, state, logs, repo cache, other sessions), and
+  system secrets: `/etc/shadow`, `/etc/gshadow`, sudoers and the SSH host keys. A gVisor sandbox
+  is uid 0, so root-owned files it is not denied would be readable.
+
+A tool that fails reading something outside the allowlist (a cache, a toolchain in your home)
+needs that path in `AGENT_SANDBOX_READ_ALLOW`. `make sandbox-gvisor` checks that the host home,
+another project and `/etc/shadow` are unreadable and that `git` and `python3` still run.
 
 ## How a run is confined
 
@@ -142,10 +170,10 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   policies translate to no network and report `network.restricted_egress` as a gap.
 * **Seatbelt** has no CPU/memory/pids limits and blocks loopback with `net=disable`.
 * **No disk quota** from isobox: `WatchDisk`/`LimitedWriter` exist but are not wired into runs.
-* **Reads are broad** (host files minus the user's credential directories and the runner's own
-  files); `fs.read` scoping is not used, so other projects on the host are readable. Entries
-  created under `TMP_ROOT` or `STATE_ROOT` after a run starts (a session started meanwhile) are
-  not denied to it.
+* **Reads are broad with `AGENT_SANDBOX_READ=host`** (the default on macOS): host files minus the
+  denied paths, so other projects are readable. Entries created under `TMP_ROOT` or `STATE_ROOT`
+  after a run starts (a session started meanwhile) are not denied to it. `scoped` (the Linux
+  default) closes both: see [What the sandbox can read](#what-the-sandbox-can-read).
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
 * **The model proxy covers Anthropic and OpenAI** for claude, codex and pi, and only with outbound
@@ -157,11 +185,12 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   thread (`llm-fallback`). Before, it ran on the host: `make sandbox-smoke` caught it writing
   outside the workspace.
 * No `sandbox.oom`/`fs_denied`/`egress_denied` events (isobox gives no denial signal).
-* **Conformance on real hosts** (isobox `c7bbd19`): Seatbelt on macOS proves 8 capabilities
-  but not `process.containment`, so `strict` cannot run there. gVisor (`runsc` 20261005.0, Linux
-  arm64 in a privileged container) proves 11, including `process.containment`,
-  `process.cross_run_isolation` and `resource.pids` (through the nproc shim, see below); not
-  `fs.virtual_paths` (no `/workspace` remap on either backend).
+* **Conformance on real hosts** (isobox `c7bbd19`, gVisor with the fork's `2145756`): Seatbelt
+  on macOS proves 8 capabilities but not `process.containment`, so `strict` cannot run there.
+  gVisor (`runsc` 20261005.0, Linux arm64 in a privileged container) proves 12, including
+  `fs.read_scope`, `process.containment`, `process.cross_run_isolation` and `resource.pids`
+  (through the nproc shim, see below); not `fs.virtual_paths` (no `/workspace` remap on either
+  backend).
 * **The pids cap uses `RLIMIT_NPROC` only with `AGENT_SANDBOX_BACKEND=gvisor`.** With the
   backend left to isobox (`""`) the cap goes to isobox's `--pids`, which on gVisor caps the
   Sentry's host threads instead (see below).
