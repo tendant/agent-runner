@@ -34,6 +34,28 @@ For git against a self-hosted server: `GIT_HOST`, `GIT_ORG`, and `GIT_TOKEN` (or
 With a chat bot connected, `/set KEY VALUE` configures a running instance (saved to `.env.local`,
 applied immediately); `/config`, `/status` and `/help` show the rest.
 
+### Sandboxed agents
+
+To run every agent CLI in a sandbox ([agentbox](https://github.com/tendant/agentbox): gVisor on
+Linux, Seatbelt on macOS, as your own user, never root):
+
+```bash
+# Linux, once, by an admin (uses sudo; agent-runner itself never does):
+sudo apt install iproute2 nftables
+git clone https://github.com/tendant/agentbox && (cd agentbox && make install && make check)
+# macOS: nothing to install.
+
+echo 'AGENT_SANDBOX=permissive' >> .env             # strict: refuse runs it cannot fully enforce
+echo 'CLAUDE_CODE_OAUTH_TOKEN=...' >> .env          # claude: from `claude setup-token`
+```
+
+The sandbox hides your home directory and credentials; the agent reads its workspace, memory and
+the CLIs' installs, and reaches the network only through a per-run gateway (any public host by
+default, never private or metadata addresses). Model credentials stay in agent-runner: claude and
+codex reach their models through a per-run proxy, and codex uses your `codex login` without the
+sandbox ever seeing it. `/status` shows whether the sandbox is ready; `make sandbox-smoke` checks
+it end to end. Details: [docs/sandbox.md](docs/sandbox.md).
+
 ## Docker
 
 ```bash
@@ -78,7 +100,7 @@ curl -X POST localhost:8080/agent/{session_id}/stop
 | [docs/agents.md](docs/agents.md) | The agent directory, isolation (`agent-home/`), memory, MCP servers |
 | [docs/agent-stream.md](docs/agent-stream.md) | Connecting the Agent Stream app |
 | [docs/scheduler.md](docs/scheduler.md) | One-shot and cron tasks, `_schedule.json` |
-| [docs/sandbox.md](docs/sandbox.md) | Agent sandbox (Seatbelt, gVisor) |
+| [docs/sandbox.md](docs/sandbox.md) | Agent sandbox (agentbox: gVisor on Linux, Seatbelt on macOS), egress, limits |
 | [DESIGN.md](DESIGN.md) | Architecture; memory and prompt composition |
 | [TASKS_DESIGN.md](TASKS_DESIGN.md), [SECRETS.md](SECRETS.md) | Task and secrets design |
 
@@ -86,4 +108,6 @@ curl -X POST localhost:8080/agent/{session_id}/stop
 
 ```bash
 go test -race ./...
+make sandbox-smoke        # the sandbox on this host, end to end (as a normal user)
+make sandbox-agentbox     # the Linux sandbox in Docker, from any host
 ```
