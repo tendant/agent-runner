@@ -24,7 +24,7 @@ it starts inside one isolation boundary, provided by [isobox](https://github.com
 
 An invalid sandbox configuration rejects every run; it never falls back to the host.
 
-Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor` through isobox, or `agentbox`: rootless gVisor, see [agentbox](#agentbox-rootless-gvisor-linux-no-root)), `AGENT_SANDBOX_ISOBOX`
+Other settings: `AGENT_SANDBOX_BACKEND` (`agentbox`, the default on Linux: rootless gVisor, see [agentbox](#agentbox-rootless-gvisor-linux-no-root); or `""` (the default elsewhere: Seatbelt on macOS) | `seatbelt` | `gvisor` through isobox, whose gVisor needs root), `AGENT_SANDBOX_ISOBOX`
 (path to a pinned isobox build), `AGENT_SANDBOX_POLICY` (system-layer `SandboxSpec`: a path to a
 JSON file, or the JSON itself when it starts with `{`; fields it leaves unset keep the default
 policy's values, so `{"version":1,"network":{"egress":"none"}}` still grants the workspace,
@@ -38,7 +38,7 @@ proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below), `AGENT_SA
 
 ## agentbox: rootless gVisor (Linux, no root)
 
-`AGENT_SANDBOX_BACKEND=agentbox` runs every agent CLI in gVisor **as the runner's own user**,
+`AGENT_SANDBOX_BACKEND=agentbox`, the default on Linux, runs every agent CLI in gVisor **as the runner's own user**,
 through [agentbox](https://github.com/tendant/agentbox) instead of isobox (whose gVisor path needs
 root at run time). Setup, once, by an admin:
 
@@ -260,7 +260,7 @@ AGENT_SANDBOX_EVIDENCE=seatbelt-macos.json AGENT_SANDBOX=strict ...
   (`/home/runner`, mode 0750) cannot start a single process there (`failed to find initial
   working directory ... permission denied`). Every run is rejected with a message naming the
   directory and the fix (`chmod o+x`, which allows entering without listing). This applies whenever
-  isobox resolves to gVisor, including with `AGENT_SANDBOX_BACKEND` unset on Linux.
+  isobox resolves to gVisor (`AGENT_SANDBOX_BACKEND=gvisor`, or `""` on Linux).
 
 ## Fork bombs: memory and pids caps
 
