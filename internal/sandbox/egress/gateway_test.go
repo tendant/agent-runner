@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -141,5 +142,48 @@ func TestBadConfig(t *testing.T) {
 	}
 	if _, err := Start(Config{Allow: []string{"@nope"}}); err == nil {
 		t.Error("unknown set must fail")
+	}
+}
+
+// "*" is any public host or IP; sensitive addresses still need an explicit
+// grant, and names resolving to them are refused.
+func TestAnyPublicHost(t *testing.T) {
+	e := setup(t, Config{Allow: []string{"*"}},
+		map[string]string{"github.com": "140.82.112.3", "rebind.example.com": "10.0.0.5", "meta.example.com": "169.254.169.254"})
+	for _, ok := range []string{"github.com:443", "1.1.1.1:443"} {
+		if got := connect(t, e, ok); !strings.Contains(got, "200") {
+			t.Errorf("%s: %s", ok, got)
+		}
+	}
+	for _, bad := range []string{"169.254.169.254:80", "127.0.0.1:443", "10.0.0.1:443", "192.168.1.1:443",
+		"rebind.example.com:443", "meta.example.com:80", "github.com:22"} {
+		if got := connect(t, e, bad); !strings.Contains(got, "403") {
+			t.Errorf("%s must be denied under *: %s", bad, got)
+		}
+	}
+}
+
+func TestUnixSocket(t *testing.T) {
+	dir, err := os.MkdirTemp("", "eg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sock := dir + "/egress.sock"
+	e := setup(t, Config{Allow: []string{"example.com"}, UnixSocket: sock}, map[string]string{"example.com": "93.184.216.34"})
+	if e.g.Addr() != sock {
+		t.Errorf("Addr %q", e.g.Addr())
+	}
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fmt.Fprintf(c, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+	if line, _ := bufio.NewReader(c).ReadString('\n'); !strings.Contains(line, "200") {
+		t.Errorf("over the socket: %q", line)
+	}
+	if fi, err := os.Stat(sock); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("socket mode %v %v", fi, err)
 	}
 }

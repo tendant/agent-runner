@@ -1,3 +1,17 @@
-{"_note": "Rootless gVisor through agentbox (github.com/tendant/agentbox), as a normal user. No network by design (network.outbound is not claimed: model proxies are reached over mounted sockets). resource.memory and resource.cpu need a systemd user scope, absent in CI containers; qualify them on the host with agentbox's scripts/phase0.sh.",
- "require": ["env.scrub", "fs.deny", "fs.read_scope", "fs.write_scope", "network.direct_none", "network.no_listen",
-             "process.containment", "process.cross_run_isolation", "resource.pids", "resource.timeout"]}
+{
+ "_note": "Rootless gVisor through agentbox (github.com/tendant/agentbox), as a normal user. No direct network: egress is restricted through the run's gateway (an HTTP proxy over a mounted socket; network.outbound, raw connections, is not claimed), model proxies over mounted sockets. resource.memory and resource.cpu need a systemd user scope, absent in CI containers; qualify them on the host with agentbox's scripts/phase0.sh.",
+ "require": [
+  "env.scrub",
+  "fs.deny",
+  "fs.read_scope",
+  "fs.write_scope",
+  "network.controlled_dns",
+  "network.direct_none",
+  "network.no_listen",
+  "network.restricted_egress",
+  "process.containment",
+  "process.cross_run_isolation",
+  "resource.pids",
+  "resource.timeout"
+ ]
+}

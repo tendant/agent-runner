@@ -28,6 +28,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
+	"github.com/agent-runner/agent-runner/internal/sandbox/egress"
 )
 
 // Config configures the adapter for one run.
@@ -117,6 +118,10 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 		sandbox.CapKernelIsolation,
 		sandbox.CapNetworkDirectNone, // no network namespace beyond loopback
 		sandbox.CapNetworkNoListen,   // nothing outside can connect in
+		// Restricted egress: only through the run's gateway (an HTTP proxy
+		// over a mounted socket), which resolves names itself.
+		sandbox.CapNetworkRestrictedEgress,
+		sandbox.CapNetworkControlledDNS,
 	}
 	if c.PIDLimit {
 		declared = append(declared, sandbox.CapResourcePIDs)
@@ -150,7 +155,7 @@ func (b *Backend) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.
 	res := sandbox.Evaluate("agentbox:gvisor", spec, enforced, caveats)
 	for i, g := range res.Gaps {
 		if g.Capability == sandbox.CapNetworkOutbound {
-			res.Gaps[i].Reason = "agentbox sandboxes have no network (the model proxies are reached over mounted sockets)"
+			res.Gaps[i].Reason = "agentbox has no direct network: egress is \"restricted\" through the run's gateway (\"*\" allows any public host)"
 		}
 	}
 	return res, nil
@@ -197,6 +202,33 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		s.ModelSockets = append(s.ModelSockets, sock)
 		routes[addr] = "/run/agentbox/" + filepath.Base(sock)
 	}
+	// Restricted egress: the run's gateway on a private socket, reached
+	// through the forwarder at egressAddr.
+	var gw *egress.Gateway
+	var gwDir string
+	if spec.Network.Egress == sandbox.EgressRestricted {
+		base := os.Getenv("XDG_RUNTIME_DIR")
+		if base == "" {
+			base = os.TempDir()
+		}
+		var err error
+		if gwDir, err = os.MkdirTemp(base, "are-"); err != nil {
+			return nil, err
+		}
+		sock := filepath.Join(gwDir, "egress.sock")
+		if gw, err = egress.Start(egress.Config{Allow: spec.Network.EgressAllow, UnixSocket: sock}); err != nil {
+			os.RemoveAll(gwDir)
+			return nil, fmt.Errorf("agentbox: egress gateway: %w", err)
+		}
+		s.ModelSockets = append(s.ModelSockets, sock)
+		routes[egressAddr] = "/run/agentbox/egress.sock"
+	}
+	closeGW := func() {
+		if gw != nil {
+			gw.Close()
+			os.RemoveAll(gwDir)
+		}
+	}
 	for _, d := range spec.Filesystem.Deny {
 		h, err := b.host(d)
 		if err != nil {
@@ -223,18 +255,20 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		}
 		var err error
 		if fwd, err = copySelf(tmp); err != nil {
+			closeGW()
 			return nil, fmt.Errorf("agentbox: forwarder: %w", err)
 		}
 	}
 	sb, err := b.ab.Create(ctx, s)
 	if err != nil {
+		closeGW()
 		return nil, err
 	}
 	grace := time.Duration(r.GraceSec) * time.Second
 	if grace == 0 {
 		grace = 5 * time.Second
 	}
-	return &prepared{b: b, sb: sb, fwd: fwd, routes: routes,
+	return &prepared{b: b, sb: sb, fwd: fwd, routes: routes, closeGW: closeGW, egress: gw != nil,
 		timeout: time.Duration(r.TimeoutSec) * time.Second, grace: grace}, nil
 }
 
@@ -245,6 +279,17 @@ func underAny(p string, dirs map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// egressAddr is where the forwarder serves the run's egress gateway.
+const egressAddr = "127.0.0.1:3128"
+
+// proxyEnv points HTTP clients (git, npm, pip, go, curl, the CLIs) at the
+// gateway; NO_PROXY keeps the model forwarder on loopback direct.
+func proxyEnv() []string {
+	u := "http://" + egressAddr
+	return []string{"HTTPS_PROXY=" + u, "HTTP_PROXY=" + u, "https_proxy=" + u, "http_proxy=" + u,
+		"NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost"}
 }
 
 // copySelf copies the running binary into dir (a fresh copy, never a link:
@@ -277,6 +322,8 @@ type prepared struct {
 	sb       ab.Sandbox
 	fwd      string
 	routes   map[string]string
+	egress   bool          // commands get the proxy variables for the run's gateway
+	closeGW  func()        // stops the gateway with the sandbox
 	timeout  time.Duration // the spec's wall timeout (0: none)
 	grace    time.Duration // TERM to KILL
 	mu       sync.Mutex
@@ -301,7 +348,11 @@ func (p *prepared) Command(ctx context.Context, ps sandbox.ProcSpec) (*exec.Cmd,
 			return nil, err
 		}
 	}
-	c, cleanup, err := cmdr.Cmd(ctx, ab.Command{Args: args, Env: ps.Env, Dir: dir})
+	env := ps.Env
+	if p.egress {
+		env = append(append([]string{}, env...), proxyEnv()...)
+	}
+	c, cleanup, err := cmdr.Cmd(ctx, ab.Command{Args: args, Env: env, Dir: dir})
 	if err != nil {
 		return nil, err
 	}
@@ -371,6 +422,9 @@ func (p *prepared) runCleanups() {
 // Destroy kills what is left of the commands and closes the sandbox.
 func (p *prepared) Destroy(ctx context.Context) error {
 	p.runCleanups()
+	if p.closeGW != nil {
+		defer p.closeGW()
+	}
 	if p.fwd != "" {
 		defer os.Remove(p.fwd)
 	}
