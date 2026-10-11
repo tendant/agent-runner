@@ -12,7 +12,7 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/prometheus/client_golang v1.19.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	github.com/tendant/agentbox v0.0.2
+	github.com/tendant/agentbox v0.0.3-0.20261011230643-4cdfcc9418ab
 	github.com/tendant/simple-workflow v0.0.6
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0
