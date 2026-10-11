@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
@@ -151,11 +152,11 @@ func TestSandboxCodexLoginDefault(t *testing.T) {
 
 func TestSandboxScopedReadsSetting(t *testing.T) {
 	for v, want := range map[string]bool{"scoped": true, "host": false, "": runtime.GOOS == "linux"} {
-		if got, err := sandboxScopedReads(v); err != nil || got != want {
+		if got, err := clisetup.SandboxScopedReads(v); err != nil || got != want {
 			t.Errorf("%q: %v %v", v, got, err)
 		}
 	}
-	if _, err := sandboxScopedReads("everything"); err == nil {
+	if _, err := clisetup.SandboxScopedReads("everything"); err == nil {
 		t.Error("a bad value must fail closed")
 	}
 }

@@ -2,13 +2,10 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/agenthome"
@@ -28,7 +25,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	if mode == "" || mode == sandbox.ModeOff {
 		return nil
 	}
-	scoped, err := sandboxScopedReads(cfg.Agent.SandboxRead)
+	scoped, err := clisetup.SandboxScopedReads(cfg.Agent.SandboxRead)
 	if err != nil {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
@@ -63,34 +60,13 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend, "scoped_reads", scoped)
-	bin := cfg.Agent.SandboxIsobox
-	if bin == "" {
-		bin = "isobox"
-	}
-	if _, err := exec.LookPath(bin); err != nil {
-		slog.Warn("sandbox: isobox not found; every agent run will be rejected until it is installed (docs/sandbox.md) or AGENT_SANDBOX_ISOBOX names it", "isobox", bin)
+	for _, p := range clisetup.SandboxProblems(string(mode), cfg.Agent.SandboxIsobox, cfg.Agent.SandboxBackend) {
+		slog.Error("sandbox: every agent run will be rejected: " + p)
 	}
 	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow, cfg.Agent.SandboxModelProxy) {
 		slog.Warn("sandbox: claude runs have no credentials: " + clisetup.SandboxedClaudeAuthHelp)
 	}
 	return rt
-}
-
-// sandboxScopedReads parses AGENT_SANDBOX_READ: "scoped" limits reads to the
-// run's roots, system paths, the agent CLIs and AGENT_SANDBOX_READ_ALLOW;
-// "host" leaves the host readable minus credentials and the runner's files.
-// Unset: scoped on Linux (where the sandbox is uid 0 and production runs),
-// host elsewhere.
-func sandboxScopedReads(v string) (bool, error) {
-	switch v {
-	case "scoped":
-		return true, nil
-	case "host":
-		return false, nil
-	case "":
-		return goruntime.GOOS == "linux", nil
-	}
-	return false, fmt.Errorf("AGENT_SANDBOX_READ: bad value %q (want scoped|host)", v)
 }
 
 // sandboxPrivatePaths lists the runner's own files a sandboxed agent must not

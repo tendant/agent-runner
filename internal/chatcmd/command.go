@@ -332,6 +332,10 @@ func (c *Commander) handleStatus() string {
 		fmt.Fprintf(&b, "**cli:** %s ✗ (not installed — /install-cli)\n", cli)
 	}
 
+	// Sandbox
+	fmt.Fprintf(&b, "**sandbox:** %s\n", clisetup.SandboxStatus(c.cfg.Agent.SandboxMode,
+		c.cfg.Agent.SandboxIsobox, c.cfg.Agent.SandboxBackend, c.cfg.Agent.SandboxRead))
+
 	// Memory git state
 	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); err == nil {
 		if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
