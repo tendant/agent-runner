@@ -41,10 +41,12 @@ jobs:
         run: |
           sudo apt-get install -y -qq nftables iproute2 >/dev/null
           bash "$(go list -m -f '{{.Dir}}' github.com/tendant/agentbox)/scripts/install-runsc.sh"
+      # /tmp, not $RUNNER_TEMP: that is inside the runner's home, which the
+      # run's own directories would then show in the home probe.
       - name: Smoke
-        run: KEEP=1 TMPDIR="$RUNNER_TEMP" scripts/sandbox-smoke
+        run: KEEP=1 TMPDIR=/tmp scripts/sandbox-smoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sandbox-${{ matrix.backend }}
-          path: ${{ runner.temp }}/sandbox-smoke.*/report-*.json
+          path: /tmp/sandbox-smoke.*/report-*.json
