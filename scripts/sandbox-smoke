@@ -425,9 +425,10 @@ if [ "$GV" = 1 ]; then
 
 	step "runner, fork bomb under AGENT_SANDBOX_PIDS=256 (no memory cap)"
 	bomb "sandbox pids bomb" AGENT_SANDBOX_PIDS=256
-	# Under 90s: well before the 120s iteration timeout. Tearing down the
-	# bomb's processes inside gVisor takes a while (46-60s under agentbox).
-	if [ "${RESULT%%|*}" = completed ] && [ "$ELAPSED" -lt 90 ]; then pass "session completed after ${ELAPSED}s"
+	# Completed, and inside the 120s iteration timeout (which would fail it).
+	# Tearing the bomb's processes down inside gVisor takes a while: 30-60s
+	# on a workstation, over 90s on a 2-core CI runner.
+	if [ "${RESULT%%|*}" = completed ] && [ "$ELAPSED" -lt 120 ]; then pass "session completed after ${ELAPSED}s"
 	else fail "session ${RESULT} after ${ELAPSED}s, want completed"; fi
 	BOMB=$(find "$DATA" -path "*$SESSION*" -name bomb.txt | head -1)
 	if [ -n "$BOMB" ] && grep -q "Resource temporarily unavailable" "$BOMB"; then pass "fork() failed with EAGAIN"
