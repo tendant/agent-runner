@@ -95,6 +95,12 @@ one. git over SSH (port 22) is refused: use HTTPS remotes. How connections reach
   `127.0.0.1:3128` by the forwarder; on macOS it is a port on the host's loopback that the
   sandbox may connect to. A program that ignores the proxy settings gets no connection at all.
 
+**What it did.** Each run tallies the gateway's decisions by host. The first time a run reaches
+or is refused a host, the runner logs `sandbox.egress_allowed` or `sandbox.egress_denied` with
+the host (names only, never payloads), and the session's audit log (`LOGS_ROOT`) gets a
+**Network** table: every host, refused first, with how many connections were allowed and
+refused (at most 500 hosts a run).
+
 **Nothing else.** On macOS the profile denies every socket except connections to the run's own
 loopback ports, and Mach lookups of the keychain (`com.apple.SecurityServer`) and DNS
 (`com.apple.mDNSResponder`) services; a sandboxed process cannot listen or signal anything
@@ -238,7 +244,6 @@ AGENT_SANDBOX_EVIDENCE=agentbox-host.json AGENT_SANDBOX=strict ...
   thread (`llm-fallback`).
 * Conformance does not prove `fs.virtual_paths` on either system (no `/workspace` remap: paths
   stay the host's) or `network.outbound` (no direct network by design).
-* The gateway logs no per-connection decisions yet (`OnEvent` exists, nothing records it).
 
 ## Fork bombs: memory and pids caps
 
@@ -268,8 +273,9 @@ session complete, each with the host's available memory and the runner unharmed.
   reaps sandboxes whose lease expired *and* whose owner process is dead. It never reaps a live
   runner because an instance ID differs. Events: `sandbox.timeout`, `sandbox.orphan_reaped`,
   `sandbox.enforcement_lost`, `sandbox.teardown_incomplete`.
-* **Events logged by the runner:** `sandbox.started|finished|rejected|enforcement_lost` (ids and names only,
-  never env values or secrets).
+* **Events logged by the runner:** `sandbox.started|finished|rejected|enforcement_lost` and
+  `sandbox.egress_allowed|egress_denied` (ids and names only, never env values, payloads or
+  secrets).
 * **Thread runs:** one active run per Thread, bounded queue; a lost lease cancels the run.
 
 ## Tests

@@ -59,9 +59,17 @@ type AgentLogData struct {
 	SuccessfulIterations int
 	TotalCostUSD         float64
 	Error                string
-	Plan                 string // JSON string of planner output (if enabled)
-	Review               string // JSON string of reviewer output (if enabled)
-	PlannerPrompt        string // full prompt sent to the planner (for debugging)
+	Plan                 string      // JSON string of planner output (if enabled)
+	Review               string      // JSON string of reviewer output (if enabled)
+	PlannerPrompt        string      // full prompt sent to the planner (for debugging)
+	Egress               []EgressLog // sandboxed runs: what the egress gateway allowed and refused
+}
+
+// EgressLog is one host a sandboxed session's egress gateway decided on.
+type EgressLog struct {
+	Host    string
+	Allowed int
+	Denied  int
 }
 
 // AgentIterationLog captures one iteration for the log
@@ -284,6 +292,16 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 	if data.Error != "" {
 		sb.WriteString("## Error\n\n")
 		sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", data.Error))
+	}
+
+	if len(data.Egress) > 0 {
+		sb.WriteString("## Network\n\n")
+		sb.WriteString("Connections through the sandbox's egress gateway, by host (refused first).\n\n")
+		sb.WriteString("| Host | Allowed | Refused |\n|---|---:|---:|\n")
+		for _, e := range data.Egress {
+			sb.WriteString(fmt.Sprintf("| `%s` | %d | %d |\n", e.Host, e.Allowed, e.Denied))
+		}
+		sb.WriteString("\n")
 	}
 
 	if data.PlannerPrompt != "" {

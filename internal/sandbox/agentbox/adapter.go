@@ -57,6 +57,9 @@ type Config struct {
 	// HostPorts are model proxies' ports on the host's loopback (backends
 	// with HostPorts: Seatbelt).
 	HostPorts []int
+	// OnEgress receives each decision of the run's egress gateway: the host
+	// asked for, and whether it was allowed. Never payloads.
+	OnEgress func(allowed bool, host string)
 	// Evidence is the conformance report for this backend on this host;
 	// when set, only capabilities it proves are claimed.
 	Evidence *conformance.Report
@@ -274,6 +277,9 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	var gwDir, proxyAddr string
 	if spec.Network.Egress == sandbox.EgressRestricted {
 		gcfg := egress.Config{Allow: spec.Network.EgressAllow}
+		if on := b.cfg.OnEgress; on != nil {
+			gcfg.OnEvent = func(kind, host string) { on(kind == "allowed", host) }
+		}
 		if c.Gateway || c.ModelSocket {
 			base := os.Getenv("XDG_RUNTIME_DIR")
 			if base == "" {

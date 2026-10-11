@@ -169,15 +169,17 @@ func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 
 // beginSandbox confines the run's agent CLIs. The returned context carries the
 // sandbox launcher, so the planner, session and reviewer are all covered. A
-// strict-mode rejection fails the session before any work starts.
-func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (context.Context, func(), bool) {
+// strict-mode rejection fails the session before any work starts. egress
+// reports what the run's egress gateway allowed and refused (nil without a
+// sandbox).
+func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (_ context.Context, finish func(), egress func() []sandboxrt.EgressHost, aborted bool) {
 	if h.sandbox == nil || h.sandbox.Mode() == "off" {
-		return ctx, func() {}, false
+		return ctx, func() {}, nil, false
 	}
 	// Fail now, in words, rather than deep in the CLI with an auth error.
 	if clisetup.ResolveCLI(h.config.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(h.config.Agent.SandboxEnvAllow, h.config.Agent.SandboxModelProxy) {
 		h.FailSession(sessionID, "sandbox: claude has no credentials: "+clisetup.SandboxedClaudeAuthHelp)
-		return ctx, func() {}, true
+		return ctx, func() {}, nil, true
 	}
 	thread := sessionID
 	if live.TaskWorkspace != "" {
@@ -186,9 +188,9 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 	run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds})
 	if err != nil {
 		h.FailSession(sessionID, "sandbox: "+err.Error())
-		return ctx, func() {}, true
+		return ctx, func() {}, nil, true
 	}
-	return run.Ctx, run.Finish, false
+	return run.Ctx, run.Finish, run.Egress, false
 }
 
 // CallbackPayload is the body POSTed to a session's CallbackURL: the same
@@ -253,6 +255,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
+	var sandboxEgress func() []sandboxrt.EgressHost // set once the sandbox starts
 
 	// Root span for the run; every phase below is a child. The trace id is
 	// stored on the session so API responses and logs can be joined to it.
@@ -332,6 +335,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			})
 		}
 		logData.PlannerPrompt = plannerPromptText
+		if sandboxEgress != nil {
+			for _, e := range sandboxEgress() {
+				logData.Egress = append(logData.Egress, logging.EgressLog{Host: e.Host, Allowed: e.Allowed, Denied: e.Denied})
+			}
+		}
 		if snap.PlanJSON != nil {
 			if data, err := json.Marshal(snap.PlanJSON); err == nil {
 				logData.Plan = string(data)
@@ -504,10 +512,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
-	ctx, sandboxFinish, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
+	ctx, sandboxFinish, egress, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
 	if sandboxAborted {
 		return
 	}
+	sandboxEgress = egress
 	defer sandboxFinish()
 
 	planCtx, planSpan := tracing.Start(ctx, "agent.planner", attribute.Bool("planner.enabled", h.config.Agent.PlannerEnabled))

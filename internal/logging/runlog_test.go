@@ -275,3 +275,17 @@ func TestWriteRunLog_CreatesDirectory(t *testing.T) {
 		t.Error("expected file to exist")
 	}
 }
+
+func TestAgentLogNetworkSection(t *testing.T) {
+	l := &RunLogger{LogsRoot: t.TempDir()}
+	md := l.generateAgentMarkdown(&AgentLogData{SessionID: "s", Egress: []EgressLog{
+		{Host: "169.254.169.254", Denied: 2}, {Host: "github.com", Allowed: 3}}}, "2026-10-11_00-00-00")
+	for _, want := range []string{"## Network", "| `169.254.169.254` | 0 | 2 |", "| `github.com` | 3 | 0 |"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("missing %q in:\n%s", want, md)
+		}
+	}
+	if strings.Contains(l.generateAgentMarkdown(&AgentLogData{SessionID: "s"}, "x"), "## Network") {
+		t.Error("no egress, no Network section")
+	}
+}

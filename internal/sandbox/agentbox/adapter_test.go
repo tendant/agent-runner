@@ -3,12 +3,15 @@ package agentbox
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	ab "github.com/tendant/agentbox/pkg/agentbox"
 
@@ -293,5 +296,39 @@ func TestHostPortsBackend(t *testing.T) {
 	want := fmt.Sprintf("HTTPS_PROXY=http://127.0.0.1:%d", sp.HostPorts[1])
 	if !slices.Contains(f.cmds[0].Env, want) || slices.Contains(f.cmds[0].Args, "--") {
 		t.Errorf("command %+v, want %s and no forwarder", f.cmds[0], want)
+	}
+}
+
+// The gateway's decisions reach OnEgress: here a request for the metadata
+// address, refused.
+func TestOnEgress(t *testing.T) {
+	f := &fakeAB{caps: ab.Capabilities{Backend: "seatbelt", Rootless: true, NetworkNone: true, HostPorts: true}}
+	s := spec()
+	s.Resources = sandbox.ResourcePolicy{}
+	s.Network.Egress, s.Network.EgressAllow = sandbox.EgressRestricted, []string{"*"}
+	type decision struct {
+		allowed bool
+		host    string
+	}
+	got := make(chan decision, 4)
+	ps, err := New(Config{Roots: roots(t), Backend: f, OnEgress: func(a bool, h string) { got <- decision{a, h} }}).Prepare(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ps.Destroy(context.Background())
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", f.specs[0].HostPorts[0]))
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}, Timeout: 5 * time.Second}
+	resp, err := c.Get("http://169.254.169.254/latest/meta-data/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	select {
+	case d := <-got:
+		if d.allowed || d.host != "169.254.169.254" {
+			t.Errorf("decision %+v", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no egress decision reported")
 	}
 }

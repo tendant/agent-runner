@@ -370,6 +370,16 @@ type Run struct {
 	started  time.Time
 	backend  string
 	model    *modelRun // the run's model channels, if any
+	egress   *egressLog
+}
+
+// Egress is what the run's egress gateway allowed and refused, by host,
+// refused first. It stays readable after Finish.
+func (r *Run) Egress() []EgressHost {
+	if r == nil {
+		return nil
+	}
+	return r.egress.summary()
 }
 
 // Begin prepares a run. With mode off it returns ctx unchanged.
@@ -444,12 +454,16 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	}
 	var modelRoutes map[string]string // set once the model proxies start: sockets (Linux)
 	var modelPorts []int              // or loopback ports (macOS)
+	// The gateway's decisions, tallied for the run and reported per host.
+	egress := newEgressLog(func(kind, host string) {
+		r.emit(Event{Kind: kind, RunID: req.RunID, ThreadID: req.ThreadID, Detail: host})
+	})
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
 		}
 		return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
-			HostPorts: modelPorts, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
+			HostPorts: modelPorts, OnEgress: egress.record, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
 			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode})
 	}
 
@@ -486,7 +500,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		return nil, err
 	}
 	runCtx, cancel := context.WithCancel(runCtx)
-	run := &Run{rt: r, req: req, Spec: spec, cancel: cancel, stop: make(chan struct{}), roots: roots, releaseT: releaseThread, started: time.Now(), backend: res.Backend}
+	run := &Run{rt: r, req: req, Spec: spec, cancel: cancel, stop: make(chan struct{}), roots: roots, releaseT: releaseThread, started: time.Now(), backend: res.Backend, egress: egress}
 	go func() { // keep the sandbox lease alive while the run is active
 		t := time.NewTicker(r.cfg.LeaseTTL / 3)
 		defer t.Stop()
