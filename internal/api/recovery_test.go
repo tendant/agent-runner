@@ -18,11 +18,16 @@ import (
 // sandboxed dirs, with the journal seeded by the caller.
 func recoveryServer(t *testing.T) *Server {
 	t.Helper()
-	dir := t.TempDir()
+	// Not t.TempDir: a restored session dispatches for real and keeps
+	// writing (memory log, journal, audit log) after the test returns, and
+	// t.TempDir fails the test when its RemoveAll races those writes.
+	dir, err := os.MkdirTemp("", "recovery-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("DATA_DIR", dir)
 
-	// Separate temp dirs for state that background session goroutines keep
-	// writing after the test returns — t.TempDir's RemoveAll would race them.
 	tmpDir, err := os.MkdirTemp("", "recovery-test-tmp-*")
 	if err != nil {
 		t.Fatal(err)
