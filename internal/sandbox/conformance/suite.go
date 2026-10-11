@@ -226,6 +226,36 @@ func cases() []testCase {
 			}
 			return nil
 		}},
+		{"fs.read_scope", func(t *x) error {
+			ws, outside := t.env.Host(sandbox.RootWorkspace), t.env.Outside
+			if err := os.WriteFile(filepath.Join(ws, "scope-ok"), []byte("SCOPE_OK\n"), 0o644); err != nil {
+				return err
+			}
+			marker := "OUTSIDE-" + t.env.Secret
+			if err := os.WriteFile(filepath.Join(outside, "scope-secret"), []byte(marker+"\n"), 0o644); err != nil {
+				return err
+			}
+			// Scripts must still start: on usrmerge hosts /bin is a symlink into
+			// /usr, which a scoped view can lose.
+			if err := os.WriteFile(filepath.Join(ws, "scope-script"), []byte("#!/bin/sh\necho SCRIPT_OK\n"), 0o755); err != nil {
+				return err
+			}
+			spec := t.baseSpec()
+			spec.Filesystem.ScopedReads = true
+			// Errors to /dev/null: they repeat the path, which names the file.
+			out, _ := t.exec(spec, fmt.Sprintf("cat %s/scope-ok; %s/scope-script 2>&1; cat %s/scope-secret 2>/dev/null; echo LISTING:; ls %s 2>/dev/null", ws, ws, outside, outside))
+			switch {
+			case !strings.Contains(out, "SCOPE_OK"):
+				return fmt.Errorf("positive control failed: cannot read the workspace: %s", tail(out, 300))
+			case !strings.Contains(out, "SCRIPT_OK"):
+				return fmt.Errorf("positive control failed: a #!/bin/sh script cannot start: %s", tail(out, 300))
+			case strings.Contains(out, marker):
+				return errors.New("read a file outside the granted paths")
+			case strings.Contains(out, "scope-secret"):
+				return errors.New("listed a directory outside the granted paths")
+			}
+			return nil
+		}},
 		{"fs.virtual_paths", func(t *x) error {
 			out, _ := t.exec(t.baseSpec(), "test -d /workspace && echo VIRT_OK")
 			if !strings.Contains(out, "VIRT_OK") {

@@ -40,6 +40,9 @@ type Config struct {
 	// the runner's own private files (its .env, state, logs). They come from
 	// the runner, not the policy, so they are host paths, not logical ones.
 	ReadDeny []string
+	// Readable are host paths readable under ScopedReads besides the roots
+	// and systemReadable (memory, uploads, the agent CLIs' installs, ...).
+	Readable []string
 }
 
 // Backend implements sandbox.Backend over the isobox CLI.
@@ -116,7 +119,29 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 			flags = append(flags, "--writable", w)
 		}
 	}
-	notes = append(notes, "reads are broad host reads minus denied paths (fs read scoping not used)")
+	var scopedReadable []string // nil: host reads
+	if spec.Filesystem.ScopedReads {
+		readable := map[string]bool{}
+		for _, p := range append(systemReadable(), b.cfg.Readable...) {
+			if _, err := os.Stat(p); err == nil {
+				readable[filepath.Clean(p)] = true
+			}
+		}
+		for _, h := range b.cfg.Roots {
+			readable[h] = true
+		}
+		var rl []string
+		for p := range readable {
+			rl = append(rl, p)
+		}
+		sort.Strings(rl)
+		for _, p := range rl {
+			flags = append(flags, "--readable", p)
+		}
+		scopedReadable = rl
+	} else {
+		notes = append(notes, "reads are broad host reads minus denied paths (fs read scoping not used)")
+	}
 
 	deny := map[string]bool{}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -125,6 +150,9 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 		}
 	}
 	for _, d := range b.cfg.ReadDeny {
+		deny[d] = true
+	}
+	for _, d := range systemDeny() {
 		deny[d] = true
 	}
 	for _, d := range spec.Filesystem.Deny {
@@ -141,6 +169,12 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 	}
 	var dl []string
 	for d := range deny {
+		// Under scoped reads a path outside every readable one is invisible
+		// already; denying it would put an empty placeholder (and its parent,
+		// e.g. the home directory) into the view.
+		if scopedReadable != nil && !underAnyPath(d, scopedReadable) {
+			continue
+		}
 		dl = append(dl, d)
 	}
 	sort.Strings(dl)
@@ -166,6 +200,7 @@ func (b *Backend) flags(spec sandbox.SandboxSpec) (flags []string, notes []strin
 
 var isoboxToCap = map[string][]sandbox.CapabilityID{
 	"env.scrub":        {sandbox.CapEnvScrub},
+	"fs.read.scope":    {sandbox.CapFSReadScope},
 	"fs.write.scope":   {sandbox.CapFSWriteScope},
 	"fs.read.deny":     {sandbox.CapFSDeny},
 	"net.disable":      {sandbox.CapNetworkDirectNone, sandbox.CapNetworkNoListen},
@@ -509,4 +544,14 @@ func withSystemPath(env []string) []string {
 		out[i] = "PATH=" + v
 	}
 	return out
+}
+
+// underAnyPath reports whether p is one of dirs or inside one.
+func underAnyPath(p string, dirs []string) bool {
+	for _, d := range dirs {
+		if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }

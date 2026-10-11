@@ -9,7 +9,11 @@ on:
   workflow_dispatch:
 
 env:
-  ISOBOX_REF: c7bbd193e9b1b20054b94b776509ea1fd2129cd5   # isobox main as of 2026-10-07; bump deliberately
+  # The tendant fork: upstream c7bbd19 plus the scoped-read fix that keeps /bin
+  # (and /sbin, /lib64) in gVisor views on usrmerge hosts. Back to
+  # can1357/isobox once upstream has it. Bump deliberately.
+  ISOBOX_REPO: https://github.com/tendant/isobox
+  ISOBOX_REF: 2145756b9672559615f1605d4c2cec8a19011cf7
 
 jobs:
   unit:
@@ -35,7 +39,7 @@ jobs:
         with: { go-version: "1.26" }
       - name: Build isobox
         run: |
-          git clone https://github.com/can1357/isobox /tmp/isobox
+          git clone "$ISOBOX_REPO" /tmp/isobox
           git -C /tmp/isobox checkout "$ISOBOX_REF"
           (cd /tmp/isobox && go build -o /tmp/isobox/isobox ./cmd/isobox)
       - name: Install gVisor (Linux)

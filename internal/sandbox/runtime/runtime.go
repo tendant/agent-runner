@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,8 +50,12 @@ type Config struct {
 	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	Memory        string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	PIDs          string // optional process/thread cap for every run; overrides the policy's pids
-	EvidenceFile  string // optional conformance report; claims limited to proven caps
-	EnvAllow      []string
+	// ScopedReads limits every run's host reads to its roots, the system
+	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
+	ScopedReads  bool
+	ReadAllow    []string // host paths readable under ScopedReads (memory, uploads, ...)
+	EvidenceFile string   // optional conformance report; claims limited to proven caps
+	EnvAllow     []string
 	// PrivatePaths are the runner's own host files and directories (its .env
 	// files, state, logs, ...). Every run is read-denied them, except for the
 	// parts that hold the run's own workspace, home and tmp (see readDeny).
@@ -230,6 +235,12 @@ func New(cfg Config) (*Runtime, error) {
 	if r.cfg.StateDir, err = filepath.Abs(cfg.StateDir); err != nil {
 		return nil, err
 	}
+	r.cfg.ReadAllow = make([]string, len(cfg.ReadAllow))
+	for i, p := range cfg.ReadAllow {
+		if r.cfg.ReadAllow[i], err = filepath.Abs(p); err != nil {
+			return nil, err
+		}
+	}
 	r.cfg.PrivatePaths = make([]string, len(cfg.PrivatePaths))
 	for i, p := range cfg.PrivatePaths {
 		if r.cfg.PrivatePaths[i], err = filepath.Abs(p); err != nil {
@@ -267,6 +278,9 @@ func New(cfg Config) (*Runtime, error) {
 			return nil, fmt.Errorf("sandbox pids: bad count %q", cfg.PIDs)
 		}
 		r.system.Resources.PIDs = n
+	}
+	if cfg.ScopedReads {
+		r.system.Filesystem.ScopedReads = true // a policy can scope reads too, never unscope
 	}
 	if cfg.EvidenceFile != "" {
 		b, err := os.ReadFile(cfg.EvidenceFile)
@@ -393,11 +407,21 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		keep = append(keep, d)
 	}
 	deny := readDeny(r.cfg.PrivatePaths, keep)
+	// Scoped reads: the configured paths and the agent CLIs' installs, looked
+	// up per run (a CLI installed with /install-cli is found without a restart).
+	// A private path is never made readable.
+	var readable []string
+	for _, p := range append(slices.Clone(r.cfg.ReadAllow), toolReadable()...) {
+		if !underAny(p, r.cfg.PrivatePaths) {
+			readable = append(readable, p)
+		}
+	}
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
 		}
-		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence, ReadDeny: deny})
+		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence,
+			ReadDeny: deny, Readable: readable})
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).
@@ -618,4 +642,14 @@ func readDeny(private, keep []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// underAny reports whether p is one of dirs or inside one.
+func underAny(p string, dirs []string) bool {
+	for _, d := range dirs {
+		if p == d || strings.HasPrefix(p, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

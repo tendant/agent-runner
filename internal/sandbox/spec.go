@@ -98,6 +98,9 @@ type SandboxSpec struct {
 type FilesystemPolicy struct {
 	Grants []PathGrant `json:"grants,omitempty"`
 	Deny   []string    `json:"deny,omitempty"`
+	// ScopedReads limits host reads to the grants plus the backend's
+	// readable system paths; otherwise the host is readable minus Deny.
+	ScopedReads bool `json:"scoped_reads,omitempty"`
 }
 
 // PathGrant allows access to a logical path subtree.
