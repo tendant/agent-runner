@@ -263,8 +263,8 @@ func TestTransparentEgress(t *testing.T) {
 
 // Seatbelt-like backends share the host's network stack: model proxies and
 // the gateway on the host's loopback, reachable at exactly their ports;
-// HTTPS_PROXY points at the gateway; limits the backend lacks are not asked
-// for (Check reports them).
+// HTTPS_PROXY points at the gateway; limits the backend lacks are still
+// asked for, so agentbox refuses the sandbox rather than run it uncapped.
 func TestHostPortsBackend(t *testing.T) {
 	f := &fakeAB{caps: ab.Capabilities{Backend: "seatbelt", Rootless: true, NetworkNone: true, HostPorts: true}}
 	s := spec()
@@ -286,8 +286,8 @@ func TestHostPortsBackend(t *testing.T) {
 	if len(sp.HostPorts) != 2 || sp.HostPorts[0] != 4801 || len(sp.ModelSockets) != 0 || sp.Network.Mode == ab.NetworkGateway {
 		t.Errorf("spec %+v", sp)
 	}
-	if sp.Limits != (ab.Limits{}) {
-		t.Errorf("limits the backend lacks were asked for: %+v", sp.Limits)
+	if sp.Limits.MemoryBytes != 1<<30 || sp.Limits.PIDs != 256 {
+		t.Errorf("requested limits were dropped: %+v", sp.Limits)
 	}
 	ps.(sandbox.Commander).Command(context.Background(), sandbox.ProcSpec{Args: []string{"git", "fetch"}})
 	want := fmt.Sprintf("HTTPS_PROXY=http://127.0.0.1:%d", sp.HostPorts[1])
