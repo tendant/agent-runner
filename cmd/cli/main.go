@@ -332,7 +332,9 @@ func startAndPoll(ctx context.Context, baseURL, apiKey, message string) error {
 
 // streamSession connects to GET /agent/{id}/stream and renders events to stdout.
 func streamSession(ctx context.Context, baseURL, apiKey, sessionID string) error {
-	streamCtx, cancel := context.WithCancel(ctx)
+	// Not derived from ctx: on Ctrl+C the stream stays open to show the
+	// session stopping (the done event), cut after stopGrace at the latest.
+	streamCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet,
@@ -355,25 +357,42 @@ func streamSession(ctx context.Context, baseURL, apiKey, sessionID string) error
 		return fmt.Errorf("stream returned %d", resp.StatusCode)
 	}
 
-	// Handle Ctrl+C: send stop signal then keep reading until done event
-	stopSent := false
+	// Handle Ctrl+C: send stop signal then keep reading until done event.
+	// finished keeps the normal end of a session (the caller cancels ctx
+	// after we return) from being taken for a Ctrl+C.
+	finished := make(chan struct{})
+	defer close(finished)
 	go func() {
-		<-ctx.Done()
-		if !stopSent {
-			stopSent = true
-			fmt.Println("\n[stopping] sending stop signal...")
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer stopCancel()
-			stopResp, stopErr := apiRequest(stopCtx, http.MethodPost,
-				baseURL+"/agent/"+sessionID+"/stop", apiKey, nil)
-			if stopErr == nil {
-				stopResp.Body.Close()
-			}
+		select {
+		case <-finished:
+			return
+		case <-ctx.Done():
+		}
+		select {
+		case <-finished: // both ready: the session ended on its own
+			return
+		default:
+		}
+		fmt.Println("\n[stopping] sending stop signal...")
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		stopResp, stopErr := apiRequest(stopCtx, http.MethodPost,
+			baseURL+"/agent/"+sessionID+"/stop", apiKey, nil)
+		if stopErr == nil {
+			stopResp.Body.Close()
+		}
+		select {
+		case <-finished:
+		case <-time.After(stopGrace):
+			cancel()
 		}
 	}()
 
 	return readSSEStream(resp.Body)
 }
+
+// stopGrace is how long the stream stays open after a stop request.
+var stopGrace = 10 * time.Second
 
 // readSSEStream reads an SSE stream from r until a done event or EOF.
 func readSSEStream(r io.Reader) error {

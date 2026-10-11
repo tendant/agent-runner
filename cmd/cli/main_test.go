@@ -2,8 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // readUntilPasteEnd is the low-level primitive still worth testing.
@@ -65,5 +71,61 @@ func TestCollectPaste_PreservesPriorTypedText(t *testing.T) {
 	}
 	if string(line) != "pasted" {
 		t.Errorf("expected 'pasted' as current line, got %q", line)
+	}
+}
+
+// fakeStream serves one session's SSE stream: the done event right away, or
+// only after a stop request when hold is set. It counts stop requests.
+func fakeStream(t *testing.T, hold bool) (url string, stops *atomic.Int32) {
+	stops = new(atomic.Int32)
+	stopped := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/stop") {
+			if stops.Add(1) == 1 {
+				close(stopped)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		if hold {
+			select {
+			case <-stopped:
+			case <-r.Context().Done(): // the client hung up
+				return
+			}
+		}
+		fmt.Fprint(w, "event: done\ndata: {\"status\":\"completed\"}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, stops
+}
+
+func TestFinishedSessionIsNotStopped(t *testing.T) {
+	url, stops := fakeStream(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := streamSession(ctx, url, "", "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	cancel() // what the REPL does after every session
+	time.Sleep(100 * time.Millisecond)
+	if n := stops.Load(); n != 0 {
+		t.Errorf("a finished session got %d stop requests", n)
+	}
+}
+
+func TestCtrlCStopsTheSession(t *testing.T) {
+	url, stops := fakeStream(t, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }() // Ctrl+C
+	done := make(chan error, 1)
+	go func() { done <- streamSession(ctx, url, "", "agent-1") }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not end after the stop")
+	}
+	if n := stops.Load(); n != 1 {
+		t.Errorf("Ctrl+C sent %d stop requests, want 1", n)
 	}
 }

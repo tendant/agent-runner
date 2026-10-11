@@ -333,6 +333,7 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 
 	lastSentCount := 0
 	lastLogCount := 0
+	lastStart := [2]int{} // iteration and completed steps last announced
 	var lastEventSeq uint64
 
 	emit := func() (done bool) {
@@ -375,8 +376,10 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		lastSentCount = len(snap.Iterations)
 
-		// if an iteration is in progress, emit iteration_start
-		if snap.CurrentIteration > lastSentCount {
+		// if an iteration is in progress, emit iteration_start: once per
+		// iteration, and again only when its plan progress moves.
+		if start := [2]int{snap.CurrentIteration, len(snap.CompletedSteps)}; snap.CurrentIteration > lastSentCount && start != lastStart {
+			lastStart = start
 			sendEvent("iteration_start", map[string]any{
 				"session_id":      snap.ID,
 				"iteration":       snap.CurrentIteration,
