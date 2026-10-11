@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -133,5 +135,35 @@ func TestCredentialPerRequest(t *testing.T) {
 	}
 	if len(*seen) != 2 {
 		t.Errorf("a request without a credential reached upstream")
+	}
+}
+
+func TestUnixSocketListener(t *testing.T) {
+	dir, err := os.MkdirTemp("", "px") // short: Unix socket paths are limited
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sock := dir + "/m.sock"
+	p, _, seen := setup(t, func(c *Config) { c.UnixSocket = sock })
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	}}}
+	req, _ := http.NewRequest("POST", "http://sandbox/v1/x", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+p.Token())
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("over the socket: %v %v", resp, err)
+	}
+	resp.Body.Close()
+	if (*seen)[0].Get("x-api-key") != "REAL-PROVIDER-KEY" {
+		t.Error("the credential is attached over the socket too")
+	}
+	req, _ = http.NewRequest("POST", "http://sandbox/v1/x", nil) // no token
+	if resp, err := client.Do(req); err != nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("the run token still guards the socket: %v %v", resp, err)
+	}
+	if fi, err := os.Stat(sock); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("socket mode: %v %v", fi, err)
 	}
 }

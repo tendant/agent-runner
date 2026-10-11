@@ -25,6 +25,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
+	abadapter "github.com/agent-runner/agent-runner/internal/sandbox/agentbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 	"github.com/agent-runner/agent-runner/internal/sandbox/isobox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
@@ -46,7 +47,8 @@ type Config struct {
 	StateDir      string // sandbox state root (leases, per-run dirs)
 	Instance      string // runner instance id
 	IsoboxBin     string
-	IsoboxBackend string // "", "seatbelt", "gvisor"
+	IsoboxBackend string // "", "seatbelt", "gvisor", or "agentbox" (not isobox: rootless gVisor through agentbox)
+	AgentboxRunsc string // agentbox's runsc (default /usr/local/bin/runsc, else PATH)
 	PolicyFile    string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	Memory        string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	PIDs          string // optional process/thread cap for every run; overrides the policy's pids
@@ -279,6 +281,12 @@ func New(cfg Config) (*Runtime, error) {
 		}
 		r.system.Resources.PIDs = n
 	}
+	if r.agentbox() && r.system.Network.Egress == sandbox.EgressOutbound {
+		// agentbox sandboxes have no network; the model proxies are reached
+		// over mounted sockets, so a policy asking for outbound would only
+		// gap (strict: reject) every run.
+		r.system.Network.Egress = sandbox.EgressNone
+	}
 	if cfg.ScopedReads {
 		r.system.Filesystem.ScopedReads = true // a policy can scope reads too, never unscope
 	}
@@ -416,9 +424,14 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			readable = append(readable, p)
 		}
 	}
+	var modelRoutes map[string]string // agentbox: set once the model proxies start
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
+		}
+		if r.agentbox() {
+			return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
+				Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc, StateDir: filepath.Join(r.cfg.StateDir, "agentbox")})
 		}
 		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence,
 			ReadDeny: deny, Readable: readable})
@@ -483,6 +496,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	cliEnvAllow := map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}}
 	var cliEnv map[string][]string
 	model, err := r.startModels(spec, req.RunID, req.ThreadID)
+	modelRoutes = model.routes()
 	if err == nil && model != nil {
 		err = model.writePiModels(r.cfg.PiSeed, piDir)
 		if err == nil {
@@ -653,3 +667,6 @@ func underAny(p string, dirs []string) bool {
 	}
 	return false
 }
+
+// agentbox reports whether runs use agentbox instead of isobox.
+func (r *Runtime) agentbox() bool { return r.cfg.IsoboxBackend == "agentbox" }

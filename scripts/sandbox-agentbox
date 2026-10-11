@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Check the agent sandbox through agentbox (rootless gVisor, no root at run
+# time) from any host with Docker: an Ubuntu container that allows user
+# namespaces but is not privileged, runsc installed by agentbox's own
+# scripts/install-runsc.sh, and scripts/sandbox-smoke run as a normal user:
+# conformance, runner probes, strict mode, fork bombs, codex.
+#
+#   scripts/sandbox-agentbox
+#
+# Env: KEEP=1 to keep the work dir. On a Linux host with runsc installed,
+# run SANDBOX_BACKEND=agentbox scripts/sandbox-smoke directly instead.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+REPO=$PWD
+
+command -v docker >/dev/null || { echo "docker not found" >&2; exit 2; }
+case $(docker info --format '{{.Architecture}}') in
+aarch64 | arm64) GOARCH=arm64 NODEARCH=arm64 ;;
+x86_64 | amd64) GOARCH=amd64 NODEARCH=x64 ;;
+*) echo "unsupported Docker architecture" >&2; exit 2 ;;
+esac
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner
+
+W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-agentbox.XXXXXX")
+trap 'if [ "${KEEP:-}" = 1 ]; then echo "kept $W"; else rm -rf "$W"; fi' EXIT
+
+echo "== build (linux/$GOARCH)"
+CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/agent-runner" ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH go build -o "$W/sandbox-conformance" ./cmd/sandbox-conformance
+# agentbox's installer, from the module version agent-runner builds with.
+AB=$(go list -m -f '{{.Dir}}' github.com/tendant/agentbox)
+cp "$AB/scripts/install-runsc.sh" "$W/install-runsc.sh"
+echo "agentbox: $(go list -m -f '{{.Version}}' github.com/tendant/agentbox) ($AB)"
+
+NODE=node-v22.12.0-linux-$NODEARCH
+[ -f "$CACHE/$NODE.tar.xz" ] || { mkdir -p "$CACHE" && curl -fsSL -o "$CACHE/$NODE.tar.xz.part" "https://nodejs.org/dist/v22.12.0/$NODE.tar.xz" && mv "$CACHE/$NODE.tar.xz.part" "$CACHE/$NODE.tar.xz"; }
+cp "$CACHE/$NODE.tar.xz" "$W/node.tar.xz"
+
+echo "== container"
+docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined -e KEEP="${KEEP:-}" \
+	-v "$REPO:/repo:ro" -v "$W:/w" ubuntu:24.04 bash -euc '
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get update -qq >/dev/null
+	apt-get install -y -qq procps python3 curl bzip2 xz-utils ca-certificates git >/dev/null
+	bash /w/install-runsc.sh | tail -1
+	chmod -R a+rX /w
+	# As the normal user agent-runner runs as: codex installed with npm under
+	# its home, credentials there for the probes to be kept away from.
+	runuser -u ubuntu -- bash -euc "
+		mkdir -p ~/.local/node && tar -xJf /w/node.tar.xz -C ~/.local/node --strip-components=1
+		export PATH=~/.npm-global/bin:~/.local/node/bin:\$PATH
+		npm install -g --silent --prefix ~/.npm-global @openai/codex@0.162.1 >/dev/null 2>&1 || echo codex install failed: the codex step will be skipped
+		command -v codex >/dev/null && codex --version
+		mkdir -p ~/.ssh ~/.aws ~/.claude
+		for f in .ssh/known_hosts .aws/credentials .claude/.credentials.json; do echo dummy >~/\$f; done
+		cd /repo
+		KEEP=\"${KEEP:-}\" SANDBOX_BACKEND=agentbox AGENT_RUNNER_BIN=/w/agent-runner CONFORMANCE_BIN=/w/sandbox-conformance \
+			scripts/sandbox-smoke
+	"
+'

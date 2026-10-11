@@ -24,7 +24,7 @@ it starts inside one isolation boundary, provided by [isobox](https://github.com
 
 An invalid sandbox configuration rejects every run; it never falls back to the host.
 
-Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor`), `AGENT_SANDBOX_ISOBOX`
+Other settings: `AGENT_SANDBOX_BACKEND` (`""`|`seatbelt`|`gvisor` through isobox, or `agentbox`: rootless gVisor, see [agentbox](#agentbox-rootless-gvisor-linux-no-root)), `AGENT_SANDBOX_ISOBOX`
 (path to a pinned isobox build), `AGENT_SANDBOX_POLICY` (system-layer `SandboxSpec`: a path to a
 JSON file, or the JSON itself when it starts with `{`; fields it leaves unset keep the default
 policy's values, so `{"version":1,"network":{"egress":"none"}}` still grants the workspace,
@@ -35,6 +35,40 @@ every run, e.g. `4g`; overrides the policy's `resources.memory_bytes`), `AGENT_S
 (comma-separated host env var names to pass in; model credentials are never passed while the model
 proxy is on), `AGENT_SANDBOX_MODEL_PROXY` (default `true`; see below), `AGENT_SANDBOX_READ` and
 `AGENT_SANDBOX_READ_ALLOW` (see [What the sandbox can read](#what-the-sandbox-can-read)).
+
+## agentbox: rootless gVisor (Linux, no root)
+
+`AGENT_SANDBOX_BACKEND=agentbox` runs every agent CLI in gVisor **as the runner's own user**,
+through [agentbox](https://github.com/tendant/agentbox) instead of isobox (whose gVisor path needs
+root at run time). Setup, once, by an admin:
+
+```bash
+git clone https://github.com/tendant/agentbox && cd agentbox
+scripts/install-runsc.sh   # runsc in /usr/local/bin + the AppArmor profile Ubuntu 23.10+ needs
+scripts/phase0.sh          # as the runner's user: what this host supports
+```
+
+What changes against isobox:
+
+* **No network.** Policy egress becomes `none`. The model proxies still work: each also listens on
+  a Unix socket mounted into the sandbox, and a forwarder (agent-runner's own binary,
+  `__agent-runner-fwd`) gives the CLIs `http://127.0.0.1:4801` (Anthropic) / `:4802` (OpenAI)
+  with the same per-run tokens. `git push`, `npm install` and web access fail inside the sandbox.
+* **Reads are an allowlist by construction:** only the run's grants (mounted at their own host
+  paths, so `HOME`, `CODEX_HOME` and the workspace keep their paths), the memory dir, uploads,
+  the agent CLIs' installs and `AGENT_SANDBOX_READ_ALLOW`, plus the host's system directories
+  read-only. The runner's private files and the policy's denies are covered by empty mounts
+  wherever a mount exposes them.
+* **Files belong to the runner:** the sandbox's root is the runner's user on the host, so
+  root-owned files (`/etc/shadow`) stay unreadable by plain permissions, and a private (0700)
+  home is no obstacle.
+* **Limits:** processes through `RLIMIT_NPROC` (`AGENT_SANDBOX_PIDS`: `fork()` fails, the sandbox
+  survives); memory and CPU through a systemd user scope (`AGENT_SANDBOX_MEMORY`), refused when
+  no user session can create one.
+* **Proof:** `scripts/sandbox-agentbox` runs the conformance suite (baseline
+  `.github/sandbox-baselines/agentbox.json`, 12 capabilities in a container, all but
+  `network.outbound`) and the runner smoke, codex included, as a normal user in an unprivileged
+  container. On a Linux host with runsc installed: `SANDBOX_BACKEND=agentbox scripts/sandbox-smoke`.
 
 ## What the sandbox can read
 

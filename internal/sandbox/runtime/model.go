@@ -69,13 +69,18 @@ var modelCredentialEnv = map[string][]string{
 
 // modelRun is a run's started channels: per provider, the proxy.
 type modelRun struct {
-	proxies map[string]*proxy.Proxy
-	chatgpt bool // the OpenAI channel is a ChatGPT login (codex only)
+	proxies   map[string]*proxy.Proxy
+	chatgpt   bool              // the OpenAI channel is a ChatGPT login (codex only)
+	sockDir   string            // agentbox: the proxies' Unix sockets
+	inSandbox map[string]string // agentbox: provider -> forwarder address
 }
 
 func (m *modelRun) close() {
 	for _, p := range m.proxies {
 		_ = p.Close()
+	}
+	if m.sockDir != "" {
+		os.RemoveAll(m.sockDir)
 	}
 }
 
@@ -83,12 +88,34 @@ func (m *modelRun) close() {
 // policy has no outbound network, which leaves a proxy unreachable (isobox
 // cannot open a single port into the sandbox).
 func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) (*modelRun, error) {
-	if len(r.cfg.Models) == 0 || spec.Network.Egress != sandbox.EgressOutbound {
+	// isobox needs outbound network to reach a proxy; agentbox reaches it
+	// over a mounted Unix socket, with no network at all.
+	if len(r.cfg.Models) == 0 || (spec.Network.Egress != sandbox.EgressOutbound && !r.agentbox()) {
 		return nil, nil
 	}
 	m := &modelRun{proxies: map[string]*proxy.Proxy{}}
+	if r.agentbox() {
+		// A short private directory: Unix socket paths are limited to ~108
+		// bytes, which a run's state directory can come close to.
+		base := os.Getenv("XDG_RUNTIME_DIR")
+		if base == "" {
+			base = os.TempDir()
+		}
+		d, err := os.MkdirTemp(base, "arm-")
+		if err != nil {
+			return nil, err
+		}
+		m.sockDir = d
+		m.inSandbox = map[string]string{}
+	}
 	for name, ch := range r.cfg.Models {
+		var sock string
+		if m.sockDir != "" {
+			sock = filepath.Join(m.sockDir, name+".sock")
+			m.inSandbox[name] = agentboxAddr[name]
+		}
 		p, err := proxy.Start(proxy.Config{
+			UnixSocket:    sock,
 			Upstream:      ch.Upstream,
 			ListenHost:    modelListenHost(),
 			AuthHeader:    ch.AuthHeader,
@@ -115,6 +142,31 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 	return m, nil
 }
 
+// agentboxAddr is where the forwarder inside an agentbox sandbox serves each
+// provider's proxy (the sandbox's own loopback).
+var agentboxAddr = map[string]string{ProviderAnthropic: "127.0.0.1:4801", ProviderOpenAI: "127.0.0.1:4802"}
+
+// url is the base URL a CLI in the sandbox reaches provider name's proxy at.
+func (m *modelRun) url(name string) string {
+	if a, ok := m.inSandbox[name]; ok {
+		return "http://" + a
+	}
+	return m.proxies[name].BaseURL()
+}
+
+// routes maps the forwarder's in-sandbox addresses to the proxies' sockets
+// (agentbox); nil otherwise.
+func (m *modelRun) routes() map[string]string {
+	if m == nil || m.sockDir == "" {
+		return nil
+	}
+	r := map[string]string{}
+	for name, a := range m.inSandbox {
+		r[a] = filepath.Join(m.sockDir, name+".sock")
+	}
+	return r
+}
+
 // envAllow drops the channels' credential variables from an env allowlist.
 func (m *modelRun) envAllow(allow []string) []string {
 	return slices.DeleteFunc(slices.Clone(allow), func(k string) bool {
@@ -133,7 +185,7 @@ func (m *modelRun) envAllow(allow []string) []string {
 func (m *modelRun) cliEnv(channels map[string]*ModelChannel) map[string][]string {
 	env := map[string][]string{}
 	if p := m.proxies[ProviderAnthropic]; p != nil {
-		env["claude"] = []string{"ANTHROPIC_BASE_URL=" + p.BaseURL(), "ANTHROPIC_AUTH_TOKEN=" + p.Token()}
+		env["claude"] = []string{"ANTHROPIC_BASE_URL=" + m.url(ProviderAnthropic), "ANTHROPIC_AUTH_TOKEN=" + p.Token()}
 		if channels[ProviderAnthropic].OAuth {
 			env["pi"] = append(env["pi"], "ANTHROPIC_OAUTH_TOKEN="+p.Token())
 		} else {
@@ -181,7 +233,7 @@ name = "OpenAI (agent-runner proxy)"
 base_url = %q
 env_key = %q
 wire_api = "responses"
-`, codexProvider, codexProvider, p.BaseURL()+"/v1", codexKeyEnv)
+`, codexProvider, codexProvider, m.url(ProviderOpenAI)+"/v1", codexKeyEnv)
 	if m.chatgpt {
 		// The proxy holds a ChatGPT login and adds its token and account id.
 		// name "OpenAI" keeps codex's OpenAI-only request features (codex
@@ -196,7 +248,7 @@ base_url = %q
 env_key = %q
 wire_api = "responses"
 supports_websockets = false
-`, codexProvider, codexProvider, p.BaseURL()+chatgptBase, codexKeyEnv)
+`, codexProvider, codexProvider, m.url(ProviderOpenAI)+chatgptBase, codexKeyEnv)
 	}
 	if err := os.MkdirAll(codexDir, 0o700); err != nil {
 		return err
@@ -223,7 +275,7 @@ func (m *modelRun) writePiModels(seedDir, piDir string) error {
 	if providers == nil {
 		providers = map[string]any{}
 	}
-	for name, p := range m.proxies {
+	for name := range m.proxies {
 		if name == ProviderOpenAI && m.chatgpt {
 			continue // ChatGPT's codex backend is not an API pi speaks
 		}
@@ -231,7 +283,7 @@ func (m *modelRun) writePiModels(seedDir, piDir string) error {
 		if pc == nil {
 			pc = map[string]any{}
 		}
-		base := p.BaseURL()
+		base := m.url(name)
 		if name == ProviderOpenAI {
 			base += "/v1"
 		}

@@ -60,6 +60,21 @@ func SandboxProblems(mode, isobox, backend string) []string {
 		return nil
 	}
 	var out []string
+	if backend == "agentbox" {
+		// Rootless gVisor through agentbox: no isobox, no root; runsc with,
+		// on Ubuntu 23.10+, its AppArmor profile.
+		runsc := "/usr/local/bin/runsc"
+		if _, err := lookPath(runsc); err != nil {
+			if _, err := lookPath("runsc"); err != nil {
+				out = append(out, "runsc (gVisor) not found: an admin installs it once with agentbox's scripts/install-runsc.sh "+
+					"(https://github.com/tendant/agentbox), which also adds the AppArmor profile Ubuntu 23.10+ needs")
+			}
+		}
+		if goruntime.GOOS != "linux" {
+			out = append(out, "agentbox runs on Linux only")
+		}
+		return out
+	}
 	if isobox == "" {
 		isobox = "isobox"
 	}
