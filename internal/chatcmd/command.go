@@ -339,7 +339,7 @@ func (c *Commander) handleStatus() string {
 	// Memory git state
 	if _, err := os.Stat(filepath.Join(c.cfg.MemoryDir, ".git")); err == nil {
 		if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
-			fmt.Fprintf(&b, "**memory:** git ✓ → %s\n", strings.TrimSpace(string(out)))
+			fmt.Fprintf(&b, "**memory:** git ✓ → %s\n", gitsafe.RedactURL(strings.TrimSpace(string(out))))
 		} else {
 			b.WriteString("**memory:** git (no remote)\n")
 		}
@@ -917,7 +917,7 @@ func (c *Commander) handleMemoryPush() string {
 	if remote == "" {
 		return "memory pushed"
 	}
-	return "memory pushed to " + remote
+	return "memory pushed to " + gitsafe.RedactURL(remote)
 }
 
 // handleMemoryGit initialises or updates git-backed memory.
@@ -936,12 +936,12 @@ func (c *Commander) handleMemoryGit(remote string) string {
 	}
 	if res.RemoteChanged {
 		if res.RemoteOld == "" {
-			fmt.Fprintf(&b, "remote set: %s\n", res.RemoteNew)
+			fmt.Fprintf(&b, "remote set: %s\n", gitsafe.RedactURL(res.RemoteNew))
 		} else {
-			fmt.Fprintf(&b, "remote updated: %s → %s\n", res.RemoteOld, res.RemoteNew)
+			fmt.Fprintf(&b, "remote updated: %s → %s\n", gitsafe.RedactURL(res.RemoteOld), gitsafe.RedactURL(res.RemoteNew))
 		}
 	} else {
-		fmt.Fprintf(&b, "already configured: %s\n", res.RemoteNew)
+		fmt.Fprintf(&b, "already configured: %s\n", gitsafe.RedactURL(res.RemoteNew))
 	}
 	b.WriteString("run /memory push to sync")
 	return strings.TrimRight(b.String(), "\n")
@@ -1012,7 +1012,7 @@ func (c *Commander) handleMemoryStatus() string {
 	b.WriteString("**git:** initialised\n")
 
 	if out, err := gitsafe.Command("-C", c.cfg.MemoryDir, "remote", "get-url", "origin").Output(); err == nil {
-		fmt.Fprintf(&b, "**remote:** %s\n", strings.TrimSpace(string(out)))
+		fmt.Fprintf(&b, "**remote:** %s\n", gitsafe.RedactURL(strings.TrimSpace(string(out))))
 	} else {
 		b.WriteString("**remote:** none\n")
 	}
@@ -1152,7 +1152,7 @@ func (c *Commander) handleRepoList() string {
 			b.WriteString(" ✓ shared")
 		}
 		if remote != "" {
-			fmt.Fprintf(&b, " — %s", remote)
+			fmt.Fprintf(&b, " — %s", gitsafe.RedactURL(remote))
 		}
 		if last != "" {
 			fmt.Fprintf(&b, "\n  %s", last)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -173,6 +174,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 		return "", fmt.Errorf("no remote configured — run /memory git <remote-url> first")
 	}
 
+	warnCredentialInRemote(remote)
 	env := GitSSHEnv(remote, creds.SSHKey)
 
 	// Ensure credential helper is current (user may have changed since init).
@@ -192,9 +194,9 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 
 	headAfter, _ := gitOutput(memoryDir, "rev-parse", "HEAD")
 	if string(headBefore) != string(headAfter) {
-		slog.Info("memory pulled", "remote", remote, "from", strings.TrimSpace(string(headBefore))[:8], "to", strings.TrimSpace(string(headAfter))[:8])
+		slog.Info("memory pulled", "remote", gitsafe.RedactURL(remote), "from", strings.TrimSpace(string(headBefore))[:8], "to", strings.TrimSpace(string(headAfter))[:8])
 	} else {
-		slog.Info("memory pulled", "remote", remote, "status", "already up to date")
+		slog.Info("memory pulled", "remote", gitsafe.RedactURL(remote), "status", "already up to date")
 	}
 
 	return remote, nil
@@ -326,7 +328,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if err := pushMemory(memoryDir, env, remote, creds.Token); err != nil {
 		return fmt.Errorf("push failed: %w", err)
 	}
-	slog.Info("memory pushed", "remote", remote)
+	slog.Info("memory pushed", "remote", gitsafe.RedactURL(remote))
 
 	return nil
 }
@@ -584,4 +586,21 @@ func summariseChanges(porcelain []byte) string {
 		return strings.Join(names, ", ")
 	}
 	return fmt.Sprintf("%d files", len(names))
+}
+
+var credWarned sync.Once
+
+// warnCredentialInRemote says, once, that the memory remote's URL carries a
+// credential: it sits in the memory repo's .git/config in plain text and
+// used to reach the logs. The credential helper (MEMORY_GIT_TOKEN) keeps it
+// out of both.
+func warnCredentialInRemote(remote string) {
+	if !gitsafe.HasCredential(remote) {
+		return
+	}
+	credWarned.Do(func() {
+		slog.Warn("memory git: the remote URL contains a credential; set MEMORY_GIT_TOKEN (and MEMORY_GIT_USER) "+
+			"instead and remove it from the URL with: git -C <memory dir> remote set-url origin <url without the token>",
+			"remote", gitsafe.RedactURL(remote))
+	})
 }

@@ -462,7 +462,7 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 	if err == nil {
 		currentURL := strings.TrimSpace(string(out))
 		if currentURL == expectedURL {
-			slog.Debug("workspace: git remote already correct", "repo", repoName, "url", expectedURL)
+			slog.Debug("workspace: git remote already correct", "repo", repoName, "url", gitsafe.RedactURL(expectedURL))
 			return
 		}
 		slog.Info("workspace: updating git remote", "repo", repoName, "old", currentURL, "new", expectedURL)
@@ -477,7 +477,7 @@ func configureGitRemote(repoPath, repoName, expectedURL string) {
 	}
 
 	// No remote — add it
-	slog.Info("workspace: adding git remote", "repo", repoName, "url", expectedURL)
+	slog.Info("workspace: adding git remote", "repo", repoName, "url", gitsafe.RedactURL(expectedURL))
 	addRemote := gitsafe.Command("remote", "add", "origin", expectedURL)
 	addRemote.Dir = repoPath
 	var addRemoteStderr strings.Builder

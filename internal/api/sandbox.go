@@ -80,6 +80,11 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 // path.
 func sandboxPrivatePaths(cfg *config.Config) []string {
 	paths := []string{cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot}
+	if cfg.MemoryDir != "" {
+		// The memory files are readable; their git internals are not (a
+		// remote URL in .git/config can carry the push credential).
+		paths = append(paths, filepath.Join(cfg.MemoryDir, ".git"))
+	}
 	if d := codexLoginDir(cfg); d != "" {
 		// The whole directory: a refresh writes the rotated token to a temp
 		// file next to auth.json first.

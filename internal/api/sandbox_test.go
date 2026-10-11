@@ -42,6 +42,7 @@ func TestSandboxPrivatePaths(t *testing.T) {
 		cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot,
 		filepath.Join(cfg.ProjectDir, ".env"), filepath.Join(cfg.ProjectDir, ".env.prod"),
 		filepath.Join(cfg.DataDir, ".env.local"), // listed before /set creates it
+		filepath.Join(cfg.MemoryDir, ".git"),     // a remote URL there can carry the push token
 	} {
 		if !got[want] {
 			t.Errorf("missing %s", want)
