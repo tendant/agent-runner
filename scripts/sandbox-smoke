@@ -296,6 +296,11 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	[ -n "$HOSTIP" ] && expect private_net blocked
 	[ -n "$HOSTIP" ] && expect private_direct blocked
 	expect metadata_direct blocked
+	# The gateway's decisions reach the session's audit log.
+	AUDIT=$(ls "$DATA"/logs/*_agent_"$SESSION".md 2>/dev/null | head -1)
+	if [ -n "$AUDIT" ] && grep -q '^## Network' "$AUDIT" && grep -q '^| `169.254.169.254` | 0 | [1-9]' "$AUDIT" &&
+		grep -q '^| `github.com` | [1-9]' "$AUDIT"; then pass "audit log lists the refused metadata address and allowed github.com"
+	else fail "no Network section with the gateway's decisions in ${AUDIT:-the audit log}"; fi
 	if [ "$AGENTBOX_EGRESS" = transparent ]; then
 		expect egress_bypass allowed
 		expect_env egress_proxy ""
