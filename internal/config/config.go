@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,16 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+// defaultSandboxBackend is agentbox (rootless gVisor) on Linux, where
+// agent-runner runs as a normal user and isobox's gVisor needs root; isobox's
+// native backend (Seatbelt) elsewhere.
+func defaultSandboxBackend() string {
+	if goruntime.GOOS == "linux" {
+		return "agentbox"
+	}
+	return ""
+}
 
 // defaultDataDir returns the default base directory for all mutable
 // agent-runner data: the process working directory. One runner directory is
@@ -106,7 +117,7 @@ type AgentConfig struct {
 	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
 	CLI                 string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
 	SandboxMode         string   // AGENT_SANDBOX — off (default) | permissive | strict
-	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — isobox backend: "" (native) | seatbelt | gvisor
+	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — agentbox (default on Linux) | "" (isobox native) | seatbelt | gvisor (isobox, root)
 	SandboxIsobox       string   // AGENT_SANDBOX_ISOBOX — path to the isobox binary (default "isobox")
 	SandboxPolicyFile   string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
@@ -257,6 +268,7 @@ func defaultConfigForDataDir(data string) *Config {
 			CLI:                 "pi",
 			PlannerEnabled:      true,
 			SandboxModelProxy:   true,
+			SandboxBackend:      defaultSandboxBackend(),
 			MaxQueueSize:        10,
 			MaxConcurrent:       1,
 			TasksEnabled:        true,
