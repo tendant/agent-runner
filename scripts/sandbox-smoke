@@ -391,6 +391,63 @@ if [ "$BACKEND" = gvisor ]; then
 	"failed|"*"cannot enter $PRIV "*"chmod o+x $PRIV"*) pass "rejected, naming $PRIV and chmod o+x" ;;
 	*) fail "want a rejection naming $PRIV, got: $RESULT" ;;
 	esac
+
+	# The real codex CLI on a ChatGPT login, through the model proxy, against
+	# a fake ChatGPT backend: codex must start under scoped reads (node and
+	# its npm install under the home), reach the proxy, and the proxy must
+	# attach the login's token and account id.
+	step "runner, codex on a ChatGPT login (fake backend)"
+	CODEX_BIN=$(command -v codex || true)
+	if [ -z "$CODEX_BIN" ]; then
+		echo "  skip  codex not installed"
+	else
+		cat >"$W/fake-chatgpt.py" <<'PY'
+import http.server, json, sys
+log, portfile = sys.argv[1], sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0); self.rfile.read(n)
+        with open(log, "a") as f:
+            f.write("%s|%s|%s\n" % (self.path, self.headers.get("Authorization"), self.headers.get("ChatGPT-Account-ID")))
+        if not self.path.endswith("/responses"):
+            self.send_response(404); self.end_headers(); return
+        self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+        for ev in ({"type": "response.created", "response": {"id": "r1"}},
+                   {"type": "response.output_item.done", "item": {"type": "message", "role": "assistant", "id": "m1",
+                    "content": [{"type": "output_text", "text": "PONG-FROM-FAKE-CHATGPT. TASK: DONE"}]}},
+                   {"type": "response.completed", "response": {"id": "r1", "usage": {"input_tokens": 1, "input_tokens_details": None,
+                    "output_tokens": 1, "output_tokens_details": None, "total_tokens": 2}}}):
+            self.wfile.write(("event: %s\ndata: %s\n\n" % (ev["type"], json.dumps(ev))).encode())
+    do_GET = do_POST
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(portfile, "w").write(str(srv.server_port))
+srv.serve_forever()
+PY
+		python3 "$W/fake-chatgpt.py" "$W/chatgpt.log" "$W/chatgpt.port" &
+		FAKE_CHATGPT=$!
+		for _ in $(seq 50); do [ -s "$W/chatgpt.port" ] && break; sleep 0.1; done
+		mkdir -p "$W/codex-login"
+		ACCESS=$(python3 -c 'import base64,json,time;e=lambda d:base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=");print(e({"alg":"none"})+"."+e({"exp":int(time.time())+86400})+".sig")')
+		printf '{"auth_mode":"chatgpt","tokens":{"access_token":"%s","refresh_token":"smoke-refresh","id_token":"%s","account_id":"acct-smoke"},"last_refresh":"2026-01-01T00:00:00Z"}\n' "$ACCESS" "$ACCESS" >"$W/codex-login/auth.json"
+		SAVED_PATH=$PATH_FOR_RUNNER
+		PATH_FOR_RUNNER="$(dirname "$CODEX_BIN"):$(dirname "$(command -v node)"):$PATH_FOR_RUNNER"
+		start_runner permissive AGENT_CLI=codex AGENT_SANDBOX_CODEX_LOGIN="$W/codex-login/auth.json" \
+			AGENT_SANDBOX_CHATGPT_URL="http://127.0.0.1:$(cat "$W/chatgpt.port")"
+		run_task "say pong" 180
+		stop_runner
+		PATH_FOR_RUNNER=$SAVED_PATH
+		kill "$FAKE_CHATGPT" 2>/dev/null
+		if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
+		if grep -q "^/backend-api/codex/responses|Bearer $ACCESS|acct-smoke$" "$W/chatgpt.log" 2>/dev/null; then
+			pass "backend got /backend-api/codex/responses with the login's token and account id"
+		else
+			fail "backend requests: $(cut -d'|' -f1,3 "$W/chatgpt.log" 2>/dev/null | sort -u | tr '\n' ' ')"
+		fi
+		case $LAST_BODY in *PONG-FROM-FAKE-CHATGPT*) pass "codex returned the backend's reply" ;; *) fail "no reply from codex in the session" ;; esac
+		if grep -rqs "smoke-refresh" "$DATA/tmp" "$DATA/state/sandbox"; then fail "the login's refresh token is in the run's files"
+		else pass "the login's refresh token is not in the run's files"; fi
+	fi
 fi
 
 step "runner, no claude credentials"

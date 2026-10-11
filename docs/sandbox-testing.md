@@ -8,7 +8,9 @@ credentials, the runner's own files, other sessions, writes outside the workspac
 and that a claude run without credentials fails up front. On gVisor they also run `strict` mode
 and a fork bomb under `AGENT_SANDBOX_MEMORY=512m` (must be killed) and one under `AGENT_SANDBOX_PIDS=256`
 (`fork()` must fail with `EAGAIN`), neither harming the host, and a data dir under a 0750
-home not owned by root (every run must be rejected, naming the directory).
+home not owned by root (every run must be rejected, naming the directory). `make sandbox-gvisor`
+also installs the real codex CLI with npm under the home and runs it on a fake ChatGPT login
+against a fake backend, through the model proxy.
 
 ## A. 自动化测试（任何机器）
 
