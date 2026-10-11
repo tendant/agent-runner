@@ -6,8 +6,9 @@
 #                                    (billed; needs CLAUDE_CODE_OAUTH_TOKEN in
 #                                    the env or in .env, from `claude setup-token`)
 #
-# 1. Conformance: what this host's backend actually enforces (Seatbelt on
-#    macOS, gVisor on Linux), gated on .github/sandbox-baselines/<backend>.json.
+# 1. Conformance: what agentbox actually enforces on this host (gVisor on
+#    Linux, Seatbelt on macOS), gated on
+#    .github/sandbox-baselines/agentbox-<backend>.json.
 # 2. Runner probes: the real agent-runner, with a fake `claude` that tries to
 #    escape (read ~/.ssh and the runner's .env, write outside the workspace,
 #    reach the network, ...) and checks it reaches the model only through the
@@ -15,14 +16,13 @@
 #    allow, under the default policy and with egress "none".
 #
 # Env:
-#   ISOBOX       isobox binary; default: built at the ref CI pins, cached
 #   KEEP=1       keep the work dir (runner logs, probe reports)
 #   SMOKE_PORT   runner port (default 18093)
-#   AGENT_RUNNER_BIN, CONFORMANCE_BIN   prebuilt binaries (scripts/sandbox-gvisor)
-#   AGENTBOX_EGRESS  agentbox egress mode required of this host: transparent
-#                (default: every connection reaches the gateway; needs ip, nft
-#                and agentbox-unshare where AppArmor restricts user
-#                namespaces) or proxy
+#   AGENT_RUNNER_BIN, CONFORMANCE_BIN   prebuilt binaries (scripts/sandbox-agentbox)
+#   AGENTBOX_EGRESS  egress mode required of this host: transparent (the
+#                default on Linux: every connection reaches the gateway; needs
+#                ip, nft and agentbox-unshare where AppArmor restricts user
+#                namespaces) or proxy (the only one on macOS)
 #
 # The probes record outcomes and byte counts only, never file contents.
 
@@ -34,26 +34,20 @@ REAL=0
 [ "${1:-}" = "--real" ] && REAL=1
 PORT=${SMOKE_PORT:-18093}
 
+# agentbox's backend for this OS. scripts/sandbox-agentbox runs the Linux
+# one in Docker from any host.
 case "$(uname -s)" in
-Darwin) BACKEND=seatbelt ;;
-Linux) BACKEND=gvisor ;;
+Darwin) BACKEND=seatbelt AGENTBOX_EGRESS=${AGENTBOX_EGRESS:-proxy} ;;
+Linux) BACKEND=gvisor AGENTBOX_EGRESS=${AGENTBOX_EGRESS:-transparent} ;;
 *) echo "unsupported OS: $(uname -s)" >&2; exit 2 ;;
 esac
-# SANDBOX_BACKEND=agentbox: rootless gVisor through agentbox (Linux, as a
-# normal user; scripts/sandbox-agentbox runs it in Docker).
-BACKEND=${SANDBOX_BACKEND:-$BACKEND}
-if [ "$BACKEND" = gvisor ] && [ "$(id -u)" != 0 ]; then
-	echo "gVisor through isobox needs root: run as root, or use scripts/sandbox-gvisor (Docker)" >&2
+if [ "$(id -u)" = 0 ]; then
+	echo "agentbox runs as a normal user, as agent-runner does: not as root" >&2
 	exit 2
 fi
-if [ "$BACKEND" = agentbox ] && [ "$(id -u)" = 0 ]; then
-	echo "agentbox is rootless: run as a normal user" >&2
-	exit 2
-fi
-# GV: the gVisor checks (strict, fork bombs, ...) apply to both gVisor paths.
-GV=0; case $BACKEND in gvisor | agentbox) GV=1 ;; esac
-AGENTBOX_EGRESS=${AGENTBOX_EGRESS:-transparent}
-EGRESS_MODE=; [ "$BACKEND" = agentbox ] && EGRESS_MODE=$AGENTBOX_EGRESS
+# GV: the checks only gVisor can pass (limits: fork bombs).
+GV=0; [ "$BACKEND" = gvisor ] && GV=1
+EGRESS_MODE=$AGENTBOX_EGRESS
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/sandbox-smoke.XXXXXX")
 W=$(cd "$W" && pwd -P)
@@ -71,8 +65,6 @@ trap cleanup EXIT
 # Another project in the host user's home: scoped reads must hide it.
 OTHER=$HOME/.sandbox-smoke-other-project.$$
 mkdir -p "$OTHER" && echo "OTHER-PROJECT-MARKER" >"$OTHER/notes.txt"
-# Scoped reads are the default on Linux (AGENT_SANDBOX_READ).
-SCOPED=0; [ "$(uname)" = Linux ] && SCOPED=1
 
 FAILED=0
 pass() { printf '  ok    %s\n' "$*"; }
@@ -82,31 +74,17 @@ step() { printf '\n== %s\n' "$*"; }
 # --- binaries ----------------------------------------------------------------
 
 step "build"
-if [ -z "${ISOBOX:-}" ] && [ "$BACKEND" != agentbox ]; then
-	REF=$(sed -n 's/^  ISOBOX_REF: \([0-9a-f]*\).*/\1/p' .github/workflows/sandbox.yml)
-	ISOBOX_URL=$(sed -n 's/^  ISOBOX_REPO: \([^ ]*\).*/\1/p' .github/workflows/sandbox.yml)
-	[ -n "$REF" ] || { echo "no ISOBOX_REF in .github/workflows/sandbox.yml" >&2; exit 2; }
-	CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner/isobox-$REF
-	if [ ! -x "$CACHE/isobox" ]; then
-		echo "building isobox $REF (Go fetches the toolchain it needs)"
-		rm -rf "$CACHE" && git clone -q "$ISOBOX_URL" "$CACHE"
-		git -C "$CACHE" checkout -q "$REF"
-		(cd "$CACHE" && go build -o isobox ./cmd/isobox)
-	fi
-	ISOBOX=$CACHE/isobox
-fi
 AGENT_RUNNER_BIN=${AGENT_RUNNER_BIN:-$W/agent-runner}
 CONFORMANCE_BIN=${CONFORMANCE_BIN:-$W/sandbox-conformance}
 [ -x "$AGENT_RUNNER_BIN" ] || go build -o "$AGENT_RUNNER_BIN" ./cmd/server
 [ -x "$CONFORMANCE_BIN" ] || go build -o "$CONFORMANCE_BIN" ./cmd/sandbox-conformance
-[ "$BACKEND" = agentbox ] && echo "agentbox: rootless runsc $(runsc --version 2>/dev/null | head -1)" || echo "isobox: $ISOBOX"
+[ "$BACKEND" = gvisor ] && echo "agentbox: gVisor, $(runsc --version 2>/dev/null | head -1)" || echo "agentbox: Seatbelt"
 
 # --- 1. conformance ------------------------------------------------------------
 
 step "conformance ($BACKEND)"
-if (cd "$W" && "$CONFORMANCE_BIN" --isobox "${ISOBOX:-}" --backend "$BACKEND" \
-	--report "report-$BACKEND.json" --manifest "manifest-$BACKEND.json" \
-	--require-file "$REPO/.github/sandbox-baselines/$BACKEND.json" 2>&1 | grep -v notrun); then
+if (cd "$W" && "$CONFORMANCE_BIN" --report "report-$BACKEND.json" --manifest "manifest-$BACKEND.json" \
+	--require-file "$REPO/.github/sandbox-baselines/agentbox-$BACKEND.json" 2>&1 | grep -v notrun); then
 	pass "baseline capabilities proven"
 else
 	fail "baseline capabilities not proven (see above)"
@@ -229,7 +207,7 @@ start_runner() {
 	(cd "$RUN" && exec env -i PATH="$PATH_FOR_RUNNER" HOME="$HOME" \
 		DATA_DIR="$DATA" API_BIND="127.0.0.1:$PORT" AGENT_CLI=claude \
 		AGENT_PLANNER_ENABLED=false AGENT_REVIEWER_ENABLED=false AGENT_MEMORY_CURATION_ENABLED=false \
-		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" AGENT_SANDBOX_ISOBOX="${ISOBOX:-}" AGENT_SANDBOX_BACKEND="$BACKEND" \
+		AGENT_MAX_ITERATIONS=1 AGENT_SANDBOX="$mode" \
 		AGENT_SANDBOX_EGRESS_MODE="$EGRESS_MODE" FAKE_SECRET_TOKEN=leak-me "$@" "$AGENT_RUNNER_BIN" >"$W/runner-$mode.log" 2>&1) &
 	RUNNER_PID=$!
 	for _ in $(seq 100); do curl -sf "localhost:$PORT/health" >/dev/null && return 0; sleep 0.1; done
@@ -300,39 +278,35 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 		write_outside symlink metadata_ip; do
 		expect $n blocked
 	done
-	# With no run dir under /tmp, gVisor gives the sandbox a private /tmp:
-	# the write succeeds there, so check the host instead.
+	# gVisor gives the sandbox a private /tmp (the write succeeds there),
+	# Seatbelt refuses it: either way the host's /tmp must not change.
 	if [ -e /tmp/sandbox-smoke-escaped ]; then fail "write_tmp reached the host's /tmp"
 	elif grep -q '^allowed|write_tmp|' "$REPORT"; then pass "write_tmp stayed in the sandbox's own /tmp"
 	else expect write_tmp blocked; fi
 	for n in memory write_workspace write_config; do expect $n allowed; done
-	# agentbox sandboxes have no network; the model proxy is reached through
-	# the forwarder (model_proxy below).
+	# No direct network: egress only through the run's gateway, the model
+	# through its proxy (model_proxy below). git over HTTPS works; the host's
+	# private address and metadata are refused, proxy settings honoured or
+	# not. Transparent: a program ignoring them still gets public hosts,
+	# through the gateway; proxy: it gets nothing.
 	expect internet allowed
-	if [ "$BACKEND" = agentbox ]; then
-		# Egress only through the run's gateway: git over HTTPS works; the
-		# host's private address and metadata are refused, proxy settings
-		# honoured or not. Transparent: a program ignoring them still gets
-		# public hosts, through the gateway; proxy: it gets nothing.
-		expect git_https allowed
-		[ -n "$HOSTIP" ] && expect private_net blocked
-		[ -n "$HOSTIP" ] && expect private_direct blocked
-		expect metadata_direct blocked
-		if [ "$AGENTBOX_EGRESS" = transparent ]; then
-			expect egress_bypass allowed
-			expect_env egress_proxy ""
-		else
-			expect egress_bypass blocked
-			expect_env egress_proxy present
-		fi
+	expect git_https allowed
+	[ -n "$HOSTIP" ] && expect private_net blocked
+	[ -n "$HOSTIP" ] && expect private_direct blocked
+	expect metadata_direct blocked
+	if [ "$AGENTBOX_EGRESS" = transparent ]; then
+		expect egress_bypass allowed
+		expect_env egress_proxy ""
+	else
+		expect egress_bypass blocked
+		expect_env egress_proxy present
 	fi
 	[ -e /etc/shadow ] && expect etc_shadow blocked
-	if [ "$SCOPED" = 1 ]; then # what scoped reads hide, and what they must not break
-		for n in host_home other_project; do expect $n blocked; done
-		[ -e /etc/os-release ] && expect etc_config allowed
-		command -v git >/dev/null && expect tool_git allowed
-		expect tool_python allowed
-	fi
+	# What scoped reads hide, and what they must not break.
+	for n in host_home other_project; do expect $n blocked; done
+	[ -e /etc/os-release ] && expect etc_config allowed
+	command -v git >/dev/null && expect tool_git allowed
+	expect tool_python allowed
 	expect_env home "$DATA/state/sandbox/home/*"
 	expect_env config_dir "$DATA/state/sandbox/home/*/.claude"
 	expect_env codex_home "$DATA/state/sandbox/home/*/.codex"
@@ -349,9 +323,9 @@ if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token; then
 	[ "$leftover" = 0 ] && pass "no lease files left" || fail "$leftover lease files left"
 fi
 
-# agentbox: the other egress mode, the gateway's proxy path.
-if [ "$BACKEND" = agentbox ] && [ "$AGENTBOX_EGRESS" = transparent ]; then
-	step "runner, agentbox egress through HTTPS_PROXY only"
+# Linux: the other egress mode, the gateway's proxy path.
+if [ "$AGENTBOX_EGRESS" = transparent ]; then
+	step "runner, egress through HTTPS_PROXY only"
 	if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_SANDBOX_EGRESS_MODE=proxy; then
 		expect internet allowed
 		expect egress_bypass blocked
@@ -360,34 +334,31 @@ if [ "$BACKEND" = agentbox ] && [ "$AGENTBOX_EGRESS" = transparent ]; then
 	fi
 fi
 
-# agentbox: the default above already has no network.
-[ "$BACKEND" = agentbox ] || step "runner, egress none"
-[ "$BACKEND" = agentbox ] || if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
+step "runner, egress none"
+if probe permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token \
 	AGENT_SANDBOX_POLICY='{"version":1,"network":{"egress":"none"}}'; then
 	expect internet blocked
 	expect metadata_ip blocked
+	expect egress_bypass blocked
 	expect write_workspace allowed # unset grants inherit the default policy
-	# No network, so no reachable proxy: the token is passed to claude instead.
-	expect_env proxy_url ""
-	expect_env token present
+	# The model channel needs no network: claude still gets the proxy.
+	expect_env proxy_url present
+	expect_env token ""
+	expect model_proxy allowed
+fi
+
+# Strict: every capability the policy needs, proven by the conformance run.
+step "runner, strict (evidence from the conformance run)"
+if probe strict CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_SANDBOX_EVIDENCE="$W/report-$BACKEND.json"; then
+	expect runner_env blocked
+	expect write_outside blocked
+	expect write_workspace allowed
 fi
 
 if [ "$GV" = 1 ]; then
-	# gVisor proves process.containment, which every run requires, so strict
-	# mode can run here (on Seatbelt it rejects every run).
-	step "runner, strict (evidence from the conformance run)"
-	if probe strict CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token AGENT_SANDBOX_EVIDENCE="$W/report-$BACKEND.json"; then
-		expect runner_env blocked
-		expect write_outside blocked
-		expect write_workspace allowed
-	fi
-fi
-
-if [ "$GV" = 1 ]; then
-	# Two fork bombs. isobox's pids limit caps only the Sentry's host threads,
-	# so on gVisor the pids cap is RLIMIT_NPROC, set by the nproc shim inside
-	# the sandbox. Either cap must contain the bomb: under the memory cap the
-	# sandbox is killed; under the pids cap fork() fails and the run finishes.
+	# Two fork bombs: under the memory cap (a systemd user scope) the sandbox
+	# is killed; under the pids cap (RLIMIT_NPROC inside gVisor) fork() fails
+	# and the run finishes. macOS has neither cap.
 	mem_avail() { awk '/^MemAvailable:/ { print $2 * 1024 }' /proc/meminfo; }
 	# bomb MESSAGE ENV...: run one task with host memory sampled. Sets RESULT,
 	# ELAPSED and DROP (the largest fall in host available memory).
@@ -426,7 +397,7 @@ if [ "$GV" = 1 ]; then
 	}
 
 	step "runner, fork bomb under AGENT_SANDBOX_MEMORY=512m"
-	if [ "$BACKEND" = agentbox ] && ! systemd-run --user --scope --quiet true 2>/dev/null; then
+	if ! systemd-run --user --scope --quiet true 2>/dev/null; then
 		# agentbox caps memory through a systemd user scope and refuses a
 		# memory limit without one (checked by its own tests).
 		echo "  skip  no systemd user scope here"
@@ -453,45 +424,31 @@ if [ "$GV" = 1 ]; then
 	if [ -n "$BOMB" ] && grep -q "Resource temporarily unavailable" "$BOMB"; then pass "fork() failed with EAGAIN"
 	else fail "no EAGAIN from fork() (${BOMB:-no bomb.txt})"; fi
 	bomb_cleanup
+fi
 
-	step "runner, data dir under a private home"
-	PRIV=$W/private
-	if [ "$BACKEND" = agentbox ]; then
-		# Rootless: the sandbox runs as the runner's own user, so a private
-		# (0700) home is no obstacle.
-		install -d -m 0700 "$PRIV"
-		DATA_SAVED=$DATA DATA=$PRIV/data
-		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
-		run_task "sandbox smoke probe" 60
-		stop_runner
-		DATA=$DATA_SAVED
-		if [ "${RESULT%%|*}" = completed ]; then pass "runs under a 0700 home owned by the runner"
-		else fail "under a 0700 home: $RESULT"; fi
-	else
-		# isobox: the agent is root without capabilities, so a 0750 parent not
-		# owned by root must be named, not fail every session without saying why.
-		install -d -o nobody -g "$(id -gn nobody)" -m 0750 "$PRIV"
-		DATA_SAVED=$DATA DATA=$PRIV/data
-		start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
-		run_task "sandbox smoke probe" 20
-		stop_runner
-		DATA=$DATA_SAVED
-		case $RESULT in
-		"failed|"*"cannot enter $PRIV "*"chmod o+x $PRIV"*) pass "rejected, naming $PRIV and chmod o+x" ;;
-		*) fail "want a rejection naming $PRIV, got: $RESULT" ;;
-		esac
-	fi
+# The sandbox runs as the runner's own user, so a private (0700) home is no
+# obstacle.
+step "runner, data dir under a private home"
+PRIV=$W/private
+install -d -m 0700 "$PRIV"
+DATA_SAVED=$DATA DATA=$PRIV/data
+start_runner permissive CLAUDE_CODE_OAUTH_TOKEN=smoke-fake-token
+run_task "sandbox smoke probe" 60
+stop_runner
+DATA=$DATA_SAVED
+if [ "${RESULT%%|*}" = completed ]; then pass "runs under a 0700 home owned by the runner"
+else fail "under a 0700 home: $RESULT"; fi
 
-	# The real codex CLI on a ChatGPT login, through the model proxy, against
-	# a fake ChatGPT backend: codex must start under scoped reads (node and
-	# its npm install under the home), reach the proxy, and the proxy must
-	# attach the login's token and account id.
-	step "runner, codex on a ChatGPT login (fake backend)"
-	CODEX_BIN=$(command -v codex || true)
-	if [ -z "$CODEX_BIN" ]; then
-		echo "  skip  codex not installed"
-	else
-		cat >"$W/fake-chatgpt.py" <<'PY'
+# The real codex CLI on a ChatGPT login, through the model proxy, against
+# a fake ChatGPT backend: codex must start under scoped reads (node and
+# its npm install under the home), reach the proxy, and the proxy must
+# attach the login's token and account id.
+step "runner, codex on a ChatGPT login (fake backend)"
+CODEX_BIN=$(command -v codex || true)
+if [ -z "$CODEX_BIN" ]; then
+	echo "  skip  codex not installed"
+else
+	cat >"$W/fake-chatgpt.py" <<'PY'
 import http.server, json, sys
 log, portfile = sys.argv[1], sys.argv[2]
 class H(http.server.BaseHTTPRequestHandler):
@@ -514,30 +471,29 @@ srv = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(portfile, "w").write(str(srv.server_port))
 srv.serve_forever()
 PY
-		python3 "$W/fake-chatgpt.py" "$W/chatgpt.log" "$W/chatgpt.port" &
-		FAKE_CHATGPT=$!
-		for _ in $(seq 50); do [ -s "$W/chatgpt.port" ] && break; sleep 0.1; done
-		mkdir -p "$W/codex-login"
-		ACCESS=$(python3 -c 'import base64,json,time;e=lambda d:base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=");print(e({"alg":"none"})+"."+e({"exp":int(time.time())+86400})+".sig")')
-		printf '{"auth_mode":"chatgpt","tokens":{"access_token":"%s","refresh_token":"smoke-refresh","id_token":"%s","account_id":"acct-smoke"},"last_refresh":"2026-01-01T00:00:00Z"}\n' "$ACCESS" "$ACCESS" >"$W/codex-login/auth.json"
-		SAVED_PATH=$PATH_FOR_RUNNER
-		PATH_FOR_RUNNER="$(dirname "$CODEX_BIN"):$(dirname "$(command -v node)"):$PATH_FOR_RUNNER"
-		start_runner permissive AGENT_CLI=codex AGENT_SANDBOX_CODEX_LOGIN="$W/codex-login/auth.json" \
-			AGENT_SANDBOX_CHATGPT_URL="http://127.0.0.1:$(cat "$W/chatgpt.port")"
-		run_task "say pong" 180
-		stop_runner
-		PATH_FOR_RUNNER=$SAVED_PATH
-		kill "$FAKE_CHATGPT" 2>/dev/null
-		if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
-		if grep -q "^/backend-api/codex/responses|Bearer $ACCESS|acct-smoke$" "$W/chatgpt.log" 2>/dev/null; then
-			pass "backend got /backend-api/codex/responses with the login's token and account id"
-		else
-			fail "backend requests: $(cut -d'|' -f1,3 "$W/chatgpt.log" 2>/dev/null | sort -u | tr '\n' ' ')"
-		fi
-		case $LAST_BODY in *PONG-FROM-FAKE-CHATGPT*) pass "codex returned the backend's reply" ;; *) fail "no reply from codex in the session" ;; esac
-		if grep -rqs "smoke-refresh" "$DATA/tmp" "$DATA/state/sandbox"; then fail "the login's refresh token is in the run's files"
-		else pass "the login's refresh token is not in the run's files"; fi
+	python3 "$W/fake-chatgpt.py" "$W/chatgpt.log" "$W/chatgpt.port" &
+	FAKE_CHATGPT=$!
+	for _ in $(seq 50); do [ -s "$W/chatgpt.port" ] && break; sleep 0.1; done
+	mkdir -p "$W/codex-login"
+	ACCESS=$(python3 -c 'import base64,json,time;e=lambda d:base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=");print(e({"alg":"none"})+"."+e({"exp":int(time.time())+86400})+".sig")')
+	printf '{"auth_mode":"chatgpt","tokens":{"access_token":"%s","refresh_token":"smoke-refresh","id_token":"%s","account_id":"acct-smoke"},"last_refresh":"2026-01-01T00:00:00Z"}\n' "$ACCESS" "$ACCESS" >"$W/codex-login/auth.json"
+	SAVED_PATH=$PATH_FOR_RUNNER
+	PATH_FOR_RUNNER="$(dirname "$CODEX_BIN"):$(dirname "$(command -v node)"):$PATH_FOR_RUNNER"
+	start_runner permissive AGENT_CLI=codex AGENT_SANDBOX_CODEX_LOGIN="$W/codex-login/auth.json" \
+		AGENT_SANDBOX_CHATGPT_URL="http://127.0.0.1:$(cat "$W/chatgpt.port")"
+	run_task "say pong" 180
+	stop_runner
+	PATH_FOR_RUNNER=$SAVED_PATH
+	kill "$FAKE_CHATGPT" 2>/dev/null
+	if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
+	if grep -q "^/backend-api/codex/responses|Bearer $ACCESS|acct-smoke$" "$W/chatgpt.log" 2>/dev/null; then
+		pass "backend got /backend-api/codex/responses with the login's token and account id"
+	else
+		fail "backend requests: $(cut -d'|' -f1,3 "$W/chatgpt.log" 2>/dev/null | sort -u | tr '\n' ' ')"
 	fi
+	case $LAST_BODY in *PONG-FROM-FAKE-CHATGPT*) pass "codex returned the backend's reply" ;; *) fail "no reply from codex in the session" ;; esac
+	if grep -rqs "smoke-refresh" "$DATA/tmp" "$DATA/state/sandbox"; then fail "the login's refresh token is in the run's files"
+	else pass "the login's refresh token is not in the run's files"; fi
 fi
 
 step "runner, no claude credentials"

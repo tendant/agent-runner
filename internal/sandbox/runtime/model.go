@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
@@ -71,8 +71,8 @@ var modelCredentialEnv = map[string][]string{
 type modelRun struct {
 	proxies   map[string]*proxy.Proxy
 	chatgpt   bool              // the OpenAI channel is a ChatGPT login (codex only)
-	sockDir   string            // agentbox: the proxies' Unix sockets
-	inSandbox map[string]string // agentbox: provider -> forwarder address
+	sockDir   string            // Linux: the proxies' Unix sockets
+	inSandbox map[string]string // Linux: provider -> forwarder address
 }
 
 func (m *modelRun) close() {
@@ -84,17 +84,16 @@ func (m *modelRun) close() {
 	}
 }
 
-// startModels starts a proxy for each configured provider, or none when the
-// policy has no outbound network, which leaves a proxy unreachable (isobox
-// cannot open a single port into the sandbox).
+// startModels starts a proxy for each configured provider. The sandbox
+// reaches them with no network: on Linux (gVisor, its own network stack)
+// over Unix sockets mounted into it, on macOS (Seatbelt, the host's stack)
+// at their loopback ports, which are all it may connect to.
 func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) (*modelRun, error) {
-	// isobox needs outbound network to reach a proxy; agentbox reaches it
-	// over a mounted Unix socket, with no network at all.
-	if len(r.cfg.Models) == 0 || (spec.Network.Egress != sandbox.EgressOutbound && !r.agentbox()) {
+	if len(r.cfg.Models) == 0 {
 		return nil, nil
 	}
 	m := &modelRun{proxies: map[string]*proxy.Proxy{}}
-	if r.agentbox() {
+	if goruntime.GOOS == "linux" {
 		// A short private directory: Unix socket paths are limited to ~108
 		// bytes, which a run's state directory can come close to.
 		base := os.Getenv("XDG_RUNTIME_DIR")
@@ -155,7 +154,7 @@ func (m *modelRun) url(name string) string {
 }
 
 // routes maps the forwarder's in-sandbox addresses to the proxies' sockets
-// (agentbox); nil otherwise.
+// (Linux); nil otherwise.
 func (m *modelRun) routes() map[string]string {
 	if m == nil || m.sockDir == "" {
 		return nil
@@ -165,6 +164,25 @@ func (m *modelRun) routes() map[string]string {
 		r[a] = filepath.Join(m.sockDir, name+".sock")
 	}
 	return r
+}
+
+// ports are the proxies' loopback ports (macOS); nil otherwise.
+func (m *modelRun) ports() []int {
+	if m == nil || m.sockDir != "" {
+		return nil
+	}
+	var out []int
+	for _, p := range m.proxies {
+		u, err := url.Parse(p.BaseURL())
+		if err != nil {
+			continue
+		}
+		if n, err := strconv.Atoi(u.Port()); err == nil {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // envAllow drops the channels' credential variables from an env allowlist.
@@ -312,21 +330,8 @@ func (m *modelRun) names() string {
 	return strings.Join(n, ",")
 }
 
-// modelListenHost is where the proxies listen. Seatbelt shares the host's
-// network stack, so loopback. gVisor has its own, where 127.0.0.1 is the
-// sandbox itself; it reaches the host by the host's address. A proxy accepts
-// only its run's token, which lives as long as the run.
-func modelListenHost() string {
-	if goruntime.GOOS == "darwin" {
-		return "127.0.0.1"
-	}
-	addrs, err := net.InterfaceAddrs()
-	if err == nil {
-		for _, a := range addrs {
-			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLoopback() && !n.IP.IsLinkLocalUnicast() {
-				return n.IP.String()
-			}
-		}
-	}
-	return "127.0.0.1"
-}
+// modelListenHost is where the proxies' TCP listeners are: loopback. On
+// macOS the sandbox shares the host's network stack and reaches them there;
+// on Linux it uses the Unix sockets. A proxy accepts only its run's token,
+// which lives as long as the run.
+func modelListenHost() string { return "127.0.0.1" }

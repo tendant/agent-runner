@@ -1,5 +1,5 @@
 // Package sandbox defines agent-runner's sandbox policy model. The runner owns
-// policy; backends (e.g. isobox) only declare and enforce capabilities. A strict
+// policy; backends (agentbox) only declare and enforce capabilities. A strict
 // run whose policy needs a capability the backend lacks never starts.
 package sandbox
 

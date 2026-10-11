@@ -1,19 +1,12 @@
 name: sandbox
 on:
   pull_request:
-    paths: ["internal/sandbox/**", "internal/executor/**", "cmd/sandbox-*/**", ".github/**"]
+    paths: ["internal/sandbox/**", "internal/executor/**", "cmd/sandbox-*/**", "scripts/sandbox-*", ".github/**", "go.mod"]
   push:
     branches: [main]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
-
-env:
-  # The tendant fork: upstream c7bbd19 plus the scoped-read fix that keeps /bin
-  # (and /sbin, /lib64) in gVisor views on usrmerge hosts. Back to
-  # can1357/isobox once upstream has it. Bump deliberately.
-  ISOBOX_REPO: https://github.com/tendant/isobox
-  ISOBOX_REF: 2145756b9672559615f1605d4c2cec8a19011cf7
 
 jobs:
   unit:
@@ -24,46 +17,34 @@ jobs:
         with: { go-version-file: go.mod }
       - run: go build ./... && go test ./internal/sandbox/... ./internal/executor/...
 
-  conformance:
+  # The sandbox end to end, as a normal user (never root): agentbox's
+  # conformance suite gated on .github/sandbox-baselines/agentbox-<backend>.json,
+  # then the runner probes (scripts/sandbox-smoke).
+  smoke:
     needs: unit
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: macos-latest, backend: seatbelt }
-          - { os: ubuntu-latest, backend: gvisor }
+          - { os: ubuntu-24.04, backend: gvisor }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.26" }
-      - name: Build isobox
-        run: |
-          git clone "$ISOBOX_REPO" /tmp/isobox
-          git -C /tmp/isobox checkout "$ISOBOX_REF"
-          (cd /tmp/isobox && go build -o /tmp/isobox/isobox ./cmd/isobox)
-      - name: Install gVisor (Linux)
+        with: { go-version-file: go.mod }
+      - name: Install runsc (Linux)
         if: matrix.backend == 'gvisor'
-        # isobox needs `runsc features` (oci-seccomp), which 20250106.0 lacks;
-        # releases now ship as a tarball. isobox also runs ip/sysctl/iptables.
+        # agentbox's installer, from the module version agent-runner builds
+        # with: runsc, and the AppArmor profiles Ubuntu 24.04 needs for
+        # rootless runsc and agentbox-unshare (transparent egress).
         run: |
-          U=https://storage.googleapis.com/gvisor/releases/release/20261005.0/x86_64/gvisor.tar.bz2
-          curl -fsSL -o gvisor.tar.bz2 "$U" && curl -fsSL "$U.sha512" | sed 's/ .*/  gvisor.tar.bz2/' | sha512sum -c -
-          tar -xjf gvisor.tar.bz2
-          sudo install -m 0755 runsc /usr/local/bin/runsc && sudo cp -r gvisor-bin /usr/local/bin/
-          runsc --version && runsc features | grep -q oci-seccomp
-          which ip sysctl iptables
-      - name: Conformance
-        run: |
-          go build -o sandbox-conformance ./cmd/sandbox-conformance
-          RUN=""; [ "${{ matrix.backend }}" = gvisor ] && RUN="sudo env PATH=$PATH"
-          $RUN ./sandbox-conformance --isobox /tmp/isobox/isobox --backend ${{ matrix.backend }} \
-            --report report-${{ matrix.backend }}.json --manifest manifest-${{ matrix.backend }}.json \
-            --require-file .github/sandbox-baselines/${{ matrix.backend }}.json
+          sudo apt-get install -y -qq nftables iproute2 >/dev/null
+          bash "$(go list -m -f '{{.Dir}}' github.com/tendant/agentbox)/scripts/install-runsc.sh"
+      - name: Smoke
+        run: KEEP=1 TMPDIR="$RUNNER_TEMP" scripts/sandbox-smoke
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: conformance-${{ matrix.backend }}
-          path: |
-            report-${{ matrix.backend }}.json
-            manifest-${{ matrix.backend }}.json
+          name: sandbox-${{ matrix.backend }}
+          path: ${{ runner.temp }}/sandbox-smoke.*/report-*.json

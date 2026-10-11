@@ -90,12 +90,12 @@ longer runs `Engine.ExecuteAgent` itself: it calls `Backend.Start` and then
 
 The sandbox (docs/sandbox.md, `AGENT_SANDBOX`) confines a run **on the host
 that runs it**: the CLI process tree goes through `executor.Launcher` into
-isobox, under a `SandboxSpec` resolved from tighten-only layers. Jobs decide
+agentbox, under a `SandboxSpec` resolved from tighten-only layers. Jobs decide
 **where** a run happens. The two compose:
 
 - **`local` and `subprocess` use the sandbox as their boundary.** A `subprocess` runner applies `AGENT_SANDBOX` exactly as the in-process engine does, so the sandbox lands first and jobs reuse it.
-- **In `k8s-job` the pod is the outer boundary**, and the same `SandboxSpec` is translated into it rather than into isobox flags: `fs` into the pod's volumes and read-only root, limits into resources, `restricted` egress into a NetworkPolicy (which Kubernetes can enforce, unlike isobox today), and gVisor through a `runtimeClassName`. The runner inside the pod may still run its CLIs under isobox; that is a deployment choice, not a requirement.
-- **Capabilities and evidence carry over.** A `k8s-job` backend claims capabilities the same way an isobox backend does, so `strict` rejects a run whose spec the cluster cannot enforce (no NetworkPolicy controller, no gVisor runtime class).
+- **In `k8s-job` the pod is the outer boundary**, and the same `SandboxSpec` is translated into it rather than into an agentbox spec: `fs` into the pod's volumes and read-only root, limits into resources, `restricted` egress into a NetworkPolicy (Kubernetes enforces it at the pod; agentbox through its gateway), and gVisor through a `runtimeClassName`. The runner inside the pod may still run its CLIs under agentbox; that is a deployment choice, not a requirement.
+- **Capabilities and evidence carry over.** A `k8s-job` backend claims capabilities the same way the agentbox backend does, so `strict` rejects a run whose spec the cluster cannot enforce (no NetworkPolicy controller, no gVisor runtime class).
 - **The model proxy moves to the dispatcher.** `internal/sandbox/proxy` keeps provider credentials outside the sandbox; for jobs it runs in the dispatcher, and the job gets the proxy's URL and a per-run token instead of LLM keys in its env. This closes the `AGENT_SANDBOX_ENV_ALLOW` interim gap for jobs.
 - **Secrets delivery** (`internal/sandbox/secrets`) is how a job receives the git and memory tokens it does need, instead of `envFrom` a whole Secret.
 - **Leases and the supervisor stay per host.** The Thread run queue (one active run per thread) and sandbox leases guard runs on one machine; across pods the dispatcher's queue and journal are the owner, and Kubernetes (`activeDeadlineSeconds`, Job deletion) does the supervisor's deadline and orphan work. A `subprocess` runner keeps using leases and `sandbox-supervisor` as today.

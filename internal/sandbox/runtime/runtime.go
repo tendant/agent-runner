@@ -27,7 +27,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	abadapter "github.com/agent-runner/agent-runner/internal/sandbox/agentbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
-	"github.com/agent-runner/agent-runner/internal/sandbox/isobox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
 )
 
@@ -46,14 +45,12 @@ type Config struct {
 	Mode          sandbox.Mode
 	StateDir      string // sandbox state root (leases, per-run dirs)
 	Instance      string // runner instance id
-	IsoboxBin     string
-	IsoboxBackend string // "", "seatbelt", "gvisor", or "agentbox" (not isobox: rootless gVisor through agentbox)
-	AgentboxRunsc string // agentbox's runsc (default /usr/local/bin/runsc, else PATH)
-	// EgressAllow, with agentbox, is what "outbound" policy becomes:
-	// restricted egress through the run's gateway to these hosts (default
-	// "*": any public host; private and metadata addresses never).
+	AgentboxRunsc string // Linux: agentbox's runsc (default /usr/local/bin/runsc, else PATH)
+	// EgressAllow is what "outbound" policy becomes: restricted egress
+	// through the run's gateway to these hosts (default "*": any public
+	// host; private and metadata addresses never).
 	EgressAllow []string
-	// EgressMode, with agentbox: "auto" (default; transparent where the host
+	// EgressMode: "auto" (default; transparent where the host
 	// supports it), "transparent" (every TCP connection reaches the gateway;
 	// required) or "proxy" (only what honours HTTPS_PROXY).
 	EgressMode string
@@ -101,8 +98,8 @@ func DefaultSystemSpec() sandbox.SandboxSpec {
 				{Path: sandbox.RootTmp, Access: sandbox.ReadWrite},
 			},
 			// No deny list by default: the sandbox home is a private runner-managed
-			// directory (no real credentials), and the isobox adapter always
-			// read-denies the host user's credential directories. A deny inside a
+			// directory (no real credentials), and nothing of the host user's home
+			// is readable but the agent CLIs' installs. A deny inside a
 			// writable grant cannot be enforced for writes, so it would make
 			// fs.deny a gap under strict.
 		},
@@ -238,8 +235,8 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.StateDir == "" {
 		return nil, errors.New("sandbox: state dir required")
 	}
-	// Absolute: these reach the sandbox (CODEX_HOME, isobox's --dir and
-	// --read-deny), whose processes run in the workspace, so a relative path
+	// Absolute: these reach the sandbox (CODEX_HOME, the working directory,
+	// denied paths), whose processes run in the workspace, so a relative path
 	// (DATA_DIR defaults to ".") would name the wrong place or nothing.
 	var err error
 	if r.cfg.StateDir, err = filepath.Abs(cfg.StateDir); err != nil {
@@ -289,8 +286,8 @@ func New(cfg Config) (*Runtime, error) {
 		}
 		r.system.Resources.PIDs = n
 	}
-	if r.agentbox() && r.system.Network.Egress == sandbox.EgressOutbound {
-		// agentbox has no direct network: "outbound" is restricted egress
+	if r.system.Network.Egress == sandbox.EgressOutbound {
+		// The sandbox has no direct network: "outbound" is restricted egress
 		// through the run's gateway, to any public host unless EgressAllow
 		// lists hosts. Private, loopback, link-local and metadata addresses
 		// are refused either way.
@@ -445,18 +442,15 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			readable = append(readable, p)
 		}
 	}
-	var modelRoutes map[string]string // agentbox: set once the model proxies start
+	var modelRoutes map[string]string // set once the model proxies start: sockets (Linux)
+	var modelPorts []int              // or loopback ports (macOS)
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
 		}
-		if r.agentbox() {
-			return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
-				Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc, StateDir: filepath.Join(r.cfg.StateDir, "agentbox"),
-				EgressMode: r.cfg.EgressMode})
-		}
-		return isobox.New(isobox.Config{Binary: r.cfg.IsoboxBin, Backend: r.cfg.IsoboxBackend, Roots: roots, Evidence: r.evidence,
-			ReadDeny: deny, Readable: readable})
+		return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
+			HostPorts: modelPorts, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
+			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode})
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).
@@ -518,7 +512,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	cliEnvAllow := map[string][]string{"claude": {"CLAUDE_CODE_OAUTH_TOKEN"}}
 	var cliEnv map[string][]string
 	model, err := r.startModels(spec, req.RunID, req.ThreadID)
-	modelRoutes = model.routes()
+	modelRoutes, modelPorts = model.routes(), model.ports()
 	if err == nil && model != nil {
 		err = model.writePiModels(r.cfg.PiSeed, piDir)
 		if err == nil {
@@ -689,6 +683,3 @@ func underAny(p string, dirs []string) bool {
 	}
 	return false
 }
-
-// agentbox reports whether runs use agentbox instead of isobox.
-func (r *Runtime) agentbox() bool { return r.cfg.IsoboxBackend == "agentbox" }

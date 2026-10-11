@@ -67,7 +67,7 @@ func DirSize(root string) (int64, error) {
 }
 
 // WatchDisk polls the writable dirs and calls onExceed once when their combined
-// size passes max. It is the runner-side disk quota (isobox has no res.disk).
+// size passes max. It is the runner-side disk quota (no backend enforces res.disk).
 // It returns when ctx ends or the limit is hit.
 func WatchDisk(ctx context.Context, dirs []string, max int64, every time.Duration, onExceed func(used int64)) {
 	if max <= 0 {

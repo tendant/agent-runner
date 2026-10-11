@@ -2,76 +2,80 @@ package clisetup
 
 import (
 	"errors"
-	"os"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func fakeHost(t *testing.T, have map[string]bool, root bool) {
-	oldLook, oldEuid := lookPath, euid
-	t.Cleanup(func() { lookPath, euid = oldLook, oldEuid })
+func fakeHost(t *testing.T, os string, have ...string) {
+	oldLook, oldGOOS := lookPath, goos
+	t.Cleanup(func() { lookPath, goos = oldLook, oldGOOS })
+	goos = os
 	lookPath = func(name string) (string, error) {
-		if have[name] {
-			return "/usr/bin/" + name, nil
+		if slices.Contains(have, name) {
+			return name, nil
 		}
 		return "", errors.New("not found")
-	}
-	euid = func() int {
-		if root {
-			return 0
-		}
-		return 1000
 	}
 }
 
 func TestSandboxProblems(t *testing.T) {
-	all := map[string]bool{"isobox": true, "runsc": true, "ip": true, "sysctl": true, "iptables": true}
-	fakeHost(t, all, true)
-	if p := SandboxProblems("off", "", "gvisor"); p != nil {
+	fakeHost(t, "linux", "/usr/local/bin/runsc")
+	if p := SandboxProblems("off", "gvisor"); p != nil {
 		t.Errorf("off: %v", p)
 	}
-	if p := SandboxProblems("strict", "", "gvisor"); p != nil {
+	if p := SandboxProblems("strict", ""); p != nil {
 		t.Errorf("all present: %v", p)
 	}
-
-	fakeHost(t, map[string]bool{"ip": true}, false)
-	p := strings.Join(SandboxProblems("permissive", "", "gvisor"), "\n")
-	for _, want := range []string{"isobox not found (isobox)", "git clone " + IsoboxRepo, "git checkout " + IsoboxRef[:7], "sudo install -m 0755 isobox /usr/local/bin/",
-		"AGENT_SANDBOX=off", "runsc (gVisor) not found", "missing sysctl, iptables", "as root"} {
+	if p := SandboxProblems("strict", "agentbox"); p != nil {
+		t.Errorf("explicit agentbox: %v", p)
+	}
+	// The isobox backends are gone, said plainly.
+	for _, b := range []string{"gvisor", "seatbelt"} {
+		if p := SandboxProblems("permissive", b); len(p) != 1 || !strings.Contains(p[0], "isobox was removed") {
+			t.Errorf("%s: %v", b, p)
+		}
+	}
+	fakeHost(t, "linux")
+	p := strings.Join(SandboxProblems("permissive", ""), "\n")
+	for _, want := range []string{"runsc (gVisor) not found", "github.com/tendant/agentbox", "make install", "AGENT_SANDBOX=off"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %q in:\n%s", want, p)
 		}
 	}
-	// Seatbelt needs only isobox.
-	if p := SandboxProblems("permissive", "/opt/isobox", "seatbelt"); len(p) != 1 || !strings.Contains(p[0], "(/opt/isobox)") {
-		t.Errorf("seatbelt: %v", p)
+	fakeHost(t, "darwin", "/usr/bin/sandbox-exec")
+	if p := SandboxProblems("permissive", ""); p != nil {
+		t.Errorf("macOS: %v", p)
+	}
+	fakeHost(t, "windows")
+	if p := SandboxProblems("permissive", ""); len(p) != 1 {
+		t.Errorf("windows: %v", p)
 	}
 }
 
 func TestSandboxStatus(t *testing.T) {
-	fakeHost(t, map[string]bool{"isobox": true, "runsc": true, "ip": true, "sysctl": true, "iptables": true}, true)
-	if got := SandboxStatus("", "", "", ""); got != "off" {
+	fakeHost(t, "linux", "/usr/local/bin/runsc")
+	if got := SandboxStatus("", "", ""); got != "off" {
 		t.Errorf("off: %q", got)
 	}
-	if got := SandboxStatus("strict", "", "gvisor", "scoped"); got != "strict, gvisor, scoped reads ✓" {
+	if got := SandboxStatus("strict", "", ""); !strings.HasPrefix(got, "strict, agentbox (") || !strings.HasSuffix(got, "✓") {
 		t.Errorf("ready: %q", got)
 	}
-	fakeHost(t, nil, true)
-	if got := SandboxStatus("permissive", "", "seatbelt", "host"); !strings.Contains(got, "✗ every run will be rejected") || !strings.Contains(got, "isobox not found") {
+	fakeHost(t, "linux")
+	if got := SandboxStatus("permissive", "", "host"); !strings.Contains(got, "✗ every run will be rejected") || !strings.Contains(got, "AGENT_SANDBOX_READ=host") {
 		t.Errorf("broken: %q", got)
 	}
 }
 
-// The install help must name the isobox CI builds.
-func TestIsoboxPinMatchesCI(t *testing.T) {
-	b, err := os.ReadFile("../../.github/workflows/sandbox.yml")
-	if err != nil {
-		t.Fatal(err)
+func TestSandboxScopedReads(t *testing.T) {
+	for _, v := range []string{"", "scoped"} {
+		if s, err := SandboxScopedReads(v); !s || err != nil {
+			t.Errorf("%q: %v %v", v, s, err)
+		}
 	}
-	repo := regexp.MustCompile(`(?m)^  ISOBOX_REPO: (\S+)`).FindSubmatch(b)
-	ref := regexp.MustCompile(`(?m)^  ISOBOX_REF: ([0-9a-f]+)`).FindSubmatch(b)
-	if repo == nil || ref == nil || string(repo[1]) != IsoboxRepo || string(ref[1]) != IsoboxRef {
-		t.Errorf("clisetup pins %s@%s; the workflow pins %q@%q", IsoboxRepo, IsoboxRef, repo, ref)
+	for _, v := range []string{"host", "x"} {
+		if _, err := SandboxScopedReads(v); err == nil {
+			t.Errorf("%q: want an error", v)
+		}
 	}
 }

@@ -1,7 +1,7 @@
 // Package e2e exercises the sandbox end to end with the real runtime, adapter,
-// launcher, leases, supervisor and workspace export, using a fake `isobox`
-// executable (so it runs anywhere). Real Seatbelt/gVisor enforcement is
-// covered separately by cmd/sandbox-conformance on those hosts.
+// launcher, leases, supervisor and workspace export, over the real agentbox
+// adapter with a fake agentbox backend (so it runs anywhere). Real gVisor and
+// Seatbelt enforcement is covered by cmd/sandbox-conformance on those hosts.
 package e2e
 
 import (
@@ -17,44 +17,93 @@ import (
 	"testing"
 	"time"
 
+	ab "github.com/tendant/agentbox/pkg/agentbox"
+
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
+	abadapter "github.com/agent-runner/agent-runner/internal/sandbox/agentbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"github.com/agent-runner/agent-runner/internal/sandbox/supervisor"
 	"github.com/agent-runner/agent-runner/internal/sandbox/workspace"
 )
 
-const fakeIsobox = `#!/bin/sh
-for a in "$@"; do
-  if [ "$a" = "--print" ]; then
-    echo "backend:  seatbelt"
-    echo "enforces: env.scrub, fs.read.deny, fs.write.scope, net.outbound, net.disable"
-    exit 0
-  fi
-done
-while [ "$1" != "--" ]; do shift; done; shift
-exec "$@"
-`
+// fakeAB is an agentbox backend that runs commands on the host as they are
+// (so the tests run anywhere): the real adapter, runtime, leases and
+// supervisor around it. It cannot cap memory, like Seatbelt.
+type fakeAB struct{}
+
+func (fakeAB) Capabilities(context.Context) (ab.Capabilities, error) {
+	return ab.Capabilities{Backend: "fake", Rootless: true, NetworkNone: true, Gateway: true, ModelSocket: true,
+		PIDLimit: true, KernelIsolation: true, Persistent: true}, nil
+}
+
+// Create honours Lifetime, as agentbox does: it ends the sandbox.
+func (fakeAB) Create(_ context.Context, s ab.Spec) (ab.Sandbox, error) {
+	sb := &fakeSB{spec: s}
+	if s.Lifetime > 0 {
+		time.AfterFunc(s.Lifetime, func() { sb.Close(context.Background()) })
+	}
+	return sb, nil
+}
+
+type fakeSB struct {
+	spec    ab.Spec
+	mu      sync.Mutex
+	cancels []context.CancelFunc
+}
+
+func (s *fakeSB) ID() string { return s.spec.ID }
+
+// Cmd's commands end with the sandbox: Close cancels their contexts, which
+// kills each one's process group.
+func (s *fakeSB) Cmd(ctx context.Context, c ab.Command) (*exec.Cmd, func(), error) {
+	ctx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.cancels = append(s.cancels, cancel)
+	s.mu.Unlock()
+	cmd := exec.CommandContext(ctx, c.Args[0], c.Args[1:]...)
+	cmd.Dir, cmd.Env = c.Dir, append(append([]string{}, s.spec.Env...), c.Env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	return cmd, cancel, nil
+}
+
+func (s *fakeSB) Exec(ctx context.Context, c ab.Command) (ab.Result, error) {
+	cmd, cleanup, _ := s.Cmd(ctx, c)
+	defer cleanup()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.Stdin, c.Stdout, c.Stderr
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ab.Result{ExitCode: ee.ExitCode()}, nil
+	}
+	return ab.Result{}, err
+}
+
+func (s *fakeSB) Close(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.cancels {
+		c()
+	}
+	return nil
+}
 
 type harness struct {
 	t      *testing.T
 	state  string
-	bin    string
 	events []string
 	mu     sync.Mutex
 }
 
-func newHarness(t *testing.T) *harness {
-	h := &harness{t: t, state: t.TempDir(), bin: filepath.Join(t.TempDir(), "isobox")}
-	if err := os.WriteFile(h.bin, []byte(fakeIsobox), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return h
-}
+func newHarness(t *testing.T) *harness { return &harness{t: t, state: t.TempDir()} }
 
 func (h *harness) runtime(mode sandbox.Mode, policy string) *sandboxrt.Runtime {
-	cfg := sandboxrt.Config{Mode: mode, StateDir: h.state, Instance: "e2e", IsoboxBin: h.bin, LeaseTTL: time.Second,
+	cfg := sandboxrt.Config{Mode: mode, StateDir: h.state, Instance: "e2e", LeaseTTL: time.Second,
+		NewBackend: func(roots map[string]string) sandbox.Backend {
+			return abadapter.New(abadapter.Config{Roots: roots, Backend: fakeAB{}})
+		},
 		OnEvent: func(e sandboxrt.Event) { h.mu.Lock(); h.events = append(h.events, e.Kind); h.mu.Unlock() }}
 	if policy != "" {
 		p := filepath.Join(h.t.TempDir(), "policy.json")

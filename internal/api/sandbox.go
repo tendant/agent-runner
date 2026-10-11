@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -26,23 +27,24 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return nil
 	}
 	scoped, err := clisetup.SandboxScopedReads(cfg.Agent.SandboxRead)
+	if err == nil && cfg.Agent.SandboxBackend != "" && cfg.Agent.SandboxBackend != "agentbox" {
+		err = fmt.Errorf("AGENT_SANDBOX_BACKEND=%s is no longer supported: isobox was removed (unset it)", cfg.Agent.SandboxBackend)
+	}
 	if err != nil {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
 	}
 	host, _ := os.Hostname()
 	rt, err := sandboxrt.New(sandboxrt.Config{
-		Mode:          mode,
-		StateDir:      filepath.Join(cfg.StateRoot, "sandbox"),
-		Instance:      host,
-		IsoboxBin:     cfg.Agent.SandboxIsobox,
-		IsoboxBackend: cfg.Agent.SandboxBackend,
-		PolicyFile:    cfg.Agent.SandboxPolicyFile,
-		Memory:        cfg.Agent.SandboxMemory,
-		PIDs:          cfg.Agent.SandboxPIDs,
-		ScopedReads:   scoped,
-		EgressAllow:   cfg.Agent.SandboxEgressAllow,
-		EgressMode:    cfg.Agent.SandboxEgressMode,
+		Mode:        mode,
+		StateDir:    filepath.Join(cfg.StateRoot, "sandbox"),
+		Instance:    host,
+		PolicyFile:  cfg.Agent.SandboxPolicyFile,
+		Memory:      cfg.Agent.SandboxMemory,
+		PIDs:        cfg.Agent.SandboxPIDs,
+		ScopedReads: scoped,
+		EgressAllow: cfg.Agent.SandboxEgressAllow,
+		EgressMode:  cfg.Agent.SandboxEgressMode,
 		// Prompts point agents at memory, and uploads reach them by path.
 		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
 		EvidenceFile: cfg.Agent.SandboxEvidence,
@@ -61,8 +63,8 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
 	}
-	slog.Info("sandbox enabled", "mode", mode, "backend", cfg.Agent.SandboxBackend, "scoped_reads", scoped)
-	for _, p := range clisetup.SandboxProblems(string(mode), cfg.Agent.SandboxIsobox, cfg.Agent.SandboxBackend) {
+	slog.Info("sandbox enabled", "mode", mode, "backend", "agentbox:"+clisetup.SandboxBackendName())
+	for _, p := range clisetup.SandboxProblems(string(mode), cfg.Agent.SandboxBackend) {
 		slog.Error("sandbox: every agent run will be rejected: " + p)
 	}
 	if clisetup.ResolveCLI(cfg.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(cfg.Agent.SandboxEnvAllow, cfg.Agent.SandboxModelProxy) {

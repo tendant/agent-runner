@@ -8,7 +8,7 @@
 #   scripts/sandbox-agentbox
 #
 # Env: KEEP=1 to keep the work dir. On a Linux host with runsc installed,
-# run SANDBOX_BACKEND=agentbox scripts/sandbox-smoke directly instead.
+# run scripts/sandbox-smoke directly instead (on macOS it checks Seatbelt).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -55,7 +55,7 @@ docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconf
 		mkdir -p ~/.ssh ~/.aws ~/.claude
 		for f in .ssh/known_hosts .aws/credentials .claude/.credentials.json; do echo dummy >~/\$f; done
 		cd /repo
-		KEEP=\"${KEEP:-}\" SANDBOX_BACKEND=agentbox AGENT_RUNNER_BIN=/w/agent-runner CONFORMANCE_BIN=/w/sandbox-conformance \
+		KEEP=\"${KEEP:-}\" AGENT_RUNNER_BIN=/w/agent-runner CONFORMANCE_BIN=/w/sandbox-conformance \
 			scripts/sandbox-smoke
 	"
 '

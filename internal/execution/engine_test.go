@@ -650,10 +650,10 @@ func keys(m map[string][]sdktrace.ReadOnlySpan) []string {
 	return out
 }
 
-func TestFriendlyErrorForMissingIsobox(t *testing.T) {
-	raw := `sandbox: sandbox rejected run: isobox --print: exec: "isobox": executable file not found in $PATH: `
+func TestFriendlyErrorForUnavailableSandbox(t *testing.T) {
+	raw := `sandbox: sandbox rejected run: agentbox: the gvisor sandbox is unavailable here: rootless runsc does not work: exec: "runsc": executable file not found in $PATH`
 	got := friendlyError(raw)
-	for _, want := range []string{"the sandbox is on (AGENT_SANDBOX) but isobox is not installed", "git clone https://github.com/tendant/isobox", "AGENT_SANDBOX=off"} {
+	for _, want := range []string{"the sandbox is on (AGENT_SANDBOX) but cannot run on this host", "github.com/tendant/agentbox", "make install", "AGENT_SANDBOX=off"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
