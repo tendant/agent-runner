@@ -37,7 +37,7 @@ func TestSandboxProblems(t *testing.T) {
 
 	fakeHost(t, map[string]bool{"ip": true}, false)
 	p := strings.Join(SandboxProblems("permissive", "", "gvisor"), "\n")
-	for _, want := range []string{"isobox not found (isobox)", "git clone " + IsoboxRepo, "git checkout " + IsoboxRef[:7],
+	for _, want := range []string{"isobox not found (isobox)", "git clone " + IsoboxRepo, "git checkout " + IsoboxRef[:7], "sudo install -m 0755 isobox /usr/local/bin/",
 		"AGENT_SANDBOX=off", "runsc (gVisor) not found", "missing sysctl, iptables", "as root"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("missing %q in:\n%s", want, p)
