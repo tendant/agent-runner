@@ -318,18 +318,12 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		s.Deny = append(s.Deny, h)
 	}
 	s.Deny = append(s.Deny, b.cfg.ReadDeny...)
-	// Only the limits this backend enforces; Check reports the others as
-	// gaps, and the mode decides whether that may run.
+	// Every requested limit, enforceable or not: agentbox refuses a sandbox
+	// it cannot cap (fail closed), whatever the mode. A cap is set to stop a
+	// run harming the host, so it is never quietly dropped (a fork bomb ran
+	// uncapped when a missing systemd user scope dropped AGENT_SANDBOX_MEMORY).
 	r := spec.Resources
-	if c.MemoryLimit {
-		s.Limits.MemoryBytes = r.MemoryBytes
-	}
-	if c.CPULimit {
-		s.Limits.CPUs = r.CPUs
-	}
-	if c.PIDLimit {
-		s.Limits.PIDs = r.PIDs
-	}
+	s.Limits = ab.Limits{MemoryBytes: r.MemoryBytes, CPUs: r.CPUs, PIDs: r.PIDs}
 	if r.TimeoutSec > 0 {
 		// Run enforces TERM, grace, KILL; the lifetime is the backstop for
 		// commands handed back through Command.

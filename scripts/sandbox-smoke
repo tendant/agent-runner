@@ -105,6 +105,8 @@ cat >"$W/bin/claude" <<EOF
 # The fork-bomb check: fork forever while the main process stays alive (when
 # it exits, gVisor kills every process left in the sandbox).
 case "\$*" in *"sandbox fork bomb"*)
+	# Proof the bomb ran: a sandbox that never started also "ends early".
+	mkdir -p "\$PWD/_send" && echo started >"\$PWD/_send/bomb-started"
 	b() { b | b & }
 	b
 	exec sleep 600 ;;
@@ -407,7 +409,9 @@ if [ "$GV" = 1 ]; then
 	case $RESULT in
 	*"sandbox rejected run"*) fail "the sandbox never started: ${RESULT#*|}" ;;
 	completed* | failed* | stopped*)
-		if [ "$ELAPSED" -lt 90 ]; then pass "sandbox killed after ${ELAPSED}s (${RESULT%%|*}: ${RESULT#*|})"
+		if [ -z "$(find "$DATA" -path "*$SESSION*" -name bomb-started | head -1)" ]; then
+			fail "the fork bomb never ran (${RESULT%%|*}: ${RESULT#*|})"
+		elif [ "$ELAPSED" -lt 90 ]; then pass "sandbox killed after ${ELAPSED}s (${RESULT%%|*}: ${RESULT#*|})"
 		else fail "the fork bomb ran ${ELAPSED}s: ended by the timeout, not the memory cap"; fi ;;
 	*) fail "session still ${RESULT%%|*} after ${ELAPSED}s" ;;
 	esac
