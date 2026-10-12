@@ -149,7 +149,7 @@ func TestPrepareMapsPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.cmds[0]
-	if got.Dir != r[sandbox.RootWorkspace] || !slices.Equal(got.Env, []string{"A=1"}) {
+	if got.Dir != r[sandbox.RootWorkspace] || !slices.Equal(got.Env, []string{"A=1", "IS_SANDBOX=1"}) {
 		t.Errorf("command %+v", got)
 	}
 	want := []string{filepath.Join(r[sandbox.RootTmp], ".agent-runner-fwd"), fwdMode, "127.0.0.1:4801=/run/agentbox/anthropic.sock", "--", "claude", "-p"}
