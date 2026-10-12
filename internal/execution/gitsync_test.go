@@ -11,6 +11,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/executor"
+	gitpkg "github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 )
 
@@ -229,5 +230,27 @@ func TestWorkspaceRepos_Layouts(t *testing.T) {
 	}
 	if got := workspaceRepos(""); got != nil {
 		t.Errorf("empty path: %v", got)
+	}
+}
+
+// A sandboxed agent has no git credentials: the conflict instructions end
+// with the rebase, and the runner pushes. Outside the sandbox it pushes.
+func TestConflictContextSandboxed(t *testing.T) {
+	rc := []*gitpkg.RebaseConflictError{{RepoPath: "/w/app", Branch: "main", Files: []string{"a.go"}}}
+	host := buildConflictContext(rc, false)
+	box := buildConflictContext(rc, true)
+	if !strings.Contains(host, "git push origin HEAD") {
+		t.Errorf("host agents push:\n%s", host)
+	}
+	if strings.Contains(box, "git push") || !strings.Contains(box, "the runner pushes") {
+		t.Errorf("sandboxed agents must not be told to push:\n%s", box)
+	}
+	for _, want := range []string{"git add", "rebase --continue", "a.go"} {
+		if !strings.Contains(box, want) {
+			t.Errorf("missing %q:\n%s", want, box)
+		}
+	}
+	if !strings.Contains(sandboxGitNote, "do not `git push`") || !strings.Contains(sandboxGitNote, "the runner pushes") {
+		t.Errorf("sandbox note:\n%s", sandboxGitNote)
 	}
 }
