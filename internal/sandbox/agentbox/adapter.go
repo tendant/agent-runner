@@ -444,9 +444,12 @@ func (p *prepared) Command(ctx context.Context, ps sandbox.ProcSpec) (*exec.Cmd,
 			return nil, err
 		}
 	}
-	env := ps.Env
+	// IS_SANDBOX=1: under gVisor every command is the sandbox's uid 0 (the
+	// runner's user on the host), and claude refuses
+	// --dangerously-skip-permissions as root unless told it is in a sandbox.
+	env := append(append([]string{}, ps.Env...), "IS_SANDBOX=1")
 	if p.proxyAddr != "" {
-		env = append(append([]string{}, env...), proxyEnv(p.proxyAddr)...)
+		env = append(env, proxyEnv(p.proxyAddr)...)
 	}
 	c, cleanup, err := cmdr.Cmd(ctx, ab.Command{Args: args, Env: env, Dir: dir})
 	if err != nil {
