@@ -25,6 +25,25 @@ const (
 	ProviderOpenAI    = "openai"
 )
 
+// CompatProvider is a provider with an OpenAI-compatible chat API, as pi
+// names it among its built-ins. pi gets its proxy as that provider's baseUrl
+// (models.json) and the run token in KeyEnv. Adding one is a row here.
+type CompatProvider struct {
+	Name     string // pi's provider name; the channel's key
+	KeyEnv   string // the API key variable, on the host and for pi
+	BaseEnv  string // overrides Upstream on the host
+	Upstream string // default API base (pi's baseUrl: no /v1 for DeepSeek)
+}
+
+// CompatProviders are the OpenAI-compatible providers the runner proxies.
+var CompatProviders = []CompatProvider{
+	{Name: "deepseek", KeyEnv: "DEEPSEEK_API_KEY", BaseEnv: "DEEPSEEK_BASE_URL", Upstream: "https://api.deepseek.com"},
+}
+
+// CompatPaths are the chat API paths an OpenAI-compatible client uses, with
+// and without a /v1 base.
+var CompatPaths = []string{"/chat/completions", "/models", "/v1/chat/completions", "/v1/models"}
+
 // ModelChannel is a provider credential that sandboxed agent CLIs reach the
 // model with. The runtime starts a proxy (internal/sandbox/proxy) per run and
 // provider that attaches it; the CLIs get only the proxy's URL and a per-run
@@ -65,6 +84,12 @@ const chatgptBase = "/backend-api/codex"
 var modelCredentialEnv = map[string][]string{
 	ProviderAnthropic: {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"},
 	ProviderOpenAI:    {"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"},
+}
+
+func init() {
+	for _, p := range CompatProviders {
+		modelCredentialEnv[p.Name] = []string{p.KeyEnv, p.BaseEnv}
+	}
 }
 
 // modelRun is a run's started channels: per provider, the proxy.
@@ -146,9 +171,16 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 // (macOS). A var so tests cover both paths on any OS.
 var modelSockets = goruntime.GOOS == "linux"
 
-// agentboxAddr is where the forwarder inside an agentbox sandbox serves each
-// provider's proxy (the sandbox's own loopback).
-var agentboxAddr = map[string]string{ProviderAnthropic: "127.0.0.1:4801", ProviderOpenAI: "127.0.0.1:4802"}
+// agentboxAddr is where the forwarder inside a gVisor sandbox serves each
+// provider's proxy (the sandbox's own loopback): 4801, 4802, then one port
+// per CompatProvider from 4803.
+var agentboxAddr = func() map[string]string {
+	m := map[string]string{ProviderAnthropic: "127.0.0.1:4801", ProviderOpenAI: "127.0.0.1:4802"}
+	for i, p := range CompatProviders {
+		m[p.Name] = "127.0.0.1:" + strconv.Itoa(4803+i)
+	}
+	return m
+}()
 
 // url is the base URL a CLI in the sandbox reaches provider name's proxy at.
 func (m *modelRun) url(name string) string {
@@ -221,6 +253,11 @@ func (m *modelRun) cliEnv(channels map[string]*ModelChannel) map[string][]string
 		env["codex"] = []string{codexKeyEnv + "=" + p.Token()}
 		if !m.chatgpt { // pi speaks the public API, not ChatGPT's backend
 			env["pi"] = append(env["pi"], "OPENAI_API_KEY="+p.Token())
+		}
+	}
+	for _, cp := range CompatProviders {
+		if p := m.proxies[cp.Name]; p != nil {
+			env["pi"] = append(env["pi"], cp.KeyEnv+"="+p.Token())
 		}
 	}
 	return env

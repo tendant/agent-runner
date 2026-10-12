@@ -121,7 +121,8 @@ func (g *Gateway) dial(ctx context.Context, hostport string) (net.Conn, error) {
 			return nil, errDenied
 		}
 		if addrs, err = g.cfg.Resolve(ctx, host); err != nil || len(addrs) == 0 {
-			g.event("denied", host)
+			// Not a policy decision (no such name, or the run ended
+			// mid-lookup): no "denied" event, which would read as a refusal.
 			return nil, errDenied
 		}
 	}

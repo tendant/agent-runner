@@ -187,3 +187,21 @@ func TestUnixSocket(t *testing.T) {
 		t.Errorf("socket mode %v %v", fi, err)
 	}
 }
+
+// A name that does not resolve was not refused by policy: no "denied" event
+// (a run ending mid-lookup made allowed hosts look refused).
+func TestUnresolvedIsNotDenied(t *testing.T) {
+	var ev []string
+	g, err := Start(Config{Allow: []string{"*"}, OnEvent: func(k, h string) { ev = append(ev, k+" "+h) },
+		Resolve: func(context.Context, string) ([]netipAddr, error) { return nil, fmt.Errorf("no such host") }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if _, err := g.dial(context.Background(), "nowhere.invalid:443"); err == nil {
+		t.Fatal("an unresolved name must not connect")
+	}
+	if len(ev) != 0 {
+		t.Errorf("events %v", ev)
+	}
+}

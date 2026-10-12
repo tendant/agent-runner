@@ -246,13 +246,29 @@ func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel
 			if u := upstreamURL("AGENT_SANDBOX_CHATGPT_URL", "https://chatgpt.com"); u != nil {
 				out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.ChatGPTPaths,
 					Credential: login.Headers, ChatGPT: true}
-				return out
+				return withCompatChannels(out)
 			}
 		}
 	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		if u := upstreamURL("OPENAI_BASE_URL", "https://api.openai.com"); u != nil {
 			out[sandboxrt.ProviderOpenAI] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.OpenAIPaths,
+				AuthHeader: "Authorization", AuthValue: "Bearer " + key}
+		}
+	}
+	return withCompatChannels(out)
+}
+
+// withCompatChannels adds a channel for each OpenAI-compatible provider
+// whose key is set (DEEPSEEK_API_KEY, ...).
+func withCompatChannels(out map[string]*sandboxrt.ModelChannel) map[string]*sandboxrt.ModelChannel {
+	for _, p := range sandboxrt.CompatProviders {
+		key := os.Getenv(p.KeyEnv)
+		if key == "" {
+			continue
+		}
+		if u := upstreamURL(p.BaseEnv, p.Upstream); u != nil {
+			out[p.Name] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.CompatPaths,
 				AuthHeader: "Authorization", AuthValue: "Bearer " + key}
 		}
 	}

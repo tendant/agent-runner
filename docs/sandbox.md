@@ -199,6 +199,11 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
     * Checked with the real codex CLI (0.162) against a fake backend on both systems
       (`make sandbox-smoke`). Against chatgpt.com it is untested, including whether Cloudflare
       challenges the proxy.
+  * **DeepSeek** (`pi`): `DEEPSEEK_API_KEY` (`Authorization: Bearer`), to `DEEPSEEK_BASE_URL` or
+    `https://api.deepseek.com`; paths `/chat/completions`, `/models` (with or without `/v1`).
+    pi's built-in `deepseek` provider gets the proxy as its `baseUrl` and a run token in
+    `DEEPSEEK_API_KEY`. More OpenAI-compatible providers are a row each in `CompatProviders`
+    (`internal/sandbox/runtime/model.go`).
   * **pi** gets the run's `models.json` (the seed's, with each proxied built-in provider's `baseUrl`
     set to its proxy) and run tokens in env (`ANTHROPIC_OAUTH_TOKEN` for a setup-token).
 
@@ -247,9 +252,9 @@ AGENT_SANDBOX_EVIDENCE=agentbox-host.json AGENT_SANDBOX=strict ...
 * **No disk quota:** `WatchDisk`/`LimitedWriter` exist but are not wired into runs.
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
-* **The model proxy covers Anthropic and OpenAI** for claude, codex and pi. opencode and other
-  providers (DeepSeek, ...) still need their keys through `AGENT_SANDBOX_ENV_ALLOW`, and egress
-  to their APIs.
+* **The model proxy covers Anthropic, OpenAI and DeepSeek** for claude, codex and pi (DeepSeek:
+  pi). opencode, and other providers (OpenRouter, Gemini, ...), still need their keys through
+  `AGENT_SANDBOX_ENV_ALLOW`, which puts the real key in the sandbox, and egress to their APIs.
 * The fast-LLM executor fallback (analyzer, curator, and the planner outside a session, used when
   no LLM API key is set) runs the agent CLI in a sandbox run of its own, sharing one sandbox
   thread (`llm-fallback`).
