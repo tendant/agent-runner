@@ -65,7 +65,7 @@ func (h *Engine) syncWorkspaceRepos(
 
 		// Hand the conflict to the agent as a corrective iteration, the same
 		// way reviewer feedback is.
-		conflictContext := buildConflictContext(conflicts)
+		conflictContext := buildConflictContext(conflicts, h.sandboxed())
 		iterNum := liveSession.Snapshot().CurrentIteration + 1
 		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
@@ -162,8 +162,9 @@ func parkConflictedWork(ctx context.Context, ops *gitpkg.Operations, rc *gitpkg.
 }
 
 // buildConflictContext is the prompt section that tells the agent exactly
-// what state the repo is in and how to finish.
-func buildConflictContext(conflicts []*gitpkg.RebaseConflictError) string {
+// what state the repo is in and how to finish. A sandboxed agent has no git
+// credentials: it finishes the rebase and the runner pushes.
+func buildConflictContext(conflicts []*gitpkg.RebaseConflictError, sandboxed bool) string {
 	var sb strings.Builder
 	sb.WriteString("## Git: the remote branch moved — resolve the rebase conflicts\n\n")
 	sb.WriteString("Another session pushed while you worked. Your commits were rebased onto the new remote head and the rebase stopped on conflicts. It is still in progress; finish it rather than redoing the task.\n\n")
@@ -177,7 +178,11 @@ func buildConflictContext(conflicts []*gitpkg.RebaseConflictError) string {
 	sb.WriteString("For each repo above, in that directory:\n")
 	sb.WriteString("1. Open each conflicted file and resolve the `<<<<<<<`/`=======`/`>>>>>>>` markers. Keep both sides' intent — the remote changes come from a different task and must be preserved.\n")
 	sb.WriteString("2. `git add <files>` then `GIT_EDITOR=true git rebase --continue`. Repeat if a later commit conflicts.\n")
-	sb.WriteString("3. `git push origin HEAD`.\n\n")
+	if sandboxed {
+		sb.WriteString("3. Stop there: the runner pushes once the rebase is finished (you have no git credentials here).\n\n")
+	} else {
+		sb.WriteString("3. `git push origin HEAD`.\n\n")
+	}
 	sb.WriteString("Do not `git rebase --abort`, do not force-push, do not reset the branch.\n")
 	return sb.String()
 }

@@ -106,6 +106,17 @@ loopback ports, and Mach lookups of the keychain (`com.apple.SecurityServer`) an
 (`com.apple.mDNSResponder`) services; a sandboxed process cannot listen or signal anything
 outside its sandbox.
 
+## Git
+
+The sandbox has no git credentials: `GIT_TOKEN` and `GIT_SSH_KEY` stay with the runner, like the
+model keys. The runner clones and fetches the repos before a session; the agent works and
+commits inside; after the session the runner pushes every repo the agent committed to
+(`syncWorkspaceRepos`). When another session moved the branch it rebases the commits itself, and
+only when that rebase conflicts does it hand the agent an iteration to resolve the markers (it
+pushes afterwards); work that still cannot be merged goes to `agent-rescue/<session>`. Sandboxed
+sessions are told this in their prompt, so they commit and do not try to push. The runner's own
+git commands ignore the hooks and config an agent could plant (`internal/gitsafe`).
+
 ## What the sandbox can read
 
 An allowlist, on both systems: the run's workspace, sandbox home and tmp, the memory dir and
