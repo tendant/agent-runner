@@ -315,3 +315,66 @@ func TestRelativeRunnerPathsReachTheSandboxAbsolute(t *testing.T) {
 		}
 	}
 }
+
+// DeepSeek for pi: the key stays in the runner; pi gets the proxy as its
+// deepseek provider's baseUrl and a run token in DEEPSEEK_API_KEY, and the
+// proxy forwards pi's chat requests with the real key.
+func TestDeepSeekChannelForPi(t *testing.T) { bothPaths(t, testDeepSeekChannelForPi) }
+
+func testDeepSeekChannelForPi(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	got := &sandbox.ProcSpec{}
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
+		EnvAllow: []string{"DEEPSEEK_API_KEY"}, // listed, but the channel keeps it out
+		Models: map[string]*ModelChannel{
+			"deepseek": {Upstream: u, AuthHeader: "Authorization", AuthValue: "Bearer real-deepseek-key", Paths: CompatPaths},
+		},
+		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEEPSEEK_API_KEY", "real-deepseek-key")
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi := launch(t, run, got, "pi")
+	token := pi["DEEPSEEK_API_KEY"]
+	if token == "" || strings.Contains(token, "real-") {
+		t.Fatalf("pi's DEEPSEEK_API_KEY: %q", token)
+	}
+	b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+		} `json:"providers"`
+	}
+	json.Unmarshal(b, &doc)
+	base := doc.Providers["deepseek"].BaseURL
+	if base == "" || strings.HasSuffix(base, "/v1") {
+		t.Fatalf("deepseek baseUrl %q in %s", base, b)
+	}
+	if code := post(t, fromHost(run, base)+"/chat/completions", token); code != 200 || gotAuth != "Bearer real-deepseek-key" || gotPath != "/chat/completions" {
+		t.Errorf("pi through the proxy: %d, upstream got %q %q", code, gotAuth, gotPath)
+	}
+	if code := post(t, fromHost(run, base)+"/files", token); code < 400 {
+		t.Errorf("a path outside the chat API must be refused: %d", code)
+	}
+	// claude and codex get nothing from a DeepSeek-only setup.
+	for _, cli := range []string{"claude", "codex"} {
+		for k, v := range launch(t, run, got, cli) {
+			if strings.Contains(v, "real-") || k == "DEEPSEEK_API_KEY" {
+				t.Errorf("%s got %s", cli, k)
+			}
+		}
+	}
+}

@@ -162,3 +162,28 @@ func TestSandboxScopedReadsSetting(t *testing.T) {
 		}
 	}
 }
+
+// DEEPSEEK_API_KEY gets a channel of its own (pi's deepseek provider), next
+// to whatever else is configured; DEEPSEEK_BASE_URL moves it.
+func TestSandboxDeepSeekChannel(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agent.SandboxModelProxy = true
+	cfg.Agent.SandboxCodexLogin = "off"
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+	t.Setenv("DEEPSEEK_BASE_URL", "")
+	ch := sandboxModelChannels(cfg)["deepseek"]
+	if ch == nil || ch.Upstream.String() != "https://api.deepseek.com" || ch.AuthValue != "Bearer sk-deepseek" {
+		t.Fatalf("deepseek channel %+v", ch)
+	}
+	t.Setenv("DEEPSEEK_BASE_URL", "https://proxy.example/v1")
+	if ch := sandboxModelChannels(cfg)["deepseek"]; ch == nil || ch.Upstream.String() != "https://proxy.example" {
+		t.Errorf("DEEPSEEK_BASE_URL: %+v", ch)
+	}
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	if _, ok := sandboxModelChannels(cfg)["deepseek"]; ok {
+		t.Error("no key, no channel")
+	}
+}
