@@ -21,6 +21,8 @@ func (c *Commander) handleRepo(arg string) string {
 	}
 	reg := repos.New(c.cfg.ReposFile)
 	switch strings.ToLower(fields[0]) {
+	case "help":
+		return repoHelp
 	case "list":
 		return c.handleRepoList()
 	case "add":
@@ -66,7 +68,7 @@ func (c *Commander) handleRepo(arg string) string {
 		}
 		return "ok: " + fields[1] + " removed; sessions no longer get it"
 	}
-	return "error: " + repoUsage
+	return "error: unknown /repo command.\n\n" + repoHelp
 }
 
 // saveRepo registers the repo (fetching it first) and describes it.
@@ -132,7 +134,7 @@ func (c *Commander) handleRepoList() string {
 		return "error: " + err.Error()
 	}
 	if len(list) == 0 {
-		return "no repos (add one: /repo add <url> [secret=NAME])"
+		return "no repos yet.\n\n" + repoHelp
 	}
 	var b strings.Builder
 	b.WriteString("Repos in every session:\n")

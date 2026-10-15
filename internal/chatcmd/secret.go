@@ -18,13 +18,15 @@ func (c *Commander) handleSecret(arg string) string {
 		sub = strings.ToLower(fields[0])
 	}
 	switch sub {
+	case "help":
+		return secretHelp
 	case "", "list":
 		list, err := store.List()
 		if err != nil {
 			return "error: " + err.Error()
 		}
 		if len(list) == 0 {
-			return "no agent secrets (add one: /secret set NAME VALUE [description])"
+			return "no agent secrets yet.\n\n" + secretHelp
 		}
 		var b strings.Builder
 		b.WriteString("Agent secrets (in every session's environment):\n")
@@ -48,12 +50,12 @@ func (c *Commander) handleSecret(arg string) string {
 		case len(fields) >= 3 && !multiline:
 			name, value, desc = fields[1], fields[2], strings.Join(fields[3:], " ")
 		default:
-			return "error: usage: /secret set NAME VALUE [description], or for a value of several lines (a private key): /secret set NAME [description] and the value on the lines after"
+			return "error: /secret set needs a name and a value.\n\n" + secretHelp
 		}
 		if err := store.Set(name, value, desc); err != nil {
-			return "error: " + err.Error()
+			return "error: " + err.Error() + "\n(/secret help shows the format)"
 		}
-		return fmt.Sprintf("ok: %s set (%d characters); agents get it as $%s from their next session", name, len(value), name)
+		return fmt.Sprintf("ok: %s set (%d characters). Agents get it as $%s from their next session; a repo uses it with /repo add <url> secret=%s.", name, len(value), name, name)
 	case "remove", "rm", "delete":
 		if len(fields) != 2 {
 			return "error: usage: /secret remove NAME"
@@ -67,5 +69,30 @@ func (c *Commander) handleSecret(arg string) string {
 		}
 		return "ok: " + fields[1] + " removed"
 	}
-	return "error: usage: /secret [list|set NAME VALUE [description]|remove NAME]"
+	return "error: unknown /secret command.\n\n" + secretHelp
 }
+
+// secretHelp is the guide /secret help (and an empty list, and a mistake)
+// shows: what a secret is for, and the formats with examples.
+const secretHelp = `**Secrets** are credentials your agents use for their tasks: API tokens, git tokens, deploy keys.
+Every session gets each one as an environment variable ($NAME); agents see the name and your
+description, and use the value. agent-runner's own keys (/set) are separate and never shared.
+
+**Add or replace** — one line: name, value, then an optional description
+  /secret set GITEE_TOKEN 1a2b3c4d Gitee API and git for oam-server
+  /secret set GH_TOKEN ghp_xxx GitHub, read-only
+
+**A value of several lines** (an SSH private key) — name and description on the first line,
+the value on the lines after, in the same message:
+  /secret set GITEE_SSH_KEY deploy key for oam
+  -----BEGIN OPENSSH PRIVATE KEY-----
+  ...
+  -----END OPENSSH PRIVATE KEY-----
+
+**Use one for a repo:** /repo add https://<user>@gitee.com/org/repo.git secret=GITEE_TOKEN
+**See them:** /secret list (names and descriptions, never values)
+**Remove one:** /secret remove GITEE_TOKEN
+
+Names: upper case, digits and _ — the names tools expect (GITEE_TOKEN, GH_TOKEN, STRIPE_API_KEY);
+names agent-runner uses itself (GIT_*, AGENT_*, ...) are refused. Send credentials only with
+/secret: a token in an ordinary message goes to the agent's model and its logs.`

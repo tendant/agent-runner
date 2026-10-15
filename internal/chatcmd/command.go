@@ -112,7 +112,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	// returns the specific usage hint instead of falling through to the
 	// gateway's generic "Unknown command" response.
 	knownCommands := map[string]string{
-		"/help":          "usage: /help",
+		"/help":          "usage: /help [secret|repo|memory]",
 		"/config":        "usage: /config",
 		"/status":        "usage: /status",
 		"/sessions":      "usage: /sessions",
@@ -135,6 +135,16 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	switch {
 	case lower == "/help":
 		return r(helpText)
+	case strings.HasPrefix(lower, "/help "):
+		switch strings.TrimSpace(lower[len("/help "):]) {
+		case "secret", "secrets":
+			return r(secretHelp)
+		case "repo", "repos":
+			return r(repoHelp)
+		case "memory", "prompt":
+			return r(memoryHelp)
+		}
+		return r("no help on that; try /help, /help secret, /help repo or /help memory")
 	case lower == "/config":
 		return r(c.handleConfig())
 	case lower == "/status":
@@ -1066,50 +1076,74 @@ func fileState(path string) string {
 	return "missing"
 }
 
-const helpText = `**Agent Runner Commands**
+const helpText = `**Agent Runner** — send a message to give the agent a task; commands start with /.
 
-**/status** — show runtime state (agent, queue, CLI, issues)
-**/sessions** — list all active and recent sessions with IDs
-**/stop** _\<session-id\>_ — request a running or queued session to stop
-**/logs** _[n|id]_ — show last n agent logs (default 3); or /logs \<id-prefix\> for one session
-**/config** — show current configuration and readiness
+**Getting started**
+1. A credential the agent needs: /secret set GITEE\_TOKEN \<token\> Gitee API
+2. A repo for every session: /repo add https://\<user\>@gitee.com/org/repo.git secret=GITEE\_TOKEN
+3. Then just describe the task in a message. The agent commits; agent-runner pushes.
+More: **/help secret** · **/help repo** · **/help memory**
 
-**/set** _KEY VALUE_ — set a config value (saved to .env.local, survives restart)
-Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEEPSEEK\_API\_KEY \<key\>
+**Sessions**
+**/status** — what is running and queued, and any problems
+**/sessions** — active and recent sessions with their ids
+**/stop** _[session-id]_ — stop a session (the current one without an id)
+**/logs** _[n | id-prefix]_ — the last n session logs (default 3), or one session's
 
-**/install-cli** _[cli]_ _[force]_ — install agent CLI (claude / codex / opencode / pi); add **force** to reinstall even if already present
-**/install-mcp** _[name]_ — register MCP servers declared in mcp.json into the active CLI (all declared servers when no name given)
+**Repos and secrets**
+**/repo add** _\<url\> [secret=NAME] [branch=B] [push=false]_ — a repo every session gets · **/repo list** · **/repo set** _\<name\> key=value_ · **/repo remove** _\<name\>_
+**/secret set** _NAME VALUE [description]_ — a credential for the agent's tasks · **/secret list** · **/secret remove** _NAME_
 
+**Memory and instructions**
+**/memory log** — recent memory changes and the session behind each · **/memory undo** _\<session-id\>_ — take one session's notes back
+**/memory status** · **/memory pull** · **/memory push** · **/memory git** _\<remote-url\>_ · **/memory keygen** · **/memory pubkey**
+**/prompt show** _[agent|workflow]_ · **/prompt check** — out-of-date lines · **/prompt preview** _[full] [message]_ — what a session would get
+**/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
 
-**/bootstrap** — create default agent.md and prompt.md
-**/bootstrap force** — overwrite existing files
+**Setup** (agent-runner itself)
+**/config** — settings and readiness
+**/set** _KEY VALUE_ — an agent-runner setting, saved to .env.local (e.g. /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\>); credentials for the agent's tasks go in /secret instead
+**/install-cli** _[claude|codex|opencode|pi] [force]_ · **/install-mcp** _[name]_ · **/auth** _[claude|codex]_ · **/auth cancel**
+**/bootstrap** _[force]_ — create the default agent.md and prompt.md (force overwrites)`
 
-**/auth** _[cli]_ — start OAuth login flow via chat (claude or codex; pi uses provider API keys)
-**/auth cancel** — stop an in-progress auth flow
+// repoHelp is /repo help (and /help repo).
+const repoHelp = `**Repos** are the git repositories every session works on. agent-runner fetches each one
+before a session and checks it out in the agent's working directory; the agent commits, and
+agent-runner pushes its commits when the session ends.
 
-**/set-agent** _\<content\>_ — overwrite agent.md
-**/set-prompt** _\<content\>_ — overwrite prompt.md
-**/secret set** _NAME VALUE [description]_ — a secret for your agents' tasks (e.g. GITEE\_TOKEN), in every session's environment
-  A value of several lines (an SSH private key): _/secret set NAME [description]_, the value on the next lines
-**/secret list** — names and descriptions (never values) · **/secret remove** _NAME_
-**/prompt show** _[agent|workflow]_ — show agent.md and prompt.md
-**/prompt check** — what in them is out of date with how the runner works now
-**/prompt preview** _[full] [message]_ — the prompt a session would get: sections and sizes, or all of it
+**Add one** — the URL, then options:
+  /repo add https://lei@gitee.com/org/oam-server.git secret=GITEE_TOKEN
+  /repo add https://github.com/org/docs.git push=false
+  /repo add git@gitee.com:org/oam-ops.git secret=GITEE_SSH_KEY
+- secret=NAME — the /secret it logs in with (a token for https://, a private key for git@ / ssh://);
+  none for a public https:// repo
+- the user name goes in the URL when the host needs it (Gitee: https://<user>@gitee.com/...);
+  otherwise oauth2 is used
+- branch=B — the branch sessions start on (default: the repo's default branch)
+- push=false — read-only: never pushed
+- name=N — the folder name (default: from the URL)
 
-**/memory git** _\<remote-url\>_ — init or update git remote for memory dir
-  HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> · /set MEMORY\_GIT\_USER \<username\> (optional, defaults to oauth2) · SSH: /memory keygen
-**/memory pull** — pull latest memory from remote
-**/memory push** — commit and push memory to remote
-**/memory log** — recent memory changes, with the session that made each
-**/memory undo** _\<session-id\>_ — take back what one session saved to memory
-**/memory keygen** — generate SSH deploy key and print public key
-**/memory pubkey** — print existing public key
-**/memory status** — show memory dir, remote, and last commit
+Adding fetches the repo right away, so a wrong URL, branch or token shows up in the reply.
 
-**/repo add** _\<url\> [secret=NAME] [branch=B] [push=false] [name=N]_ — a repo every session gets; logs in with /secret NAME (user name from the URL, e.g. https://lei@gitee.com/...)
-**/repo list** — the repos, their branch, login and whether they are pushed
-**/repo set** _\<name\> key=value ..._ — change secret, branch, push or url
-**/repo remove** _\<name\>_ — sessions no longer get it`
+**Change one:** /repo set oam-server branch=develop · /repo set oam-server secret=NEW_TOKEN
+**See them:** /repo list · **Remove one:** /repo remove oam-server
+
+Never put a password or token in the URL: give it with /secret.`
+
+// memoryHelp is /help memory.
+const memoryHelp = `**Memory** is what the agent keeps between sessions: Markdown files (preferences, decisions,
+lessons, topic notes) shared by everyone who talks to it. Each session works on a copy; what it
+saves is merged back when it ends, as its own commit when memory is a git repo.
+
+**Recent changes:** /memory log — each with the session that made it
+**Take one back:** /memory undo <session-id>
+**Where it is:** /memory status
+**Sync with a git remote:** /memory git <remote-url> once (then /set MEMORY_GIT_TOKEN <token>, or
+/memory keygen for an SSH deploy key); /memory pull and /memory push by hand, pushes also happen
+after every session
+
+**The agent's instructions** (agent.md, prompt.md) are yours: agents cannot change them.
+/prompt show · /prompt check · /prompt preview · /set-agent <content> · /set-prompt <content>`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{

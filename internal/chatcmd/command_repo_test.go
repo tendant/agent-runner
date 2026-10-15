@@ -100,7 +100,7 @@ func TestRepoAddRefusals(t *testing.T) {
 		"/repo add https://gitee.com/o/x.git colour=red":         "unknown option",
 		"/repo add " + filepath.Join(t.TempDir(), "missing.git"): "clone",
 		"/repo add https://gitee.com/o/x.git secret=GITEE_TOKEN": "/secret set GITEE_TOKEN",
-		"/repo bogus": "usage",
+		"/repo bogus": "unknown /repo command",
 	} {
 		if r := handle(t, c, cmd); !strings.Contains(r, want) {
 			t.Errorf("%s: want %q in %q", cmd, want, r)
@@ -115,4 +115,20 @@ func makeBarRepo(t *testing.T, path string) string {
 		t.Fatalf("git init --bare %s: %v", path, err)
 	}
 	return path
+}
+
+func TestHelpTopics(t *testing.T) {
+	c := newRepoCommander(t)
+	for cmd, want := range map[string]string{
+		"/help":        "Getting started",
+		"/help secret": "BEGIN OPENSSH PRIVATE KEY",
+		"/help repo":   "push=false — read-only",
+		"/help memory": "/memory undo",
+		"/repo help":   "secret=NAME",
+		"/help nope":   "/help secret",
+	} {
+		if r := handle(t, c, cmd); !strings.Contains(r, want) {
+			t.Errorf("%s lacks %q", cmd, want)
+		}
+	}
 }
