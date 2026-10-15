@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,6 +124,7 @@ func newGitOrigin(t *testing.T, baseDir, repoCacheDir, readme, commitMsg string)
 	runCmd(t, projectPath, "git", "add", "-A")
 	runCmd(t, projectPath, "git", "commit", "-m", commitMsg)
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	registerRepo(t, repoCacheDir, "test-project", bareRepo)
 	return bareRepo, projectPath
 }
 
@@ -144,7 +146,7 @@ func baseE2EConfig(repoCacheDir, logsDir, tmpDir string) *config.Config {
 		RepoCacheRoot:            repoCacheDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
-		AllowedProjects:          []string{},
+		ReposFile:                filepath.Join(filepath.Dir(repoCacheDir), "repos.json"),
 		MaxRuntimeSeconds:        30,
 		MaxConcurrentJobs:        5,
 		GitPushRetries:           1,
@@ -314,7 +316,7 @@ func TestE2E_ApiKeyAuth(t *testing.T) {
 
 	baseDir := t.TempDir()
 	repoCacheDir, logsDir, tmpDir, _ := newE2EDirs(t, baseDir)
-	os.MkdirAll(filepath.Join(repoCacheDir, "test-project", ".git"), 0755)
+	registerRepo(t, repoCacheDir, "test-project", filepath.Join(baseDir, "missing.git"))
 
 	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
 	cfg.API.APIKey = "secret-key-123"
@@ -427,5 +429,15 @@ echo '{"result":"Done"}'
 	})
 	if code2 != http.StatusConflict {
 		t.Errorf("expected 409 (locked), got %d", code2)
+	}
+}
+
+// registerRepo registers name -> url in the repos file next to the repo
+// cache (what /repo add does), pushed.
+func registerRepo(t *testing.T, repoCacheDir, name, url string) {
+	t.Helper()
+	repos.AllowLocalPaths = true
+	if err := repos.New(filepath.Join(filepath.Dir(repoCacheDir), "repos.json")).Put(repos.Repo{Name: name, URL: url, Push: true}); err != nil {
+		t.Fatal(err)
 	}
 }

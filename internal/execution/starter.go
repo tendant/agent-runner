@@ -31,9 +31,8 @@ func (h *Engine) TaskWorkspacePath(taskKey string) string {
 	return h.workspaceManager.TaskWorkspacePath(taskKey)
 }
 
-// FinishTaskWorkspace ends a task's workspace: repos are cached back for
-// future runs (deferred from each turn so half-finished work never reaches
-// the shared cache) and the directory is removed.
+// FinishTaskWorkspace ends a task's workspace: the directory is removed.
+// Nothing goes back to the repo cache, which only ever fetches.
 func (h *Engine) FinishTaskWorkspace(taskDir string) {
 	if taskDir == "" {
 		return
@@ -41,7 +40,6 @@ func (h *Engine) FinishTaskWorkspace(taskDir string) {
 	if _, err := os.Stat(taskDir); err != nil {
 		return
 	}
-	h.cacheReposBack(taskDir)
 	if err := h.workspaceManager.CleanupWorkspace(taskDir); err != nil {
 		slog.Warn("failed to remove task workspace", "path", taskDir, "error", err)
 	}

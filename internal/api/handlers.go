@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -335,16 +335,14 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if project is allowed
-	if !h.config.IsProjectAllowed(req.Project) {
-		h.writeError(w, http.StatusBadRequest, "project not in allowed_projects")
+	// The project is a registered repo (/repo add).
+	repo, ok, err := repos.New(h.config.ReposFile).Get(req.Project)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Check if project exists
-	projectPath := filepath.Join(h.config.RepoCacheRoot, req.Project)
-	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-		h.writeError(w, http.StatusBadRequest, "project directory not found")
+	if !ok {
+		h.writeError(w, http.StatusBadRequest, "project is not a registered repo (add it with /repo add or POST /repos)")
 		return
 	}
 
@@ -379,7 +377,7 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 	jobProject := job.Project
 
 	// Start execution in background
-	go h.executeJob(job, projectPath)
+	go h.executeJob(job, repo)
 
 	// Return 202 Accepted with job info
 	h.writeJSON(w, http.StatusAccepted, map[string]any{
@@ -435,20 +433,11 @@ func (h *Handlers) HandleGetProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get list of actual projects from disk
+	// The registered repos.
 	var projects []string
-	entries, err := os.ReadDir(h.config.RepoCacheRoot)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				// Check if it's a git repo
-				gitPath := filepath.Join(h.config.RepoCacheRoot, entry.Name(), ".git")
-				if _, err := os.Stat(gitPath); err == nil {
-					if h.config.IsProjectAllowed(entry.Name()) {
-						projects = append(projects, entry.Name())
-					}
-				}
-			}
+	if list, err := repos.New(h.config.ReposFile).List(); err == nil {
+		for _, r := range list {
+			projects = append(projects, r.Name)
 		}
 	}
 
@@ -458,7 +447,7 @@ func (h *Handlers) HandleGetProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 // executeJob runs the full job execution pipeline
-func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
+func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 	// Capture job fields into locals to avoid data races with concurrent readers.
 	// After this point, never read from the job pointer — use these locals instead.
 	jobID := job.ID
@@ -494,20 +483,20 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	// Update status to running
 	h.jobManager.UpdateStatus(jobID, jobs.StatusRunning)
 
-	// Step 1: Fetch and reset the source project
-	if err := h.gitOps.FetchAndReset(ctx, projectPath); err != nil {
+	// Steps 1-2: a fresh checkout of the repo, with its own login.
+	secrets := agentsecrets.New(h.config.SecretsFile)
+	workspacePath := h.workspaceManager.JobWorkspacePath(jobID)
+	if err := repos.Checkout(ctx, repo, h.config.RepoCacheRoot, workspacePath, secrets); err != nil {
 		h.failJob(jobID, logData, "Failed to prepare git repository: "+err.Error(), "GIT_NETWORK_ERROR")
-		return
-	}
-
-	// Step 2: Prepare workspace
-	workspacePath, err := h.workspaceManager.PrepareWorkspace(projectPath, jobID)
-	if err != nil {
-		h.failJob(jobID, logData, "Failed to prepare workspace: "+err.Error(), "")
 		return
 	}
 	h.jobManager.SetWorkspacePath(jobID, workspacePath)
 	defer h.workspaceManager.CleanupWorkspace(workspacePath)
+	gitOps, err := repo.Ops(h.gitOps, secrets)
+	if err != nil {
+		h.failJob(jobID, logData, err.Error(), "GIT_AUTH_FAILURE")
+		return
+	}
 
 	// Step 3: Execute Claude Code
 	result, executionLog, err := h.getExecutor().ExecuteWithLog(ctx, workspacePath, jobInstruction)
@@ -524,7 +513,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	_ = result // result.Output available if needed
 
 	// Step 4: Get changed files
-	changedFiles, err := h.gitOps.GetChangedFiles(ctx, workspacePath)
+	changedFiles, err := gitOps.GetChangedFiles(ctx, workspacePath)
 	if err != nil {
 		h.failJob(jobID, logData, "Failed to get changed files: "+err.Error(), "")
 		return
@@ -557,7 +546,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 	logData.ValidationOK = true
 
 	// Step 6: Get diff summary
-	diffSummary, _ := h.gitOps.GetDiffSummary(ctx, workspacePath)
+	diffSummary, _ := gitOps.GetDiffSummary(ctx, workspacePath)
 	logData.DiffSummary = logging.DiffSummary{
 		Insertions: diffSummary.Insertions,
 		Deletions:  diffSummary.Deletions,
@@ -571,15 +560,19 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 		commitMessage = h.generateCommitMessage(changedFiles, jobInstruction)
 	}
 
-	commitHash, err := h.gitOps.Commit(ctx, workspacePath, commitMessage, jobAuthor, jobInstruction)
+	commitHash, err := gitOps.Commit(ctx, workspacePath, commitMessage, jobAuthor, jobInstruction)
 	if err != nil {
 		h.failJob(jobID, logData, "Failed to commit: "+err.Error(), "")
 		return
 	}
 	logData.Commit = commitHash
 
-	// Step 8: Push
-	if err := h.gitOps.Push(ctx, workspacePath); err != nil {
+	// Step 8: Push (not for a read-only repo)
+	if !repo.Push {
+		h.failJob(jobID, logData, "committed "+commitHash+" but not pushed: "+repo.Name+" is read-only (push=false)", "GIT_PUSH_DISABLED")
+		return
+	}
+	if err := gitOps.Push(ctx, workspacePath); err != nil {
 		errorCode := ""
 		if strings.Contains(err.Error(), "GIT_PUSH_CONFLICT") {
 			errorCode = "GIT_PUSH_CONFLICT"
@@ -594,7 +587,7 @@ func (h *Handlers) executeJob(job *jobs.Job, projectPath string) {
 
 	// Success!
 	logData.Status = "completed"
-	branch, _ := h.gitOps.GetCurrentBranch(ctx, workspacePath)
+	branch, _ := gitOps.GetCurrentBranch(ctx, workspacePath)
 	logData.Branch = branch
 
 	h.jobManager.SetJobResult(jobID, &jobs.JobResult{

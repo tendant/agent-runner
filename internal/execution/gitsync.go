@@ -39,17 +39,24 @@ func (h *Engine) syncWorkspaceRepos(
 	if len(workspaceRepos(checkoutPath)) == 0 {
 		return
 	}
-	ops := gitpkg.NewOperations(h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds)
+	base := gitpkg.NewOperations(h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds)
 
 	for attempt := 0; ; attempt++ {
 		// Every round: the agent may have run since the last one.
-		repos, untrusted := h.pushableRepos(checkoutPath)
+		candidates, untrusted := h.pushableRepos(checkoutPath)
+		ops, skipped := h.repoOps(base, candidates)
 		if attempt == 0 {
 			for _, r := range untrusted {
-				liveSession.AddWarning(fmt.Sprintf("%s: not pushed: the runner did not set this repo up, so it will not run git in it on the host", filepath.Base(r)))
+				if !hasCommits(r) {
+					continue
+				}
+				liveSession.AddWarning(fmt.Sprintf("%s: not pushed: not a repo agent-runner set up (ask the user to /repo add it)", filepath.Base(r)))
+			}
+			for _, w := range skipped {
+				liveSession.AddWarning(w)
 			}
 		}
-		conflicts, warnings := pushRepos(ctx, ops, repos)
+		conflicts, warnings := pushRepos(ctx, ops, candidates)
 		if len(conflicts) == 0 {
 			for _, w := range warnings {
 				liveSession.AddWarning(w)
@@ -64,14 +71,14 @@ func (h *Engine) syncWorkspaceRepos(
 				liveSession.AddWarning(w)
 			}
 			for _, rc := range conflicts {
-				liveSession.AddWarning(parkConflictedWork(ctx, ops, rc, sessionID))
+				liveSession.AddWarning(parkConflictedWork(ctx, ops[rc.RepoPath], rc, sessionID))
 			}
 			return
 		}
 
 		// Hand the conflict to the agent as a corrective iteration, the same
 		// way reviewer feedback is.
-		conflictContext := buildConflictContext(conflicts, h.sandboxed())
+		conflictContext := buildConflictContext(conflicts)
 		iterNum := liveSession.Snapshot().CurrentIteration + 1
 		var systemPrompt string
 		if h.config.Agent.PlannerEnabled {
@@ -119,11 +126,16 @@ func (h *Engine) pushableRepos(checkoutPath string) (repos, untrusted []string) 
 	return restoreGitConfigs(checkoutPath)
 }
 
-// pushRepos pushes each repo with unpushed commits. Repos whose rebase hit
-// conflicts come back in conflicts (rebase left in progress); any other
-// push failure becomes a warning string.
-func pushRepos(ctx context.Context, ops *gitpkg.Operations, repos []string) (conflicts []*gitpkg.RebaseConflictError, warnings []string) {
+// pushRepos pushes each repo with unpushed commits, with its own login
+// (ops; a repo with none is not pushed). Repos whose rebase hit conflicts
+// come back in conflicts (rebase left in progress); any other push failure
+// becomes a warning string.
+func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos []string) (conflicts []*gitpkg.RebaseConflictError, warnings []string) {
 	for _, repo := range repos {
+		ops, ok := opsFor[repo]
+		if !ok {
+			continue
+		}
 		name := filepath.Base(repo)
 		if ops.RebaseInProgress(ctx, repo) {
 			// The agent resolved the markers but didn't finish, or didn't
@@ -178,9 +190,9 @@ func parkConflictedWork(ctx context.Context, ops *gitpkg.Operations, rc *gitpkg.
 }
 
 // buildConflictContext is the prompt section that tells the agent exactly
-// what state the repo is in and how to finish. A sandboxed agent has no git
-// credentials: it finishes the rebase and the runner pushes.
-func buildConflictContext(conflicts []*gitpkg.RebaseConflictError, sandboxed bool) string {
+// what state the repo is in and how to finish: it finishes the rebase, and
+// the runner pushes.
+func buildConflictContext(conflicts []*gitpkg.RebaseConflictError) string {
 	var sb strings.Builder
 	sb.WriteString("## Git: the remote branch moved — resolve the rebase conflicts\n\n")
 	sb.WriteString("Another session pushed while you worked. Your commits were rebased onto the new remote head and the rebase stopped on conflicts. It is still in progress; finish it rather than redoing the task.\n\n")
@@ -194,11 +206,7 @@ func buildConflictContext(conflicts []*gitpkg.RebaseConflictError, sandboxed boo
 	sb.WriteString("For each repo above, in that directory:\n")
 	sb.WriteString("1. Open each conflicted file and resolve the `<<<<<<<`/`=======`/`>>>>>>>` markers. Keep both sides' intent — the remote changes come from a different task and must be preserved.\n")
 	sb.WriteString("2. `git add <files>` then `GIT_EDITOR=true git rebase --continue`. Repeat if a later commit conflicts.\n")
-	if sandboxed {
-		sb.WriteString("3. Stop there: the runner pushes once the rebase is finished (you have no git credentials here).\n\n")
-	} else {
-		sb.WriteString("3. `git push origin HEAD`.\n\n")
-	}
+	sb.WriteString("3. Stop there: the runner pushes once the rebase is finished.\n\n")
 	sb.WriteString("Do not `git rebase --abort`, do not force-push, do not reset the branch.\n")
 	return sb.String()
 }
@@ -254,6 +262,12 @@ func isGitRepo(path string) bool {
 
 // hasUnpushedCommits reports commits ahead of the upstream tracking branch.
 // No upstream means nothing to push.
+// hasCommits reports a repo with at least one commit: one the agent made
+// and left empty is not worth a warning.
+func hasCommits(repoPath string) bool {
+	return gitCmd(context.Background(), repoPath, "rev-parse", "--verify", "-q", "HEAD").Run() == nil
+}
+
 func hasUnpushedCommits(ctx context.Context, repoPath string) bool {
 	out, err := gitCmd(ctx, repoPath, "log", "@{u}..HEAD", "--oneline").Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""

@@ -69,7 +69,7 @@ Flow: `queued → running → validating → pushing → completed/failed`
 Iterative execution with multiple Claude invocations in a workspace. Claude handles all Git operations via the prompt.
 
 Flow:
-1. **Workspace preparation** — create isolated workspace, populate shared repos
+1. **Workspace preparation** — create isolated workspace, check out the registered repos
 2. **Phase 1: Planner** (optional) — sub-agent analyzes workspace state and produces a step-by-step plan
 3. **Phase 2: Iteration loop** — run Claude repeatedly with dynamic prompts incorporating plan and workspace state
 4. **Output file collection** — scan `_send/` directory for files to deliver to user
@@ -124,15 +124,15 @@ Each agent session gets an isolated workspace:
 ```
 session-{id}/
 ├── workspace/              # Agent's CWD (cmd.Dir points here)
-│   ├── shared-repo-a/      # Pre-populated from AGENT_SHARED_REPOS
-│   ├── shared-repo-b/      # Pre-populated from AGENT_SHARED_REPOS
+│   ├── repo-a/             # Every registered repo (/repo), checked out
+│   ├── repo-b/             # from the fetched cache
 │   ├── _send/              # Agent writes output files here
 │   └── _progress.json      # Agent writes plan step completion
 └── state/                  # Runner-managed (not visible to agent)
     └── TODO.md             # Progress tracker, injected into prompts
 ```
 
-- **Shared repos** (`AGENT_SHARED_REPOS`) are cached in `repo-cache/` (configured via `REPO_CACHE_ROOT`) and copied into each workspace's `workspace/` directory
+- **Repos** come from the registry (`DATA_DIR/repos.json`, `/repo`, `/repos`; REPOS_DESIGN.md): a bare clone per repo in `repo-cache/<name>.git` (`REPO_CACHE_ROOT`), fetched with the repo's own login (a `/secret`), cloned into each workspace's `workspace/` directory, never written back
 - Agent opens its eyes in `workspace/` — no `cd` needed; `_send/` and `_progress.json` are relative to CWD
 - `state/` is the runner's bookkeeping, invisible to the agent
 - After completion, repos are cached back from `workspace/` for future sessions (underscore-prefixed entries skipped)
@@ -290,8 +290,8 @@ Called by the running agent, not by operators — see "Locking" above.
 All configuration via environment variables. See `.env.example` for the full list.
 
 Key groups:
-- **Git**: `GIT_HOST`, `GIT_ORG`
-- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_SHARED_REPOS`, `AGENT_MAX_CONCURRENT`, iteration/time limits, planner/reviewer toggles
+- **Git**: `GIT_PUSH_RETRIES`, `MEMORY_GIT_*` (project repos are `/repo` and `/secret`, not `.env`)
+- **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_MAX_CONCURRENT`, iteration/time limits, planner/reviewer toggles
 - **API**: `API_BIND`, `API_KEY`
 - **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CHANNEL_IDS`
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`

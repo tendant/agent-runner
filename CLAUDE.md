@@ -49,12 +49,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir mutex in `internal/template`, a per-repo lock around cache write-back in `internal/executor`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety.
 - Config load priority: OS env > `DATA_DIR/.env.local` > `.env.<instance>` > `.env`.
-- Agent workspace uses `workspace/` subdirectory as the agent's CWD; shared repos cached in `REPO_CACHE_ROOT` between sessions.
+- Agent workspace uses `workspace/` subdirectory as the agent's CWD; every registered repo (`/repo`, `DATA_DIR/repos.json`, REPOS_DESIGN.md) is checked out there from a bare cache in `REPO_CACHE_ROOT` that only fetches.
 - Memory & prompt composition: see DESIGN.md "Memory & Prompt Composition" — `agent.md` + `prompt.md` + well-known memory files + Recent Sessions digest, bounded by `AGENT_MEMORY_CHAR_CAP`.
 
 ### Agent Execution Flow
 1. Pull memory git remote (optional), resolve prompt from the memory system
-2. Prepare workspace (clone/copy shared repos, skills)
+2. Prepare workspace (check out registered repos, skills)
 3. **Planner** sub-agent (default on) — step-by-step plan
 4. **Iteration loop** — run the agent CLI repeatedly with dynamic prompts
 5. Collect output files from `_send/`; read `_schedule.json` for self-scheduled follow-ups
@@ -67,6 +67,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `POST /bootstrap` — install CLI, seed default prompts, report readiness
 - `POST /schedule` / `GET /schedules` / `DELETE /schedule/{id}` — scheduled tasks
 - `GET /sessions`, `GET /projects`, `GET /status/{project}`
+- `GET/POST /repos`, `DELETE /repos/{name}` — the repo registry (as `/repo` in chat)
 
 ## Development
 

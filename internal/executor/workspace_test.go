@@ -2,66 +2,10 @@ package executor
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestPrepareWorkspace_CreatesAndCopies(t *testing.T) {
-	tmpRoot := t.TempDir()
-	projectDir := t.TempDir()
-
-	// Create some project files
-	os.WriteFile(filepath.Join(projectDir, "main.go"), []byte("package main"), 0644)
-	os.MkdirAll(filepath.Join(projectDir, "pkg"), 0755)
-	os.WriteFile(filepath.Join(projectDir, "pkg", "lib.go"), []byte("package pkg"), 0644)
-
-	wm := NewWorkspaceManager(tmpRoot, 3600)
-	wsPath, err := wm.PrepareWorkspace(projectDir, "test-123")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify workspace was created
-	if _, err := os.Stat(wsPath); os.IsNotExist(err) {
-		t.Fatal("workspace directory was not created")
-	}
-
-	// Verify files were copied
-	data, err := os.ReadFile(filepath.Join(wsPath, "main.go"))
-	if err != nil {
-		t.Fatalf("main.go not copied: %v", err)
-	}
-	if string(data) != "package main" {
-		t.Errorf("main.go content mismatch: %q", string(data))
-	}
-
-	data, err = os.ReadFile(filepath.Join(wsPath, "pkg", "lib.go"))
-	if err != nil {
-		t.Fatalf("pkg/lib.go not copied: %v", err)
-	}
-	if string(data) != "package pkg" {
-		t.Errorf("pkg/lib.go content mismatch: %q", string(data))
-	}
-}
-
-func TestPrepareWorkspace_JobIDInPath(t *testing.T) {
-	tmpRoot := t.TempDir()
-	projectDir := t.TempDir()
-
-	wm := NewWorkspaceManager(tmpRoot, 3600)
-	wsPath, err := wm.PrepareWorkspace(projectDir, "abc-456")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := filepath.Join(tmpRoot, "job-abc-456")
-	if wsPath != expected {
-		t.Errorf("expected path %q, got %q", expected, wsPath)
-	}
-}
 
 func TestCleanupWorkspace_RemovesDir(t *testing.T) {
 	tmpRoot := t.TempDir()
@@ -170,52 +114,13 @@ func TestPrepareAgentWorkspace_CleansUpOnError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := wm.PrepareAgentWorkspace("", sessionID, nil, "", "", "", "")
+	_, err := wm.PrepareAgentWorkspace(sessionID, "")
 	if err == nil {
 		t.Fatal("expected error when stateDir cannot be created")
 	}
 
 	if _, statErr := os.Stat(workspacePath); !os.IsNotExist(statErr) {
 		t.Errorf("expected workspace dir to be removed after setup failure, but it still exists at %s", workspacePath)
-	}
-}
-
-// [M7] PrepareAgentWorkspace must return repos that are listed in sharedRepos
-// but absent from the cache so the caller can surface them as warnings.
-func TestPrepareAgentWorkspace_ReturnsMissingRepos(t *testing.T) {
-	tmpRoot := t.TempDir()
-	repoCacheRoot := t.TempDir()
-	wm := NewWorkspaceManager(tmpRoot, 3600)
-
-	// "present" exists in cache; "absent" does not.
-	if err := os.MkdirAll(filepath.Join(repoCacheRoot, "present"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7test", []string{"present", "absent"}, "", "", "", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(missing) != 1 || missing[0] != "absent" {
-		t.Errorf(`expected missing=["absent"], got %v`, missing)
-	}
-}
-
-func TestPrepareAgentWorkspace_EmptyMissingWhenAllPresent(t *testing.T) {
-	tmpRoot := t.TempDir()
-	repoCacheRoot := t.TempDir()
-	wm := NewWorkspaceManager(tmpRoot, 3600)
-
-	if err := os.MkdirAll(filepath.Join(repoCacheRoot, "myrepo"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, missing, err := wm.PrepareAgentWorkspace(repoCacheRoot, "m7ok", []string{"myrepo"}, "", "", "", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(missing) != 0 {
-		t.Errorf("expected no missing repos, got %v", missing)
 	}
 }
 
@@ -297,58 +202,5 @@ func TestCopyFile_ResolvesSymlinkContent(t *testing.T) {
 	}
 	if string(data) != "real content" {
 		t.Errorf("expected %q, got %q", "real content", string(data))
-	}
-}
-
-// ConfigureCredHelper must win over an inherited credential.helper from a
-// config level outside the repo's own --local config (e.g. a system-level
-// macOS osxkeychain entry with a stale credential for the same host cached
-// by an unrelated project). A naive `git config credential.helper <value>`
-// only appends to the local file — it does not suppress that inherited
-// entry, and git's credential resolution stops at the first helper that
-// returns a full username+password, so the stale one silently wins.
-func TestConfigureCredHelper_OverridesInheritedHelper(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repoDir := t.TempDir()
-	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
-
-	// Simulate a system/global-level credential.helper with a decoy
-	// credential for the same host, via GIT_CONFIG_GLOBAL (redirects where
-	// git reads "global" config from — read before local, exactly like a
-	// real system-level entry would be).
-	fakeGlobalConfig := filepath.Join(t.TempDir(), "gitconfig-global")
-	// Write via `git config -f` (not a raw ini string) so the shell
-	// expression's semicolons and braces are escaped/quoted exactly as git
-	// itself would — a hand-written unquoted value would have its `;`
-	// parsed as a config-file comment, truncating it into a broken (and
-	// therefore non-competing) helper, which would make this test pass
-	// vacuously regardless of whether the fix works.
-	decoyHelper := `!f() { echo username=decoy-user; echo password=decoy-pass; }; f`
-	if err := exec.Command("git", "config", "-f", fakeGlobalConfig, "credential.helper", decoyHelper).Run(); err != nil {
-		t.Fatalf("seed fake global config: %v", err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", fakeGlobalConfig)
-
-	ConfigureCredHelper(repoDir)
-
-	cmd := exec.Command("git", "-C", repoDir, "credential", "fill")
-	cmd.Stdin = strings.NewReader("protocol=https\nhost=example.com\npath=owner/repo.git\n\n")
-	cmd.Env = append(os.Environ(), "GIT_TOKEN=real-token-value")
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git credential fill: %v", err)
-	}
-
-	got := string(out)
-	if strings.Contains(got, "decoy") {
-		t.Errorf("inherited (global) credential.helper won over the one ConfigureCredHelper set:\n%s", got)
-	}
-	if !strings.Contains(got, "username=oauth2") || !strings.Contains(got, "password=real-token-value") {
-		t.Errorf("expected our helper's username=oauth2/password=real-token-value, got:\n%s", got)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,19 +35,13 @@ type Config struct {
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
 	MemoryDir     string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 	SecretsFile   string // DATA_DIR/secrets.json: the agent user's secrets (/secret), apart from the runner's .env
-
-	// Project allowlist
-	AllowedProjects []string
+	ReposFile     string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
 
 	// Execution limits
 	MaxRuntimeSeconds int
 	MaxConcurrentJobs int
 
 	// Git settings
-	GitHost                  string // e.g. "gitea.example.com"
-	GitOrg                   string // e.g. "sites"
-	GitToken                 string // GIT_TOKEN — injected into HTTPS repo URLs at runtime
-	GitSSHKey                string // GIT_SSH_KEY — path to SSH private key for repo operations
 	GitPushRetries           int
 	GitPushRetryDelaySeconds int
 
@@ -120,7 +113,6 @@ type AgentConfig struct {
 	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
 	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — a codex ChatGPT login (auth.json) for sandboxed codex, through the proxy; unset: codex's own when AGENT_CLI=codex without OPENAI_API_KEY; "off": none
 	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
-	SharedRepos         []string // Repos to pre-populate in every agent workspace (from AGENT_SHARED_REPOS)
 	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
 	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
 	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
@@ -229,7 +221,7 @@ func defaultConfigForDataDir(data string) *Config {
 		UploadsRoot:              filepath.Join(data, "uploads"),
 		MemoryDir:                filepath.Join(data, "memory"),
 		SecretsFile:              filepath.Join(data, "secrets.json"),
-		AllowedProjects:          []string{},
+		ReposFile:                filepath.Join(data, "repos.json"),
 		MaxRuntimeSeconds:        300,
 		MaxConcurrentJobs:        5,
 		GitPushRetries:           3,
@@ -352,40 +344,10 @@ func LoadFromEnv() (*Config, error) {
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
 	cfg.UploadsRoot = envOrDefault("UPLOADS_ROOT", cfg.UploadsRoot)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
-	cfg.AllowedProjects = envSliceOrDefault("ALLOWED_PROJECTS", cfg.AllowedProjects)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("JOB_MAX_RUNTIME", cfg.MaxRuntimeSeconds)
 	cfg.MaxConcurrentJobs = envIntOrDefault("JOB_MAX_CONCURRENT", cfg.MaxConcurrentJobs)
-	cfg.GitHost = envOrDefault("GIT_HOST", cfg.GitHost)
-	cfg.GitOrg = envOrDefault("GIT_ORG", cfg.GitOrg)
-	cfg.GitToken = envOrDefault("GIT_TOKEN", cfg.GitToken)
-	cfg.GitSSHKey = envOrDefault("GIT_SSH_KEY", cfg.GitSSHKey)
 	cfg.GitPushRetries = envIntOrDefault("GIT_PUSH_RETRIES", cfg.GitPushRetries)
 	cfg.GitPushRetryDelaySeconds = envIntOrDefault("GIT_PUSH_RETRY_DELAY_SECONDS", cfg.GitPushRetryDelaySeconds)
-
-	// Propagate GIT_SSH_KEY into GIT_SSH_COMMAND so all git subprocesses
-	// (including the agent CLI) inherit it without extra wiring.
-	if cfg.GitSSHKey != "" && os.Getenv("GIT_SSH_COMMAND") == "" {
-		if err := os.Setenv("GIT_SSH_COMMAND", "ssh -i "+cfg.GitSSHKey+" -o StrictHostKeyChecking=no"); err != nil {
-			slog.Warn("config: failed to set GIT_SSH_COMMAND", "error", err)
-		}
-	}
-
-	// MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY are separate credentials for the
-	// memory repo (it may live on a different host than project repos), but
-	// most setups use the same git host for both — fall back to GIT_TOKEN/
-	// GIT_SSH_KEY so a single-host setup doesn't need to configure git
-	// credentials twice. Set MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY explicitly
-	// to use different credentials for the memory repo.
-	if os.Getenv("MEMORY_GIT_TOKEN") == "" && cfg.GitToken != "" {
-		if err := os.Setenv("MEMORY_GIT_TOKEN", cfg.GitToken); err != nil {
-			slog.Warn("config: failed to set MEMORY_GIT_TOKEN", "error", err)
-		}
-	}
-	if os.Getenv("MEMORY_GIT_SSH_KEY") == "" && cfg.GitSSHKey != "" {
-		if err := os.Setenv("MEMORY_GIT_SSH_KEY", cfg.GitSSHKey); err != nil {
-			slog.Warn("config: failed to set MEMORY_GIT_SSH_KEY", "error", err)
-		}
-	}
 
 	cfg.Validation.BlockBinaryFiles = envBoolOrDefault("VALIDATION_BLOCK_BINARY_FILES", cfg.Validation.BlockBinaryFiles)
 	cfg.Validation.BlockedPaths = envSliceOrDefault("VALIDATION_BLOCKED_PATHS", cfg.Validation.BlockedPaths)
@@ -473,7 +435,6 @@ func LoadFromEnv() (*Config, error) {
 		}
 	}
 	cfg.Agent.MaxTurns = envIntOrDefault("AGENT_MAX_TURNS", cfg.Agent.MaxTurns)
-	cfg.Agent.SharedRepos = envSliceOrDefault("AGENT_SHARED_REPOS", cfg.Agent.SharedRepos)
 	cfg.Agent.SkillsDir = envOrDefault("AGENT_SKILLS_DIR", cfg.Agent.SkillsDir)
 	cfg.Agent.PlannerEnabled = envBoolOrDefault("AGENT_PLANNER_ENABLED", cfg.Agent.PlannerEnabled)
 	cfg.Agent.ReviewerEnabled = envBoolOrDefault("AGENT_REVIEWER_ENABLED", cfg.Agent.ReviewerEnabled)
@@ -602,13 +563,9 @@ func (c *Config) copyFrom(n *Config) {
 	c.UploadsRoot = n.UploadsRoot
 	c.MemoryDir = n.MemoryDir
 	c.SecretsFile = n.SecretsFile
-	c.AllowedProjects = n.AllowedProjects
+	c.ReposFile = n.ReposFile
 	c.MaxRuntimeSeconds = n.MaxRuntimeSeconds
 	c.MaxConcurrentJobs = n.MaxConcurrentJobs
-	c.GitHost = n.GitHost
-	c.GitOrg = n.GitOrg
-	c.GitToken = n.GitToken
-	c.GitSSHKey = n.GitSSHKey
 	c.GitPushRetries = n.GitPushRetries
 	c.GitPushRetryDelaySeconds = n.GitPushRetryDelaySeconds
 	c.Validation = n.Validation
@@ -660,14 +617,6 @@ func (c *Config) FastLLMSettings() (provider, model, apiKey, baseURL string) {
 		provider, model = c.Agent.FastProvider, c.Agent.FastModel
 	}
 	return provider, model, c.FastLLM.APIKey, c.FastLLM.BaseURL
-}
-
-// IsProjectAllowed checks if a project is in the allowlist
-func (c *Config) IsProjectAllowed(project string) bool {
-	if len(c.AllowedProjects) == 0 {
-		return true // No allowlist means all projects are allowed
-	}
-	return slices.Contains(c.AllowedProjects, project)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -780,3 +729,8 @@ func envSliceOrDefault(key string, fallback []string) []string {
 	}
 	return fallback
 }
+
+// RemovedSettings are settings agent-runner no longer reads: repos and their
+// credentials come from /repo and /secret (REPOS_DESIGN.md). Startup names
+// any still set.
+var RemovedSettings = []string{"GIT_HOST", "GIT_ORG", "GIT_TOKEN", "GIT_SSH_KEY", "AGENT_SHARED_REPOS", "ALLOWED_PROJECTS"}

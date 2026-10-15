@@ -29,7 +29,9 @@ curl -X POST localhost:8080/bootstrap               # installs the CLI if missin
 `AGENT_CLI=claude` needs no key when `claude login` is done on the host; any other provider is
 in [.env.example](.env.example).
 
-For git against a self-hosted server: `GIT_HOST`, `GIT_ORG`, and `GIT_TOKEN` (or `GIT_SSH_KEY`).
+Repos to work on are added in chat, each with its own login from a `/secret`:
+`/secret set GITEE_TOKEN <token>` then `/repo add https://<user>@gitee.com/org/repo.git secret=GITEE_TOKEN`
+([REPOS_DESIGN.md](REPOS_DESIGN.md)). Every session gets every repo; agent-runner pushes the agent's commits.
 
 With a chat bot connected, `/set KEY VALUE` configures a running instance (saved to `.env.local`,
 applied immediately); `/config`, `/status` and `/help` show the rest.
@@ -76,8 +78,7 @@ Upgrading from v0.0.x: see [MIGRATION.md](MIGRATION.md). The ones most people se
 | `AGENT_MODEL` / `AGENT_FAST_MODEL` | pi's choice (opencode: `deepseek/deepseek-v4-pro` / `-flash`) | Work model as `provider/model`, and a cheap one for planning and curation |
 | `DATA_DIR` | the current directory | All mutable state |
 | `API_BIND` / `API_KEY` | `127.0.0.1:8080` / none | API address and key |
-| `GIT_TOKEN` / `GIT_SSH_KEY` | | Git credentials (`MEMORY_GIT_*` for a memory repo elsewhere) |
-| `AGENT_SHARED_REPOS` | | Repos pre-cloned into every workspace |
+| `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | | Credentials for the memory repo (project repos use `/repo` and `/secret`) |
 | `AGENT_PLANNER_ENABLED` / `AGENT_REVIEWER_ENABLED` | `true` / `false` | Planner and reviewer sub-agents |
 | `AGENT_MAX_CONCURRENT` | `1` | Sessions running at once |
 | `AGENT_SANDBOX` | `off` | Run agents in a sandbox: `permissive` or `strict` (see [docs/sandbox.md](docs/sandbox.md)) |

@@ -24,7 +24,21 @@ type DiffSummary struct {
 type Operations struct {
 	PushRetries           int
 	PushRetryDelaySeconds int
-	Token                 string // GIT_TOKEN — injected into HTTPS URLs at runtime
+	Auth                  Auth // how this repo's fetches and pushes log in (internal/repos)
+}
+
+// Auth is extra arguments and environment for a repo's git commands: its
+// credential helper and the token it reads, for that command only.
+type Auth struct {
+	Args []string // before the subcommand, e.g. -c credential.helper=...
+	Env  []string // KEY=VALUE
+}
+
+// WithAuth is a copy of o that logs in with a.
+func (o *Operations) WithAuth(a Auth) *Operations {
+	c := *o
+	c.Auth = a
+	return &c
 }
 
 // NewOperations creates a new Git operations handler
@@ -37,8 +51,7 @@ func NewOperations(pushRetries, pushRetryDelaySeconds int) *Operations {
 
 // FetchAndReset fetches from origin and resets to origin/main
 func (o *Operations) FetchAndReset(ctx context.Context, repoPath string) error {
-	fetchTarget := o.resolveRemote(ctx, repoPath)
-	if err := o.runGitCommand(ctx, repoPath, "fetch", fetchTarget); err != nil {
+	if err := o.runGitCommand(ctx, repoPath, "fetch", "origin"); err != nil {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
 
@@ -166,46 +179,6 @@ func (o *Operations) Commit(ctx context.Context, repoPath, message, author, inst
 	return strings.TrimSpace(string(hashOutput)), nil
 }
 
-// resolveRemote returns the push/fetch target for repoPath. When Token is set
-// and the stored remote is an HTTPS URL, it returns an ephemeral URL with the
-// token embedded. Otherwise it returns "origin" so normal git credential
-// helpers remain in effect.
-func (o *Operations) resolveRemote(ctx context.Context, repoPath string) string {
-	if o.Token == "" {
-		return "origin"
-	}
-	cmd := gitsafe.CommandContext(ctx, "remote", "get-url", "origin")
-	cmd.Dir = repoPath
-	out, err := cmd.Output()
-	if err != nil {
-		return "origin"
-	}
-	remote := strings.TrimSpace(string(out))
-	if injected := injectToken(remote, o.Token); injected != remote {
-		return injected
-	}
-	return "origin"
-}
-
-// injectToken rewrites an HTTPS URL to embed the token as credentials.
-// Returns remote unchanged for SSH URLs, when token is empty, or when the
-// URL already carries credentials — double-injecting produces a mangled URL.
-func injectToken(remote, token string) string {
-	if token == "" || remote == "" {
-		return remote
-	}
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(remote, prefix) {
-			rest := remote[len(prefix):]
-			if strings.Contains(rest, "@") {
-				return remote // credentials already present
-			}
-			return prefix + "oauth2:" + token + "@" + rest
-		}
-	}
-	return remote
-}
-
 // RebaseConflictError reports that integrating the remote's new commits
 // stopped on merge conflicts. The rebase is left in progress — conflict
 // markers in the working tree, REBASE_HEAD set — so the agent can resolve
@@ -238,7 +211,7 @@ func (e *RebaseConflictError) Unwrap() error { return e.Err }
 // (internal/execution/engine.go cleanup), taking unpushed commits with it.
 func (o *Operations) Push(ctx context.Context, repoPath string) error {
 	var lastErr error
-	pushTarget := o.resolveRemote(ctx, repoPath)
+	pushTarget := "origin"
 	branch, _ := o.GetCurrentBranch(ctx, repoPath)
 	if branch == "" || branch == "HEAD" {
 		branch = "HEAD"
@@ -288,7 +261,7 @@ func (o *Operations) Push(ctx context.Context, repoPath string) error {
 // PushToBranch pushes HEAD to a differently named branch on origin, for
 // parking work that couldn't be merged onto its own branch.
 func (o *Operations) PushToBranch(ctx context.Context, repoPath, branch string) error {
-	pushTarget := o.resolveRemote(ctx, repoPath)
+	pushTarget := "origin"
 	if err := o.runGitCommand(ctx, repoPath, "push", pushTarget, "HEAD:refs/heads/"+branch); err != nil {
 		return fmt.Errorf("git push to %s failed: %w", branch, err)
 	}
@@ -393,7 +366,7 @@ func (o *Operations) PullRebase(ctx context.Context, repoPath string) error {
 	if branch == "" || branch == "HEAD" {
 		branch = "HEAD"
 	}
-	return o.pullRebase(ctx, repoPath, o.resolveRemote(ctx, repoPath), branch)
+	return o.pullRebase(ctx, repoPath, "origin", branch)
 }
 
 // pullRebase is PullRebase with the remote and branch already resolved.
@@ -440,10 +413,10 @@ func (o *Operations) runGitCommand(ctx context.Context, repoPath string, args ..
 }
 
 func (o *Operations) runGitCommandEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) error {
-	cmd := gitsafe.CommandContext(ctx, args...)
+	cmd := gitsafe.CommandContext(ctx, append(append([]string{}, o.Auth.Args...), args...)...)
 	cmd.Dir = repoPath
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
+	if env := append(append([]string{}, o.Auth.Env...), extraEnv...); len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
 	}
 
 	var stderr bytes.Buffer

@@ -9,6 +9,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/repos"
 )
 
 // The runtime layer of a session's prompt (MEMORY_DESIGN.md §3): how this
@@ -22,6 +23,7 @@ type runtimeFacts struct {
 	MemoryDir  string                // as the agent sees it
 	MemoryCopy bool                  // MemoryDir is a staged copy, merged back at the end
 	Secrets    []agentsecrets.Secret // the agent user's secrets: names and descriptions are shown
+	Repos      []repos.Repo          // the registered repos in the workspace
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -30,17 +32,26 @@ func runtimeInstructions(f runtimeFacts) string {
 	b.WriteString("Written by agent-runner for this session. Where anything above disagrees, this wins.\n")
 
 	b.WriteString("\n### Git\n\n")
-	if f.Sandboxed {
-		b.WriteString("You have no git credentials here, by design: commit your work, but do not `git push`,\n" +
-			"`git pull` or `git fetch` against the remote, and do not set up credentials or new remotes.\n" +
-			"When you finish, the runner pushes your commits to the branch you are on. If another session\n" +
-			"pushed meanwhile, it rebases them for you, and asks you to resolve the conflicts only if\n" +
-			"that rebase conflicts. Repos you clone or create yourself are not pushed.\n")
-	} else {
-		b.WriteString("Commit your work with descriptive messages and push it to origin. Other sessions may push to\n" +
-			"the same branch: if your push is rejected, run `git pull --rebase`, resolve conflicts keeping\n" +
-			"both sides' intent, and push again. Never force-push or reset a shared branch.\n")
+	if len(f.Repos) > 0 {
+		b.WriteString("The repos in your working directory, set up by the people you work for (`/repo`):\n\n")
+		for _, r := range f.Repos {
+			branch := r.Branch
+			if branch == "" {
+				branch = "its default branch"
+			}
+			push := "pushed for you"
+			if !r.Push {
+				push = "read-only: never pushed"
+			}
+			b.WriteString("- `" + r.Name + "/`: " + r.URL + ", on " + branch + ", " + push + "\n")
+		}
+		b.WriteString("\n")
 	}
+	b.WriteString("Commit your work with descriptive messages, but do not `git push`, `git pull` or change remotes:\n" +
+		"when the session ends, agent-runner pushes your commits to the branch you are on. If another session\n" +
+		"pushed meanwhile, it rebases them for you, and asks you to resolve the conflicts only if that rebase\n" +
+		"conflicts. Repos you clone or create yourself are not pushed: to work on another repo, ask the user\n" +
+		"to add it with `/repo add`.\n")
 
 	if f.MemoryDir != "" {
 		dir, _ := filepath.Abs(f.MemoryDir)
@@ -66,8 +77,8 @@ func runtimeInstructions(f runtimeFacts) string {
 
 	b.WriteString("\n### Credentials\n\n")
 	b.WriteString("Credentials for your tasks are environment variables: use them from there, never search files\n" +
-		"for keys, and do not write them into files, commits or memory. agent-runner's own credentials (model\n" +
-		"keys, its git token) are never yours to use: it calls the model and pushes for you.")
+		"for keys, and do not write them into files, commits or memory. agent-runner's own credentials\n" +
+		"(model keys) are never yours to use: it calls the model for you.")
 	b.WriteString("\n")
 	if len(f.Secrets) > 0 {
 		b.WriteString("\nSet for you (`/secret` in chat adds more):\n\n")
@@ -95,7 +106,7 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 		return "", err
 	}
 	secrets, _ := agentsecrets.New(h.config.SecretsFile).List()
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets}), nil
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets, Repos: h.registeredRepos()}), nil
 }
 
 // threadKey names the thread a session belongs to, for its daily-log entry

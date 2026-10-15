@@ -306,41 +306,6 @@ func TestValidate_EmptyBind(t *testing.T) {
 	}
 }
 
-func TestIsProjectAllowed_EmptyAllowlist(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.AllowedProjects = []string{}
-	if !cfg.IsProjectAllowed("anything") {
-		t.Error("empty allowlist should allow all projects")
-	}
-}
-
-func TestIsProjectAllowed_ExactMatch(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.AllowedProjects = []string{"my-project", "other-project"}
-
-	if !cfg.IsProjectAllowed("my-project") {
-		t.Error("expected my-project to be allowed")
-	}
-	if !cfg.IsProjectAllowed("other-project") {
-		t.Error("expected other-project to be allowed")
-	}
-}
-
-func TestIsProjectAllowed_NoPartialMatch(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.AllowedProjects = []string{"my-project"}
-
-	if cfg.IsProjectAllowed("my-proj") {
-		t.Error("partial match should not be allowed")
-	}
-	if cfg.IsProjectAllowed("my-project-extended") {
-		t.Error("extended name should not match")
-	}
-	if cfg.IsProjectAllowed("other") {
-		t.Error("unrelated project should not be allowed")
-	}
-}
-
 func TestLoadFromEnv_Defaults(t *testing.T) {
 	// Clear all env vars that LoadFromEnv reads
 	for _, key := range []string{
@@ -443,7 +408,6 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	t.Setenv("JOB_MAX_CONCURRENT", "10")
 	t.Setenv("API_BIND", "0.0.0.0:9090")
 	t.Setenv("API_KEY", "secret123")
-	t.Setenv("ALLOWED_PROJECTS", "project-a,project-b")
 	t.Setenv("AGENT_PATHS", "src/,docs/")
 	t.Setenv("AGENT_AUTHOR", "my-bot")
 	t.Setenv("AGENT_COMMIT_PREFIX", "[auto]")
@@ -473,9 +437,6 @@ func TestLoadFromEnv_OverridesFromEnv(t *testing.T) {
 	}
 	if cfg.API.APIKey != "secret123" {
 		t.Errorf("expected secret123, got %s", cfg.API.APIKey)
-	}
-	if len(cfg.AllowedProjects) != 2 {
-		t.Errorf("expected 2 allowed projects, got %d", len(cfg.AllowedProjects))
 	}
 	if len(cfg.Agent.Paths) != 2 {
 		t.Errorf("expected 2 agent paths, got %d", len(cfg.Agent.Paths))
@@ -651,18 +612,18 @@ func TestLoadFromEnv_TelegramConfigDefaults(t *testing.T) {
 }
 
 func TestLoadFromEnv_SliceParsing(t *testing.T) {
-	t.Setenv("ALLOWED_PROJECTS", "a, b , c")
+	t.Setenv("AGENT_PATHS", "a, b , c")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cfg.AllowedProjects) != 3 {
-		t.Fatalf("expected 3 projects, got %d", len(cfg.AllowedProjects))
+	if len(cfg.Agent.Paths) != 3 {
+		t.Fatalf("expected 3 paths, got %d", len(cfg.Agent.Paths))
 	}
-	if cfg.AllowedProjects[0] != "a" || cfg.AllowedProjects[1] != "b" || cfg.AllowedProjects[2] != "c" {
-		t.Errorf("unexpected projects: %v", cfg.AllowedProjects)
+	if cfg.Agent.Paths[0] != "a" || cfg.Agent.Paths[1] != "b" || cfg.Agent.Paths[2] != "c" {
+		t.Errorf("unexpected paths: %v", cfg.Agent.Paths)
 	}
 }
 

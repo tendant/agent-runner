@@ -18,7 +18,19 @@ curl -X POST http://localhost:8080/agent/{session_id}/steer \
 curl -X POST http://localhost:8080/agent/{session_id}/stop
 ```
 
-One-shot jobs: `POST /run` → poll `GET /job/{id}`
+Repos every session gets (REPOS_DESIGN.md), the API side of `/repo`:
+
+```bash
+curl http://localhost:8080/repos
+curl -X POST http://localhost:8080/repos -H 'Content-Type: application/json' \
+  -d '{"url": "https://lei@gitee.com/org/oam-server.git", "secret": "GITEE_TOKEN", "branch": "main"}'
+curl -X DELETE http://localhost:8080/repos/oam-server
+```
+
+`POST` fetches the repo with its login before saving it (400 on a bad URL, branch or token);
+`push` defaults to `true`, `false` makes it read-only.
+
+One-shot jobs: `POST /run` → poll `GET /job/{id}` (`project` is a registered repo's name)
 
 ## Observability
 

@@ -109,18 +109,20 @@ outside its sandbox.
 
 ## Git
 
-The sandbox has no git credentials: `GIT_TOKEN` and `GIT_SSH_KEY` stay with the runner, like the
-model keys. The runner clones and fetches the repos before a session; the agent works and
-commits inside; after the session the runner pushes every repo the agent committed to
-(`syncWorkspaceRepos`). When another session moved the branch it rebases the commits itself, and
+Repos come from the registry (`/repo`, REPOS_DESIGN.md), each logging in with the user's
+`/secret` it names. The runner fetches them into its cache and checks them out into the
+workspace before a session; the agent works and commits inside; after the session the runner
+pushes every registered repo the agent committed to (`syncWorkspaceRepos`), except read-only ones
+(`push=false`). When another session moved the branch it rebases the commits itself, and
 only when that rebase conflicts does it hand the agent an iteration to resolve the markers (it
-pushes afterwards); work that still cannot be merged goes to `agent-rescue/<session>`. Sandboxed
-sessions are told this in their prompt, so they commit and do not try to push. The runner's own
+pushes afterwards); work that still cannot be merged goes to `agent-rescue/<session>`. Every
+session is told this in its prompt, so it commits and does not push (the token is in its
+environment, as a `/secret`, but the runner is the one place pushes happen). The runner's own
 git commands ignore the hooks and config an agent could plant (`internal/gitsafe`), and never
 use a `.git/config` the agent wrote: each repo's config is saved after the runner sets the
 workspace up, out of the sandbox's view, and put back before every host-side git step (push,
-rebase, cache-back). A repo the runner did not set up (one the agent cloned or made) is neither
-pushed nor cached; the session says so in a warning.
+rebase). Nothing goes back from a workspace to the cache, which only fetches. A repo the runner
+did not set up (one the agent cloned or made) is never pushed; the session says so in a warning.
 
 ## What the sandbox can read
 
