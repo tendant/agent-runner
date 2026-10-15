@@ -2,6 +2,7 @@ package execution
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -122,5 +123,45 @@ func TestRestoreGitConfigReplacesLink(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(other); string(b) != "[core]\n" {
 		t.Errorf("the link's target was written: %q", b)
+	}
+}
+
+// Sandboxed, the agent's session is closed before the runner's git, and
+// started again for a conflict: the conflict still gets resolved.
+func TestSandboxedConflictRestartsAgent(t *testing.T) {
+	env := sandboxEnv(t)
+	bare, workspace := conflictedWorkspace(t)
+	repo := filepath.Join(workspace, "site")
+	if err := saveGitConfigs(workspace); err != nil {
+		t.Fatal(err)
+	}
+	session := runSync(t, env, workspace, func(string) error {
+		os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("mine+theirs\n"), 0o644)
+		git(t, repo, "add", "shared.txt")
+		cmd := exec.Command("git", "rebase", "--continue")
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("rebase --continue: %v\n%s", err, out)
+		}
+		return nil
+	})
+	if got := git(t, bare, "show", "main:shared.txt"); got != "mine+theirs" {
+		t.Errorf("origin should have the merged result, got %q (warnings %v)", got, session.Snapshot().Warnings)
+	}
+}
+
+// hasCommits reads files only.
+func TestHasCommitsWithoutGit(t *testing.T) {
+	empty := t.TempDir()
+	exec.Command("git", "-C", empty, "init", "-q").Run()
+	if hasCommits(empty) {
+		t.Error("an empty repo has no commits")
+	}
+	full := t.TempDir()
+	exec.Command("git", "-C", full, "init", "-q").Run()
+	exec.Command("git", "-C", full, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "x").Run()
+	if !hasCommits(full) {
+		t.Error("a repo with a commit")
 	}
 }

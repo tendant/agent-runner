@@ -83,10 +83,12 @@ var bareCommands = []string{"help", "config", "status", "sessions", "bootstrap",
 func (c *Commander) Handle(text string, send func(string)) (reply, sessionID string, handled bool) {
 	text = strings.TrimSpace(text)
 	lower := strings.ToLower(text)
-	// Normalise: accept "config", "help", "bootstrap" without leading slash.
+	// Normalise: accept "config", "help", "status", ... without the slash,
+	// but only as the whole message: "help me fix the login bug" or
+	// "bootstrap the repo, force push" is a task for the agent.
 	if !strings.HasPrefix(lower, "/") {
 		for _, cmd := range bareCommands {
-			if lower == cmd || strings.HasPrefix(lower, cmd+" ") {
+			if lower == cmd {
 				text = "/" + text
 				lower = "/" + lower
 				break

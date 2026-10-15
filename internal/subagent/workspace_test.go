@@ -193,3 +193,21 @@ func runGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 }
+
+// Under WithoutHostGit no git runs in the workspace's repos.
+func TestReadWorkspaceStateWithoutHostGit(t *testing.T) {
+	ws := t.TempDir()
+	repo := filepath.Join(ws, "site")
+	for _, args := range [][]string{{"init", "-q", repo}, {"-C", repo, "config", "user.email", "t@t"}, {"-C", repo, "config", "user.name", "T"}, {"-C", repo, "commit", "-q", "--allow-empty", "-m", "first"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	if s := ReadWorkspaceState(context.Background(), ws); len(s.RecentCommits) != 1 {
+		t.Fatalf("commits read normally: %v", s.RecentCommits)
+	}
+	s := ReadWorkspaceState(WithoutHostGit(context.Background()), ws)
+	if len(s.RecentCommits) != 0 || s.GitDiffStat != "" || len(s.RepoNames) != 1 {
+		t.Errorf("no git expected, repos still listed: %+v", s)
+	}
+}

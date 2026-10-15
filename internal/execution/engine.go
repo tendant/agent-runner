@@ -577,6 +577,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if sandboxRun != nil {
 		defer sandboxRun.Finish()
 		sandboxEgress = sandboxRun.Egress
+		// From here the agent may run: no git on the host in its repos
+		// while it could (subagent.WithoutHostGit; pushes close it first).
+		ctx = subagent.WithoutHostGit(ctx)
 	}
 	if memoryStage = h.stageMemory(sessionID, liveSession, sandboxRun, checkoutPath); memoryStage != nil {
 		memoryDir = memoryStage.Dir
@@ -655,6 +658,15 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	promptBuilder, stopReason, completed, blockedOrStuck, aborted := h.runIterationLoop(
 		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan, as)
 	if aborted {
+		// The session has failed, but what the agent committed and left
+		// in _send/ is still the user's: push it (no conflict turn: work
+		// that cannot be merged is parked on agent-rescue/<id>) and deliver
+		// the files before the workspace goes.
+		as.Close()
+		keepCtx, cancel := keepWorkCtx(ctx)
+		defer cancel()
+		h.syncWorkspaceRepos(keepCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil)
+		h.finalizeAgentOutputs(keepCtx, sessionID, liveSession, checkoutPath)
 		return
 	}
 
@@ -672,11 +684,15 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	reviewSpan.End()
 
-	syncCtx, syncSpan := tracing.Start(ctx, "agent.git.sync")
+	// Not cancelled with the session (a shutdown cancels it): the agent's
+	// commits are pushed or parked either way.
+	keepCtx, cancelKeep := keepWorkCtx(ctx)
+	defer cancelKeep()
+	syncCtx, syncSpan := tracing.Start(keepCtx, "agent.git.sync")
 	h.syncWorkspaceRepos(syncCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as)
 	syncSpan.End()
 
-	finCtx, finSpan := tracing.Start(ctx, "agent.finalize")
+	finCtx, finSpan := tracing.Start(keepCtx, "agent.finalize")
 	h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
 	finSpan.End()
 
@@ -1712,4 +1728,10 @@ func (h *Engine) recordTurnResult(liveSession *agent.Session, checkoutPath strin
 	}
 	liveSession.SetTurnResult(status, strings.TrimSpace(p.Question), strings.TrimSpace(p.Summary), p.Decisions)
 	return status == subagent.TurnNeedsInput
+}
+
+// keepWorkCtx is ctx without its cancellation, bounded: for pushing and
+// delivering a session's work even when the session was cancelled.
+func keepWorkCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 }

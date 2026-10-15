@@ -1,7 +1,7 @@
 name: sandbox
 on:
   pull_request:
-    paths: ["internal/sandbox/**", "internal/executor/**", "cmd/sandbox-*/**", "scripts/sandbox-*", ".github/**", "go.mod"]
+    paths: ["internal/sandbox/**", "internal/executor/**", "internal/execution/**", "internal/repos/**", "internal/agentsecrets/**", "internal/api/sandbox.go", "cmd/sandbox-*/**", "scripts/sandbox-*", ".github/**", "go.mod"]
   push:
     branches: [main]
   schedule:

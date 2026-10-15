@@ -2,6 +2,7 @@ package execution
 
 import (
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,36 +93,4 @@ func regularGitConfig(repo string) (string, error) {
 }
 
 // writeGitConfig replaces repo/.git/config with data, whatever is there.
-func writeGitConfig(repo string, data []byte) error {
-	gitDir := filepath.Join(repo, ".git")
-	fi, err := os.Lstat(gitDir)
-	if err != nil {
-		return err
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("%s is not a directory", gitDir)
-	}
-	tmp, err := os.CreateTemp(gitDir, ".config.trusted-*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name()) //nolint:errcheck
-		return err
-	}
-	tmp.Close()
-	// Rename replaces a planted link or directory entry, not its target.
-	cfg := filepath.Join(gitDir, "config")
-	if fi, err := os.Lstat(cfg); err == nil && fi.IsDir() {
-		if err := os.RemoveAll(cfg); err != nil {
-			os.Remove(tmp.Name()) //nolint:errcheck
-			return err
-		}
-	}
-	if err := os.Rename(tmp.Name(), cfg); err != nil {
-		os.Remove(tmp.Name()) //nolint:errcheck
-		return err
-	}
-	return nil
-}
+func writeGitConfig(repo string, data []byte) error { return gitsafe.WriteConfig(repo, data) }

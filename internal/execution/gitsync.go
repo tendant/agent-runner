@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -42,6 +43,13 @@ func (h *Engine) syncWorkspaceRepos(
 	base := gitpkg.NewOperations(h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds)
 
 	for attempt := 0; ; attempt++ {
+		// Sandboxed, nothing of the agent's may still be running when the
+		// runner runs git on the host: something it left behind could
+		// rewrite .git/config right after the saved one is put back.
+		// Closing its session ends its sandbox and every process in it.
+		if h.sandboxed() && as != nil {
+			as.Close()
+		}
 		// Every round: the agent may have run since the last one.
 		candidates, untrusted := h.pushableRepos(checkoutPath)
 		ops, skipped := h.repoOps(base, candidates)
@@ -98,6 +106,18 @@ func (h *Engine) syncWorkspaceRepos(
 		)
 		if as.toolSpans != nil {
 			as.toolSpans.SetParent(iterCtx)
+		}
+		if h.sandboxed() {
+			// Closed above, before the runner's git: start it again.
+			if err := as.start(ctx, checkoutPath); err != nil {
+				iterSpan.End()
+				for _, rc := range conflicts {
+					liveSession.AddWarning(parkConflictedWork(ctx, ops[rc.RepoPath], rc, sessionID))
+				}
+				liveSession.AddWarning("could not restart the agent to resolve conflicts: " + err.Error())
+				return
+			}
+			as.forceFull = true
 		}
 		result, _ := h.executePrompt(iterCtx, as.session(), executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
 		result.Prompt = systemPrompt
@@ -263,9 +283,23 @@ func isGitRepo(path string) bool {
 // hasUnpushedCommits reports commits ahead of the upstream tracking branch.
 // No upstream means nothing to push.
 // hasCommits reports a repo with at least one commit: one the agent made
-// and left empty is not worth a warning.
+// and left empty is not worth a warning. It reads files, never runs git:
+// the repo may be one agent-runner did not set up, whose config it does
+// not trust.
 func hasCommits(repoPath string) bool {
-	return gitCmd(context.Background(), repoPath, "rev-parse", "--verify", "-q", "HEAD").Run() == nil
+	gitDir := filepath.Join(repoPath, ".git")
+	if fi, err := os.Stat(filepath.Join(gitDir, "packed-refs")); err == nil && fi.Size() > 0 {
+		return true
+	}
+	found := false
+	filepath.WalkDir(filepath.Join(gitDir, "refs", "heads"), func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func hasUnpushedCommits(ctx context.Context, repoPath string) bool {

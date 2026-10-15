@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"github.com/agent-runner/agent-runner/internal/repos"
+	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -498,9 +502,33 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 		return
 	}
 
-	// Step 3: Execute Claude Code
-	result, executionLog, err := h.getExecutor().ExecuteWithLog(ctx, workspacePath, jobInstruction)
+	// Step 3: the agent, sandboxed like a session's (when the sandbox is
+	// on), with the users' secrets. Its repo config is saved first and put
+	// back before the runner's own git below: the agent can edit it.
+	savedConfig, err := os.ReadFile(filepath.Join(workspacePath, ".git", "config"))
+	if err != nil {
+		h.failJob(jobID, logData, "Failed to read the checkout's git config: "+err.Error(), "")
+		return
+	}
+	runCtx := ctx
+	if h.sandbox != nil && h.sandbox.Mode() != sandbox.ModeOff {
+		run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: "job-" + jobID, RunID: "job-" + jobID, Workspace: workspacePath, MaxSecond: h.config.MaxRuntimeSeconds})
+		if err != nil {
+			h.failJob(jobID, logData, "sandbox: "+err.Error(), "SANDBOX_REJECTED")
+			return
+		}
+		defer run.Finish()
+		runCtx = run.Ctx
+	}
+	if list, err := secrets.List(); err == nil {
+		runCtx = executor.WithSessionEnv(runCtx, agentsecrets.EnvOf(list))
+	}
+	result, executionLog, err := h.getExecutor().ExecuteWithLog(runCtx, workspacePath, jobInstruction)
 	logData.ExecutionLog = executionLog
+	if rerr := gitsafe.WriteConfig(workspacePath, savedConfig); rerr != nil {
+		h.failJob(jobID, logData, "Failed to restore the checkout's git config: "+rerr.Error(), "")
+		return
+	}
 
 	if err != nil {
 		errorCode := "CLAUDE_ERROR"
