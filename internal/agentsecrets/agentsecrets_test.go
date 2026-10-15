@@ -40,7 +40,7 @@ func TestStore(t *testing.T) {
 	if ok, _ := s.Remove("STRIPE_API_KEY"); ok {
 		t.Error("removed twice")
 	}
-	for _, bad := range []struct{ name, value string }{{"GIT_TOKEN", "x"}, {"lower", "x"}, {"OK_NAME", ""}, {"OK_NAME", "a\nb"}} {
+	for _, bad := range []struct{ name, value string }{{"GIT_TOKEN", "x"}, {"lower", "x"}, {"OK_NAME", ""}, {"OK_NAME", "a\x00b"}} {
 		if err := s.Set(bad.name, bad.value, ""); err == nil {
 			t.Errorf("Set(%q, %q) must fail", bad.name, bad.value)
 		}

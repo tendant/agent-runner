@@ -74,15 +74,6 @@ func (m DNSMode) rank() int {
 	return -1
 }
 
-// SecretDelivery says how a secret reaches the sandbox, in order of preference.
-type SecretDelivery string
-
-const (
-	DeliverFD   SecretDelivery = "fd"
-	DeliverFile SecretDelivery = "file"
-	DeliverEnv  SecretDelivery = "env"
-)
-
 // SandboxSpec is the single runner-owned policy for one run. Zero values mean
 // "unset / inherit" when layered (see Resolve).
 type SandboxSpec struct {
@@ -90,7 +81,6 @@ type SandboxSpec struct {
 	Filesystem   FilesystemPolicy `json:"filesystem"`
 	Network      NetworkPolicy    `json:"network"`
 	Resources    ResourcePolicy   `json:"resources"`
-	Secrets      []SecretGrant    `json:"secrets,omitempty"`
 	Requirements []CapabilityID   `json:"requirements,omitempty"`
 }
 
@@ -127,14 +117,6 @@ type ResourcePolicy struct {
 	OutputBytes int64   `json:"output_bytes,omitempty"`
 	TimeoutSec  int64   `json:"timeout_sec,omitempty"`
 	GraceSec    int64   `json:"grace_sec,omitempty"` // TERM -> grace -> KILL
-}
-
-// SecretGrant names a secret the trusted policy lets the sandbox see. Values
-// never appear in the spec.
-type SecretGrant struct {
-	Name     string         `json:"name"`
-	Delivery SecretDelivery `json:"delivery"`
-	Target   string         `json:"target,omitempty"` // env var name or logical file path
 }
 
 // ParseSpec decodes a spec strictly: unknown fields, trailing data and
@@ -196,26 +178,6 @@ func (s SandboxSpec) Validate() error {
 	r := s.Resources
 	if r.CPUs < 0 || r.MemoryBytes < 0 || r.DiskBytes < 0 || r.PIDs < 0 || r.OutputBytes < 0 || r.TimeoutSec < 0 || r.GraceSec < 0 {
 		return errors.New("sandbox spec: negative resource limit")
-	}
-	seen := map[string]bool{}
-	for _, sg := range s.Secrets {
-		if sg.Name == "" || seen[sg.Name] {
-			return fmt.Errorf("sandbox spec: secret name %q empty or duplicate", sg.Name)
-		}
-		seen[sg.Name] = true
-		switch sg.Delivery {
-		case DeliverFD:
-		case DeliverFile:
-			if err := validLogicalPath(sg.Target); err != nil {
-				return fmt.Errorf("sandbox spec: secret %q: %w", sg.Name, err)
-			}
-		case DeliverEnv:
-			if sg.Target == "" {
-				return fmt.Errorf("sandbox spec: secret %q: env delivery needs a target", sg.Name)
-			}
-		default:
-			return fmt.Errorf("sandbox spec: secret %q: bad delivery %q", sg.Name, sg.Delivery)
-		}
 	}
 	for _, c := range s.Requirements {
 		if _, ok := Registry[c]; !ok {

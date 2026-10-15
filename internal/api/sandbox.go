@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"log/slog"
 	"net/url"
 	"os"
@@ -83,7 +84,7 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 	if cfg.SecretsFile != "" {
 		// Agent secrets reach the sandbox as environment variables, by
 		// name; the file holding them all is not the agent's to read.
-		paths = append(paths, cfg.SecretsFile)
+		paths = append(paths, cfg.SecretsFile, agentsecrets.FilesDir(cfg.SecretsFile))
 	}
 	if cfg.MemoryDir != "" {
 		// The memory files are readable; their git internals are not (a

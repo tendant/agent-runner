@@ -210,6 +210,9 @@ func commitMemoryToParentRepo(memoryDir string) error {
 	if err != nil {
 		return nil
 	}
+	if real, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = real // git reports the repo root with links resolved
+	}
 
 	// Warn if a nested memory/ subdir exists — the agent shouldn't create it.
 	// Not auto-removed: the user may want to inspect or back it up manually.
@@ -263,10 +266,9 @@ func commitMemoryToParentRepo(memoryDir string) error {
 // pushes to origin.
 //
 // If memoryDir has its own .git it is treated as a standalone repo (the normal
-// case when /memory git has been configured). Otherwise the function falls
-// back to the nearest parent git repo and commits only the files that live
-// under memoryDir. Push is skipped in the fallback case — there is no
-// memory-specific remote to push to.
+// case when /memory git has been configured). Otherwise nothing is committed,
+// unless MEMORY_GIT_PARENT_REPO=true: then the files under memoryDir are
+// committed (not pushed) to the nearest git repo around it.
 func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	if memoryDir == "" {
 		return nil
@@ -284,7 +286,14 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	}
 
 	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
-		return commitMemoryToParentRepo(memoryDir)
+		// Not its own repo: memory is plain files, nothing to commit. Only
+		// MEMORY_GIT_PARENT_REPO=true commits them into a repo around the
+		// memory dir (DATA_DIR defaults to the current folder, which may
+		// be any checkout, so this is never done unasked).
+		if v := strings.ToLower(os.Getenv("MEMORY_GIT_PARENT_REPO")); v == "true" || v == "1" {
+			return commitMemoryToParentRepo(memoryDir)
+		}
+		return nil
 	}
 
 	if err := gitRunEnv(memoryDir, nil, "add", "-A"); err != nil {

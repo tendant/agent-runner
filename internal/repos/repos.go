@@ -165,6 +165,8 @@ func (rp Repo) Check() error {
 		if err := agentsecrets.CheckName(rp.Secret); err != nil {
 			return fmt.Errorf("secret: %w", err)
 		}
+	} else if rp.IsSSH() {
+		return errors.New("an ssh URL needs a key: secret=NAME, a /secret holding the private key (a public repo: use its https:// URL)")
 	}
 	return CheckURL(rp.URL)
 }
@@ -237,7 +239,7 @@ func (rp Repo) Auth(secrets *agentsecrets.Store) (gitpkg.Auth, error) {
 		return a, nil
 	}
 	if rp.IsSSH() {
-		return a, fmt.Errorf("%s: ssh URLs with a secret are not supported yet; use the https:// URL", rp.Name)
+		return rp.sshAuth(secrets)
 	}
 	token, err := lookup(secrets, rp.Secret)
 	if err != nil {
@@ -264,3 +266,30 @@ func lookup(secrets *agentsecrets.Store, name string) (string, error) {
 	}
 	return "", fmt.Errorf("secret %s is not set (/secret set %s ...)", name, name)
 }
+
+// sshProgram is the ssh agent-runner's git commands run (tests replace it).
+var sshProgram = "ssh"
+
+// sshAuth logs in over ssh with the secret's private key, given to ssh as a
+// file of its own: never the host user's keys, agent or ssh config, which
+// are agent-runner's, not the users'. A host key is trusted the first time
+// and checked after (a known_hosts file next to the key files).
+func (rp Repo) sshAuth(secrets *agentsecrets.Store) (gitpkg.Auth, error) {
+	if secrets == nil {
+		return gitpkg.Auth{}, fmt.Errorf("%s: secret %s is not set", rp.Name, rp.Secret)
+	}
+	key, err := secrets.File(rp.Secret)
+	if err != nil {
+		return gitpkg.Auth{}, fmt.Errorf("%s: %w", rp.Name, err)
+	}
+	opts := []string{"-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+		"-i", key, "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + filepath.Join(filepath.Dir(key), "known_hosts")}
+	cmd := shellQuote(sshProgram)
+	for _, o := range opts {
+		cmd += " " + shellQuote(o)
+	}
+	// GIT_SSH_COMMAND wins over core.sshCommand, whatever a repo's config says.
+	return gitpkg.Auth{Env: []string{"GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=" + cmd}}, nil
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

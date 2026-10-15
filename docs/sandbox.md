@@ -177,7 +177,10 @@ Two kinds, kept apart:
 `/secret` refuses any name agent-runner reads itself (its settings, `GIT_*`, `AGENT_*`, model
 provider variables, `PATH`, proxies, ...), so one kind cannot become the other; use the names
 tools expect (`GITEE_TOKEN`, `GH_TOKEN`, `STRIPE_API_KEY`). The file is denied to the sandbox like
-`.env`; `/secret list` shows names and descriptions only.
+`.env`; `/secret list` shows names and descriptions only. A value may span lines (an SSH private
+key: `/secret set NAME [description]`, the key on the lines after); a repo with an `ssh://` or
+`git@host:` URL logs in with it, written to a 0600 file next to `secrets.json` (also hidden from
+the sandbox) and given to ssh with none of the host's keys, agent or ssh config.
 
 ## How a run is confined
 
@@ -268,8 +271,8 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
 
 `SandboxSpec` (version 1; unknown fields or versions fail closed). Layers
 `system -> bot -> agent -> workspace -> run` may only tighten: unset inherits, widening is an
-error naming the layer, deny lists and requirements only grow, secrets are granted only by the
-first layer. Filesystem uses logical roots `/workspace`, `/home/agent`, `/tmp`.
+error naming the layer, deny lists and requirements only grow. There is no secrets field: the
+agent user's secrets are `/secret`'s ([Secrets](#secrets)). Filesystem uses logical roots `/workspace`, `/home/agent`, `/tmp`.
 Egress modes: `none`, `restricted` (hosts, single-label `*.wildcards`, CIDRs, `@sets`), `outbound`
 (which becomes `restricted` to any public host).
 

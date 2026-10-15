@@ -202,9 +202,6 @@ func withDefaults(spec, def sandbox.SandboxSpec) sandbox.SandboxSpec {
 	if res.GraceSec == 0 {
 		res.GraceSec = dr.GraceSec
 	}
-	if spec.Secrets == nil {
-		spec.Secrets = def.Secrets
-	}
 	if spec.Requirements == nil {
 		spec.Requirements = def.Requirements
 	}

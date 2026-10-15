@@ -1090,6 +1090,7 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 **/set-agent** _\<content\>_ — overwrite agent.md
 **/set-prompt** _\<content\>_ — overwrite prompt.md
 **/secret set** _NAME VALUE [description]_ — a secret for your agents' tasks (e.g. GITEE\_TOKEN), in every session's environment
+  A value of several lines (an SSH private key): _/secret set NAME [description]_, the value on the next lines
 **/secret list** — names and descriptions (never values) · **/secret remove** _NAME_
 **/prompt show** _[agent|workflow]_ — show agent.md and prompt.md
 **/prompt check** — what in them is out of date with how the runner works now

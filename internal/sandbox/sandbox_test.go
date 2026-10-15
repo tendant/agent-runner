@@ -16,7 +16,6 @@ func base() SandboxSpec {
 		},
 		Network:   NetworkPolicy{Egress: EgressRestricted, EgressAllow: []string{"*.github.com", "10.0.0.0/8", "@vcs"}},
 		Resources: ResourcePolicy{MemoryBytes: 2 << 30, TimeoutSec: 600},
-		Secrets:   []SecretGrant{{Name: "gh", Delivery: DeliverFD}},
 	}
 }
 
@@ -89,8 +88,8 @@ func TestResolveTightens(t *testing.T) {
 	if got.Network.Egress != EgressRestricted || got.Network.DNS != DNSControlled {
 		t.Errorf("network: %+v", got.Network)
 	}
-	if len(got.Filesystem.Deny) != 2 || len(got.Secrets) != 1 {
-		t.Errorf("deny/secrets: %+v %+v", got.Filesystem.Deny, got.Secrets)
+	if len(got.Filesystem.Deny) != 2 {
+		t.Errorf("deny: %+v", got.Filesystem.Deny)
 	}
 	if got.Filesystem.FSAccess(RootWorkspace+"/sub/x", true) {
 		t.Error("ro grant must not allow write")
@@ -110,8 +109,6 @@ func TestResolveRejectsWidening(t *testing.T) {
 		"listen":           {Version: 1, Network: NetworkPolicy{Listen: &yes}},
 		"more memory":      {Version: 1, Resources: ResourcePolicy{MemoryBytes: 4 << 30}},
 		"grant outside":    {Version: 1, Filesystem: FilesystemPolicy{Grants: []PathGrant{{RootHome, ReadWrite}}}},
-		"new secret":       {Version: 1, Secrets: []SecretGrant{{Name: "aws", Delivery: DeliverEnv, Target: "AWS"}}},
-		"secret changed":   {Version: 1, Secrets: []SecretGrant{{Name: "gh", Delivery: DeliverEnv, Target: "GH"}}},
 	}
 	for name, l := range cases {
 		_, err := Resolve(Layer{LayerSystem, base()}, Layer{LayerRun, l})
@@ -168,5 +165,13 @@ func TestCheckStrictAndPermissive(t *testing.T) {
 	}
 	if _, err := full.Prepare(context.Background(), spec); err == nil {
 		t.Error("manifest backend must not prepare")
+	}
+}
+
+// The policy has no secrets field (agent secrets are /secret's): a policy
+// that still names one is refused, not silently ignored.
+func TestParseSpecRefusesSecrets(t *testing.T) {
+	if _, err := ParseSpec([]byte(`{"version":1,"secrets":[{"name":"gh","delivery":"env"}]}`)); err == nil {
+		t.Error("a secrets field must be refused")
 	}
 }

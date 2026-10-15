@@ -151,20 +151,6 @@ func tighten(p, c SandboxSpec) (SandboxSpec, error) {
 		out.Resources.CPUs = cr.CPUs
 	}
 
-	// Secrets: may only drop or keep identical grants.
-	if c.Secrets != nil {
-		pm := map[string]SecretGrant{}
-		for _, s := range p.Secrets {
-			pm[s.Name] = s
-		}
-		for _, s := range c.Secrets {
-			if pm[s.Name] != s {
-				bad("secret %q not granted by parent", s.Name)
-			}
-		}
-		out.Secrets = c.Secrets
-	}
-
 	// Requirements only accumulate.
 	var req []string
 	for _, r := range append(append([]CapabilityID{}, p.Requirements...), c.Requirements...) {

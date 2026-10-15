@@ -506,6 +506,70 @@ PY
 	else pass "the login's refresh token is not in the run's files"; fi
 fi
 
+step "runner, the real claude CLI (fake Anthropic backend)"
+# Free: the CLI itself, sandboxed, through the model proxy to a stand-in
+# for the API. Catches the CLI refusing to start in the sandbox (as uid 0
+# under gVisor) or not reaching the model through the proxy.
+REAL_CLAUDE=$(command -v claude || true)
+if [ -z "$REAL_CLAUDE" ] || [ "$(dirname "$REAL_CLAUDE")" = "$W/bin" ]; then
+	echo "  skip  the claude CLI is not installed (npm i -g @anthropic-ai/claude-code)"
+else
+	cat >"$W/fake-anthropic.py" <<'PY'
+import http.server, json, sys
+log, portfile = sys.argv[1], sys.argv[2]
+TEXT = "PONG-FROM-FAKE-ANTHROPIC. TASK: DONE"
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n)
+        with open(log, "a") as f:
+            f.write("%s|%s\n" % (self.path, self.headers.get("x-api-key")))
+        if not self.path.split("?")[0].endswith("/v1/messages"):
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(b"{}"); return
+        try: stream = json.loads(body or b"{}").get("stream")
+        except Exception: stream = False
+        msg = {"id": "msg_smoke", "type": "message", "role": "assistant", "model": "claude-smoke",
+               "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
+        if not stream:
+            msg.update(content=[{"type": "text", "text": TEXT}], stop_reason="end_turn")
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(json.dumps(msg).encode()); return
+        self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+        for ev in ({"type": "message_start", "message": msg},
+                   {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                   {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": TEXT}},
+                   {"type": "content_block_stop", "index": 0},
+                   {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 5}},
+                   {"type": "message_stop"}):
+            self.wfile.write(("event: %s\ndata: %s\n\n" % (ev["type"], json.dumps(ev))).encode())
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b"{}")
+    def log_message(self, *a): pass
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+open(portfile, "w").write(str(srv.server_port))
+srv.serve_forever()
+PY
+	python3 "$W/fake-anthropic.py" "$W/anthropic.log" "$W/anthropic.port" &
+	FAKE_ANTHROPIC=$!
+	for _ in $(seq 50); do [ -s "$W/anthropic.port" ] && break; sleep 0.1; done
+	SAVED_PATH=$PATH_FOR_RUNNER
+	PATH_FOR_RUNNER="$(dirname "$REAL_CLAUDE"):$(dirname "$(command -v node)"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	start_runner permissive ANTHROPIC_API_KEY=smoke-fake-key ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$W/anthropic.port")"
+	run_task "say pong" 180
+	stop_runner
+	PATH_FOR_RUNNER=$SAVED_PATH
+	kill "$FAKE_ANTHROPIC" 2>/dev/null
+	if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
+	case $LAST_BODY in *"cannot be used with root"*) fail "claude refused to run as root in the sandbox" ;; esac
+	if grep -q "/v1/messages.*|smoke-fake-key$" "$W/anthropic.log" 2>/dev/null; then
+		pass "the API got /v1/messages with the runner's key, through the proxy"
+	else
+		fail "API requests: $(sort -u "$W/anthropic.log" 2>/dev/null | cut -d'|' -f1 | tr '\n' ' ')"
+	fi
+	case $LAST_BODY in *PONG-FROM-FAKE-ANTHROPIC*) pass "claude returned the API's reply" ;; *) fail "no reply from claude in the session" ;; esac
+fi
+
 step "runner, no claude credentials"
 start_runner permissive
 run_task "sandbox smoke probe" 20

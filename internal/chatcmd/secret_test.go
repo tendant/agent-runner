@@ -1,6 +1,7 @@
 package chatcmd
 
 import (
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,5 +37,21 @@ func TestSecretCommand(t *testing.T) {
 func TestSetMasksAPIKey(t *testing.T) {
 	if !isSensitiveKey("API_KEY") {
 		t.Error("API_KEY is the runner's REST key: masked like the others")
+	}
+}
+
+// A value of several lines (a private key) comes on the lines after.
+func TestSecretSetMultiline(t *testing.T) {
+	env := setupTestEnv(t)
+	env.cfg.SecretsFile = filepath.Join(t.TempDir(), "secrets.json")
+	c := NewCommander(env.cfg, env.rt)
+	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n-----END OPENSSH PRIVATE KEY-----"
+	reply, _, _ := c.Handle("/secret set GITEE_SSH_KEY deploy key for oam\n"+key+"\n", nil)
+	if !strings.HasPrefix(reply, "ok") || strings.Contains(reply, "abc") {
+		t.Fatalf("set: %q", reply)
+	}
+	list, _ := agentsecrets.New(env.cfg.SecretsFile).List()
+	if len(list) != 1 || list[0].Value != key || list[0].Description != "deploy key for oam" {
+		t.Errorf("stored %+v", list)
 	}
 }

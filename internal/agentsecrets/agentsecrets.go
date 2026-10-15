@@ -85,8 +85,8 @@ func (s *Store) Set(name, value, description string) error {
 	if value == "" {
 		return errors.New("empty value")
 	}
-	if strings.ContainsAny(value, "\x00\n") {
-		return errors.New("a value cannot contain a newline or NUL")
+	if strings.Contains(value, "\x00") {
+		return errors.New("a value cannot contain NUL")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -112,6 +112,50 @@ func (s *Store) Remove(name string) (bool, error) {
 	delete(m, name)
 	return true, s.write(m)
 }
+
+// File writes the secret's value to a file of its own (0600, in a 0700
+// directory next to the secrets file, hidden from the sandbox like it) and
+// returns its path: for tools that take a key as a file, such as ssh -i.
+// The file is rewritten only when the value changed.
+func (s *Store) File(name string) (string, error) {
+	list, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	for _, sec := range list {
+		if sec.Name != name {
+			continue
+		}
+		dir := FilesDir(s.path)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", err
+		}
+		os.Chmod(dir, 0o700) //nolint:errcheck
+		path := filepath.Join(dir, name)
+		value := sec.Value
+		if !strings.HasSuffix(value, "\n") {
+			value += "\n" // ssh rejects a key without its final newline
+		}
+		if cur, err := os.ReadFile(path); err == nil && string(cur) == value {
+			return path, nil
+		}
+		tmp, err := os.CreateTemp(dir, "."+name+".tmp-*") // 0600
+		if err != nil {
+			return "", err
+		}
+		if _, err := tmp.WriteString(value); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name()) //nolint:errcheck
+			return "", err
+		}
+		tmp.Close()
+		return path, os.Rename(tmp.Name(), path)
+	}
+	return "", fmt.Errorf("secret %s is not set (/secret set %s ...)", name, name)
+}
+
+// FilesDir is where File puts secrets as files, for a secrets file at path.
+func FilesDir(path string) string { return filepath.Join(filepath.Dir(path), ".secret-files") }
 
 func (s *Store) read() (map[string]Secret, error) {
 	m := map[string]Secret{}

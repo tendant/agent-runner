@@ -1,6 +1,6 @@
 # Repos and Their Credentials — Design
 
-Status: steps 1 and 2 implemented (`internal/repos`, `/repo`, `/repos`); SSH keys as secrets (step 3) are not. Replaces `GIT_HOST`, `GIT_ORG`, `GIT_TOKEN`, `GIT_SSH_KEY`,
+Status: implemented (`internal/repos`, `/repo`, `/repos`; SSH keys as multi-line secrets). Replaces `GIT_HOST`, `GIT_ORG`, `GIT_TOKEN`, `GIT_SSH_KEY`,
 `AGENT_SHARED_REPOS` and `ALLOWED_PROJECTS`. No compatibility with them is kept.
 
 ## 1. Principle
