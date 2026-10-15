@@ -78,5 +78,5 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: h.sandboxed()}), nil
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true}), nil
 }

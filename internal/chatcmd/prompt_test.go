@@ -2,9 +2,12 @@ package chatcmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 )
 
 func TestPromptCommand(t *testing.T) {
@@ -30,5 +33,34 @@ func TestPromptCommand(t *testing.T) {
 	}
 	if reply, _, _ := c.Handle("/prompt nope", nil); !strings.HasPrefix(reply, "error: usage") {
 		t.Errorf("unknown: %q", reply)
+	}
+}
+
+func TestMemoryLogAndUndo(t *testing.T) {
+	c, memDir := newMemoryCommander(t)
+	os.MkdirAll(memDir, 0o755)
+	if reply, _, _ := c.Handle("/memory log", nil); !strings.Contains(reply, "not a git repo") {
+		t.Errorf("no repo: %q", reply)
+	}
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.email", "t@t"}, {"config", "user.name", "T"}} {
+		exec.Command("git", append([]string{"-C", memDir}, args...)...).Run()
+	}
+	os.WriteFile(filepath.Join(memDir, "decisions.md"), []byte("d1\n"), 0o644)
+	tmpl.CommitMemory(memDir, "init")
+	os.WriteFile(filepath.Join(memDir, "decisions.md"), []byte("d1\nbad note\n"), 0o644)
+	tmpl.CommitMemory(memDir, tmpl.SessionCommitMessage("agent-7", "stream", []string{"decisions.md"}))
+
+	if reply, _, _ := c.Handle("/memory log", nil); !strings.Contains(reply, "memory: session agent-7 (stream)") {
+		t.Errorf("log: %q", reply)
+	}
+	reply, _, _ := c.Handle("/memory undo agent-7", nil)
+	if !strings.Contains(reply, "undid 1") {
+		t.Errorf("undo: %q", reply)
+	}
+	if b, _ := os.ReadFile(filepath.Join(memDir, "decisions.md")); string(b) != "d1\n" {
+		t.Errorf("not undone: %q", b)
+	}
+	if reply, _, _ := c.Handle("/memory undo", nil); !strings.Contains(reply, "usage") {
+		t.Errorf("no id: %q", reply)
 	}
 }

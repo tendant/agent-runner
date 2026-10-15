@@ -156,8 +156,8 @@ runner merges back, under the memory lock and before the daily log, curation and
 * **Concurrent writers:** a file another session or the curator changed meanwhile takes this
   session's change only when it is a pure append (added on top); a rewrite is refused, not lost.
 
-Whatever is refused shows as a session warning (`memory changes not saved: ...`). Unsandboxed
-runs write the memory dir directly, as before.
+Whatever is refused shows as a session warning (`memory changes not saved: ...`) and in the
+session's audit log. Unsandboxed sessions work the same way, on a copy next to their workspace.
 
 ## How a run is confined
 

@@ -109,3 +109,57 @@ func TestSandboxedSessionMemoryCopy(t *testing.T) {
 		t.Error("the copy must be removed")
 	}
 }
+
+// Every session, sandboxed or not, works on a copy; what it saves is one
+// commit naming it, separate from the daily log's, and the audit log says
+// what the prompt held and what was saved.
+func TestSessionMemoryCommitsAndAuditLog(t *testing.T) {
+	env := setupTestEnv(t)
+	h := env.handlers
+	h.config.Agent.CLI = "pi"
+	h.config.Agent.PlannerEnabled = false
+	mem := h.config.MemoryDir
+	os.MkdirAll(mem, 0o755)
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.email", "t@t"}, {"config", "user.name", "T"}} {
+		exec.Command("git", append([]string{"-C", mem}, args...)...).Run()
+	}
+	os.WriteFile(filepath.Join(mem, "agent.md"), []byte("memory is at mem={{MEMORY_DIR}}"), 0o644)
+	os.WriteFile(filepath.Join(mem, "decisions.md"), []byte("use go\n"), 0o644)
+	exec.Command("git", "-C", mem, "add", "-A").Run()
+	exec.Command("git", "-C", mem, "commit", "-qm", "init").Run()
+
+	var staged string
+	h.executor = promptExecutor{fn: func(prompt string) {
+		if m := regexp.MustCompile(`mem=(\S+)`).FindStringSubmatch(prompt); m != nil && staged == "" {
+			staged = m[1]
+			os.WriteFile(filepath.Join(staged, "decisions.md"), []byte("use go\nuse sqlite\n"), 0o644)
+		}
+	}}
+	session, _ := h.agentManager.CreateSession("note a decision", nil, "stream", "", 1, 30)
+	h.ExecuteAgent(session)
+
+	absMem, _ := filepath.Abs(mem)
+	if staged == "" || staged == absMem {
+		t.Fatalf("an unsandboxed session must work on a copy too, got %q", staged)
+	}
+	out, _ := exec.Command("git", "-C", mem, "log", "--format=%s").Output()
+	log := string(out)
+	for _, want := range []string{"memory: session " + session.ID + " (api): saved decisions.md", "memory: daily log (session " + session.ID + ")"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("missing commit %q in:\n%s", want, log)
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(h.config.LogsRoot, "*"+session.ID+"*"))
+	if len(files) == 0 {
+		files, _ = filepath.Glob(filepath.Join(h.config.LogsRoot, "*", "*"+session.ID+"*"))
+	}
+	if len(files) == 0 {
+		t.Fatal("no audit log")
+	}
+	b, _ := os.ReadFile(files[0])
+	for _, want := range []string{"## Prompt", "How this runner works", "## Memory", "saved `decisions.md`"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("audit log lacks %q", want)
+		}
+	}
+}

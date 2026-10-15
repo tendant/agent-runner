@@ -124,7 +124,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 		"/auth":          "usage: /auth [claude|codex] — only available via chat",
-		cmdMemory:        "usage: " + cmdMemory + " [show|clear|git <url>]",
+		cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
 		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 		cmdRepo:          "usage: " + cmdRepo + " [add|remove|list] <url>",
 		"/stop":          "usage: /stop [session-id]",
@@ -892,8 +892,12 @@ func (c *Commander) handleMemory(arg string) string {
 		return c.handleMemoryPubkey()
 	case "status", "":
 		return c.handleMemoryStatus()
+	case "log":
+		return c.handleMemoryLog()
+	case "undo":
+		return c.handleMemoryUndo(strings.TrimSpace(rest))
 	default:
-		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory pull · /memory push · /memory keygen · /memory pubkey · /memory status"
+		return "unknown subcommand: /memory " + sub + "\nTry: /memory git <remote-url> · /memory pull · /memory push · /memory log · /memory undo <session-id> · /memory keygen · /memory pubkey · /memory status"
 	}
 }
 
@@ -1338,6 +1342,8 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
   HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> · /set MEMORY\_GIT\_USER \<username\> (optional, defaults to oauth2) · SSH: /memory keygen
 **/memory pull** — pull latest memory from remote
 **/memory push** — commit and push memory to remote
+**/memory log** — recent memory changes, with the session that made each
+**/memory undo** _\<session-id\>_ — take back what one session saved to memory
 **/memory keygen** — generate SSH deploy key and print public key
 **/memory pubkey** — print existing public key
 **/memory status** — show memory dir, remote, and last commit
