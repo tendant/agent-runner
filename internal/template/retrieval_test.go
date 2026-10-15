@@ -3,6 +3,7 @@ package template
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -204,5 +205,34 @@ func TestRetrieve_SkipsWelcomeFile(t *testing.T) {
 	}
 	if len(r.Files) != 1 {
 		t.Errorf("expected only decisions.md, got %d files", len(r.Files))
+	}
+}
+
+// Lowercase topic files are listed with their first line and size, not
+// loaded; well-known and upper-case files are loaded in full.
+func TestRetrieve_TopicFilesIndexed(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "decisions.md"), []byte("use go"), 0644)
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("be kind"), 0644)
+	os.WriteFile(filepath.Join(dir, "oam_server.md"), []byte("# oam-server: import pipeline\n\nlong details here"), 0644)
+
+	r := Retrieve(dir)
+	byName := map[string]MemoryFile{}
+	for _, f := range r.Files {
+		byName[f.Filename] = f
+	}
+	if f := byName["oam_server.md"]; !f.Indexed || f.Content != "oam-server: import pipeline" || f.Size == 0 {
+		t.Errorf("topic file: %+v", f)
+	}
+	if byName["decisions.md"].Indexed || byName["SOUL.md"].Indexed {
+		t.Error("well-known and upper-case files are loaded in full")
+	}
+	out := Compile(PromptInput{Retrieval: r, Vars: map[string]string{VarMemoryDir: "/m"}})
+	if !strings.Contains(out, "## Memory Files") || !strings.Contains(out, "- /m/oam_server.md (") ||
+		!strings.Contains(out, "): oam-server: import pipeline") || strings.Contains(out, "long details here") {
+		t.Errorf("index:\n%s", out)
+	}
+	if !strings.Contains(out, "## Decisions\n\nuse go") || !strings.Contains(out, "be kind") {
+		t.Errorf("full files:\n%s", out)
 	}
 }

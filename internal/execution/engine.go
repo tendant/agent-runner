@@ -437,6 +437,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
 			time.Now().Format("15:04"), snap.Status, snap.SuccessfulIterations, snap.TotalCostUSD))
 		logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
+		if t := threadKey(liveSession); t != "" {
+			logLines = append(logLines, tmpl.ThreadLine+t)
+		}
 		if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
 			reviewLine := fmt.Sprintf("**Review:** score %d/10", rr.Score)
 			if len(rr.Issues) > 0 {
@@ -1255,7 +1258,13 @@ func (h *Engine) resolvePromptCuts(sessionID, message, memoryDir string) (string
 	if memCap > 0 {
 		sessionBudget = memCap / 4
 	}
-	recentSessions := tmpl.RecentSessions(h.config.MemoryDir, h.config.Agent.MemoryDays, sessionBudget)
+	thread := ""
+	if h.agentManager != nil {
+		if live, ok := h.agentManager.GetSessionDirect(sessionID); ok {
+			thread = threadKey(live)
+		}
+	}
+	recentSessions := tmpl.RecentSessionsFor(h.config.MemoryDir, h.config.Agent.MemoryDays, sessionBudget, thread)
 	fileBudget := memCap
 	if memCap > 0 {
 		fileBudget = memCap - len(recentSessions)

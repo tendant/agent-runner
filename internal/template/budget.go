@@ -34,7 +34,7 @@ func ApplyBudget(r Retrieval, budget int) (Retrieval, []string) {
 	perFileCap := budget / 3
 	if perFileCap > 0 {
 		for i := range files {
-			if !files[i].WellKnown && len(files[i].Content) > perFileCap {
+			if !files[i].WellKnown && !files[i].Indexed && len(files[i].Content) > perFileCap {
 				files[i].Content = truncate(files[i].Content, perFileCap) +
 					fmt.Sprintf(truncationNotice, files[i].Filename)
 				warnings = append(warnings, fmt.Sprintf("truncated %s to %d chars (per-file cap)", files[i].Filename, perFileCap))
@@ -44,7 +44,7 @@ func ApplyBudget(r Retrieval, budget int) (Retrieval, []string) {
 
 	// 2. Drop non-well-known files, last-loaded first.
 	for i := len(files) - 1; i >= 0 && totalSize(Retrieval{Files: files}) > budget; i-- {
-		if files[i].WellKnown {
+		if files[i].WellKnown || files[i].Indexed { // an index line costs little
 			continue
 		}
 		warnings = append(warnings, fmt.Sprintf("dropped %s (over memory budget)", files[i].Filename))
@@ -56,6 +56,9 @@ func ApplyBudget(r Retrieval, budget int) (Retrieval, []string) {
 		over := totalSize(Retrieval{Files: files}) - budget
 		if over <= 0 {
 			break
+		}
+		if files[i].Indexed {
+			continue
 		}
 		// The notice appended below adds length; trim enough to cover it too.
 		notice := fmt.Sprintf(truncationNotice, files[i].Filename)

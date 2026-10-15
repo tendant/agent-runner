@@ -1,8 +1,9 @@
 # Memory and Prompt Management — Design
 
-Status: phases 1 and 2 implemented (runtime layer, slim `agent.md` with upgrade of unedited
+Status: phases 1 to 3 implemented (runtime layer, slim `agent.md` with upgrade of unedited
 defaults, `/prompt show|check|preview`; one write path through a checked copy, a commit per
-step, `/memory log|undo`, prompt and memory in the audit log); phases 3 and 4 are a proposal. Current behaviour: DESIGN.md "Memory & Prompt Composition".
+step, `/memory log|undo`, prompt and memory in the audit log; topic files indexed, Recent Sessions
+bounded and same-thread first); phase 4 is a proposal. Current behaviour: DESIGN.md "Memory & Prompt Composition".
 
 Decided:
 - **Several people** talk to one agent and share its memory. There is no per-person memory;
@@ -44,7 +45,7 @@ Non-goals: a vector database, embeddings, or a hosted service. Search can come l
 |---|---|---|---|
 | **Runtime** | the code | built in, composed per session | the runner is upgraded; differs by mode (sandboxed or not, CLI, task or one-shot) |
 | **Instructions** | operator | `memory/instructions/agent.md`, `workflow.md` | the operator edits them (chat, API, git) |
-| **Memory** | agents, curated | `memory/global/`, `memory/projects/<name>/` | sessions save notes; the curator compacts |
+| **Memory** | agents, curated | `memory/*.md` (flat) | sessions save notes; the curator compacts |
 
 The **runtime layer** takes over everything that describes how the runner works:
 - git: who pushes, conflicts;
@@ -64,55 +65,50 @@ shipped.
 - A customized file is kept, and `/prompt check` lists the lines that duplicate or contradict
   the runtime layer.
 
-## 4. Memory layout and scopes
+## 4. What a session loads
 
-```
-memory/
-  instructions/   agent.md, workflow.md            operator-owned
-  global/         user_preferences.md, lessons.md  every session
-  projects/<p>/   summary.md, decisions.md, *.md   sessions working on <p>
-  logs/YYYY-MM/   DD-<host>.md                     runner-written daily logs
-```
+The memory dir stays flat: no scopes, no migration. Each agent has its own memory, usually for
+one area of work, so splitting it again by project adds more than it fixes. What changes is
+what goes into the prompt:
 
-**Which projects a session gets:** the repos in its workspace (shared repos, task repos), plus
-any named with `/repo`. `<p>` is the repo name (`oam-server`). A session with no repo gets
-`global/` only. `Recent Sessions` is filtered the same way: entries from sessions on the same
-projects, or from the same task or chat thread.
+* **In full:** the well-known files (`user_preferences.md`, `project_summary.md`,
+  `decisions.md`, `workflows.md`, `lessons.md`) and upper-case files (the operator's, such as
+  `SOUL.md`). The curator keeps the well-known ones under budget.
+* **As an index:** every other lowercase `.md` file, the agent's topic files (`oam_server.md`),
+  is one line of a `## Memory Files` section: path, size and first line. The runtime layer tells
+  the agent to start a topic file with a one-line summary and to read it when a task touches
+  the topic. Memory can grow without crowding the prompt.
+* **Recent Sessions:** at most 10 entries from the last `AGENT_MEMORY_DAYS`, those of the same
+  thread first (the task, else the chat; each daily-log entry records it as a hashed
+  `**Thread:**` line), then the newest others. With several people on one agent, other threads'
+  sessions are mostly noise.
+* **Budget:** as before for full files (cut with a note pointing at the file). Index lines are
+  never cut. `/prompt preview` shows what is in full and what is indexed.
 
-**Budget:** applied per scope, in this order:
-1. instructions, never cut;
-2. global;
-3. the session's projects, split evenly;
-4. recent sessions.
-
-Each cut is reported in the prompt preview (§7).
-
-**Migration:** today's top-level files move to `global/` (`decisions.md` and
-`project_summary.md` too, since we can't tell which project they belong to; the curator can
-later move items it can place, §8). `agent.md` and
-`prompt.md` move to `instructions/`. Old paths are read as fallbacks for one release.
+What it gives up: an indexed file is read only if the agent chooses to. The core files and the
+first lines cover the common case; a topic every session needs can be named in `agent.md`.
 
 ## 5. Writing memory
 
 Every session, sandboxed or not, writes through a staged copy. It extends today's sandboxed
 merge, which becomes the only path.
 
-1. **Stage.** Copy the session's scopes (global plus its projects) into a per-run directory and point `{{MEMORY_DIR}}` at it. Instructions and logs are copied read-only, or not copied.
+1. **Stage.** Copy the memory dir's top-level files into a per-run directory and point
+   `{{MEMORY_DIR}}` at it.
 2. **Merge** at session end, under the memory lock:
-   - **Allowed:** lowercase `.md` files in the staged scopes.
+   - **Allowed:** top-level lowercase `.md` files.
    - **Append-only:** `lessons.md`.
    - **Refused:** instructions, logs, deletions, links and binaries.
    - **Limits:** size and new-file caps.
    - **Three-way:** a file someone else changed meanwhile takes only a pure append.
-   - A new file goes to the scope it was written in. The runtime layer tells the agent where
-     things belong (facts about a repo in `projects/<p>/`, the rest in `global/`) and that
-     several people share this memory.
+   - The runtime layer tells the agent which files to use, that topic files go in their own
+     file with a one-line summary first, and that several people share this memory.
 3. **Optional review queue** (`AGENT_MEMORY_REVIEW=off|on`, default `off`): the merge writes a
    pending change instead of applying it, the chat gets the diff, and `/memory approve <id>` or
    `/memory reject <id>` decides.
 4. **Provenance.** Each merge is its own commit:
    ```
-   memory: session <id> (<source>): saved projects/oam-server/decisions.md, global/lessons.md
+   memory: session <id> (<source>): saved decisions.md, oam_server.md
    ```
    Daily log and curation get their own commits. `/memory undo <session-id>` reverts that
    session's commit.
@@ -137,26 +133,21 @@ agent session, sandboxed or not; a session that wants a workflow change says so 
 * The audit log records each session's prompt manifest:
   - layers and sections, with each one's size and hash;
   - budget cuts;
-  - the memory scopes used;
   - which memory files the merge saved or refused.
 
   It records sizes and hashes, not the full text.
-* `/memory log [scope]` lists recent memory commits, with their session and source.
+* `/memory log` lists recent memory commits, with their session and source.
 
 ## 8. Curation
 
-The curator keeps its role (lessons; compaction over budget) and gains scopes:
-- it compacts per scope;
-- it may move a note from `global/` to the project it names;
-- it never touches instructions or logs.
-
-Its writes are commits like any session's, so they can be undone the same way.
+The curator keeps its role (lessons; compaction of well-known files over budget) and never
+touches instructions or logs. Its writes are commits like any session's, so they can be undone
+the same way.
 
 ## 9. Later
 
-* **Search instead of dumping:** the runtime layer tells agents memory is a directory they can
-  read and `grep`, and the prompt carries only instructions, global memory and a
-  table of contents per project. Possibly a small `memory search` helper.
+* **Search:** if the topic index grows past what a line each can carry, a small `memory search`
+  helper, or the curator merging related topic files.
 * **agent-stream panel:** browse and edit memory and instructions, approve pending changes, see
   a session's prompt manifest. Built on the §6 API.
 * **Expiry:** notes with a date stamp the curator may retire.
@@ -167,14 +158,8 @@ Its writes are commits like any session's, so they can be undone the same way.
    `/prompt preview`, `/prompt check`. Fixes problem 1 for every instance without hand edits.
 2. **One write path:** staged merge for all sessions, commits per session, `/memory undo`,
    `/memory log`, the prompt manifest in the audit log.
-3. **Scopes:** the new layout and migration, choosing scopes per session, a per-scope budget,
-   filtered Recent Sessions.
+3. **Load less, read on demand:** core files in full, topic files as an index, Recent Sessions
+   bounded and same-thread first (§4). Replaces the earlier plan of per-project scopes.
 4. **Review queue and API:** then the agent-stream panel.
 
 Each phase ships on its own; phase 1 is the smallest and removes the most confusion.
-
-## 11. Open questions
-
-1. **Project key:** the repo name, or a project name the operator assigns, so that one project
-   can span oam-server and oam-ops? Proposed: the repo name by default, with optional groups in
-   `instructions/projects.md` (`oam: oam-server, oam-ops`).
