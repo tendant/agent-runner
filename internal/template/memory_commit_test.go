@@ -118,3 +118,23 @@ func TestCommitAndPushMemoryParentRepoOptIn(t *testing.T) {
 		t.Errorf("opt-in: %v, %s commits", err, count())
 	}
 }
+
+// Pulling into a memory repo with no commits yet (after /memory git on an
+// empty dir) must not panic.
+func TestPullMemoryIntoEmptyRepo(t *testing.T) {
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	exec.Command("git", "init", "-q", "--bare", "-b", "main", remote).Run()
+	seed := t.TempDir()
+	for _, args := range [][]string{{"clone", "-q", remote, seed}, {"-C", seed, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "x"}, {"-C", seed, "push", "-q", "origin", "HEAD:main"}} {
+		exec.Command("git", args...).Run()
+	}
+	mem := t.TempDir()
+	exec.Command("git", "-C", mem, "init", "-q", "-b", "main").Run()
+	exec.Command("git", "-C", mem, "remote", "add", "origin", remote).Run()
+	if _, err := PullMemory(mem, MemoryGitCreds{}); err != nil {
+		t.Logf("pull: %v", err) // an error is fine; a panic is not
+	}
+	if shortHash(nil) != "(none)" || shortHash([]byte("0123456789abc\n")) != "01234567" {
+		t.Error("shortHash")
+	}
+}

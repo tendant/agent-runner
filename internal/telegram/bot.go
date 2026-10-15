@@ -436,9 +436,26 @@ func (b *Bot) send(chatID int64, text string) {
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
-	if _, err := b.api.Send(msg); err != nil {
+	_, err := b.api.Send(msg)
+	if err != nil && isParseError(err) {
+		// Legacy Markdown rejects a stray _ or * (GH_TOKEN, a path, a
+		// model's reply): send it as plain text rather than not at all.
+		plain := tgbotapi.NewMessage(chatID, plainText(text))
+		_, err = b.api.Send(plain)
+	}
+	if err != nil {
 		slog.Error("telegram: failed to send message", "error", err)
 	}
+}
+
+// isParseError reports Telegram refusing a message's Markdown.
+func isParseError(err error) bool {
+	return strings.Contains(err.Error(), "can't parse entities") || strings.Contains(err.Error(), "can't find end of the entity")
+}
+
+// plainText is a Markdown reply without its markup, for a plain-text resend.
+func plainText(s string) string {
+	return strings.NewReplacer("**", "", "\\_", "_", "\\*", "*", "`", "").Replace(s)
 }
 
 // uploadOutputFiles sends _send/ files as Telegram documents.

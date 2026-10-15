@@ -194,7 +194,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 
 	headAfter, _ := gitOutput(memoryDir, "rev-parse", "HEAD")
 	if string(headBefore) != string(headAfter) {
-		slog.Info("memory pulled", "remote", gitsafe.RedactURL(remote), "from", strings.TrimSpace(string(headBefore))[:8], "to", strings.TrimSpace(string(headAfter))[:8])
+		slog.Info("memory pulled", "remote", gitsafe.RedactURL(remote), "from", shortHash(headBefore), "to", shortHash(headAfter))
 	} else {
 		slog.Info("memory pulled", "remote", gitsafe.RedactURL(remote), "status", "already up to date")
 	}
@@ -612,4 +612,14 @@ func warnCredentialInRemote(remote string) {
 			"instead and remove it from the URL with: git -C <memory dir> remote set-url origin <url without the token>",
 			"remote", gitsafe.RedactURL(remote))
 	})
+}
+
+// shortHash is a commit hash's first 8 characters, or "(none)" for a repo
+// with no commits yet.
+func shortHash(out []byte) string {
+	h := strings.TrimSpace(string(out))
+	if len(h) < 8 {
+		return "(none)"
+	}
+	return h[:8]
 }

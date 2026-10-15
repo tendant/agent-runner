@@ -132,3 +132,16 @@ func TestHelpTopics(t *testing.T) {
 		}
 	}
 }
+
+// A bare command word counts only as the whole message.
+func TestBareWordsOnlyAlone(t *testing.T) {
+	c := newRepoCommander(t)
+	if _, _, ok := c.Handle("help", nil); !ok {
+		t.Error("bare help")
+	}
+	for _, msg := range []string{"help me fix the login bug", "status of the deploy?", "bootstrap the repo, force push it", "logs show an error"} {
+		if _, _, ok := c.Handle(msg, nil); ok {
+			t.Errorf("%q is a task, not a command", msg)
+		}
+	}
+}

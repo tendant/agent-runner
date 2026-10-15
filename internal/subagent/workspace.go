@@ -10,6 +10,24 @@ import (
 	"strings"
 )
 
+type noHostGitKey struct{}
+
+// WithoutHostGit returns a context under which ReadWorkspaceState runs no
+// git in the workspace's repos. A sandboxed session's agent can rewrite a
+// repo's .git (config, hooks) at any time, and anything it left running
+// can do so between a check and a git command; git on the host reads that
+// config. So once the agent may have run, the runner does not run git
+// there while it could still be running: the state then lists repos and
+// TODO only (the agent can run git itself).
+func WithoutHostGit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noHostGitKey{}, true)
+}
+
+func hostGitAllowed(ctx context.Context) bool {
+	off, _ := ctx.Value(noHostGitKey{}).(bool)
+	return !off
+}
+
 // ReadWorkspaceState reads the current state of the workspace for prompt injection.
 // workspacePath is the agent's CWD (the workspace/ subdir). Repos live directly here.
 // TODO.md is read from the sibling state/ directory.
@@ -36,6 +54,9 @@ func ReadWorkspaceState(ctx context.Context, workspacePath string) WorkspaceStat
 	var commits []string
 	var diffs []string
 	for _, repoName := range state.RepoNames {
+		if !hostGitAllowed(ctx) {
+			break
+		}
 		repoDir := filepath.Join(workspacePath, repoName)
 
 		// Recent commits
