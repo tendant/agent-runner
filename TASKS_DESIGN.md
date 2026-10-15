@@ -105,7 +105,7 @@ thread file, keyed the same way.
 - **Path:** `STATE_DIR/tasks/<thread-key>/workspace/` instead of `session-<id>/workspace/`. The layout (`workspace/`, `state/`, `_send/`, `_progress.json`) is unchanged.
 - **Created on the first turn** by `PrepareAgentWorkspace`, exactly as today. Later turns reuse the directory as-is. They do not copy the repos in again or wipe untracked files.
 - **Repos (decided: push per turn):** each turn keeps today's end-of-run git handling. It commits and pushes through `gitsync` (rebase, agent-assisted conflict resolution, rescue branch), so finished work lands every turn, as it does now, and is never stranded in a workspace. What persistence adds is uncommitted scratch work, generated files, `_send/` history and the progress file.
-- **Cache-back:** `CacheReposBack` runs only when the task ends (`done`, `failed` or `cancelled`), not after every turn. That keeps half-finished work out of the shared cache that other tasks copy from.
+- **No cache-back:** repos are checked out from a cache that only fetches (REPOS_DESIGN.md); the task workspace keeps its checkouts between turns and is removed when the task ends.
 - **Lock:** each workspace has a lock, taken for the length of a turn. The thread state machine already allows only one turn per task; the lock is a guard against races around restart recovery.
 - **Clean-up:**
   - `done`: the workspace is deleted after `AGENT_TASK_RETENTION` (default 24h), which leaves room for feedback.

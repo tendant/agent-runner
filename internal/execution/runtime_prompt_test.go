@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/repos"
 )
 
 func TestRuntimeInstructions(t *testing.T) {
 	host := runtimeInstructions(runtimeFacts{MemoryDir: "/data/memory"})
 	box := runtimeInstructions(runtimeFacts{Sandboxed: true, MemoryDir: "/state/home/s1/memory", MemoryCopy: true})
 
-	for _, want := range []string{"git pull --rebase", "push it to origin", "/data/memory", "several people", "do not edit them", "_send/"} {
+	for _, want := range []string{"agent-runner pushes", "/repo add", "/data/memory", "several people", "do not edit them", "_send/"} {
 		if !strings.Contains(host, want) {
 			t.Errorf("unsandboxed: missing %q:\n%s", want, host)
 		}
@@ -20,13 +21,16 @@ func TestRuntimeInstructions(t *testing.T) {
 	if strings.Contains(host, "your own copy") {
 		t.Errorf("unsandboxed sessions must not get the sandbox's rules:\n%s", host)
 	}
-	for _, want := range []string{"do not `git push`", "the runner pushes", "/state/home/s1/memory", "your own copy", "never yours to use"} {
+	for _, want := range []string{"do not `git push`", "agent-runner pushes", "/state/home/s1/memory", "your own copy", "never yours to use"} {
 		if !strings.Contains(box, want) {
 			t.Errorf("sandboxed: missing %q:\n%s", want, box)
 		}
 	}
-	if strings.Contains(box, "push it to origin") {
-		t.Errorf("a sandboxed agent must not be told to push:\n%s", box)
+	repoNote := runtimeInstructions(runtimeFacts{Repos: []repos.Repo{{Name: "oam-server", URL: "https://lei@gitee.com/o/oam-server.git", Branch: "develop", Push: true}, {Name: "docs", URL: "https://github.com/o/docs.git"}}})
+	for _, want := range []string{"- `oam-server/`: https://lei@gitee.com/o/oam-server.git, on develop, pushed for you", "- `docs/`: https://github.com/o/docs.git, on its default branch, read-only"} {
+		if !strings.Contains(repoNote, want) {
+			t.Errorf("repo list: missing %q:\n%s", want, repoNote)
+		}
 	}
 	if strings.Contains(runtimeInstructions(runtimeFacts{}), "### Memory") {
 		t.Error("no memory section without a memory dir")

@@ -12,6 +12,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 )
 
@@ -90,6 +91,7 @@ func runSync(t *testing.T, env *engineTestEnv, workspace string, fn func(string)
 	env.handlers.config.GitPushRetries = 2
 	env.handlers.config.GitPushRetryDelaySeconds = 0
 
+	registerWorkspaceRepos(t, env, workspace)
 	session, err := env.handlers.agentManager.CreateSession("edit shared.txt", nil, "test", "", 3, 60)
 	if err != nil {
 		t.Fatal(err)
@@ -233,17 +235,13 @@ func TestWorkspaceRepos_Layouts(t *testing.T) {
 	}
 }
 
-// A sandboxed agent has no git credentials: the conflict instructions end
-// with the rebase, and the runner pushes. Outside the sandbox it pushes.
-func TestConflictContextSandboxed(t *testing.T) {
+// The conflict instructions end with the rebase: the runner pushes, in
+// both modes.
+func TestConflictContext(t *testing.T) {
 	rc := []*gitpkg.RebaseConflictError{{RepoPath: "/w/app", Branch: "main", Files: []string{"a.go"}}}
-	host := buildConflictContext(rc, false)
-	box := buildConflictContext(rc, true)
-	if !strings.Contains(host, "git push origin HEAD") {
-		t.Errorf("host agents push:\n%s", host)
-	}
+	box := buildConflictContext(rc)
 	if strings.Contains(box, "git push") || !strings.Contains(box, "the runner pushes") {
-		t.Errorf("sandboxed agents must not be told to push:\n%s", box)
+		t.Errorf("agents must not be told to push:\n%s", box)
 	}
 	for _, want := range []string{"git add", "rebase --continue", "a.go"} {
 		if !strings.Contains(box, want) {
@@ -251,7 +249,27 @@ func TestConflictContextSandboxed(t *testing.T) {
 		}
 	}
 	note := runtimeInstructions(runtimeFacts{Sandboxed: true})
-	if !strings.Contains(note, "do not `git push`") || !strings.Contains(note, "the runner pushes") {
-		t.Errorf("sandbox note:\n%s", note)
+	if !strings.Contains(note, "do not `git push`") || !strings.Contains(note, "agent-runner pushes") {
+		t.Errorf("runtime note:\n%s", note)
+	}
+}
+
+// registerWorkspaceRepos registers each repo in workspace under its folder
+// name, with its origin as the URL, pushed: what /repo add would do.
+func registerWorkspaceRepos(t *testing.T, env *engineTestEnv, workspace string) {
+	t.Helper()
+	repos.AllowLocalPaths = true
+	if env.handlers.config.ReposFile == "" {
+		env.handlers.config.ReposFile = filepath.Join(t.TempDir(), "repos.json")
+	}
+	reg := repos.New(env.handlers.config.ReposFile)
+	for _, r := range workspaceRepos(workspace) {
+		out, err := exec.Command("git", "-C", r, "remote", "get-url", "origin").Output()
+		if err != nil {
+			continue
+		}
+		if err := reg.Put(repos.Repo{Name: filepath.Base(r), URL: strings.TrimSpace(string(out)), Push: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -337,7 +337,6 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 		RepoCacheRoot:     repoCacheDir,
 		LogsRoot:          logsDir,
 		TmpRoot:           tmpDir,
-		AllowedProjects:   []string{},
 		MaxRuntimeSeconds: 60,
 		MaxConcurrentJobs: 5,
 		Agent: config.AgentConfig{

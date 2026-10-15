@@ -40,11 +40,6 @@ func main() {
 		"max_runtime_seconds", cfg.MaxRuntimeSeconds,
 		"max_concurrent_jobs", cfg.MaxConcurrentJobs,
 	)
-	if len(cfg.AllowedProjects) > 0 {
-		slog.Info("allowed projects", "projects", cfg.AllowedProjects)
-	} else {
-		slog.Info("allowed projects: all")
-	}
 	if cfg.API.APIKey != "" {
 		slog.Info("API key authentication enabled")
 	}

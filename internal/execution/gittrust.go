@@ -125,17 +125,3 @@ func writeGitConfig(repo string, data []byte) error {
 	}
 	return nil
 }
-
-// cacheReposBack copies the workspace's repos to the cache. Sandboxed, the
-// saved configs go back first, and repos without one are left out.
-func (h *Engine) cacheReposBack(workspacePath string) {
-	var skip map[string]bool
-	if h.sandboxed() {
-		_, untrusted := restoreGitConfigs(filepath.Join(workspacePath, "workspace"))
-		skip = map[string]bool{}
-		for _, r := range untrusted {
-			skip[filepath.Base(r)] = true
-		}
-	}
-	h.workspaceManager.CacheReposBackExcept(workspacePath, h.config.RepoCacheRoot, skip)
-}

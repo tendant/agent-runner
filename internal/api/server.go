@@ -69,7 +69,6 @@ func NewServer(cfg *config.Config) *Server {
 		agentManager.SetJournal(sessionjournal.ForManager(j))
 	}
 	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	gitOps.Token = cfg.GitToken
 	// Level 3: agent CLI executor — uses reasoning model/provider (or CLI default if unset).
 	exec := executor.NewExecutor(cfg.Agent.CLI, cfg.Agent.Provider, cfg.Agent.Model, cfg.Agent.MaxTurns)
 	applyIsolation(cfg.Agent.Isolated, exec)
@@ -79,6 +78,11 @@ func NewServer(cfg *config.Config) *Server {
 
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
 	upgradeDefaultPrompts(handlers)
+	for _, k := range config.RemovedSettings {
+		if os.Getenv(k) != "" {
+			slog.Warn("setting no longer read: repos and their credentials come from /repo and /secret (REPOS_DESIGN.md)", "setting", k)
+		}
+	}
 
 	// Setup router
 	mux := http.NewServeMux()
@@ -88,6 +92,8 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/job/", handlers.HandleGetJob)
 	mux.HandleFunc("/status/", handlers.HandleGetStatus)
 	mux.HandleFunc("/projects", handlers.HandleGetProjects)
+	mux.HandleFunc("/repos", handlers.HandleRepos)
+	mux.HandleFunc("/repos/", handlers.HandleRepos)
 	mux.HandleFunc("/schedule", handlers.HandleSchedule)
 	mux.HandleFunc("/schedule/", handlers.HandleDeleteSchedule)
 	mux.HandleFunc("/schedules", handlers.HandleListSchedules)

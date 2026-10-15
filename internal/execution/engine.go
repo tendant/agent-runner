@@ -358,13 +358,6 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		snap := liveSession.Snapshot()
 		metrics.SessionsTotal.WithLabelValues(string(snap.Status), source).Inc()
 
-		// Cache repos back for future runs. A task turn defers this to the end
-		// of the task (FinishTaskWorkspace), so half-finished work never
-		// reaches the cache other runs copy from.
-		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
-			h.cacheReposBack(liveSession.WorkspacePath)
-		}
-
 		// The session's memory changes: their own commit, before the daily
 		// log's and curation's, and reported in the audit log.
 		memResult := h.mergeMemory(sessionID, source, liveSession, memoryStage)
@@ -606,7 +599,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Repos: h.registeredRepos()})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
@@ -719,36 +712,23 @@ func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) 
 
 	var (
 		workspacePath string
-		missingRepos  []string
 		err           error
 	)
 	if taskDir := liveSession.TaskWorkspace; taskDir != "" {
-		workspacePath, missingRepos, err = h.workspaceManager.PrepareAgentWorkspaceAt(
-			taskDir, h.config.RepoCacheRoot, h.config.Agent.SharedRepos,
-			h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
-		)
+		workspacePath, err = h.workspaceManager.PrepareAgentWorkspaceAt(taskDir, h.config.Agent.SkillsDir)
 	} else {
-		workspacePath, missingRepos, err = h.workspaceManager.PrepareAgentWorkspace(
-			h.config.RepoCacheRoot, sessionID, h.config.Agent.SharedRepos,
-			h.config.Agent.SkillsDir, h.config.GitHost, h.config.GitOrg, h.config.GitToken,
-		)
+		workspacePath, err = h.workspaceManager.PrepareAgentWorkspace(sessionID, h.config.Agent.SkillsDir)
 	}
 	if err != nil {
 		h.FailSession(sessionID, "Failed to prepare workspace: "+err.Error())
 		return "", true
 	}
-	// [M7] Surface missing shared repos as session warnings so the user knows
-	// the agent ran with an incomplete workspace.
-	for _, repo := range missingRepos {
-		liveSession.AddWarning("shared repo not found in cache: " + repo)
-	}
 	liveSession.SetWorkspacePath(workspacePath)
-	// NOTE: cleanup is done in the top-level defer (after CacheReposBack), not here.
-	// A defer here would run BEFORE the earlier defer (LIFO), deleting the workspace
-	// before cache-back can copy from it.
+	// Cleanup is done in the top-level defer, not here.
 
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
 	checkoutPath = filepath.Join(workspacePath, "workspace")
+	h.checkoutRepos(sessionID, liveSession, checkoutPath)
 	return checkoutPath, false
 }
 
@@ -1299,7 +1279,7 @@ func (h *Engine) resolvePromptCuts(sessionID, message, memoryDir string) (string
 		tmpl.VarRunnerURL:  runnerURL,
 		tmpl.VarAPIKey:     h.config.API.APIKey,
 		tmpl.VarSessionID:  sessionID,
-		tmpl.VarRepos:      strings.Join(h.config.Agent.SharedRepos, ", "),
+		tmpl.VarRepos:      strings.Join(h.repoNames(), ", "),
 		tmpl.VarProjectDir: h.config.ProjectDir,
 		tmpl.VarMemoryDir:  absMemoryDir,
 	}

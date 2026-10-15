@@ -1,0 +1,12 @@
+[
+  {
+    "name": "made-by-agent",
+    "url": "/var/folders/w1/qcj62w0n1bjff4gxgbmr9z_c0000gn/T/TestSandboxedPushSkipsUnknownRepo2792642990/004/made-by-agent.git",
+    "push": true
+  },
+  {
+    "name": "site",
+    "url": "/var/folders/w1/qcj62w0n1bjff4gxgbmr9z_c0000gn/T/TestSandboxedPushUsesSavedGitConfig778659935/005/elsewhere.git",
+    "push": true
+  }
+]

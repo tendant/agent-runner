@@ -124,28 +124,3 @@ func TestRestoreGitConfigReplacesLink(t *testing.T) {
 		t.Errorf("the link's target was written: %q", b)
 	}
 }
-
-// Sandboxed cache-back leaves out repos without a saved config and caches
-// the others with it.
-func TestSandboxedCacheBack(t *testing.T) {
-	env := sandboxEnv(t)
-	session := filepath.Join(t.TempDir(), "agent-x")
-	workspace := filepath.Join(session, "workspace")
-	os.MkdirAll(workspace, 0o755)
-	_, repo := unpushedRepo(t, workspace, "site")
-	if err := saveGitConfigs(workspace); err != nil {
-		t.Fatal(err)
-	}
-	saved, _ := os.ReadFile(filepath.Join(repo, ".git", "config"))
-	git(t, repo, "config", "remote.origin.url", "/elsewhere")
-	unpushedRepo(t, workspace, "made-by-agent")
-
-	env.handlers.cacheReposBack(session)
-	cache := env.handlers.config.RepoCacheRoot
-	if b, _ := os.ReadFile(filepath.Join(cache, "site", ".git", "config")); string(b) != string(saved) {
-		t.Errorf("cached config is not the saved one:\n%s", b)
-	}
-	if _, err := os.Stat(filepath.Join(cache, "made-by-agent")); !os.IsNotExist(err) {
-		t.Error("a repo without a saved config must not be cached")
-	}
-}

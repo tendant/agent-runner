@@ -3,10 +3,13 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -61,6 +64,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.MemoryDir = "memory"
 	cfg.OutputsRoot = filepath.Join(dir, "outputs")
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")
+	cfg.ReposFile = filepath.Join(dir, "repos.json")
+	cfg.SecretsFile = filepath.Join(dir, "secrets.json")
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
@@ -82,11 +87,14 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 }
 
+// createFakeProject registers a repo named name (its URL leads nowhere: the
+// tests only look at how a job is accepted).
 func (e *testEnv) createFakeProject(t *testing.T, name string) {
 	t.Helper()
-	projectDir := filepath.Join(e.repoCacheDir, name)
-	gitDir := filepath.Join(projectDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	repos.AllowLocalPaths = true
+	if err := repos.New(e.handlers.config.ReposFile).Put(repos.Repo{Name: name, URL: filepath.Join(e.repoCacheDir, "missing-"+name+".git"), Push: true}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func postJSON(handler http.HandlerFunc, body interface{}) *httptest.ResponseRecorder {
@@ -169,58 +177,20 @@ func TestHandleRun_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestHandleRun_ProjectNotAllowed(t *testing.T) {
-	dir := t.TempDir()
-	repoCacheDir := filepath.Join(dir, "repo-cache")
-	os.MkdirAll(repoCacheDir, 0755)
-
-	cfg := config.DefaultConfig()
-	cfg.RepoCacheRoot = repoCacheDir
-	cfg.LogsRoot = filepath.Join(dir, "logs")
-	cfg.TmpRoot = filepath.Join(dir, "tmp")
-	cfg.AllowedProjects = []string{"allowed-project"}
-
-	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600, 10, 1)
-	t.Cleanup(agentMgr.Stop)
-	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	exec := executor.NewExecutor("claude", "", "", 0)
-	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
-	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
-	runLogger := logging.NewRunLogger(cfg.LogsRoot)
-	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
-
-	w := postJSON(handlers.HandleRun, map[string]interface{}{
-		"project":     "not-allowed",
-		"instruction": "fix bug",
-		"paths":       []string{"src/"},
-	})
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-	resp := parseJSON(w)
-	if resp["error"] != "project not in allowed_projects" {
-		t.Errorf("unexpected error: %v", resp["error"])
-	}
-}
-
-func TestHandleRun_ProjectDirNotFound(t *testing.T) {
+// A job's project must be a registered repo.
+func TestHandleRun_ProjectNotRegistered(t *testing.T) {
 	env := setupTestEnv(t)
-	// Don't create the project directory
+	os.MkdirAll(filepath.Join(env.repoCacheDir, "nonexistent", ".git"), 0755) // a directory is not enough
 
 	w := postJSON(env.handlers.HandleRun, map[string]interface{}{
 		"project":     "nonexistent",
 		"instruction": "fix bug",
 		"paths":       []string{"src/"},
 	})
-
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
-	resp := parseJSON(w)
-	if resp["error"] != "project directory not found" {
+	if resp := parseJSON(w); !strings.Contains(fmt.Sprint(resp["error"]), "not a registered repo") {
 		t.Errorf("unexpected error: %v", resp["error"])
 	}
 }
@@ -304,6 +274,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	cfg.LogsRoot = filepath.Join(dir, "logs")
 	cfg.TmpRoot = tmpDir
 	cfg.MaxConcurrentJobs = 1
+	cfg.ReposFile = filepath.Join(dir, "repos.json")
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
@@ -316,9 +287,11 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
 	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
 
-	// Create fake projects
-	os.MkdirAll(filepath.Join(repoCacheDir, "project-a", ".git"), 0755)
-	os.MkdirAll(filepath.Join(repoCacheDir, "project-b", ".git"), 0755)
+	// Register two projects
+	repos.AllowLocalPaths = true
+	for _, n := range []string{"project-a", "project-b"} {
+		repos.New(cfg.ReposFile).Put(repos.Repo{Name: n, URL: filepath.Join(dir, n+".git"), Push: true})
+	}
 
 	// First request takes the only slot
 	w1 := postJSON(handlers.HandleRun, map[string]interface{}{
@@ -467,8 +440,8 @@ func TestHandleGetProjects_WithGitProjects(t *testing.T) {
 	env.createFakeProject(t, "project-a")
 	env.createFakeProject(t, "project-b")
 
-	// Also create a non-git directory (should be excluded)
-	os.MkdirAll(filepath.Join(env.repoCacheDir, "not-a-repo"), 0755)
+	// A directory in the cache is not a project: only registered repos are.
+	os.MkdirAll(filepath.Join(env.repoCacheDir, "not-a-repo", ".git"), 0755)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
 	w := httptest.NewRecorder()
@@ -478,43 +451,6 @@ func TestHandleGetProjects_WithGitProjects(t *testing.T) {
 	projects := resp["projects"].([]interface{})
 	if len(projects) != 2 {
 		t.Errorf("expected 2 git projects, got %d", len(projects))
-	}
-}
-
-func TestHandleGetProjects_RespectsAllowlist(t *testing.T) {
-	dir := t.TempDir()
-	repoCacheDir := filepath.Join(dir, "repo-cache")
-	os.MkdirAll(repoCacheDir, 0755)
-
-	cfg := config.DefaultConfig()
-	cfg.RepoCacheRoot = repoCacheDir
-	cfg.LogsRoot = filepath.Join(dir, "logs")
-	cfg.TmpRoot = filepath.Join(dir, "tmp")
-	cfg.AllowedProjects = []string{"allowed-only"}
-
-	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
-	t.Cleanup(jobManager.Stop)
-	agentMgr := agent.NewManager(3600, 10, 1)
-	t.Cleanup(agentMgr.Stop)
-	gitOps := git.NewOperations(cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds)
-	exec := executor.NewExecutor("claude", "", "", 0)
-	validator := executor.NewValidator(cfg.Validation.BlockedPaths, cfg.Validation.BlockBinaryFiles)
-	workspaceManager := executor.NewWorkspaceManager(cfg.TmpRoot, cfg.MaxRuntimeSeconds)
-	runLogger := logging.NewRunLogger(cfg.LogsRoot)
-	handlers := NewHandlers(cfg, jobManager, agentMgr, gitOps, exec, validator, workspaceManager, runLogger)
-
-	// Create two projects, only one in allowlist
-	os.MkdirAll(filepath.Join(repoCacheDir, "allowed-only", ".git"), 0755)
-	os.MkdirAll(filepath.Join(repoCacheDir, "blocked-project", ".git"), 0755)
-
-	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
-	w := httptest.NewRecorder()
-	handlers.HandleGetProjects(w, req)
-
-	resp := parseJSON(w)
-	projects := resp["projects"].([]interface{})
-	if len(projects) != 1 {
-		t.Errorf("expected 1 allowed project, got %d", len(projects))
 	}
 }
 

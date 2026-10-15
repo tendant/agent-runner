@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -21,7 +20,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
-	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/mcpsetup"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
@@ -128,7 +126,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
 		cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
 		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
-		cmdRepo:          "usage: " + cmdRepo + " [add|remove|list] <url>",
+		cmdRepo:          repoUsage,
 		"/stop":          "usage: /stop [session-id]",
 		"/logs":          "usage: /logs [session-id-prefix]",
 		"/update-prompt": "usage: /update-prompt <content>",
@@ -569,14 +567,6 @@ func (c *Commander) handleConfig() string {
 		if os.Getenv(key) != "" {
 			fmt.Fprintf(&b, "**%s:** set\n", key)
 		}
-	}
-
-	// Repo git credentials (shown when set; token value hidden).
-	if c.cfg.GitToken != "" {
-		b.WriteString("**GIT_TOKEN:** set\n")
-	}
-	if v := c.cfg.GitSSHKey; v != "" {
-		fmt.Fprintf(&b, "**GIT_SSH_KEY:** %s\n", v)
 	}
 
 	// Memory git credentials (shown when set; values hidden).
@@ -1041,248 +1031,6 @@ func (c *Commander) handleMemoryStatus() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// handleRepo dispatches /repo subcommands.
-func (c *Commander) handleRepo(arg string) string {
-	sub, rest, _ := strings.Cut(strings.TrimSpace(arg), " ")
-	switch strings.ToLower(sub) {
-	case "add":
-		return c.handleRepoAdd(strings.TrimSpace(rest))
-	case "list":
-		return c.handleRepoList()
-	case "remove":
-		return c.handleRepoRemove(strings.TrimSpace(rest))
-	case "update":
-		return c.handleRepoUpdate(strings.TrimSpace(rest))
-	default:
-		return "unknown subcommand: /repo " + sub +
-			"\nTry: /repo add <url> · /repo list · /repo remove <name> · /repo update <name>"
-	}
-}
-
-// handleRepoAdd clones a repo into REPO_CACHE_ROOT, strips the token from the
-// stored remote, and configures a credential helper reading GIT_TOKEN from env.
-func (c *Commander) handleRepoAdd(url string) string {
-	if url == "" {
-		return "error: usage: /repo add <url>"
-	}
-	if c.cfg.RepoCacheRoot == "" {
-		return "error: REPO_CACHE_ROOT is not configured"
-	}
-
-	// Derive name: last path component, strip .git suffix.
-	name := filepath.Base(strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git"))
-	if name == "" || name == "." {
-		return "error: cannot derive repo name from URL: " + url
-	}
-
-	cachePath := filepath.Join(c.cfg.RepoCacheRoot, name)
-	if _, err := os.Stat(cachePath); err == nil {
-		return name + " is already in cache (" + cachePath + ")"
-	}
-
-	// Clone — inject token into URL so credentials aren't stored.
-	token := c.cfg.GitToken
-	cloneURL := tmpl.InjectToken(url, token, "")
-	cloneCmd := gitsafe.Command("clone", cloneURL, cachePath)
-	var cloneStderr strings.Builder
-	cloneCmd.Stderr = &cloneStderr
-	if err := cloneCmd.Run(); err != nil {
-		return fmt.Sprintf("error: git clone failed: %s", strings.TrimSpace(cloneStderr.String()))
-	}
-
-	// Strip token: set remote back to clean URL.
-	setURL := gitsafe.Command("-C", cachePath, "remote", "set-url", "origin", url)
-	var setURLStderr strings.Builder
-	setURL.Stderr = &setURLStderr
-	if err := setURL.Run(); err != nil {
-		// Non-fatal — repo is cloned; just warn.
-		return fmt.Sprintf("added %s (warning: could not strip token from remote: %v: %s)", name, err, strings.TrimSpace(setURLStderr.String()))
-	}
-
-	// Configure credential helper so future git ops pick up GIT_TOKEN from env.
-	if token != "" {
-		executor.ConfigureCredHelper(cachePath)
-	}
-
-	// Auto-append to AGENT_SHARED_REPOS so the repo is available to agents.
-	shared := c.cfg.Agent.SharedRepos
-	sharedNote := ""
-	if !slices.Contains(shared, name) {
-		shared = append(shared, name)
-		newVal := strings.Join(shared, ",")
-		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
-			if err := os.Setenv("AGENT_SHARED_REPOS", newVal); err != nil {
-				slog.Warn("repo: failed to apply AGENT_SHARED_REPOS to process", "error", err)
-			}
-			c.cfg.Agent.SharedRepos = shared
-			sharedNote = "; added to AGENT_SHARED_REPOS"
-		}
-	}
-
-	return fmt.Sprintf("added %s from %s%s", name, url, sharedNote)
-}
-
-// handleRepoList walks REPO_CACHE_ROOT and prints each git repo with its
-// remote and last commit summary.
-func (c *Commander) handleRepoList() string {
-	if c.cfg.RepoCacheRoot == "" {
-		return "error: REPO_CACHE_ROOT is not configured"
-	}
-	entries, err := os.ReadDir(c.cfg.RepoCacheRoot)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "no repos in cache (REPO_CACHE_ROOT does not exist yet)"
-		}
-		return "error: " + err.Error()
-	}
-
-	sharedSet := make(map[string]bool, len(c.cfg.Agent.SharedRepos))
-	for _, r := range c.cfg.Agent.SharedRepos {
-		sharedSet[r] = true
-	}
-
-	var b strings.Builder
-	b.WriteString("**Cached repos**\n\n")
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		p := filepath.Join(c.cfg.RepoCacheRoot, e.Name())
-		if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
-			continue // not a git repo
-		}
-		count++
-		remote := ""
-		if out, err := gitsafe.Command("-C", p, "remote", "get-url", "origin").Output(); err == nil {
-			remote = strings.TrimSpace(string(out))
-		}
-		last := ""
-		if out, err := gitsafe.Command("-C", p, "log", "-1", "--format=%h %s").Output(); err == nil {
-			last = strings.TrimSpace(string(out))
-		}
-		fmt.Fprintf(&b, "**%s**", e.Name())
-		if sharedSet[e.Name()] {
-			b.WriteString(" ✓ shared")
-		}
-		if remote != "" {
-			fmt.Fprintf(&b, " — %s", gitsafe.RedactURL(remote))
-		}
-		if last != "" {
-			fmt.Fprintf(&b, "\n  %s", last)
-		}
-		b.WriteString("\n\n")
-	}
-	if count == 0 {
-		return "no repos in cache"
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// handleRepoRemove deletes a cached repo by name, suggesting close matches on typo.
-func (c *Commander) handleRepoRemove(name string) string {
-	if name == "" {
-		return "error: usage: /repo remove <name>"
-	}
-	if c.cfg.RepoCacheRoot == "" {
-		return "error: REPO_CACHE_ROOT is not configured"
-	}
-	p := filepath.Join(c.cfg.RepoCacheRoot, name)
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		msg := "error: repo not found: " + name
-		if suggestion := executor.SuggestCachedRepo(c.cfg.RepoCacheRoot, name); suggestion != "" {
-			msg += " (did you mean " + suggestion + "?)"
-		}
-		return msg
-	}
-	if err := os.RemoveAll(p); err != nil {
-		return fmt.Sprintf("error: remove %s: %v", name, err)
-	}
-
-	// Drop from AGENT_SHARED_REPOS to keep it in sync with the cache.
-	sharedNote := ""
-	shared := c.cfg.Agent.SharedRepos
-	filtered := shared[:0:0]
-	for _, r := range shared {
-		if r != name {
-			filtered = append(filtered, r)
-		}
-	}
-	if len(filtered) < len(shared) {
-		newVal := strings.Join(filtered, ",")
-		if err := config.SetEnvLocal("AGENT_SHARED_REPOS", newVal); err == nil {
-			if err := os.Setenv("AGENT_SHARED_REPOS", newVal); err != nil {
-				slog.Warn("repo: failed to apply AGENT_SHARED_REPOS to process", "error", err)
-			}
-			c.cfg.Agent.SharedRepos = filtered
-			sharedNote = "; removed from AGENT_SHARED_REPOS"
-		}
-	}
-
-	return "removed " + name + sharedNote
-}
-
-// handleRepoUpdate fetches the latest from origin and resets the cached repo
-// to origin/<default-branch>.
-func (c *Commander) handleRepoUpdate(name string) string {
-	if name == "" {
-		return "error: usage: /repo update <name>"
-	}
-	if c.cfg.RepoCacheRoot == "" {
-		return "error: REPO_CACHE_ROOT is not configured"
-	}
-	p := filepath.Join(c.cfg.RepoCacheRoot, name)
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		msg := "error: repo not found: " + name
-		if suggestion := executor.SuggestCachedRepo(c.cfg.RepoCacheRoot, name); suggestion != "" {
-			msg += " (did you mean " + suggestion + "?)"
-		}
-		return msg
-	}
-
-	run := func(args ...string) error {
-		cmd := gitsafe.Command(args...)
-		cmd.Dir = p
-		var stderr strings.Builder
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil
-	}
-
-	// Ensure credential helper is configured for repos not added via /repo add.
-	// Always reconfigure (idempotent) rather than checking for a prior value —
-	// a system/global credential.helper for the same host (e.g. macOS
-	// osxkeychain) can satisfy a naive "is something already set" check while
-	// actually being a stale credential for an unrelated project.
-	if token := c.cfg.GitToken; token != "" {
-		executor.ConfigureCredHelper(p)
-	}
-
-	if err := run("fetch", "origin"); err != nil {
-		return fmt.Sprintf("error: git fetch: %v", err)
-	}
-
-	// Detect default branch; fall back to "main".
-	branch := "main"
-	if out, err := gitsafe.Command("-C", p, "symbolic-ref", "refs/remotes/origin/HEAD").Output(); err == nil {
-		parts := strings.Split(strings.TrimSpace(string(out)), "/")
-		if len(parts) > 0 {
-			branch = parts[len(parts)-1]
-		}
-	}
-
-	if err := run("reset", "--hard", "origin/"+branch); err != nil {
-		return fmt.Sprintf("error: git reset: %v", err)
-	}
-	if err := run("clean", "-fdx"); err != nil {
-		return fmt.Sprintf("error: git clean: %v", err)
-	}
-
-	return fmt.Sprintf("updated %s to origin/%s", name, branch)
-}
-
 // parseSetArgs parses "KEY VALUE" or "KEY=VALUE" into (key, value, true).
 func parseSetArgs(s string) (key, val string, ok bool) {
 	s = strings.TrimSpace(s)
@@ -1357,10 +1105,10 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 **/memory pubkey** — print existing public key
 **/memory status** — show memory dir, remote, and last commit
 
-**/repo add** _\<url\>_ — clone repo into cache (uses GIT\_TOKEN if set)
-**/repo list** — list cached repos with remote and last commit
-**/repo remove** _\<name\>_ — delete cached repo (suggests closest match on typo)
-**/repo update** _\<name\>_ — fetch latest from origin and reset to remote HEAD`
+**/repo add** _\<url\> [secret=NAME] [branch=B] [push=false] [name=N]_ — a repo every session gets; logs in with /secret NAME (user name from the URL, e.g. https://lei@gitee.com/...)
+**/repo list** — the repos, their branch, login and whether they are pushed
+**/repo set** _\<name\> key=value ..._ — change secret, branch, push or url
+**/repo remove** _\<name\>_ — sessions no longer get it`
 
 // configAPIKeys is the set of provider API keys shown in /config when set.
 var configAPIKeys = []string{

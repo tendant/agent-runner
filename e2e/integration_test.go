@@ -75,6 +75,7 @@ func setupIntegrationEnv(t *testing.T, cli string) (ts *httptest.Server, logsDir
 	runCmd(t, projectPath, "git", "add", "-A")
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial commit")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	registerRepo(t, repoCacheDir, "test-project", bareRepo)
 
 	provider, model := cliDefaults(cli)
 	if p := os.Getenv("INTEGRATION_PROVIDER"); p != "" {
@@ -88,7 +89,7 @@ func setupIntegrationEnv(t *testing.T, cli string) (ts *httptest.Server, logsDir
 		RepoCacheRoot:            repoCacheDir,
 		LogsRoot:                 logsDir,
 		TmpRoot:                  tmpDir,
-		AllowedProjects:          []string{},
+		ReposFile:                filepath.Join(filepath.Dir(repoCacheDir), "repos.json"),
 		MaxRuntimeSeconds:        600,
 		MaxConcurrentJobs:        5,
 		GitPushRetries:           1,
@@ -260,10 +261,12 @@ func TestIntegration_PermanentErrorFastFail(t *testing.T) {
 	runCmd(t, projectPath, "git", "add", "-A")
 	runCmd(t, projectPath, "git", "commit", "-m", "Initial commit")
 	runCmd(t, projectPath, "git", "push", "origin", "HEAD")
+	registerRepo(t, repoCacheDir, "test-project", bareRepo)
 
 	provider, _ := cliDefaults(cli)
 	cfg := &config.Config{
 		RepoCacheRoot: repoCacheDir, LogsRoot: logsDir, TmpRoot: tmpDir,
+		ReposFile:         filepath.Join(filepath.Dir(repoCacheDir), "repos.json"),
 		MaxRuntimeSeconds: 120, MaxConcurrentJobs: 5,
 		GitPushRetries: 1, GitPushRetryDelaySeconds: 0,
 		Validation: config.ValidationConfig{},
