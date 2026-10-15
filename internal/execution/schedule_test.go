@@ -93,3 +93,23 @@ func TestCollectScheduleEntries_AllFields(t *testing.T) {
 		t.Errorf("expected idempotency_key 'key-1', got %q", entries[0].IdempotencyKey)
 	}
 }
+
+func TestLimitAgentSchedule(t *testing.T) {
+	var entries []ScheduleEntry
+	for _, c := range []string{"0 9 * * *", "*/5 * * * *", "* * * * *", "*/30 * * * *", "0,10,20,30,40 * * * *", "15 * * * 1"} {
+		entries = append(entries, ScheduleEntry{Message: "m", Cron: c})
+	}
+	for i := 0; i < 6; i++ {
+		entries = append(entries, ScheduleEntry{Message: "m", RunInSeconds: 60})
+	}
+	keep, refused := limitAgentSchedule(entries)
+	if len(keep) != maxAgentScheduleEntries {
+		t.Errorf("kept %d", len(keep))
+	}
+	if keep[0].Cron != "0 9 * * *" || keep[1].Cron != "*/30 * * * *" || keep[2].Cron != "15 * * * 1" {
+		t.Errorf("wrong entries kept: %+v", keep[:3])
+	}
+	if len(refused) != len(entries)-len(keep) {
+		t.Errorf("refused %v", refused)
+	}
+}

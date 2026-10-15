@@ -441,6 +441,13 @@ func (b *Bot) send(chatID int64, text string) {
 	if b.api == nil {
 		return
 	}
+	// Telegram refuses a message over 4096 characters: send it in parts.
+	if parts := splitMessage(text, telegramMaxLen); len(parts) > 1 {
+		for _, p := range parts {
+			b.send(chatID, p)
+		}
+		return
+	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	_, err := b.api.Send(msg)
@@ -453,6 +460,33 @@ func (b *Bot) send(chatID int64, text string) {
 	if err != nil {
 		slog.Error("telegram: failed to send message", "error", err)
 	}
+}
+
+const telegramMaxLen = 4000 // under Telegram's 4096, leaving room for markup
+
+// splitMessage cuts s into parts of at most max runes, at a line break
+// where there is one.
+func splitMessage(s string, max int) []string {
+	r := []rune(s)
+	if len(r) <= max {
+		return []string{s}
+	}
+	var parts []string
+	for len(r) > max {
+		cut := max
+		for i := max; i > max/2; i-- {
+			if r[i] == '\n' {
+				cut = i
+				break
+			}
+		}
+		parts = append(parts, string(r[:cut]))
+		r = r[cut:]
+		if len(r) > 0 && r[0] == '\n' {
+			r = r[1:]
+		}
+	}
+	return append(parts, string(r))
 }
 
 // isParseError reports Telegram refusing a message's Markdown.

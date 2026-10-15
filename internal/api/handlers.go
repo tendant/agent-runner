@@ -523,6 +523,7 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 			h.failJob(jobID, logData, "sandbox: "+err.Error(), "SANDBOX_REJECTED")
 			return
 		}
+		defer run.RemoveHome() // after Finish: defers run last-in first-out
 		defer run.Finish()
 		runCtx = run.Ctx
 	}

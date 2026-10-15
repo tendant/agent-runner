@@ -119,7 +119,8 @@ type Session struct {
 
 	// AgentEvents is the executor progress event ring (newest last).
 	// Delivered to SSE subscribers as agent_event frames.
-	AgentEvents  []ExecEvent `json:"-"`
+	AgentEvents  []ExecEvent         `json:"-"`
+	redact       func(string) string // SetRedactor; nil: none
 	execEventSeq uint64
 
 	// LogLines holds streaming output lines (e.g. auth flow progress).
@@ -139,6 +140,9 @@ func (s *Session) AppendLog(line string) {
 // sequence number, and notifies SSE subscribers.
 func (s *Session) AppendExecEvent(kind, text string, at time.Time) {
 	s.mu.Lock()
+	if s.redact != nil {
+		text = s.redact(text)
+	}
 	s.execEventSeq++
 	s.AgentEvents = append(s.AgentEvents, ExecEvent{Seq: s.execEventSeq, Kind: kind, Text: text, At: at})
 	if len(s.AgentEvents) > maxExecEvents {
@@ -212,8 +216,20 @@ func (s *Session) StopRequested() bool {
 }
 
 // AddIteration appends an iteration result and updates counters
+// SetRedactor makes the session replace known secret values in what it
+// records from the agent (iteration output and errors, live events), so
+// they reach neither chat, the API nor the logs.
+func (s *Session) SetRedactor(redact func(string) string) {
+	s.mu.Lock()
+	s.redact = redact
+	s.mu.Unlock()
+}
+
 func (s *Session) AddIteration(result IterationResult) {
 	s.mu.Lock()
+	if s.redact != nil {
+		result.Output, result.Error = s.redact(result.Output), s.redact(result.Error)
+	}
 	s.Iterations = append(s.Iterations, result)
 	s.CurrentIteration = result.Iteration
 	s.TotalCostUSD += result.CostUSD

@@ -1,6 +1,8 @@
 package execution
 
 import (
+	"context"
+	"github.com/agent-runner/agent-runner/internal/executor"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,4 +63,40 @@ func TestSessionPromptNamesSecrets(t *testing.T) {
 	if strings.Contains(prompt, "tok-secret-value") {
 		t.Error("a secret's value must never be in the prompt")
 	}
+}
+
+// A secret value the agent echoes is redacted in what the session records
+// (and so in chat, the API and the audit log).
+func TestSessionRedactsSecretValues(t *testing.T) {
+	env := setupTestEnv(t)
+	h := env.handlers
+	h.config.Agent.CLI = "pi"
+	h.config.Agent.PlannerEnabled = false
+	h.config.SecretsFile = filepath.Join(t.TempDir(), "secrets.json")
+	agentsecrets.New(h.config.SecretsFile).Set("GITEE_TOKEN", "gitee-secret-value-1", "")
+	h.executor = echoExecutor{text: "the token is gitee-secret-value-1"}
+	session, _ := h.agentManager.CreateSession("show it", nil, "test", "", 1, 30)
+	h.ExecuteAgent(session)
+	for _, it := range session.Snapshot().Iterations {
+		if strings.Contains(it.Output, "gitee-secret-value-1") || !strings.Contains(it.Output, "[redacted:GITEE_TOKEN]") {
+			t.Errorf("output not redacted: %q", it.Output)
+		}
+	}
+}
+
+type echoExecutor struct{ text string }
+
+func (e echoExecutor) Execute(context.Context, string, string) (*executor.ExecutionResult, error) {
+	return &executor.ExecutionResult{Output: e.text}, nil
+}
+func (e echoExecutor) ExecuteWithSystemPrompt(ctx context.Context, w, _, in string) (*executor.ExecutionResult, error) {
+	return e.Execute(ctx, w, in)
+}
+func (e echoExecutor) ExecuteWithLog(ctx context.Context, w, in string) (*executor.ExecutionResult, string, error) {
+	r, err := e.Execute(ctx, w, in)
+	return r, "", err
+}
+func (e echoExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, w, _, in string) (*executor.ExecutionResult, string, error) {
+	r, err := e.Execute(ctx, w, in)
+	return r, "", err
 }

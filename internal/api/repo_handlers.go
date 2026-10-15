@@ -44,6 +44,10 @@ func (h *Handlers) HandleRepos(w http.ResponseWriter, r *http.Request) {
 		if rp.Name == "" {
 			rp.Name = repos.NameFromURL(rp.URL)
 		}
+		if _, exists, _ := reg.Get(rp.Name); exists {
+			h.writeError(w, http.StatusConflict, rp.Name+" is already registered (DELETE it first, or pick another name)")
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 		defer cancel()
 		if err := repos.Register(ctx, reg, rp, h.config.RepoCacheRoot, agentsecrets.New(h.config.SecretsFile)); err != nil {

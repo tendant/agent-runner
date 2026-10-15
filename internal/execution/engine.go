@@ -305,10 +305,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// Get the live session reference for mutations
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
-	var sandboxEgress func() []sandboxrt.EgressHost // set once the sandbox starts
-	var memoryStage *tmpl.MemoryStage               // the session's memory copy
-	var promptSections []tmpl.Section               // the composed prompt, for the audit log
-	var promptCuts []string                         // what the memory budget cut from it
+	var sandboxEgress func() []sandboxrt.EgressHost     // set once the sandbox starts
+	var memoryStage *tmpl.MemoryStage                   // the session's memory copy
+	var finishedRun *sandboxrt.Run                      // the sandbox run, whose home goes after the memory merge
+	sessionRedact := func(s string) string { return s } // set once the secrets are loaded
+	var promptSections []tmpl.Section                   // the composed prompt, for the audit log
+	var promptCuts []string                             // what the memory budget cut from it
 
 	// Root span for the run; every phase below is a child. The trace id is
 	// stored on the session so API responses and logs can be joined to it.
@@ -358,14 +360,18 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 
 		// The session's memory changes: their own commit, before the daily
 		// log's and curation's, and reported in the audit log.
+		if memoryStage != nil {
+			memoryStage.Redact = sessionRedact
+		}
 		memResult := h.mergeMemory(sessionID, source, liveSession, memoryStage)
+		finishedRun.RemoveHome() // after the merge: the memory copy was in it
 
 		// Write agent audit log
 		logData := &logging.AgentLogData{
 			SessionID:            sessionID,
 			Status:               string(snap.Status),
 			Duration:             int(time.Since(startTime).Seconds()),
-			Message:              message,
+			Message:              sessionRedact(message),
 			Author:               authorName,
 			SuccessfulIterations: snap.SuccessfulIterations,
 			TotalCostUSD:         snap.TotalCostUSD,
@@ -380,7 +386,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 				Error:        iter.Error,
 				DurationSecs: iter.DurationSecs,
 				CostUSD:      iter.CostUSD,
-				Prompt:       iter.Prompt,
+				Prompt:       sessionRedact(iter.Prompt),
 				Output:       iter.Output,
 			})
 		}
@@ -449,7 +455,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			errPreview = textutil.Truncate(errPreview, 120)
 			logLines = append(logLines, fmt.Sprintf("**Error:** %s", errPreview))
 		}
-		dailyEntry := strings.Join(logLines, "\n")
+		dailyEntry := sessionRedact(strings.Join(logLines, "\n")) // pushed with memory
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 			liveSession.AddWarning("daily log failed: " + err.Error())
@@ -571,8 +577,13 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// The agent user's secrets: in every CLI's environment, named in the prompt.
 	agentSecrets := h.agentSecrets(sessionID, liveSession)
 	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvOf(agentSecrets))
+	// What the agent says is recorded and forwarded without secret values.
+	redactor := agentsecrets.NewRedactor(agentSecrets)
+	liveSession.SetRedactor(redactor.Redact)
+	sessionRedact = redactor.Redact
 	memoryDir := h.config.MemoryDir // what the prompt points the agent at
 	if sandboxRun != nil {
+		finishedRun = sandboxRun
 		defer sandboxRun.Finish()
 		sandboxEgress = sandboxRun.Egress
 		// From here the agent may run: no git on the host in its repos
@@ -723,6 +734,8 @@ func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) 
 			_ = os.MkdirAll(filepath.Join(checkout, "_send"), 0o755)
 			_ = os.Remove(filepath.Join(checkout, "_schedule.json"))
 			slog.Info("reusing task workspace", "session_id", sessionID, "path", taskDir)
+			// A repo registered since the task's last turn joins it now.
+			h.checkoutRepos(sessionID, liveSession, checkout)
 			return checkout, false
 		}
 	}
@@ -1172,12 +1185,17 @@ func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liv
 	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {
 		slog.Warn("failed to collect _schedule.json", "session_id", sessionID, "error", err)
 	} else if len(schedEntries) > 0 {
-		if h.deps.WorkflowClient() != nil {
+		var refused []string
+		schedEntries, refused = limitAgentSchedule(schedEntries)
+		for _, r := range refused {
+			liveSession.AddWarning("_schedule.json: " + r)
+		}
+		if len(schedEntries) > 0 && h.deps.WorkflowClient() != nil {
 			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
 			if err := h.deps.WorkflowClient().SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
 				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
 			}
-		} else {
+		} else if len(schedEntries) > 0 {
 			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
 		}
 	}

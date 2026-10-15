@@ -45,6 +45,11 @@ func (c *Commander) handleSecret(arg string) string {
 		hf := strings.Fields(head)
 		var name, value, desc string
 		switch {
+		case multiline && len(hf) >= 3 && !strings.Contains(strings.TrimSpace(body), "\n") && !strings.HasPrefix(strings.TrimSpace(body), "-----BEGIN"):
+			// The value is on the first line and a note follows: the
+			// note is description, never the value.
+			name, value = hf[1], hf[2]
+			desc = strings.TrimSpace(strings.Join(hf[3:], " ") + " " + strings.TrimSpace(body))
 		case multiline && strings.TrimSpace(body) != "" && len(hf) >= 2:
 			name, value, desc = hf[1], strings.TrimSpace(body), strings.Join(hf[2:], " ")
 		case len(fields) >= 3 && !multiline:

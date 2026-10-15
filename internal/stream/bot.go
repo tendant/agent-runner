@@ -328,7 +328,20 @@ func (b *Bot) listenConversation(ctx context.Context, channelID string) {
 	if ok {
 		slog.Info("stream bot resumed from saved cursor", "channel_id", channelID, "after_seq", afterSeq, "mode", b.mode())
 	} else {
-		afterSeq = b.catchUpSeq(ctx, channelID)
+		// Until the catch-up succeeds there is no cursor: starting from 0
+		// would treat the channel's whole history as new messages and run
+		// agents for them. Retry instead, backing off.
+		for wait := 5 * time.Second; ; wait = min(2*wait, time.Minute) {
+			var caught bool
+			if afterSeq, caught = b.catchUpSeq(ctx, channelID); caught {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
 		slog.Info("stream bot caught up", "channel_id", channelID, "after_seq", afterSeq, "mode", b.mode())
 		b.saveCursor(channelID, afterSeq)
 	}
@@ -542,7 +555,7 @@ func (b *Bot) processEventBatch(ctx context.Context, channelID string, events []
 //     idle-drain: open the stream from seq=0 and close it once 500ms pass with
 //     no new events — the silence signals that the history burst is done.
 //     A hard cap of 10s prevents hanging on very large histories.
-func (b *Bot) catchUpSeq(ctx context.Context, channelID string) int64 {
+func (b *Bot) catchUpSeq(ctx context.Context, channelID string) (int64, bool) {
 	events, err := b.client.PollEvents(ctx, channelID, 0)
 	if err == nil {
 		var maxSeq int64
@@ -551,17 +564,17 @@ func (b *Bot) catchUpSeq(ctx context.Context, channelID string) int64 {
 				maxSeq = e.Seq
 			}
 		}
-		return maxSeq
+		return maxSeq, true
 	}
 
 	if err != ErrNotFound {
-		slog.Warn("stream bot catch-up failed", "channel_id", channelID, "error", err)
-		return 0
+		slog.Warn("stream bot catch-up failed; retrying", "channel_id", channelID, "error", err)
+		return 0, false
 	}
 
 	// Server doesn't support PollEvents — drain the SSE stream until idle.
 	slog.Debug("stream bot catch-up: poll endpoint not available, using SSE idle-drain", "channel_id", channelID)
-	return b.catchUpViaSSE(ctx, channelID)
+	return b.catchUpViaSSE(ctx, channelID), true
 }
 
 // catchUpViaSSE opens an SSE stream from seq=0 and returns the highest seq seen

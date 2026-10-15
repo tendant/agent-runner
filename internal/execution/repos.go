@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -49,6 +50,9 @@ func (h *Engine) repoNames() []string {
 func (h *Engine) checkoutRepos(sessionID string, live *agent.Session, checkoutPath string) {
 	secrets := h.agentSecretStore()
 	for _, rp := range h.registeredRepos() {
+		if _, err := os.Lstat(filepath.Join(checkoutPath, rp.Name)); err == nil {
+			continue // already there (a task's earlier turn checked it out)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		err := repos.Checkout(ctx, rp, h.config.RepoCacheRoot, filepath.Join(checkoutPath, rp.Name), secrets)
 		cancel()

@@ -163,6 +163,9 @@ type WeChatConfig struct {
 	BaseURL    string // WECHAT_BASE_URL — default: https://ilinkai.weixin.qq.com
 	CDNBaseURL string // WECHAT_CDN_BASE_URL — media CDN; default: https://novac2c.cdn.weixin.qq.com/c2c
 	StateDir   string // WECHAT_STATE_DIR — directory for sync buf cursor; defaults to TmpRoot
+	// AllowedUsers (WECHAT_ALLOWED_USERS) are the WeChat user ids that may
+	// control the agent; empty: the first user to message the bot, saved.
+	AllowedUsers []string
 }
 
 // FastLLMConfig configures the shared cheap/fast LLM slot used by the
@@ -469,6 +472,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.MaxCatchUpBacklog = envIntOrDefault("STREAM_MAX_CATCHUP_BACKLOG", 100)
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
+	cfg.WeChat.AllowedUsers = envSliceOrDefault("WECHAT_ALLOWED_USERS", nil)
 	cfg.WeChat.BaseURL = envOrDefault("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com")
 	cfg.WeChat.CDNBaseURL = envOrDefault("WECHAT_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c")
 	cfg.WeChat.StateDir = envOrDefault("WECHAT_STATE_DIR", cfg.TmpRoot)
