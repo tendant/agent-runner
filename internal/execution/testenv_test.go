@@ -67,6 +67,8 @@ func setupTestEnv(t *testing.T) *engineTestEnv {
 	cfg.LogsRoot = logsDir
 	cfg.TmpRoot = tmpDir
 	cfg.MemoryDir = filepath.Join(dir, "memory")
+	cfg.ReposFile = filepath.Join(dir, "repos.json")
+	cfg.SecretsFile = filepath.Join(dir, "secrets.json")
 	cfg.OutputsRoot = filepath.Join(dir, "outputs")
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")
 	os.MkdirAll(cfg.RepoCacheRoot, 0755)

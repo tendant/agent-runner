@@ -5,7 +5,7 @@ secrets.json
 
 # Runtime directories
 repo-cache/
-repos/
+/repos/
 workspaces/
 projects/
 origins/
