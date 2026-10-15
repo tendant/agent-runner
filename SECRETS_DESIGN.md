@@ -1,6 +1,6 @@
 # Agent Access to Sensitive/External Data — Design Analysis
 
-Status: **design discussion, not implemented.** Captures the analysis and open decisions before any code is written.
+Status: **option (A) implemented** (`internal/agentsecrets`, `/secret`, docs/sandbox.md "Secrets"). The operator decided agent users' secrets need not be hidden from their agents, only kept apart from agent-runner's own; the sandbox now keeps the runner's secrets out and egress is gated, so (B) is not planned. The `API_KEY` echo bug below is fixed. The analysis below is kept as written.
 
 ## Motivation
 

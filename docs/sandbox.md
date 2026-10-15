@@ -45,8 +45,9 @@ Other settings:
   overriding the policy's (Linux only, see [Fork bombs](#fork-bombs-memory-and-pids-caps)).
 * `AGENT_SANDBOX_EGRESS_ALLOW` and `AGENT_SANDBOX_EGRESS_MODE`: see [Network](#network).
 * `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
-* `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated); model credentials
-  are never passed while the model proxy is on.
+* `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain
+  settings; model credentials are never passed while the model proxy is on. Credentials an
+  agent needs for its tasks go in with `/secret` instead (see [Secrets](#secrets)).
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
@@ -158,6 +159,23 @@ runner merges back, under the memory lock and before the daily log, curation and
 
 Whatever is refused shows as a session warning (`memory changes not saved: ...`) and in the
 session's audit log. Unsandboxed sessions work the same way, on a copy next to their workspace.
+
+## Secrets
+
+Two kinds, kept apart:
+
+* **agent-runner's own** (`.env`, `/set`): model keys, `GIT_TOKEN`, `MEMORY_GIT_TOKEN`, bot
+  tokens, `API_KEY`. Never in the sandbox: the model proxy and the runner's push use them for
+  the agent.
+* **The agent user's** (`/secret set NAME VALUE [description]`, kept in `DATA_DIR/secrets.json`,
+  0600): what agents need for their tasks, such as `GITEE_TOKEN`. In every session's environment,
+  sandboxed or not, and named with their descriptions (never values) in the prompt. They are not
+  hidden from the agent: give each the least access its task needs.
+
+`/secret` refuses any name agent-runner reads itself (its settings, `GIT_*`, `AGENT_*`, model
+provider variables, `PATH`, proxies, ...), so one kind cannot become the other; use the names
+tools expect (`GITEE_TOKEN`, `GH_TOKEN`, `STRIPE_API_KEY`). The file is denied to the sandbox like
+`.env`; `/secret list` shows names and descriptions only.
 
 ## How a run is confined
 

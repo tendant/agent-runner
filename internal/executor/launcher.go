@@ -164,16 +164,51 @@ func (l *SandboxLauncher) env(s LaunchSpec) []string {
 
 // LauncherFrom returns the launcher carried by ctx, if any.
 func LauncherFrom(ctx context.Context) (Launcher, bool) {
-	l, ok := ctx.Value(launcherKey{}).(Launcher)
-	return l, ok && l != nil
+	l, _ := ctx.Value(launcherKey{}).(Launcher)
+	l = unwrapEnv(l) // session env alone confines nothing
+	return l, l != nil
+}
+
+// unwrapEnv is the launcher under a session-env wrapper.
+func unwrapEnv(l Launcher) Launcher {
+	if e, ok := l.(envLauncher); ok {
+		return e.inner
+	}
+	return l
 }
 
 // scratchDir is where an executor should create a file the CLI writes to:
 // the sandbox's scratch dir when ctx carries a sandbox launcher, else ""
 // (the host's temp dir).
 func scratchDir(ctx context.Context, l Launcher) string {
-	if sl, ok := resolveLauncher(ctx, l).(*SandboxLauncher); ok {
+	if sl, ok := unwrapEnv(resolveLauncher(ctx, l)).(*SandboxLauncher); ok {
 		return sl.ScratchDir
 	}
 	return ""
+}
+
+// WithSessionEnv returns a context whose agent-CLI launches also get env
+// (KEY=VALUE): the agent user's secrets, for every CLI the session starts,
+// sandboxed or not. It wraps the context's launcher (the host when there is
+// none); the executor's own overlay and the sandbox's settings still win.
+func WithSessionEnv(ctx context.Context, env []string) context.Context {
+	if len(env) == 0 {
+		return ctx
+	}
+	inner, _ := ctx.Value(launcherKey{}).(Launcher)
+	return WithLauncher(ctx, envLauncher{inner: inner, env: env})
+}
+
+type envLauncher struct {
+	inner Launcher
+	env   []string
+}
+
+func (l envLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd, func(), error) {
+	s.ExtraEnv = append(append([]string{}, l.env...), s.ExtraEnv...)
+	inner := l.inner
+	if inner == nil {
+		inner = HostLauncher{}
+	}
+	return inner.Command(ctx, s)
 }

@@ -35,6 +35,7 @@ type Config struct {
 	OutputsRoot   string // persistent storage for _send/ files across sessions
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
 	MemoryDir     string // Convention: ./memory (seeded defaults + daily logs + curated memory)
+	SecretsFile   string // DATA_DIR/secrets.json: the agent user's secrets (/secret), apart from the runner's .env
 
 	// Project allowlist
 	AllowedProjects []string
@@ -227,6 +228,7 @@ func defaultConfigForDataDir(data string) *Config {
 		OutputsRoot:              filepath.Join(data, "outputs"),
 		UploadsRoot:              filepath.Join(data, "uploads"),
 		MemoryDir:                filepath.Join(data, "memory"),
+		SecretsFile:              filepath.Join(data, "secrets.json"),
 		AllowedProjects:          []string{},
 		MaxRuntimeSeconds:        300,
 		MaxConcurrentJobs:        5,
@@ -599,6 +601,7 @@ func (c *Config) copyFrom(n *Config) {
 	c.OutputsRoot = n.OutputsRoot
 	c.UploadsRoot = n.UploadsRoot
 	c.MemoryDir = n.MemoryDir
+	c.SecretsFile = n.SecretsFile
 	c.AllowedProjects = n.AllowedProjects
 	c.MaxRuntimeSeconds = n.MaxRuntimeSeconds
 	c.MaxConcurrentJobs = n.MaxConcurrentJobs

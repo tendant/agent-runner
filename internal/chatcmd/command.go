@@ -33,6 +33,7 @@ const (
 	cmdSetPrompt = "/set-prompt"
 	cmdMemory    = "/memory"
 	cmdPrompt    = "/prompt"
+	cmdSecret    = "/secret"
 	cmdRepo      = "/repo"
 )
 
@@ -125,6 +126,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 		"/auth":          "usage: /auth [claude|codex] — only available via chat",
 		cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
+		cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
 		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 		cmdRepo:          "usage: " + cmdRepo + " [add|remove|list] <url>",
 		"/stop":          "usage: /stop [session-id]",
@@ -165,6 +167,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
 		arg := strings.TrimSpace(text[len("/auth"):])
 		return r(c.handleAuth(arg, send))
+	case lower == cmdSecret || strings.HasPrefix(lower, cmdSecret+" "):
+		return r(c.handleSecret(strings.TrimSpace(text[len(cmdSecret):])))
 	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
 		return r(c.handlePrompt(strings.TrimSpace(text[len(cmdPrompt):])))
 	case lower == cmdMemory || strings.HasPrefix(lower, cmdMemory+" "):
@@ -1295,6 +1299,9 @@ func parseSetArgs(s string) (key, val string, ok bool) {
 // isSensitiveKey returns true for keys whose values must not be echoed.
 func isSensitiveKey(key string) bool {
 	upper := strings.ToUpper(key)
+	if upper == "API_KEY" {
+		return true
+	}
 	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
 		if strings.HasSuffix(upper, suffix) {
 			return true
@@ -1334,6 +1341,8 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/set-agent** _\<content\>_ — overwrite agent.md
 **/set-prompt** _\<content\>_ — overwrite prompt.md
+**/secret set** _NAME VALUE [description]_ — a secret for your agents' tasks (e.g. GITEE\_TOKEN), in every session's environment
+**/secret list** — names and descriptions (never values) · **/secret remove** _NAME_
 **/prompt show** _[agent|workflow]_ — show agent.md and prompt.md
 **/prompt check** — what in them is out of date with how the runner works now
 **/prompt preview** _[full] [message]_ — the prompt a session would get: sections and sizes, or all of it
