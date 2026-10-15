@@ -560,7 +560,15 @@ PY
 	stop_runner
 	PATH_FOR_RUNNER=$SAVED_PATH
 	kill "$FAKE_ANTHROPIC" 2>/dev/null
-	if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else fail "session: $RESULT"; fi
+	if [ "${RESULT%%|*}" = completed ]; then pass "session completed"; else
+		fail "session: $RESULT"
+		printf '%s' "$LAST_BODY" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for it in d.get("iterations") or []:
+    print("        iteration:", ((it.get("error") or "") + " | " + (it.get("output") or ""))[:1500].replace("\n","\n        "))'
+		grep -i "claude\|error\|sandbox" "$W/runner-permissive.log" | tail -15 | sed 's/^/        log: /'
+	fi
 	case $LAST_BODY in *"cannot be used with root"*) fail "claude refused to run as root in the sandbox" ;; esac
 	if grep -q "/v1/messages.*|smoke-fake-key$" "$W/anthropic.log" 2>/dev/null; then
 		pass "the API got /v1/messages with the runner's key, through the proxy"
