@@ -114,6 +114,25 @@ func RunAuthFlow(parent context.Context, cli string, send func(string)) error {
 	return nil
 }
 
+// staleAgentMD are lines of earlier default agent.md files that are wrong
+// for sandboxed sessions; instances keep the agent.md they were set up with.
+var staleAgentMD = []string{
+	"are available directly\nas environment variables",
+	"Commit all changes with descriptive commit messages and push to origin",
+}
+
+// StaleAgentMDForSandbox reports whether an agent.md still carries default
+// text that misleads a sandboxed agent (credentials in the environment,
+// pushing itself).
+func StaleAgentMDForSandbox(content string) bool {
+	for _, s := range staleAgentMD {
+		if strings.Contains(content, s) {
+			return true
+		}
+	}
+	return false
+}
+
 const DefaultAgentMD = `# Agent
 
 You are an autonomous software development agent.
@@ -121,7 +140,8 @@ You are an autonomous software development agent.
 ## Core Principles
 
 - Complete tasks thoroughly before reporting done
-- Commit all changes with descriptive commit messages and push to origin
+- Commit all changes with descriptive commit messages. Push to origin yourself unless your
+  session notes say the runner pushes for you (sandboxed sessions do).
 - Other sessions may push to the same branch while you work. If your push is
   rejected, run ` + "`git pull --rebase`" + `, resolve any conflicts keeping both sides'
   intent, and push again. Never force-push or reset a shared branch.
@@ -147,9 +167,10 @@ Keep entries brief. Append — do not delete existing content unless correcting 
 
 ## Credentials
 
-API keys and credentials (ANTHROPIC_API_KEY, OPENAI_API_KEY, AWS_*, etc.) are available directly
-as environment variables — the server loads .env and .env.local at startup and all subprocesses
-inherit them. No file loading is needed.
+Credentials the operator gives you are environment variables; use them from there, never search
+files for keys, and never print or write them out. In a sandboxed session only the variables the
+operator passed in are set, and model API keys never are: your CLI reaches the model through the
+runner.
 
 ## When Done
 

@@ -375,7 +375,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		// of the task (FinishTaskWorkspace), so half-finished work never
 		// reaches the cache other runs copy from.
 		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
-			h.workspaceManager.CacheReposBack(liveSession.WorkspacePath, h.config.RepoCacheRoot)
+			h.cacheReposBack(liveSession.WorkspacePath)
 		}
 
 		// Write agent audit log
@@ -565,6 +565,13 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	wsSpan.End()
 	if aborted {
 		return
+	}
+	if h.sandboxed() {
+		// Before the agent can touch them: the configs host-side git will use.
+		if err := saveGitConfigs(checkoutPath); err != nil {
+			slog.Warn("could not save the workspace's git configs", "session_id", sessionID, "error", err)
+			liveSession.AddWarning("git: repos without a saved config will not be pushed: " + err.Error())
+		}
 	}
 	ctx, sandboxRun, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
 	if sandboxAborted {
