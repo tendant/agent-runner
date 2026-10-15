@@ -1,8 +1,12 @@
 package execution
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
+
+	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
 // The runtime layer of a session's prompt (MEMORY_DESIGN.md §3): how this
@@ -45,7 +49,9 @@ func runtimeInstructions(f runtimeFacts) string {
 			"- `project_summary.md`: goals, tech stack, status\n" +
 			"- `decisions.md`: decisions and why\n" +
 			"- `lessons.md`: append only; curated after each session\n" +
-			"- any other lowercase `.md` file, for a topic of its own\n\n" +
+			"- any other lowercase `.md` file, for a topic of its own (e.g. `oam_server.md`): these are only\n" +
+			"  listed in your prompt (Memory Files), by their first line, so start each with a one-line\n" +
+			"  summary, and read one when the task touches its topic\n\n" +
 			"Append; delete only to correct an error. `agent.md` and `prompt.md` are your instructions, set by\n" +
 			"the operator: do not edit them; propose changes in your reply instead.\n")
 		if f.MemoryCopy {
@@ -79,4 +85,21 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 		return "", err
 	}
 	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true}), nil
+}
+
+// threadKey names the thread a session belongs to, for its daily-log entry
+// and to show a later session of the same thread its entries first: the
+// task, else the chat (hashed: the log is pushed with memory), else none.
+func threadKey(s *agent.Session) string {
+	if s == nil {
+		return ""
+	}
+	if s.TaskWorkspace != "" {
+		return "task-" + filepath.Base(s.TaskWorkspace)
+	}
+	if s.ConvID != "" {
+		h := sha256.Sum256([]byte(s.ConvID))
+		return "chat-" + hex.EncodeToString(h[:4])
+	}
+	return ""
 }

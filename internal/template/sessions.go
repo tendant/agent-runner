@@ -8,12 +8,27 @@ import (
 	"time"
 )
 
-// RecentSessions collects daily-log entries (memoryDir/YYYY-MM-DD-<host>.md,
-// as written by AppendDailyLog) from the last `days` days and formats them as
-// "### <date> (<host>)" blocks, newest first. When budget > 0 and the result
-// would exceed it, whole days are dropped oldest-first. Returns "" when
-// days <= 0, memoryDir is empty, or no logs fall in the window.
+// maxRecentEntries bounds Recent Sessions: the latest few sessions, not
+// every one in the window.
+const maxRecentEntries = 10
+
+// ThreadLine marks a daily-log entry with the thread (task or chat) its
+// session belonged to, so a later session in the same thread sees it first.
+const ThreadLine = "**Thread:** "
+
+// RecentSessions is RecentSessionsFor with no thread.
 func RecentSessions(memoryDir string, days, budget int) string {
+	return RecentSessionsFor(memoryDir, days, budget, "")
+}
+
+// RecentSessionsFor collects daily-log entries (memoryDir/YYYY-MM-DD-<host>.md,
+// as written by AppendDailyLog) from the last `days` days: at most
+// maxRecentEntries, those of thread first (when given), then the newest
+// others. They are shown under "### <date> (<host>)" headers, newest first.
+// When budget > 0, entries that would exceed it are left out (the first
+// one is truncated rather than dropped). Returns "" when days <= 0,
+// memoryDir is empty, or no logs fall in the window.
+func RecentSessionsFor(memoryDir string, days, budget int, thread string) string {
 	if memoryDir == "" || days <= 0 {
 		return ""
 	}
@@ -21,70 +36,106 @@ func RecentSessions(memoryDir string, days, budget int) string {
 	if err != nil {
 		return ""
 	}
-
 	cutoff := time.Now().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
 
-	type dayLog struct {
-		date    string
-		host    string
-		content string
+	type entry struct {
+		date, host, text string
+		order            int // newest first
 	}
-	var logs []dayLog
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".md") {
-			continue
-		}
+	var all []entry
+	type dayFile struct{ date, host, name string }
+	var days_ []dayFile
+	for _, e := range entries {
+		name := e.Name()
 		stem := strings.TrimSuffix(name, ".md")
-		if !datePrefix.MatchString(stem) {
+		if e.IsDir() || !strings.HasSuffix(name, ".md") || !datePrefix.MatchString(stem) || stem[:10] < cutoff {
 			continue
 		}
-		date := stem[:10]
-		if date < cutoff {
-			continue
-		}
-		data, err := ReadMemoryFile(memoryDir, name)
+		days_ = append(days_, dayFile{stem[:10], strings.TrimPrefix(strings.TrimPrefix(stem, stem[:10]), "-"), name})
+	}
+	// Newest day first; stable so same-day multi-host files keep dir order.
+	sort.SliceStable(days_, func(i, j int) bool { return days_[i].date > days_[j].date })
+	for _, d := range days_ {
+		data, err := ReadMemoryFile(memoryDir, d.name)
 		if err != nil {
 			continue
 		}
-		content := strings.TrimSpace(data)
-		if content == "" {
-			continue
+		parts := splitLogEntries(data)
+		for i := len(parts) - 1; i >= 0; i-- { // appended in order: newest last
+			all = append(all, entry{date: d.date, host: d.host, text: parts[i], order: len(all)})
 		}
-		host := strings.TrimPrefix(stem, date)
-		host = strings.TrimPrefix(host, "-")
-		logs = append(logs, dayLog{date: date, host: host, content: content})
 	}
-	if len(logs) == 0 {
+	if len(all) == 0 {
 		return ""
 	}
 
-	// Newest first; stable so same-day multi-host files keep dir order.
-	sort.SliceStable(logs, func(i, j int) bool { return logs[i].date > logs[j].date })
-
-	var blocks []string
-	total := 0
-	for _, l := range logs {
-		header := "### " + l.date
-		if l.host != "" {
-			header += " (" + l.host + ")"
-		}
-		block := header + "\n\n" + l.content
-		if budget > 0 && total+len(block) > budget {
-			if len(blocks) == 0 {
-				// Even the newest day alone exceeds the budget — include a
-				// truncated head rather than nothing.
-				blocks = append(blocks, truncate(block, budget)+
-					fmt.Sprintf(truncationNotice, l.date+"-"+l.host+".md"))
+	// Choose: the thread's entries first, then the newest others.
+	var chosen []entry
+	taken := make([]bool, len(all))
+	if thread != "" {
+		for i, e := range all {
+			if len(chosen) < maxRecentEntries && strings.Contains(e.text, ThreadLine+thread) {
+				chosen, taken[i] = append(chosen, e), true
 			}
-			break
 		}
-		blocks = append(blocks, block)
-		total += len(block)
+	}
+	for i, e := range all {
+		if len(chosen) < maxRecentEntries && !taken[i] {
+			chosen = append(chosen, e)
+		}
+	}
+	if budget > 0 {
+		var fit []entry
+		total := 0
+		for _, e := range chosen {
+			if total+len(e.text) > budget {
+				if len(fit) == 0 {
+					e.text = truncate(e.text, budget) + fmt.Sprintf(truncationNotice, e.date+"-"+e.host+".md")
+					fit = append(fit, e)
+				}
+				continue
+			}
+			fit, total = append(fit, e), total+len(e.text)
+		}
+		chosen = fit
 	}
 
-	return strings.Join(blocks, "\n\n")
+	// Show newest first, grouped by day file.
+	sort.SliceStable(chosen, func(i, j int) bool { return chosen[i].order < chosen[j].order })
+	var b strings.Builder
+	last := ""
+	for _, e := range chosen {
+		if key := e.date + "\x00" + e.host; key != last {
+			if last != "" {
+				b.WriteString("\n")
+			}
+			header := "### " + e.date
+			if e.host != "" {
+				header += " (" + e.host + ")"
+			}
+			b.WriteString(header + "\n\n")
+			last = key
+		}
+		b.WriteString(e.text + "\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// splitLogEntries splits a daily log into its entries: each starts with a
+// "**[HH:MM]**" line (AppendDailyLog's format); text before the first is
+// one entry of its own.
+func splitLogEntries(data string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
+		if strings.HasPrefix(line, "**[") && cur.Len() > 0 {
+			out = append(out, strings.TrimSpace(cur.String()))
+			cur.Reset()
+		}
+		cur.WriteString(line + "\n")
+	}
+	if s := strings.TrimSpace(cur.String()); s != "" {
+		out = append(out, s)
+	}
+	return out
 }

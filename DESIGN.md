@@ -90,8 +90,8 @@ internal/api/agent_executor.go; `Compile`, internal/template/compiler.go):
 2. **`prompt.md`** — workflow overlay, appended when present. Overridable via `AGENT_PROMPT_FILE`.
 3. **Well-known memory files**, each as a `## <Name>` section, in fixed order:
    `user_preferences.md`, `project_summary.md`, `decisions.md`, `workflows.md`, `lessons.md`.
-4. **Other lowercase `.md` files** in the memory dir (excluding the above, `HEARTBEAT.md`, and date-prefixed daily logs).
-5. **`## Recent Sessions`** — the last `AGENT_MEMORY_DAYS` days of daily logs, newest first.
+4. **Other `.md` files** in the memory dir (excluding the above, `HEARTBEAT.md`, and date-prefixed daily logs): upper-case ones (the operator's) in full; lowercase ones (agents' topic files) only as a **`## Memory Files`** index of path, size and first line, read by the agent on demand.
+5. **`## Recent Sessions`** — at most 10 daily-log entries from the last `AGENT_MEMORY_DAYS` days: the same thread's first (task, else chat; each entry carries a hashed `**Thread:**` line), then the newest others.
 6. **`## Current Request`** — the task message.
 7. **`## How this runner works`** — the runtime layer (`runtimeInstructions`, internal/execution/runtime_prompt.go): git (who pushes), memory (where, what is saved, shared by everyone who talks to the agent), credentials, `_send/`. Generated per session from the mode it runs in, so it cannot go stale; `agent.md` keeps only the operator's persona and rules (MEMORY_DESIGN.md).
 

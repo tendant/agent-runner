@@ -104,10 +104,34 @@ func Retrieve(memoryDir string) Retrieval {
 		}
 
 		displayName := deriveDisplayName(stem)
+		if isLowerTopic(name) {
+			// An agent's topic file: listed with its first line, read on
+			// demand, so memory can grow without crowding the prompt.
+			files = append(files, MemoryFile{Name: displayName, Filename: name, Content: firstLine(content), Indexed: true, Size: len(data)})
+			continue
+		}
 		files = append(files, MemoryFile{Name: displayName, Filename: name, Content: content})
 	}
 
 	return Retrieval{Files: files}
+}
+
+// isLowerTopic reports a lowercase memory file: one an agent may write
+// (stageWritable), so a topic file, not an operator's.
+func isLowerTopic(name string) bool { return stageWritable.MatchString(name) }
+
+// firstLine is a file's first non-empty line, without heading marks, cut to
+// a line of an index.
+func firstLine(content string) string {
+	for _, l := range strings.Split(content, "\n") {
+		if l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#")); l != "" {
+			if len(l) > 100 {
+				l = l[:97] + "..."
+			}
+			return l
+		}
+	}
+	return ""
 }
 
 // deriveDisplayName converts a filename stem to a display name:

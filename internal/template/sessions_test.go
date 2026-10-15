@@ -1,6 +1,7 @@
 package template
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,5 +107,34 @@ func TestCompile_RecentSessionsOrdering(t *testing.T) {
 	}
 	if strings.Contains(out, "session SUBSTITUTED body") {
 		t.Error("RecentSessions must not receive var substitution")
+	}
+}
+
+// The current thread's entries come first, the rest are the newest others,
+// and no more than maxRecentEntries are shown.
+func TestRecentSessionsFor_PrefersThread(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString("**[09:00]** completed\n**Task:** mine from long ago\n" + ThreadLine + "chat-aa\n")
+	for i := range 15 {
+		fmt.Fprintf(&b, "**[10:%02d]** completed\n**Task:** other %d\n"+ThreadLine+"chat-bb\n", i, i)
+	}
+	writeDated(t, dir, 0, "h", b.String())
+
+	out := RecentSessionsFor(dir, 7, 0, "chat-aa")
+	if !strings.Contains(out, "mine from long ago") {
+		t.Errorf("the thread's entry must be kept:\n%s", out)
+	}
+	if n := strings.Count(out, "**["); n != maxRecentEntries {
+		t.Errorf("%d entries, want %d", n, maxRecentEntries)
+	}
+	if !strings.Contains(out, "other 14") || strings.Contains(out, "other 0\n") {
+		t.Errorf("the newest others should fill the rest:\n%s", out)
+	}
+	if strings.Index(out, "other 14") > strings.Index(out, "other 13") {
+		t.Errorf("newest first:\n%s", out)
+	}
+	if strings.Contains(RecentSessions(dir, 7, 0), "mine from long ago") {
+		t.Error("without a thread, only the newest entries")
 	}
 }
