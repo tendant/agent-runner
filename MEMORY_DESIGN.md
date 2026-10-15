@@ -1,7 +1,8 @@
 # Memory and Prompt Management — Design
 
-Status: phase 1 implemented (runtime layer, slim `agent.md` with upgrade of unedited defaults,
-`/prompt show|check|preview`); the rest is a proposal. Current behaviour: DESIGN.md "Memory & Prompt Composition".
+Status: phases 1 and 2 implemented (runtime layer, slim `agent.md` with upgrade of unedited
+defaults, `/prompt show|check|preview`; one write path through a checked copy, a commit per
+step, `/memory log|undo`, prompt and memory in the audit log); phases 3 and 4 are a proposal. Current behaviour: DESIGN.md "Memory & Prompt Composition".
 
 Decided:
 - **Several people** talk to one agent and share its memory. There is no per-person memory;

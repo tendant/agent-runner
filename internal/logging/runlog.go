@@ -59,10 +59,21 @@ type AgentLogData struct {
 	SuccessfulIterations int
 	TotalCostUSD         float64
 	Error                string
-	Plan                 string      // JSON string of planner output (if enabled)
-	Review               string      // JSON string of reviewer output (if enabled)
-	PlannerPrompt        string      // full prompt sent to the planner (for debugging)
-	Egress               []EgressLog // sandboxed runs: what the egress gateway allowed and refused
+	Plan                 string             // JSON string of planner output (if enabled)
+	Review               string             // JSON string of reviewer output (if enabled)
+	PlannerPrompt        string             // full prompt sent to the planner (for debugging)
+	Egress               []EgressLog        // sandboxed runs: what the egress gateway allowed and refused
+	Prompt               []PromptSectionLog // the session prompt's sections (sizes and hashes, not text)
+	PromptCuts           []string           // what the memory budget cut from it
+	MemorySaved          []string           // memory files the session's changes were saved to
+	MemorySkipped        []string           // memory changes refused ("name: reason")
+}
+
+// PromptSectionLog is one section of a session's prompt.
+type PromptSectionLog struct {
+	Title string
+	Chars int
+	Hash  string
 }
 
 // EgressLog is one host a sandboxed session's egress gateway decided on.
@@ -300,6 +311,33 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 		sb.WriteString("| Host | Allowed | Refused |\n|---|---:|---:|\n")
 		for _, e := range data.Egress {
 			sb.WriteString(fmt.Sprintf("| `%s` | %d | %d |\n", e.Host, e.Allowed, e.Denied))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(data.Prompt) > 0 {
+		sb.WriteString("## Prompt\n\n")
+		sb.WriteString("The session prompt's sections, without their text (the hash tells two sessions' prompts apart).\n\n")
+		sb.WriteString("| Section | Characters | Hash |\n|---|---:|---|\n")
+		for _, p := range data.Prompt {
+			sb.WriteString(fmt.Sprintf("| %s | %d | `%s` |\n", strings.ReplaceAll(p.Title, "|", "\\|"), p.Chars, p.Hash))
+		}
+		sb.WriteString("\n")
+		for _, c := range data.PromptCuts {
+			sb.WriteString(fmt.Sprintf("- Memory budget: %s\n", c))
+		}
+		if len(data.PromptCuts) > 0 {
+			sb.WriteString("\n")
+		}
+	}
+
+	if len(data.MemorySaved)+len(data.MemorySkipped) > 0 {
+		sb.WriteString("## Memory\n\n")
+		for _, f := range data.MemorySaved {
+			sb.WriteString(fmt.Sprintf("- saved `%s`\n", f))
+		}
+		for _, f := range data.MemorySkipped {
+			sb.WriteString(fmt.Sprintf("- not saved: %s\n", f))
 		}
 		sb.WriteString("\n")
 	}
