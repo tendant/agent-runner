@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -138,4 +140,58 @@ func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
 	}
 
 	return entries, nil
+}
+
+// Limits on what an agent schedules for itself (_schedule.json): scheduled
+// runs survive restarts and run with the agent's own access, so a run that
+// goes wrong must not multiply. An operator's POST /schedule is not limited.
+const (
+	maxAgentScheduleEntries = 5
+	minAgentCronMinutes     = 15
+)
+
+// limitAgentSchedule keeps the first maxAgentScheduleEntries entries and
+// refuses a cron schedule more frequent than every minAgentCronMinutes.
+func limitAgentSchedule(entries []ScheduleEntry) (keep []ScheduleEntry, refused []string) {
+	for i, e := range entries {
+		switch {
+		case len(keep) >= maxAgentScheduleEntries:
+			refused = append(refused, fmt.Sprintf("entry %d not scheduled: at most %d per session", i, maxAgentScheduleEntries))
+		case e.Cron != "" && cronTooFrequent(e.Cron):
+			refused = append(refused, fmt.Sprintf("entry %d not scheduled: cron %q runs more often than every %d minutes", i, e.Cron, minAgentCronMinutes))
+		default:
+			keep = append(keep, e)
+		}
+	}
+	return keep, refused
+}
+
+// cronTooFrequent reports a cron expression whose minute field fires more
+// than once every minAgentCronMinutes: "*", "*/n" or "a-b" ranges with a
+// small step, or a list of many minutes.
+func cronTooFrequent(expr string) bool {
+	fields := strings.Fields(expr)
+	if len(fields) == 0 {
+		return false
+	}
+	if strings.HasPrefix(fields[0], "@") {
+		return fields[0] == "@every" // "@every 1m" style: refuse rather than parse
+	}
+	minute := fields[0]
+	if strings.Count(minute, ",")+1 > 60/minAgentCronMinutes {
+		return true
+	}
+	for _, part := range strings.Split(minute, ",") {
+		base, step, hasStep := strings.Cut(part, "/")
+		n := 1
+		if hasStep {
+			if v, err := strconv.Atoi(step); err == nil {
+				n = v
+			}
+		}
+		if (base == "*" || strings.Contains(base, "-")) && n < minAgentCronMinutes {
+			return true
+		}
+	}
+	return false
 }

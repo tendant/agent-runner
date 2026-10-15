@@ -35,7 +35,10 @@ var stageAppendOnly = map[string]bool{"lessons.md": true}
 
 // MemoryStage is a session's writable copy of the memory dir.
 type MemoryStage struct {
-	Dir    string            // the copy the agent is pointed at
+	Dir string // the copy the agent is pointed at
+	// Redact, when set, replaces secret values in what is saved (memory is
+	// pushed to its remote and read by every later session).
+	Redact func(string) string
 	memory string            // the real memory dir
 	base   map[string][]byte // what was copied, by file name
 }
@@ -164,6 +167,9 @@ func (st *MemoryStage) merge() (MergeResult, error) {
 				skip(name, fmt.Sprintf("more than %d new files", maxStagedNewFiles))
 				continue
 			}
+		}
+		if st.Redact != nil {
+			data = []byte(st.Redact(string(data)))
 		}
 		saved, why, err := st.apply(name, base, existed, data)
 		if err != nil {

@@ -324,35 +324,44 @@ type SweepPolicy struct {
 // and lose their workspace, keeping the record until retention passes too.
 // A working task is never touched.
 func (s *Store) Sweep(now time.Time, p SweepPolicy) {
-	for _, rec := range s.List() {
-		idle := now.Sub(rec.UpdatedAt)
-		switch {
-		case rec.Status.Finished():
-			if idle < p.Retention {
-				continue
-			}
-			if !rec.WorkspaceRemoved && p.Finish != nil {
-				p.Finish(rec.Workspace)
-			}
-			s.Delete(rec.ThreadKey)
-			slog.Info("task: record expired", "task_id", rec.ID, "thread", rec.ThreadKey, "status", rec.Status)
-		case rec.Status.Resumable():
-			if idle < p.IdleTTL {
-				continue
-			}
-			if p.Finish != nil {
-				p.Finish(rec.Workspace)
-			}
-			_, _ = s.Update(rec.ThreadKey, func(r *Record) {
-				if !r.Status.Resumable() {
-					return // it moved on while we swept
+	// Each record is re-checked and claimed under the store lock before
+	// its workspace goes: List is a snapshot, and a turn may start in the
+	// meantime (a resume, feedback on a done task).
+	for _, listed := range s.List() {
+		var release string
+		var expired, removed bool
+		s.mu.Lock()
+		rec, ok := s.getLocked(listed.ThreadKey)
+		if ok && rec.ID == listed.ID {
+			idle := now.Sub(rec.UpdatedAt)
+			switch {
+			case rec.Status.Finished() && idle >= p.Retention:
+				if !rec.WorkspaceRemoved {
+					release = rec.Workspace
 				}
-				r.Status = StatusFailed
-				r.FailReason = "expired"
-				r.OpenQuestion = ""
-				r.WorkspaceRemoved = true
-			})
-			slog.Info("task: expired after idling", "task_id", rec.ID, "thread", rec.ThreadKey)
+				if err := os.Remove(s.path(rec.ThreadKey)); err != nil && !os.IsNotExist(err) {
+					slog.Warn("task store: delete failed", "thread", rec.ThreadKey, "error", err)
+				}
+				removed = true
+			case rec.Status.Resumable() && idle >= p.IdleTTL:
+				release = rec.Workspace
+				rec.Status = StatusFailed
+				rec.FailReason = "expired"
+				rec.OpenQuestion = ""
+				rec.WorkspaceRemoved = true
+				_ = s.saveLocked(rec)
+				expired = true
+			}
+		}
+		s.mu.Unlock()
+		if release != "" && p.Finish != nil {
+			p.Finish(release) // claimed: no turn can start in it now
+		}
+		switch {
+		case removed:
+			slog.Info("task: record expired", "task_id", listed.ID, "thread", listed.ThreadKey, "status", listed.Status)
+		case expired:
+			slog.Info("task: expired after idling", "task_id", listed.ID, "thread", listed.ThreadKey)
 		}
 	}
 }

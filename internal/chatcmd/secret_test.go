@@ -67,3 +67,15 @@ func TestSecretHelp(t *testing.T) {
 		}
 	}
 }
+
+// A one-line value followed by a note: the note is the description.
+func TestSecretSetValueThenNote(t *testing.T) {
+	env := setupTestEnv(t)
+	env.cfg.SecretsFile = filepath.Join(t.TempDir(), "secrets.json")
+	c := NewCommander(env.cfg, env.rt)
+	c.Handle("/secret set GH_TOKEN ghp_secret123\nGitHub, read-only", nil)
+	list, _ := agentsecrets.New(env.cfg.SecretsFile).List()
+	if len(list) != 1 || list[0].Value != "ghp_secret123" || list[0].Description != "GitHub, read-only" {
+		t.Errorf("stored %+v", list)
+	}
+}

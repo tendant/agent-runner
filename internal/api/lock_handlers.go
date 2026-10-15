@@ -41,6 +41,12 @@ func (h *Handlers) HandleLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.WaitSeconds > 0 {
+		// Waiting may outlast the server's write deadline: without lifting
+		// it, a lease granted late is held while the client got EOF.
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Now().Add(time.Duration(req.WaitSeconds)*time.Second + time.Minute))
+	}
 	lease, err := h.lockManager.Acquire(
 		r.Context(),
 		req.Name,

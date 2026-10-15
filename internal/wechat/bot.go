@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,11 @@ type Bot struct {
 
 	engine *botcommon.Engine
 
+	// Who may control the agent (allowedSender).
+	allowed   []string
+	ownerFile string
+	ownerMu   sync.Mutex
+
 	// loginMu prevents concurrent /wechat-login flows.
 	loginMu sync.Mutex
 
@@ -70,6 +77,8 @@ func New(cfg config.WeChatConfig, starter AgentStarter, threadMgr *thread.Manage
 		analyzer:      analyzer,
 		ctxTokens:     make(map[string]string),
 		ctxTokenTimes: make(map[string]time.Time),
+		allowed:       cfg.AllowedUsers,
+		ownerFile:     filepath.Join(cfg.StateDir, "wechat-owner"),
 	}
 	b.engine = &botcommon.Engine{
 		QueueNewRequests:     true, // one task per chat: new requests wait their turn
@@ -354,6 +363,10 @@ func (b *Bot) handleMessage(msg WeixinMessage) {
 		return
 	}
 
+	if !b.allowedSender(msg.FromUserID) {
+		slog.Warn("wechat: ignoring message from a user not allowed to control this agent (WECHAT_ALLOWED_USERS)", "from_user_id", msg.FromUserID)
+		return
+	}
 	slog.Info("wechat: handling message", "from_user_id", msg.FromUserID, "content_len", len(content))
 
 	userID := msg.FromUserID
@@ -658,4 +671,30 @@ func formatFinalResult(session *agent.Session) string {
 	}
 	sb += botcommon.FormatWarningsSuffix(session)
 	return sb
+}
+
+// allowedSender reports whether userID may control the agent: one of
+// WECHAT_ALLOWED_USERS, or, with none set, the first user to message the
+// bot (saved, so it stays theirs across restarts). Anyone else who finds
+// the bot could otherwise run agents and use /set, /secret and /repo.
+func (b *Bot) allowedSender(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	if len(b.allowed) > 0 {
+		return slices.Contains(b.allowed, userID)
+	}
+	b.ownerMu.Lock()
+	defer b.ownerMu.Unlock()
+	if owner, err := os.ReadFile(b.ownerFile); err == nil {
+		return strings.TrimSpace(string(owner)) == userID
+	}
+	if err := os.MkdirAll(filepath.Dir(b.ownerFile), 0o700); err != nil {
+		return false
+	}
+	if err := os.WriteFile(b.ownerFile, []byte(userID+"\n"), 0o600); err != nil {
+		return false
+	}
+	slog.Info("wechat: this agent now answers only this user (set WECHAT_ALLOWED_USERS to change)", "user_id", userID)
+	return true
 }

@@ -151,7 +151,7 @@ func main() {
 
 		// Create workflow client for agent scheduling
 		swClient := simpleworkflow.NewClientWithDB(r.DB(), r.Dialect())
-		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient))
+		server.Handlers().SetWorkflowClient(api.NewWorkflowScheduler(swClient, cfg.Scheduler.MaxAttempts))
 		server.Handlers().SetRunnerDB(scheduler.NewDebugDB(r.DB(), r.Dialect().DriverName()))
 		slog.Info("scheduler workflow client initialized")
 

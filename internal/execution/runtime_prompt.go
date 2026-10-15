@@ -62,7 +62,7 @@ func runtimeInstructions(f runtimeFacts) string {
 			"- `user_preferences.md`: how the people you work for like things done\n" +
 			"- `project_summary.md`: goals, tech stack, status\n" +
 			"- `decisions.md`: decisions and why\n" +
-			"- `lessons.md`: append only; curated after each session\n" +
+			"- `lessons.md`: lessons learned; append only\n" +
 			"- any other lowercase `.md` file, for a topic of its own (e.g. `oam_server.md`): these are only\n" +
 			"  listed in your prompt (Memory Files), by their first line, so start each with a one-line\n" +
 			"  summary, and read one when the task touches its topic\n\n" +

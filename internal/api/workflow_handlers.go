@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -23,16 +25,17 @@ type WorkflowScheduler = execution.WorkflowScheduler
 
 // workflowSchedulerClient implements WorkflowScheduler using a simple-workflow Client.
 type workflowSchedulerClient struct {
-	client *simpleworkflow.Client
+	client      *simpleworkflow.Client
+	maxAttempts int // SCHEDULER_MAX_ATTEMPTS: tries of a run whose start failed
 }
 
 // NewWorkflowScheduler creates a WorkflowScheduler backed by a simple-workflow Client.
-func NewWorkflowScheduler(client *simpleworkflow.Client) WorkflowScheduler {
-	return &workflowSchedulerClient{client: client}
+func NewWorkflowScheduler(client *simpleworkflow.Client, maxAttempts int) WorkflowScheduler {
+	return &workflowSchedulerClient{client: client, maxAttempts: maxAttempts}
 }
 
 func (w *workflowSchedulerClient) SubmitSchedule(ctx context.Context, entries []ScheduleEntry, typePrefix string) error {
-	return submitScheduleEntries(ctx, w.client, entries, typePrefix)
+	return submitScheduleEntries(ctx, w.client, entries, typePrefix, w.maxAttempts)
 }
 
 func (w *workflowSchedulerClient) ListSchedules(ctx context.Context) ([]ScheduleInfo, error) {
@@ -102,7 +105,7 @@ func (h *Handlers) HandleSchedule(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.workflowClient.SubmitSchedule(ctx, []ScheduleEntry{entry}, h.config.Scheduler.TypePrefix); err != nil {
-		h.writeError(w, http.StatusBadGateway, "failed to submit schedule: "+err.Error())
+		h.writeError(w, http.StatusBadRequest, "schedule not (fully) submitted: "+err.Error())
 		return
 	}
 
@@ -171,13 +174,16 @@ func (h *Handlers) HandleDeleteSchedule(w http.ResponseWriter, r *http.Request) 
 }
 
 // submitScheduleEntries submits each entry via simple-workflow client.
-func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, entries []ScheduleEntry, typePrefix string) error {
+func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, entries []ScheduleEntry, typePrefix string, maxAttempts int) error {
+	var errs []error
+	bad := func(i int, err error) { errs = append(errs, fmt.Errorf("entry %d: %w", i, err)) }
 	workflowType := typePrefix + "task.v1"
 	slog.Info("scheduler: submitting entries", "count", len(entries), "workflow_type", workflowType)
 
 	for i, entry := range entries {
 		if entry.Message == "" {
 			slog.Warn("scheduler: skipping entry with empty message", "index", i)
+			bad(i, errors.New("empty message"))
 			continue
 		}
 
@@ -194,9 +200,11 @@ func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, e
 			schedID, err := client.Schedule(workflowType, payload).
 				Cron(entry.Cron).
 				InTimezone(tz).
+				WithMaxAttempts(attempts(maxAttempts)).
 				Create(ctx)
 			if err != nil {
 				slog.Warn("scheduler: failed to create cron schedule", "index", i, "error", err)
+				bad(i, err)
 				continue
 			}
 			slog.Info("scheduler: created cron schedule", "schedule_id", schedID, "cron", entry.Cron, "tz", tz, "message", entry.Message)
@@ -206,17 +214,19 @@ func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, e
 			t, err := time.Parse(time.RFC3339, entry.RunAfter)
 			if err != nil {
 				slog.Warn("scheduler: invalid run_after", "index", i, "error", err)
+				bad(i, fmt.Errorf("run_after: %w", err))
 				continue
 			}
 			slog.Info("scheduler: submitting run_after entry", "index", i, "at", entry.RunAfter,
 				"in", time.Until(t).Round(time.Second).String(), "message", entry.Message, "idempotency_key", entry.IdempotencyKey)
-			builder := client.Submit(workflowType, payload).RunAfter(t)
+			builder := client.Submit(workflowType, payload).RunAfter(t).WithMaxAttempts(attempts(maxAttempts))
 			if entry.IdempotencyKey != "" {
 				builder = builder.WithIdempotency(entry.IdempotencyKey)
 			}
 			runID, err := builder.Execute(ctx)
 			if err != nil {
 				slog.Warn("scheduler: failed to submit run_after entry", "index", i, "error", err)
+				bad(i, err)
 				continue
 			}
 			if runID == "" {
@@ -230,13 +240,14 @@ func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, e
 			runAt := time.Now().Add(time.Duration(entry.RunInSeconds) * time.Second)
 			slog.Info("scheduler: submitting delayed entry", "index", i, "in_seconds", entry.RunInSeconds,
 				"at", runAt.Format(time.RFC3339), "message", entry.Message, "idempotency_key", entry.IdempotencyKey)
-			builder := client.Submit(workflowType, payload).RunIn(time.Duration(entry.RunInSeconds) * time.Second)
+			builder := client.Submit(workflowType, payload).RunIn(time.Duration(entry.RunInSeconds) * time.Second).WithMaxAttempts(attempts(maxAttempts))
 			if entry.IdempotencyKey != "" {
 				builder = builder.WithIdempotency(entry.IdempotencyKey)
 			}
 			runID, err := builder.Execute(ctx)
 			if err != nil {
 				slog.Warn("scheduler: failed to submit delayed entry", "index", i, "error", err)
+				bad(i, err)
 				continue
 			}
 			if runID == "" {
@@ -247,9 +258,20 @@ func submitScheduleEntries(ctx context.Context, client *simpleworkflow.Client, e
 
 		default:
 			slog.Warn("scheduler: skipping entry with no scheduling mode (need run_after, run_in_seconds, or cron)", "index", i)
+			bad(i, errors.New("no run_after, run_in_seconds or cron"))
 		}
 	}
 
-	slog.Info("scheduler: finished submitting entries", "count", len(entries))
-	return nil
+	slog.Info("scheduler: finished submitting entries", "count", len(entries), "rejected", len(errs))
+	return errors.Join(errs...)
+}
+
+// attempts is how many tries a scheduled run gets: SCHEDULER_MAX_ATTEMPTS,
+// for a run that could not start. A run that started and failed or was
+// stopped is not retried (see runAgentTask): it may have pushed already.
+func attempts(n int) int {
+	if n <= 0 {
+		return 3
+	}
+	return n
 }

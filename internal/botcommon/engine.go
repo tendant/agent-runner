@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ type Sender interface {
 // Transport-specific behavior is injected via Sender, NewReporter, and
 // OnSessionDone; cosmetic differences via the announce options.
 type Engine struct {
+	analysisLocks sync.Map // thread id -> *sync.Mutex (HandleAnalysis)
+
 	Starter       AgentStarter
 	ThreadManager *thread.Manager
 	Analyzer      *thread.Analyzer // nil = confirmation-only flow (no intent routing)
@@ -140,6 +143,7 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 			conv.AddMessage("assistant", notice)
 			e.Sender.Final(ctx, id, notice)
 		}
+		pending := conv.PendingMessages()
 		hasPending := conv.ClearPendingInput()
 
 		// Clear StateExecuting before slow post-processing so new messages
@@ -161,7 +165,9 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 			if e.AnnounceQueued {
 				e.Sender.Reply(ctx, id, "Processing queued messages...")
 			}
-			if e.HandleTaskMessage(ctx, id, conv, lastUserMessage(conv)) {
+			// Every message queued during the run, not only the last
+			// ("also add tests" before "and update the docs").
+			if e.HandleTaskMessage(ctx, id, conv, strings.Join(pending, "\n\n")) {
 				return
 			}
 			if e.Analyzer == nil {
@@ -201,8 +207,9 @@ func (e *Engine) ResumeSession(ctx context.Context, id, sessionID string) {
 func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *thread.Thread, text string) {
 	if sessionID := conv.ActiveSessionID(); sessionID != "" {
 		if err := e.Starter.Steer(sessionID, text); err == nil {
-			// Delivered live: don't replay it as a new session afterwards.
-			conv.ClearPendingInput()
+			// Delivered live: don't replay it as a new session afterwards
+			// (earlier messages that could not be steered stay queued).
+			conv.TakePendingInput()
 			slog.Info(e.Label+": steered running session", "id", id, "session_id", sessionID)
 			e.Sender.Reply(ctx, id, "Message passed to the running agent.")
 			return
@@ -216,6 +223,17 @@ func (e *Engine) HandleExecuting(ctx context.Context, id string, conv *thread.Th
 // HandleAnalysis routes the conversation through the intent analyzer and
 // dispatches on its decision (execute / ask / plan).
 func (e *Engine) HandleAnalysis(ctx context.Context, id string, conv *thread.Thread) {
+	// One analysis per thread at a time: the watcher's drain of queued
+	// messages and a new message can both get here. The second waits; if
+	// the first started a run meanwhile, its message goes to that run.
+	mu, _ := e.analysisLocks.LoadOrStore(id, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	if conv.GetState() == thread.StateExecuting {
+		e.HandleExecuting(ctx, id, conv, lastUserMessage(conv))
+		return
+	}
+
 	analysisCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 

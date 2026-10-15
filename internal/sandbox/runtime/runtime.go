@@ -379,6 +379,16 @@ func (r *Run) Egress() []EgressHost {
 	return r.egress.summary()
 }
 
+// RemoveHome removes the run's sandbox home when the run is its own thread
+// (not a task turn, whose next turn uses it). Call after Finish, once the
+// caller has read what it needs from the home (the memory copy).
+func (r *Run) RemoveHome() {
+	if r == nil || r.roots == nil || r.req.ThreadID != r.req.RunID {
+		return
+	}
+	_ = os.RemoveAll(r.roots[sandbox.RootHome])
+}
+
 // Home is the run's sandbox home on the host: writable inside, kept for the
 // thread. "" with mode off.
 func (r *Run) Home() string {

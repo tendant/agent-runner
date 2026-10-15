@@ -76,27 +76,14 @@ func (b *RunnerBridge) ExecuteAgentTask(ctx context.Context, payload scheduler.A
 			"iterations", snap.SuccessfulIterations, "elapsed", elapsed.Round(time.Second))
 	}
 
-	if snap != nil && snap.Status == agent.SessionStatusFailed && snap.Error != "" {
-		slog.Error("runner bridge: session failed", "session_id", sessionID, "error", snap.Error)
-		return &agentTaskError{msg: snap.Error}
+	// The run happened: a failed or stopped session is reported (its
+	// notification, audit log) but not retried. It may have pushed, and a
+	// stop means stop. Only a run that never started is retried.
+	if snap != nil && snap.Status == agent.SessionStatusFailed {
+		slog.Error("runner bridge: session failed (not retried)", "session_id", sessionID, "error", snap.Error)
 	}
-
 	if snap != nil && snap.Status == agent.SessionStatusStopped {
-		reason := snap.Error
-		if reason == "" {
-			reason = "stopped by user"
-		}
-		slog.Warn("runner bridge: session stopped", "session_id", sessionID, "reason", reason)
-		return &agentTaskError{msg: reason}
+		slog.Warn("runner bridge: session stopped (not retried)", "session_id", sessionID, "reason", snap.Error)
 	}
-
 	return nil
-}
-
-type agentTaskError struct {
-	msg string
-}
-
-func (e *agentTaskError) Error() string {
-	return e.msg
 }

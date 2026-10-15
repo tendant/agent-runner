@@ -39,8 +39,8 @@ type Thread struct {
 	ChatID       string
 	State        State
 	Messages     []Message
-	Plan         string // generated plan text
-	pendingInput bool   // true if user sent messages during execution
+	Plan         string   // generated plan text
+	pendingInput []string // user messages sent during execution, not yet passed on
 
 	// activeSessionID is the agent session currently executing for this
 	// thread ("" when idle) — used to steer the live run.
@@ -71,7 +71,7 @@ func (c *Thread) AddMessage(role, content string) {
 		c.compact()
 	}
 	if role == "user" && c.State == StateExecuting {
-		c.pendingInput = true
+		c.pendingInput = append(c.pendingInput, content)
 	}
 	c.UpdatedAt = time.Now()
 }
@@ -172,7 +172,7 @@ func (c *Thread) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Plan = ""
-	c.pendingInput = false
+	c.pendingInput = nil
 	c.State = StateGathering
 	c.UpdatedAt = time.Now()
 }
@@ -197,9 +197,27 @@ func (c *Thread) ActiveSessionID() string {
 func (c *Thread) ClearPendingInput() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	had := c.pendingInput
-	c.pendingInput = false
+	had := len(c.pendingInput) > 0
+	c.pendingInput = nil
 	return had
+}
+
+// TakePendingInput marks the latest queued message passed on (steered
+// into the running agent): the others stay queued.
+func (c *Thread) TakePendingInput() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := len(c.pendingInput); n > 0 {
+		c.pendingInput = c.pendingInput[:n-1]
+	}
+}
+
+// PendingMessages is the user messages queued during execution, oldest
+// first, that were not passed on.
+func (c *Thread) PendingMessages() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.pendingInput...)
 }
 
 // GetFormattedHistory returns the full thread history formatted for
