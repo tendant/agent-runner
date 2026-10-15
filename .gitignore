@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+secrets.json
 
 # Runtime directories
 repo-cache/

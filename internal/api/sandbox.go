@@ -80,6 +80,11 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 // path.
 func sandboxPrivatePaths(cfg *config.Config) []string {
 	paths := []string{cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot}
+	if cfg.SecretsFile != "" {
+		// Agent secrets reach the sandbox as environment variables, by
+		// name; the file holding them all is not the agent's to read.
+		paths = append(paths, cfg.SecretsFile)
+	}
 	if cfg.MemoryDir != "" {
 		// The memory files are readable; their git internals are not (a
 		// remote URL in .git/config can carry the push credential).

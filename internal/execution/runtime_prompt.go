@@ -3,10 +3,12 @@ package execution
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 )
 
 // The runtime layer of a session's prompt (MEMORY_DESIGN.md §3): how this
@@ -17,8 +19,9 @@ import (
 // runtimeFacts is what the runtime layer depends on.
 type runtimeFacts struct {
 	Sandboxed  bool
-	MemoryDir  string // as the agent sees it
-	MemoryCopy bool   // MemoryDir is a staged copy, merged back at the end
+	MemoryDir  string                // as the agent sees it
+	MemoryCopy bool                  // MemoryDir is a staged copy, merged back at the end
+	Secrets    []agentsecrets.Secret // the agent user's secrets: names and descriptions are shown
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -62,13 +65,20 @@ func runtimeInstructions(f runtimeFacts) string {
 	}
 
 	b.WriteString("\n### Credentials\n\n")
-	b.WriteString("Credentials the operator gives you are environment variables: use them from there, never search\n" +
-		"files for keys, and never print or write them out.")
-	if f.Sandboxed {
-		b.WriteString(" Only the variables the operator passed in are set here,\n" +
-			"and model API keys never are: your CLI reaches the model through the runner.")
-	}
+	b.WriteString("Credentials for your tasks are environment variables: use them from there, never search files\n" +
+		"for keys, and do not write them into files, commits or memory. agent-runner's own credentials (model\n" +
+		"keys, its git token) are never yours to use: it calls the model and pushes for you.")
 	b.WriteString("\n")
+	if len(f.Secrets) > 0 {
+		b.WriteString("\nSet for you (`/secret` in chat adds more):\n\n")
+		for _, s := range f.Secrets {
+			line := "- `$" + s.Name + "`"
+			if s.Description != "" {
+				line += ": " + s.Description
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 
 	b.WriteString("\n### Files for the user\n\n")
 	b.WriteString("To send the user files, put them in `_send/` in your working directory: they are delivered when\n" +
@@ -84,7 +94,8 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true}), nil
+	secrets, _ := agentsecrets.New(h.config.SecretsFile).List()
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets}), nil
 }
 
 // threadKey names the thread a session belongs to, for its daily-log entry
@@ -102,4 +113,19 @@ func threadKey(s *agent.Session) string {
 		return "chat-" + hex.EncodeToString(h[:4])
 	}
 	return ""
+}
+
+// agentSecrets lists the agent user's secrets for the session's prompt. A
+// broken secrets file is reported, not fatal: the session runs without them.
+func (h *Engine) agentSecrets(sessionID string, live *agent.Session) []agentsecrets.Secret {
+	if h.config.SecretsFile == "" {
+		return nil
+	}
+	list, err := agentsecrets.New(h.config.SecretsFile).List()
+	if err != nil {
+		slog.Warn("agent secrets unreadable; the session runs without them", "session_id", sessionID, "error", err)
+		live.AddWarning("agent secrets not loaded: " + err.Error())
+		return nil
+	}
+	return list
 }

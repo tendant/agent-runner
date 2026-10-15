@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/curator"
@@ -576,6 +577,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if sandboxAborted {
 		return
 	}
+	// The agent user's secrets: in every CLI's environment, named in the prompt.
+	agentSecrets := h.agentSecrets(sessionID, liveSession)
+	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvOf(agentSecrets))
 	memoryDir := h.config.MemoryDir // what the prompt points the agent at
 	if sandboxRun != nil {
 		defer sandboxRun.Finish()
@@ -602,7 +606,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
