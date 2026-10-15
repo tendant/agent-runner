@@ -54,7 +54,7 @@ From `internal/execution/engine.go` (`ExecuteAgentWithContext` and its deferred 
 | Agent calls back (`RUNNER_URL`: `/lock`, `/schedule`, ...) | dispatcher API | dispatcher, reached from the job (§8.5) |
 | Outputs (`_send/`), `_schedule.json` | workspace → `OUTPUTS_ROOT`, scheduler | runner collects, dispatcher stores and submits |
 | Task turn result (`recordTurnResult`) | task workspace `state/` | runner |
-| Repo cache write-back | `REPO_CACHE_ROOT` (per-repo lock) | runner (§8.2) |
+| Repo cache (fetch-only) | `REPO_CACHE_ROOT` (per-repo lock) | runner (§8.2) |
 | Audit log, metrics | `LOGS_ROOT`, Prometheus | dispatcher, from the final report |
 | Daily log, curation, memory push | `MEMORY_DIR` (memory mutex) | dispatcher, single writer (§8.3) |
 | Chat notification, webhook | bots, callback dispatcher | dispatcher (unchanged) |
@@ -179,11 +179,11 @@ acknowledged `Seq`.
 
 ### 8.2 Repo cache
 
-`REPO_CACHE_ROOT` moves to the same shared volume. Copying from it and the
-per-repo write-back lock must then work across pods: the in-process lock in
-`internal/executor` becomes a lock file (`flock`) next to each cached repo.
-Without a shared volume (`AGENT_JOB_SHARED_VOLUME` unset), jobs clone fresh
-and skip write-back, which costs time, not correctness.
+`REPO_CACHE_ROOT` moves to the same shared volume. Fetching into it and
+cloning from it must then work across pods: the in-process per-repo lock in
+`internal/repos` becomes a lock file (`flock`) next to each cached repo.
+Without a shared volume (`AGENT_JOB_SHARED_VOLUME` unset), jobs clone fresh,
+which costs time, not correctness.
 
 The shared volume needs `ReadWriteMany`, or `ReadWriteOnce` with the dispatcher and
 jobs pinned to one node (an RWO volume can be mounted by several pods on the

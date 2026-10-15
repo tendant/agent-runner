@@ -227,16 +227,13 @@ func (h *Engine) mergeMemory(sessionID, source string, live *agent.Session, st *
 	if st == nil {
 		return tmpl.MergeResult{}
 	}
-	res, err := st.Merge()
+	res, err := st.MergeAndCommit(func(saved []string) string { return tmpl.SessionCommitMessage(sessionID, source, saved) })
 	if err != nil {
 		slog.Warn("memory merge failed", "session_id", sessionID, "error", err)
 		live.AddWarning("memory changes not saved: " + err.Error())
 	}
 	if len(res.Saved) > 0 {
 		slog.Info("memory: saved the session's changes", "session_id", sessionID, "files", strings.Join(res.Saved, ", "))
-		if _, err := tmpl.CommitMemory(h.config.MemoryDir, tmpl.SessionCommitMessage(sessionID, source, res.Saved)); err != nil {
-			slog.Warn("memory: commit of the session's changes failed", "session_id", sessionID, "error", err)
-		}
 	}
 	if len(res.Skipped) > 0 {
 		slog.Warn("memory: changes not saved", "session_id", sessionID, "skipped", strings.Join(res.Skipped, "; "))
@@ -455,7 +452,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
 			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
 			liveSession.AddWarning("daily log failed: " + err.Error())
-		} else if _, err := tmpl.CommitMemory(h.config.MemoryDir, "memory: daily log (session "+sessionID+")"); err != nil {
+		} else if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: daily log (session "+sessionID+")", tmpl.DailyLogName()); err != nil {
 			slog.Warn("memory: daily log commit failed", "session_id", sessionID, "error", err)
 		}
 
@@ -487,7 +484,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			} else {
 				slog.Info("memory curation completed", "session_id", sessionID,
 					"lesson_appended", curSummary.LessonAppended, "compacted", strings.Join(curSummary.FilesCompacted, ", "))
-				if _, err := tmpl.CommitMemory(h.config.MemoryDir, "memory: curation (session "+sessionID+")"); err != nil {
+				if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: curation (session "+sessionID+")", append([]string{curator.LessonsFile}, curSummary.FilesCompacted...)...); err != nil {
 					slog.Warn("memory: curation commit failed", "session_id", sessionID, "error", err)
 				}
 			}
@@ -519,7 +516,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			h.callbacks.Deliver(sessionID, snap.CallbackURL, CallbackPayload(liveSession.Snapshot(), logFile))
 		}
 
-		// Cleanup workspace after cache-back and logging are done. A task's
+		// Cleanup workspace after pushing and logging are done. A task's
 		// workspace is kept for its next turn.
 		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
 			if err := h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath); err != nil {

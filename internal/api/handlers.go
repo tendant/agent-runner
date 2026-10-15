@@ -349,6 +349,12 @@ func (h *Handlers) HandleRun(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "project is not a registered repo (add it with /repo add or POST /repos)")
 		return
 	}
+	if !repo.Push {
+		// A job commits and pushes; a read-only repo would run the whole
+		// agent only to fail at the push.
+		h.writeError(w, http.StatusBadRequest, "project "+repo.Name+" is read-only (push=false): a job's commit could not be pushed")
+		return
+	}
 
 	// Set default author
 	author := req.Author

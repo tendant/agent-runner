@@ -135,7 +135,6 @@ session-{id}/
 - **Repos** come from the registry (`DATA_DIR/repos.json`, `/repo`, `/repos`; REPOS_DESIGN.md): a bare clone per repo in `repo-cache/<name>.git` (`REPO_CACHE_ROOT`), fetched with the repo's own login (a `/secret`), cloned into each workspace's `workspace/` directory, never written back
 - Agent opens its eyes in `workspace/` — no `cd` needed; `_send/` and `_progress.json` are relative to CWD
 - `state/` is the runner's bookkeeping, invisible to the agent
-- After completion, repos are cached back from `workspace/` for future sessions (underscore-prefixed entries skipped)
 
 ### Output Files (`_send/` Convention)
 
@@ -235,7 +234,7 @@ The runner cannot tell which two tasks conflict — that depends on what the tas
 ### Shared-resource locks (internal)
 
 - Memory dir — package mutex in `internal/template`, shared with the `/memory` chat commands
-- Repo cache write-back — per-repo-name mutex in `internal/executor`, plus randomised temp paths so a concurrent swap cannot clobber an in-flight copy
+- Repo cache — a per-repo mutex in `internal/repos` around fetching into the bare clone and cloning from it; nothing is written back from a workspace
 
 ---
 

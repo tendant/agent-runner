@@ -60,11 +60,11 @@ not in the next session.
 
 ## 4. Workspaces
 
-* **Every registered repo is in every session's workspace,** copied from the repo cache and fast
-  forwarded to its branch before the session.
+* **Every registered repo is in every session's workspace,** cloned from the repo cache (fetched
+  first) on its branch before the session.
   - Most agents have a few repos. A per-task selection (the planner choosing, or a task naming
     repos) can come later if workspaces get too big.
-* **The repo cache:** one clone per registered repo, in `REPO_CACHE_ROOT/<name>`. It is
+* **The repo cache:** one bare clone per registered repo, in `REPO_CACHE_ROOT/<name>.git`. It is
   refreshed by fetching, never written back from a workspace. That ends today's
   "cache-back", which copied whatever a session left (agent-written config, half-finished work)
   into the next session's start.

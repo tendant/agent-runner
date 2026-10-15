@@ -273,3 +273,39 @@ func registerWorkspaceRepos(t *testing.T, env *engineTestEnv, workspace string) 
 		}
 	}
 }
+
+// Commits on a branch the agent made are pushed to that branch; commits on
+// a detached HEAD are kept on agent-rescue/<session>.
+func TestSyncPushesNewBranchAndParksDetached(t *testing.T) {
+	for _, detached := range []bool{false, true} {
+		env := setupTestEnv(t)
+		base := t.TempDir()
+		bare := filepath.Join(base, "origin.git")
+		workspace := filepath.Join(base, "workspace")
+		repo := filepath.Join(workspace, "site")
+		os.MkdirAll(workspace, 0o755)
+		git(t, base, "init", "--bare", "-b", "main", bare)
+		git(t, base, "clone", bare, repo)
+		git(t, repo, "config", "user.email", "t@t")
+		git(t, repo, "config", "user.name", "T")
+		git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
+		git(t, repo, "push", "-u", "origin", "HEAD")
+		if detached {
+			git(t, repo, "checkout", "-q", "--detach")
+		} else {
+			git(t, repo, "checkout", "-q", "-b", "feature")
+		}
+		os.WriteFile(filepath.Join(repo, "f.txt"), []byte("f\n"), 0o644)
+		git(t, repo, "add", "-A")
+		git(t, repo, "commit", "-q", "-m", "agent work")
+
+		session := runSync(t, env, workspace, func(string) error { return nil })
+		branch := "feature"
+		if detached {
+			branch = "agent-rescue/" + session.ID
+		}
+		if got := git(t, bare, "ls-tree", "--name-only", branch); !strings.Contains(got, "f.txt") {
+			t.Errorf("detached=%v: commit not on %s: %q (warnings %v)", detached, branch, got, session.Snapshot().Warnings)
+		}
+	}
+}

@@ -7,8 +7,9 @@ dispatch workers instead, so N sessions can overlap. Requires a restart — the
 pool is sized at startup.
 
 Each session already gets an isolated workspace, and the runner guards the state
-they share: the memory dir (mutex in `internal/template`) and the repo cache
-(per-repo lock in `internal/executor`).
+they share: the memory dir (mutex in `internal/template`; each session works on a
+copy merged back under it) and the repo cache (per-repo lock in `internal/repos`; it
+only fetches, nothing is written back).
 
 **Git is handled without locks.** Two sessions pushing to the same branch is the
 normal case, and it resolves the way it does for people:
@@ -59,8 +60,8 @@ can span several agent runs:
   the current task finishes", at most 5) and starts as a new task when the
   current one finishes or is cancelled. In agent-stream a new request is a new
   thread, so nothing queues.
-- Each turn still commits and pushes as usual. Repos are cached back only when
-  the task's workspace is released.
+- Each turn still commits, and agent-runner pushes as usual. The task's
+  workspace keeps its checkouts between turns and is removed when the task ends.
 
 The whole flow is covered end to end against a real agent-stream server by
 `e2e/tasks_stream_e2e_test.go` (set `AGENT_STREAM_SRC` to the agent-stream

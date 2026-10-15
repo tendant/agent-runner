@@ -64,7 +64,7 @@ func (h *Engine) syncWorkspaceRepos(
 				liveSession.AddWarning(w)
 			}
 		}
-		conflicts, warnings := pushRepos(ctx, ops, candidates)
+		conflicts, warnings := pushRepos(ctx, ops, candidates, sessionID)
 		if len(conflicts) == 0 {
 			for _, w := range warnings {
 				liveSession.AddWarning(w)
@@ -150,7 +150,7 @@ func (h *Engine) pushableRepos(checkoutPath string) (repos, untrusted []string) 
 // (ops; a repo with none is not pushed). Repos whose rebase hit conflicts
 // come back in conflicts (rebase left in progress); any other push failure
 // becomes a warning string.
-func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos []string) (conflicts []*gitpkg.RebaseConflictError, warnings []string) {
+func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos []string, sessionID string) (conflicts []*gitpkg.RebaseConflictError, warnings []string) {
 	for _, repo := range repos {
 		ops, ok := opsFor[repo]
 		if !ok {
@@ -176,6 +176,16 @@ func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos 
 			}
 		}
 		if !hasUnpushedCommits(ctx, repo) {
+			continue
+		}
+		if b, _ := ops.GetCurrentBranch(ctx, repo); b == "" || b == "HEAD" {
+			// Detached: there is no branch to push to. Keep the commits.
+			rescue := "agent-rescue/" + sessionID
+			if err := ops.PushToBranch(ctx, repo, rescue); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: commits on a detached HEAD could not be preserved: %v", name, err))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("%s: the agent committed on a detached HEAD; its commits are on branch %s", name, rescue))
+			}
 			continue
 		}
 		err := ops.Push(ctx, repo)
@@ -302,7 +312,10 @@ func hasCommits(repoPath string) bool {
 	return found
 }
 
+// hasUnpushedCommits reports commits on HEAD that origin has on no branch:
+// ahead of the upstream, or on a branch the agent made (no upstream yet),
+// or on a detached HEAD.
 func hasUnpushedCommits(ctx context.Context, repoPath string) bool {
-	out, err := gitCmd(ctx, repoPath, "log", "@{u}..HEAD", "--oneline").Output()
-	return err == nil && strings.TrimSpace(string(out)) != ""
+	out, err := gitCmd(ctx, repoPath, "rev-list", "--count", "HEAD", "--not", "--remotes=origin").Output()
+	return err == nil && strings.TrimSpace(string(out)) != "" && strings.TrimSpace(string(out)) != "0"
 }

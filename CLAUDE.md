@@ -36,6 +36,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `telegram/` | Telegram bot |
 | `template/` | Memory system: prompt composition, retrieval, budget, daily logs, git sync |
 | `wechat/` | WeChat bot (iLink API) |
+| `repos/` | Repo registry (`/repo`, `/repos`): bare fetch-only cache, checkouts, per-repo logins from a `/secret` (REPOS_DESIGN.md) |
+| `agentsecrets/` | The agent user's secrets (`/secret`, `DATA_DIR/secrets.json`), apart from agent-runner's own |
+| `gitsafe/` | Hardened git commands for host-side git in agent-writable repos; restoring a saved `.git/config` |
+| `sandbox/` | Sandbox policy, runtime (agentbox: gVisor/Seatbelt), model proxy, egress gateway |
 
 ### State & Persistence
 
@@ -46,7 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - All mutable state roots under `DATA_DIR`.
 
 ### Key Patterns
-- Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir mutex in `internal/template`, a per-repo lock around cache write-back in `internal/executor`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
+- Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir mutex in `internal/template`, a per-repo lock around the fetch-only repo cache in `internal/repos`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety.
 - Config load priority: OS env > `DATA_DIR/.env.local` > `.env.<instance>` > `.env`.
 - Agent workspace uses `workspace/` subdirectory as the agent's CWD; every registered repo (`/repo`, `DATA_DIR/repos.json`, REPOS_DESIGN.md) is checked out there from a bare cache in `REPO_CACHE_ROOT` that only fetches.

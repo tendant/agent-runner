@@ -16,14 +16,12 @@ import (
 
 // MemoryGitCreds holds optional credentials for memory git operations.
 type MemoryGitCreds struct {
-	Token  string // MEMORY_GIT_TOKEN — injected into HTTPS push URLs at runtime
+	Token  string // MEMORY_GIT_TOKEN — read by a credential helper at push/pull time
 	User   string // MEMORY_GIT_USER  — git username; defaults to "oauth2" when empty
 	SSHKey string // MEMORY_GIT_SSH_KEY — path to private key; sets GIT_SSH_COMMAND
 }
 
 // MemoryGitCredsFromEnv reads MemoryGitCreds from the process environment.
-// config.LoadFromEnv seeds MEMORY_GIT_TOKEN/MEMORY_GIT_SSH_KEY from
-// GIT_TOKEN/GIT_SSH_KEY when unset, so this reflects that fallback too.
 func MemoryGitCredsFromEnv() MemoryGitCreds {
 	return MemoryGitCreds{
 		Token:  os.Getenv("MEMORY_GIT_TOKEN"),

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"log/slog"
 	"net"
 	"net/http"
@@ -561,6 +562,9 @@ func upgradeDefaultPrompts(h *Handlers) {
 	}
 	for _, p := range done {
 		slog.Info("prompts: replaced an unedited earlier default with the current one (the old one is in the memory git history, if any)", "path", p)
+		if err := tmpl.CommitInstructions(h.config.MemoryDir, p, "memory: "+filepath.Base(p)+" upgraded to the current default"); err != nil {
+			slog.Warn("prompts: committing the upgrade failed", "path", p, "error", err)
+		}
 	}
 	for _, p := range []string{systemPath, promptPath} {
 		b, err := os.ReadFile(p)
