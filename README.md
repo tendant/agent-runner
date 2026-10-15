@@ -8,7 +8,7 @@ chat interfaces (Telegram, Agent Stream, WeChat), scheduled tasks and a REST API
 ## Prerequisites
 
 - Go 1.25+
-- Git, with credentials for your remotes
+- Git (repo credentials are given in chat with `/secret`, not on the host)
 - One agent CLI on `$PATH`: `pi` (default), `claude`, `codex` or `opencode`. `POST /bootstrap`
   (or `/bootstrap` in chat) installs a missing one. On a headless Linux server, opencode also needs
   `xvfb` (see [docs/agents.md](docs/agents.md#opencode-on-linux-ubuntudebian)).
@@ -29,12 +29,27 @@ curl -X POST localhost:8080/bootstrap               # installs the CLI if missin
 `AGENT_CLI=claude` needs no key when `claude login` is done on the host; any other provider is
 in [.env.example](.env.example).
 
-Repos to work on are added in chat, each with its own login from a `/secret`:
-`/secret set GITEE_TOKEN <token>` then `/repo add https://<user>@gitee.com/org/repo.git secret=GITEE_TOKEN`
-([REPOS_DESIGN.md](REPOS_DESIGN.md)). Every session gets every repo; agent-runner pushes the agent's commits.
+### In chat
 
-With a chat bot connected, `/set KEY VALUE` configures a running instance (saved to `.env.local`,
-applied immediately); `/config`, `/status` and `/help` show the rest.
+Once a bot is connected (Telegram needs `TELEGRAM_CHAT_ID`: the one chat that controls the agent;
+WeChat answers `WECHAT_ALLOWED_USERS`, or the first user to message it), `/help` shows how to start:
+
+```
+/secret set GITEE_TOKEN <token> Gitee API and git      a credential for the agent's tasks
+/repo add https://<user>@gitee.com/org/repo.git secret=GITEE_TOKEN
+then describe the task in a message
+```
+
+- **Repos** (`/repo`, `/help repo`): every session gets every registered repo, logging in with its
+  `/secret`; the agent commits, agent-runner pushes ([REPOS_DESIGN.md](REPOS_DESIGN.md)).
+- **Secrets** (`/secret`, `/help secret`): the agent gets them as environment variables, sees only
+  their names and descriptions, and their values are redacted from chat, logs and memory.
+  agent-runner's own keys (`.env`, `/set`) never reach the agent.
+- **Memory and instructions** (`/help memory`): `/memory log` lists what each session saved,
+  `/memory undo <session-id>` takes it back; `/prompt show|check|preview` shows `agent.md`,
+  `prompt.md` and the prompt a session gets ([MEMORY_DESIGN.md](MEMORY_DESIGN.md)).
+- **Setup:** `/set KEY VALUE` configures a running instance (saved to `.env.local`, applied
+  immediately); `/config` and `/status` show it.
 
 ### Sandboxed agents
 
@@ -78,12 +93,14 @@ Upgrading from v0.0.x: see [MIGRATION.md](MIGRATION.md). The ones most people se
 | `AGENT_CLI` | `pi` | `pi`, `claude`, `codex` or `opencode` |
 | `AGENT_MODEL` / `AGENT_FAST_MODEL` | pi's choice (opencode: `deepseek/deepseek-v4-pro` / `-flash`) | Work model as `provider/model`, and a cheap one for planning and curation |
 | `DATA_DIR` | the current directory | All mutable state |
-| `API_BIND` / `API_KEY` | `127.0.0.1:8080` / none | API address and key |
+| `API_BIND` / `API_KEY` | `127.0.0.1:8080` / none | API address and key (browser requests from other sites are refused either way) |
 | `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | | Credentials for the memory repo (project repos use `/repo` and `/secret`) |
 | `AGENT_PLANNER_ENABLED` / `AGENT_REVIEWER_ENABLED` | `true` / `false` | Planner and reviewer sub-agents |
 | `AGENT_MAX_CONCURRENT` | `1` | Sessions running at once |
 | `AGENT_SANDBOX` | `off` | Run agents in a sandbox: `permissive` or `strict` (see [docs/sandbox.md](docs/sandbox.md)) |
-| `TELEGRAM_BOT_TOKEN`, `STREAM_SERVER_URL` + `STREAM_BOT_TOKEN` | | Chat bots |
+| `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | | Telegram bot; it answers no one until the chat id is set (the log names it) |
+| `WECHAT_TOKEN`, `WECHAT_ALLOWED_USERS` | | WeChat bot; without the list, the first user to message it |
+| `STREAM_SERVER_URL` + `STREAM_BOT_TOKEN` | | Agent Stream bot |
 
 ## API
 
@@ -104,7 +121,9 @@ curl -X POST localhost:8080/agent/{session_id}/stop
 | [docs/scheduler.md](docs/scheduler.md) | One-shot and cron tasks, `_schedule.json` |
 | [docs/sandbox.md](docs/sandbox.md) | Agent sandbox (agentbox: gVisor on Linux, Seatbelt on macOS), egress, limits |
 | [DESIGN.md](DESIGN.md) | Architecture; memory and prompt composition |
-| [TASKS_DESIGN.md](TASKS_DESIGN.md), [SECRETS.md](SECRETS.md) | Task and secrets design |
+| [MEMORY_DESIGN.md](MEMORY_DESIGN.md), [REPOS_DESIGN.md](REPOS_DESIGN.md), [SECRETS_DESIGN.md](SECRETS_DESIGN.md) | Memory and prompts, repos and their logins, agent secrets |
+| [TASKS_DESIGN.md](TASKS_DESIGN.md) | Multi-turn tasks |
+| [SECRETS.md](SECRETS.md) | This repo's own encrypted `.env` (SOPS) |
 
 ## Development
 
