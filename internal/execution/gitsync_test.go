@@ -250,7 +250,8 @@ func TestConflictContextSandboxed(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, box)
 		}
 	}
-	if !strings.Contains(sandboxGitNote, "do not `git push`") || !strings.Contains(sandboxGitNote, "the runner pushes") {
-		t.Errorf("sandbox note:\n%s", sandboxGitNote)
+	note := runtimeInstructions(runtimeFacts{Sandboxed: true})
+	if !strings.Contains(note, "do not `git push`") || !strings.Contains(note, "the runner pushes") {
+		t.Errorf("sandbox note:\n%s", note)
 	}
 }

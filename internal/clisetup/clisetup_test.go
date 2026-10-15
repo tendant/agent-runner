@@ -132,13 +132,3 @@ func TestSandboxedClaudeAuth(t *testing.T) {
 		t.Error("a setup-token token is passed to claude without an allow entry")
 	}
 }
-
-func TestStaleAgentMDForSandbox(t *testing.T) {
-	if StaleAgentMDForSandbox(DefaultAgentMD) {
-		t.Error("the current default must not be flagged")
-	}
-	old := "- Commit all changes with descriptive commit messages and push to origin\n"
-	if !StaleAgentMDForSandbox(old) {
-		t.Error("the old default must be flagged")
-	}
-}

@@ -75,7 +75,7 @@ func TestSandboxedSessionMemoryCopy(t *testing.T) {
 			return
 		}
 		staged = m[1]
-		if !strings.Contains(prompt, "use go") || !strings.Contains(prompt, "Memory in this sandbox") {
+		if !strings.Contains(prompt, "use go") || !strings.Contains(prompt, "This directory is your own copy") {
 			t.Errorf("prompt lacks memory or the sandbox note:\n%s", prompt)
 		}
 		os.WriteFile(filepath.Join(staged, "decisions.md"), []byte("use go\nuse sqlite\n"), 0o644)

@@ -80,3 +80,7 @@ func setupTestEnv(t *testing.T) *cmdTestEnv {
 	rt := &fakeRuntime{cfg: cfg, mgr: mgr, starter: fakeStarter{}}
 	return &cmdTestEnv{cfg: cfg, rt: rt, repoCacheDir: repoCacheDir}
 }
+
+func (r *fakeRuntime) PromptPreview(message string) (string, error) {
+	return "# Agent\n\nhi\n\n## Current Request\n\n" + message + "\n", nil
+}

@@ -93,6 +93,9 @@ internal/api/agent_executor.go; `Compile`, internal/template/compiler.go):
 4. **Other lowercase `.md` files** in the memory dir (excluding the above, `HEARTBEAT.md`, and date-prefixed daily logs).
 5. **`## Recent Sessions`** — the last `AGENT_MEMORY_DAYS` days of daily logs, newest first.
 6. **`## Current Request`** — the task message.
+7. **`## How this runner works`** — the runtime layer (`runtimeInstructions`, internal/execution/runtime_prompt.go): git (who pushes), memory (where, what is saved, shared by everyone who talks to the agent), credentials, `_send/`. Generated per session from the mode it runs in, so it cannot go stale; `agent.md` keeps only the operator's persona and rules (MEMORY_DESIGN.md).
+
+At startup an `agent.md` or `prompt.md` that is an earlier default nobody edited is replaced with the current one (`clisetup.UpgradeDefaultPrompts`, by hash of every default shipped); an edited one is kept and what in it contradicts the runtime layer is logged. In chat, `/prompt show`, `/prompt check` and `/prompt preview [full]` show the files, those contradictions, and the prompt a session would get.
 
 Template variables (`{{MESSAGE}}`, `{{DATE}}`, `{{REPOS}}`, `{{RUNNER_URL}}`, `{{API_KEY}}`, `{{PROJECT_DIR}}`, `{{MEMORY_DIR}}`) are substituted in all sections except Recent Sessions (log text may contain literal braces).
 
@@ -108,7 +111,7 @@ After every session (in order, inside the executor's completion defer):
 2. **Curation** (opt-in: `AGENT_MEMORY_CURATION_ENABLED`, default false) — a cheap LLM call (uses the fast-LLM slot (`FAST_LLM_*`)) distills the session outcome into at most 2 durable lessons appended to `lessons.md`, and compacts allowlisted memory files that exceed their per-file budget. Safety rails (internal/curator): may only write `lessons.md` and rewrite the well-known files; rewrites only when over budget and only if strictly smaller; never touches `agent.md`, `prompt.md`, or daily logs; all failures are non-fatal (`AGENT_MEMORY_CURATION_TIMEOUT_SECONDS`, default 60, bounds the call).
 3. **Git push** — `CommitAndPushMemory` (3 retries) persists everything above in one commit; git history is the undo mechanism for curation.
 
-The agent also self-edits memory directly during sessions — the default `agent.md` instructs it to write preferences/decisions/summaries to the well-known files and workflow changes to `prompt.md`.
+The agent also edits memory during sessions — the runtime layer tells it to write preferences/decisions/summaries to the well-known files, and not to edit `agent.md` or `prompt.md`. Sandboxed, it works on a copy merged back with rules (docs/sandbox.md "Memory").
 
 Memory writes made by the runner (daily log, curation, pull/commit/push) are serialized by a package-level mutex in `internal/template`, and `WriteMemoryFile` writes via temp+rename so a reader never sees a truncated file. The mutex covers this process only: the agent CLI edits memory files from a subprocess, which no in-process lock can cover. With `AGENT_MAX_CONCURRENT > 1` two agents can therefore still overwrite each other's in-session memory edits; the git-backed memory history is the undo mechanism.
 

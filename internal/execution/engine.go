@@ -170,33 +170,6 @@ func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 // sandboxed reports whether sessions run their agent CLIs in the sandbox.
 func (h *Engine) sandboxed() bool { return h.sandbox != nil && h.sandbox.Mode() != "off" }
 
-// sandboxGitNote tells a sandboxed agent how git works for it: no remote
-// credentials inside (they stay with the runner, like the model keys), so it
-// commits and the runner pushes (syncWorkspaceRepos), coming back to it
-// only when a rebase conflicts.
-const sandboxGitNote = `
-
-## Git in this sandbox
-
-You have no git credentials here, by design: commit your work, but do not ` + "`git push`" + `,
-` + "`git pull`" + ` or ` + "`git fetch`" + ` against the remote, and do not set up credentials or new remotes.
-When you finish, the runner pushes your commits to the branch you are on. If another session
-pushed meanwhile, it rebases them for you, and asks you to resolve the conflicts only if
-that rebase conflicts.
-`
-
-// sandboxMemoryNote tells a sandboxed agent what happens to its memory
-// writes: they go to a copy, merged back when the session ends.
-const sandboxMemoryNote = `
-
-## Memory in this sandbox
-
-The memory directory above is your own copy. Changes to its lowercase ` + "`.md`" + ` files (new ones
-too) are saved when the session ends; ` + "`lessons.md`" + ` only takes appends. ` + "`agent.md`" + `,
-` + "`prompt.md`" + `, upper-case files such as ` + "`HEARTBEAT.md`" + `, daily logs, deletions, subdirectories and
-links are not saved: ask the user to change those.
-`
-
 // beginSandbox confines the run's agent CLIs. The returned context carries the
 // sandbox launcher, so the planner, session and reviewer are all covered. A
 // strict-mode rejection fails the session before any work starts. egress
@@ -602,12 +575,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	if h.sandboxed() {
-		preamble += sandboxGitNote
-		if memoryStage != nil {
-			preamble += sandboxMemoryNote
-		}
-	}
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil})
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
 	planCtx, planSpan := tracing.Start(ctx, "agent.planner", attribute.Bool("planner.enabled", h.config.Agent.PlannerEnabled))
