@@ -41,7 +41,7 @@ func (h *Engine) FinishTaskWorkspace(taskDir string) {
 	if _, err := os.Stat(taskDir); err != nil {
 		return
 	}
-	h.workspaceManager.CacheReposBack(taskDir, h.config.RepoCacheRoot)
+	h.cacheReposBack(taskDir)
 	if err := h.workspaceManager.CleanupWorkspace(taskDir); err != nil {
 		slog.Warn("failed to remove task workspace", "path", taskDir, "error", err)
 	}

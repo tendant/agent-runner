@@ -237,6 +237,11 @@ func (w *WorkspaceManager) PrepareAgentWorkspaceAt(workspacePath, repoCacheRoot 
 // CacheReposBack copies repos from workspace/ back to repoCacheRoot/ for future runs.
 // Skips hidden and underscore-prefixed entries (_send/, _progress.json, etc.).
 func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
+	w.CacheReposBackExcept(workspacePath, repoCacheRoot, nil)
+}
+
+// CacheReposBackExcept is CacheReposBack leaving out the named repos.
+func (w *WorkspaceManager) CacheReposBackExcept(workspacePath, repoCacheRoot string, skip map[string]bool) {
 	agentDir := filepath.Join(workspacePath, "workspace")
 	entries, err := os.ReadDir(agentDir)
 	if err != nil {
@@ -247,7 +252,7 @@ func (w *WorkspaceManager) CacheReposBack(workspacePath, repoCacheRoot string) {
 		if !entry.IsDir() {
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "_") {
+		if strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "_") || skip[entry.Name()] {
 			continue
 		}
 		src := filepath.Join(agentDir, entry.Name())

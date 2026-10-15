@@ -36,13 +36,19 @@ func (h *Engine) syncWorkspaceRepos(
 	checkoutPath, message string, deadline time.Time,
 	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, as *agentSession,
 ) {
-	repos := workspaceRepos(checkoutPath)
-	if len(repos) == 0 {
+	if len(workspaceRepos(checkoutPath)) == 0 {
 		return
 	}
 	ops := gitpkg.NewOperations(h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds)
 
 	for attempt := 0; ; attempt++ {
+		// Every round: the agent may have run since the last one.
+		repos, untrusted := h.pushableRepos(checkoutPath)
+		if attempt == 0 {
+			for _, r := range untrusted {
+				liveSession.AddWarning(fmt.Sprintf("%s: not pushed: the runner did not set this repo up, so it will not run git in it on the host", filepath.Base(r)))
+			}
+		}
 		conflicts, warnings := pushRepos(ctx, ops, repos)
 		if len(conflicts) == 0 {
 			for _, w := range warnings {
@@ -101,6 +107,16 @@ func (h *Engine) syncWorkspaceRepos(
 			metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
 		}
 	}
+}
+
+// pushableRepos is the repos the runner may run git in on the host: all of
+// them unsandboxed; sandboxed, those it set up, with their saved configs
+// put back.
+func (h *Engine) pushableRepos(checkoutPath string) (repos, untrusted []string) {
+	if !h.sandboxed() {
+		return workspaceRepos(checkoutPath), nil
+	}
+	return restoreGitConfigs(checkoutPath)
 }
 
 // pushRepos pushes each repo with unpushed commits. Repos whose rebase hit

@@ -115,7 +115,11 @@ commits inside; after the session the runner pushes every repo the agent committ
 only when that rebase conflicts does it hand the agent an iteration to resolve the markers (it
 pushes afterwards); work that still cannot be merged goes to `agent-rescue/<session>`. Sandboxed
 sessions are told this in their prompt, so they commit and do not try to push. The runner's own
-git commands ignore the hooks and config an agent could plant (`internal/gitsafe`).
+git commands ignore the hooks and config an agent could plant (`internal/gitsafe`), and never
+use a `.git/config` the agent wrote: each repo's config is saved after the runner sets the
+workspace up, out of the sandbox's view, and put back before every host-side git step (push,
+rebase, cache-back). A repo the runner did not set up (one the agent cloned or made) is neither
+pushed nor cached; the session says so in a warning.
 
 ## What the sandbox can read
 
