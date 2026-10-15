@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,5 +82,30 @@ func TestWriteTimeout_ExceedsAnalyzerTimeout(t *testing.T) {
 				t.Errorf("writeTimeout() = %v must exceed analyzer timeout %v", got, analyzerTimeout)
 			}
 		})
+	}
+}
+
+func TestSameOriginMiddleware(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := sameOriginMiddleware(ok)
+	for _, c := range []struct {
+		method, origin string
+		want           int
+	}{
+		{http.MethodPost, "", http.StatusOK},                      // curl, bots
+		{http.MethodPost, "http://127.0.0.1:8080", http.StatusOK}, // same host
+		{http.MethodPost, "https://evil.example", http.StatusForbidden},
+		{http.MethodPost, "null", http.StatusForbidden},
+		{http.MethodGet, "https://evil.example", http.StatusOK},
+	} {
+		req := httptest.NewRequest(c.method, "http://127.0.0.1:8080/agent", strings.NewReader(`{"message":"x"}`))
+		if c.origin != "" {
+			req.Header.Set("Origin", c.origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != c.want {
+			t.Errorf("%s from %q: %d, want %d", c.method, c.origin, w.Code, c.want)
+		}
 	}
 }

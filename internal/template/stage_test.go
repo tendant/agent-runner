@@ -167,3 +167,19 @@ func TestMergeNilStage(t *testing.T) {
 		t.Errorf("%+v %v", res, err)
 	}
 }
+
+// The copy directory itself replaced by a link (to another workspace): the
+// merge refuses it and saves nothing.
+func TestMergeRefusesLinkedCopyDir(t *testing.T) {
+	mem, st := stageFixture(t)
+	elsewhere := t.TempDir()
+	os.WriteFile(filepath.Join(elsewhere, "stolen.md"), []byte("someone else's notes\n"), 0o644)
+	os.RemoveAll(st.Dir)
+	os.Symlink(elsewhere, st.Dir)
+	if _, err := st.Merge(); err == nil {
+		t.Error("a linked copy directory must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(mem, "stolen.md")); err == nil {
+		t.Error("files from the link's target were merged")
+	}
+}

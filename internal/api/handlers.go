@@ -535,6 +535,14 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 		h.failJob(jobID, logData, "Failed to restore the checkout's git config: "+rerr.Error(), "")
 		return
 	}
+	if rerr := gitsafe.CheckRepo(workspacePath); rerr != nil {
+		h.failJob(jobID, logData, "The agent left git state agent-runner does not run git in: "+rerr.Error(), "")
+		return
+	}
+	if gitOps.RebaseInProgress(ctx, workspacePath) {
+		// Its state files were the agent's to write: never continued here.
+		_ = gitOps.AbortRebase(ctx, workspacePath)
+	}
 
 	if err != nil {
 		errorCode := "CLAUDE_ERROR"

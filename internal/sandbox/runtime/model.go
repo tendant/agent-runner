@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -275,11 +276,16 @@ const (
 // codex ignores OPENAI_BASE_URL for its built-in provider (0.149 connects to
 // wss://api.openai.com directly), so a custom provider is the way to route it.
 // Without an OpenAI channel, any old file is removed.
-func (m *modelRun) writeCodexConfig(codexDir string) error {
-	path := filepath.Join(codexDir, "config.toml")
+func (m *modelRun) writeCodexConfig(home, rel string) error {
+	root, err := safefs.Open(home) // the agent's to write: no link followed
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	path := filepath.Join(rel, "config.toml")
 	p := m.proxies[ProviderOpenAI]
 	if p == nil {
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := root.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -310,17 +316,14 @@ wire_api = "responses"
 supports_websockets = false
 `, codexProvider, codexProvider, m.url(ProviderOpenAI)+chatgptBase, codexKeyEnv)
 	}
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(cfg), 0o600)
+	return safefs.WriteIn(root, path, []byte(cfg), 0o600)
 }
 
 // writePiModels writes pi's models.json for the run: the seed's (host or
 // agent-home) custom providers, with each proxied built-in provider's
 // baseUrl pointed at its proxy and any apiKey setting removed (the run token
 // comes from env).
-func (m *modelRun) writePiModels(seedDir, piDir string) error {
+func (m *modelRun) writePiModels(seedDir, home, rel string) error {
 	doc := map[string]any{}
 	if seedDir != "" {
 		if b, err := os.ReadFile(filepath.Join(seedDir, "models.json")); err == nil {
@@ -356,10 +359,7 @@ func (m *modelRun) writePiModels(seedDir, piDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(piDir, 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(piDir, "models.json"), b, 0o600)
+	return safefs.Write(home, filepath.Join(rel, "models.json"), b, 0o600) // the agent's home: no link followed
 }
 
 // names lists the started channels, for the log.

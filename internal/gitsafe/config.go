@@ -42,3 +42,37 @@ func WriteConfig(repo string, data []byte) error {
 	}
 	return nil
 }
+
+// redirecting are files in .git that make git read its config, objects or
+// refs from elsewhere, around a config the runner restored.
+var redirecting = []string{"commondir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"}
+
+// CheckRepo refuses a repo the runner must not run git in on the host after
+// an agent had it: .git not a real directory, its config not a regular file,
+// or a file that points git somewhere else.
+func CheckRepo(repo string) error {
+	gitDir := filepath.Join(repo, ".git")
+	fi, err := os.Lstat(gitDir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf(".git is not a directory")
+	}
+	if fi, err := os.Lstat(filepath.Join(gitDir, "config")); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf(".git/config is not a regular file")
+	}
+	for _, name := range redirecting {
+		if _, err := os.Lstat(filepath.Join(gitDir, name)); err == nil {
+			return fmt.Errorf(".git/%s is not accepted (it points git elsewhere)", name)
+		}
+	}
+	return nil
+}
+
+// RepoEnv pins git to repo's own .git for a host command, whatever files in
+// it say.
+func RepoEnv(repo string) []string {
+	gitDir := filepath.Join(repo, ".git")
+	return []string{"GIT_DIR=" + gitDir, "GIT_COMMON_DIR=" + gitDir, "GIT_WORK_TREE=" + repo}
+}

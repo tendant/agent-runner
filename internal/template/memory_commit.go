@@ -52,6 +52,19 @@ func CommitMemoryFiles(memoryDir, message string, files ...string) (bool, error)
 // commitPaths commits the current content of files only; the caller holds
 // the memory lock.
 func commitPaths(memoryDir, message string, files []string) (bool, error) {
+	// A path that neither exists nor is tracked (lessons.md before the
+	// first lesson) is nothing to commit, and git refuses it outright.
+	var keep []string
+	for _, f := range files {
+		if _, err := os.Lstat(filepath.Join(memoryDir, f)); err == nil {
+			keep = append(keep, f)
+		} else if out, _ := gitOutput(memoryDir, "ls-files", "--", f); len(strings.TrimSpace(string(out))) > 0 {
+			keep = append(keep, f) // tracked and deleted
+		}
+	}
+	if files = keep; len(files) == 0 {
+		return false, nil
+	}
 	args := append([]string{"add", "-A", "--"}, files...)
 	if err := gitRunEnv(memoryDir, nil, args...); err != nil {
 		return false, err
@@ -158,7 +171,7 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 		var files []string
 		for name, content := range edits {
 			files = append(files, name)
-			if content == "" {
+			if content == deleteFile {
 				os.Remove(filepath.Join(memoryDir, name)) //nolint:errcheck // a file the session created
 				continue
 			}
@@ -190,6 +203,10 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 
 const undoCommitPrefix = "memory: undo session "
 
+// deleteFile marks, in appendUndo's edits, a file the session created and
+// undoing it empties: removed, not left empty.
+const deleteFile = "\x00delete"
+
 // appendUndo works out, for commits that only appended to files, each file's
 // content with those appends removed from where they now are. ok is false
 // if any change was not a pure append or its text is no longer there.
@@ -205,7 +222,8 @@ func appendUndo(memoryDir string, commits []string) (map[string]string, bool) {
 			if name == "" {
 				continue
 			}
-			before, _ := gitOutput(memoryDir, "show", hash+"^:"+name) // "" for a file the commit created
+			before, berr := gitOutput(memoryDir, "show", hash+"^:"+name)
+			created := berr != nil // the commit created the file
 			after, err := gitOutput(memoryDir, "show", hash+":"+name)
 			if err != nil || !strings.HasPrefix(string(after), string(before)) || len(after) == len(before) {
 				return nil, false
@@ -219,11 +237,19 @@ func appendUndo(memoryDir string, commits []string) (map[string]string, bool) {
 				}
 				cur = string(b)
 			}
-			i := strings.LastIndex(cur, added)
-			if i < 0 {
-				return nil, false
+			// Where the session appended it: later sessions only appended
+			// after it (commits are undone newest first). Elsewhere only if
+			// earlier text was edited since: then its first occurrence.
+			i := len(before)
+			if i > len(cur) || cur[i:min(len(cur), i+len(added))] != added {
+				if i = strings.Index(cur, added); i < 0 {
+					return nil, false
+				}
 			}
 			edits[name] = cur[:i] + cur[i+len(added):]
+			if created && edits[name] == "" {
+				edits[name] = deleteFile
+			}
 		}
 	}
 	return edits, true

@@ -165,3 +165,51 @@ func TestHasCommitsWithoutGit(t *testing.T) {
 		t.Error("a repo with a commit")
 	}
 }
+
+// A repo whose .git points git elsewhere is not pushed.
+func TestSandboxedPushRefusesRedirectedGitDir(t *testing.T) {
+	env := sandboxEnv(t)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	os.MkdirAll(workspace, 0o755)
+	bare, repo := unpushedRepo(t, workspace, "site")
+	if err := saveGitConfigs(workspace); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(repo, ".git", "commondir"), []byte(t.TempDir()+"\n"), 0o644)
+	session := runSync(t, env, workspace, func(string) error { return nil })
+	if got := git(t, bare, "ls-tree", "--name-only", "main"); strings.Contains(got, "b.txt") {
+		t.Error("a repo with a planted commondir must not be pushed")
+	}
+	var warned bool
+	for _, w := range session.Snapshot().Warnings {
+		warned = warned || strings.Contains(w, "site: not pushed")
+	}
+	if !warned {
+		t.Errorf("expected a warning: %v", session.Snapshot().Warnings)
+	}
+}
+
+// A rebase the agent left in progress (resolved, not continued) is never
+// continued on the host: it is aborted and redone, and work that still
+// conflicts is parked, with main untouched.
+func TestRebaseLeftInProgressIsNotContinued(t *testing.T) {
+	env := sandboxEnv(t)
+	bare, workspace := conflictedWorkspace(t)
+	repo := filepath.Join(workspace, "site")
+	if err := saveGitConfigs(workspace); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "pull", "--rebase", "origin", "main")
+	cmd.Dir = repo
+	cmd.Run() // stops on the conflict
+	os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("resolved but not continued\n"), 0o644)
+	git(t, repo, "add", "shared.txt")
+
+	session := runSync(t, env, workspace, func(string) error { return nil })
+	if got := git(t, bare, "show", "main:shared.txt"); got != "theirs" {
+		t.Errorf("main must not get the uncontinued resolution: %q", got)
+	}
+	if got := git(t, bare, "show", "agent-rescue/"+session.ID+":shared.txt"); got != "mine" {
+		t.Errorf("the session's own commit should be parked: %q", got)
+	}
+}

@@ -432,12 +432,12 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	claudeDir := filepath.Join(home, ".claude")
 	codexDir := filepath.Join(home, ".codex")
 	piDir := filepath.Join(home, ".pi", "agent")
-	seedErr := seedClaudeConfig(r.cfg.Claude, claudeDir)
+	seedErr := seedClaudeConfig(r.cfg.Claude, home, ".claude")
 	if seedErr == nil {
-		seedErr = seedDir(r.cfg.CodexSeed, codexDir, codexConfigEntries)
+		seedErr = seedDir(r.cfg.CodexSeed, home, ".codex", codexConfigEntries)
 	}
 	if seedErr == nil {
-		seedErr = seedDir(r.cfg.PiSeed, piDir, piConfigEntries)
+		seedErr = seedDir(r.cfg.PiSeed, home, filepath.Join(".pi", "agent"), piConfigEntries)
 	}
 	if seedErr != nil {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "agent config: " + seedErr.Error()})
@@ -534,9 +534,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	model, err := r.startModels(spec, req.RunID, req.ThreadID)
 	modelRoutes, modelPorts = model.routes(), model.ports()
 	if err == nil && model != nil {
-		err = model.writePiModels(r.cfg.PiSeed, piDir)
+		err = model.writePiModels(r.cfg.PiSeed, home, filepath.Join(".pi", "agent"))
 		if err == nil {
-			err = model.writeCodexConfig(codexDir)
+			err = model.writeCodexConfig(home, ".codex")
 		}
 	}
 	if err != nil {

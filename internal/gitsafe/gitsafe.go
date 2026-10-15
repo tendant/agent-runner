@@ -25,6 +25,8 @@ var hardening = []string{
 	"-c", "gc.auto=0",
 	"-c", "maintenance.auto=false",
 	"-c", "receive.denyCurrentBranch=refuse",
+	"-c", "commit.gpgSign=false",
+	"-c", "tag.gpgSign=false",
 }
 
 // Args returns args prefixed with the hardening overrides.

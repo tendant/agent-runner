@@ -88,6 +88,9 @@ func (h *Engine) startAgent(turn agent.TaskTurn) (string, error) {
 }
 
 // GetAgentSession returns a snapshot of an agent session.
+// StopSession asks a session to stop (a /cancel of the task it is a turn of).
+func (h *Engine) StopSession(sessionID string) error { return h.agentManager.StopSession(sessionID) }
+
 func (h *Engine) GetAgentSession(sessionID string) (*agent.Session, bool) {
 	return h.agentManager.GetSession(sessionID)
 }

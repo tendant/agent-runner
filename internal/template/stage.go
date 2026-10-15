@@ -2,13 +2,13 @@ package template
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"io"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"syscall"
 )
 
 // A sandboxed agent cannot write the memory dir: it works on a copy (a
@@ -117,6 +117,14 @@ func (st *MemoryStage) MergeAndCommit(message func(saved []string) string) (Merg
 // merge applies the copy's changes; the caller holds the memory lock.
 func (st *MemoryStage) merge() (MergeResult, error) {
 	var res MergeResult
+	// The copy is in the agent's sandbox home: it may have replaced the
+	// directory with a link (to another workspace, say). Read only a real
+	// directory, through a root nothing in it can escape.
+	root, err := safefs.Open(st.Dir)
+	if err != nil {
+		return res, fmt.Errorf("memory copy: %w", err)
+	}
+	defer root.Close()
 	ents, err := os.ReadDir(st.Dir)
 	if err != nil {
 		return res, err
@@ -130,7 +138,7 @@ func (st *MemoryStage) merge() (MergeResult, error) {
 	newFiles := 0
 	for _, name := range names {
 		base, existed := st.base[name]
-		data, err := readStaged(filepath.Join(st.Dir, name), len(base)+maxStagedFileBytes)
+		data, err := readStaged(root, name, len(base)+maxStagedFileBytes)
 		switch {
 		case err == errNotRegular:
 			skip(name, "not a regular file")
@@ -200,30 +208,15 @@ var (
 	errTooLarge   = fmt.Errorf("too large")
 )
 
-// readStaged reads a file the sandbox wrote without following a link it may
-// have planted in its place (to a host file the runner can read).
-func readStaged(path string, limit int) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if fi, lerr := os.Lstat(path); lerr == nil && !fi.Mode().IsRegular() {
-			return nil, errNotRegular
-		}
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
+// readStaged reads a file the agent wrote in its copy: a regular file only
+// (a link, FIFO or directory is refused), at most limit bytes.
+func readStaged(root *os.Root, name string, limit int) ([]byte, error) {
+	data, err := safefs.ReadIn(root, name, int64(limit))
+	switch {
+	case errors.Is(err, safefs.ErrNotRegular):
 		return nil, errNotRegular
-	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > limit {
+	case errors.Is(err, safefs.ErrTooLarge):
 		return nil, errTooLarge
 	}
-	return data, nil
+	return data, err
 }
