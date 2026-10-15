@@ -50,7 +50,7 @@ func makeHandlers(t *testing.T) (*Engine, string) {
 func TestResolvePrompt_NoFilesReturnsCurrentRequest(t *testing.T) {
 	h, _ := makeHandlers(t)
 
-	got, err := h.resolvePrompt("test-session", "do something")
+	got, err := h.resolvePrompt("test-session", "do something", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestResolvePrompt_AgentMdLoadedWithoutEnvVar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := h.resolvePrompt("test-session", "task")
+	got, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestResolvePrompt_PromptMdLoadedWithoutEnvVar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := h.resolvePrompt("test-session", "task")
+	got, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestResolvePrompt_BothFilesLoaded(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "memory", "agent.md"), []byte("AGENT_INSTRUCTIONS"), 0644)
 	os.WriteFile(filepath.Join(dir, "memory", "prompt.md"), []byte("WORKFLOW_STEPS"), 0644)
 
-	got, err := h.resolvePrompt("test-session", "task")
+	got, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestResolvePrompt_ExplicitEnvVarOverridesFallback(t *testing.T) {
 	os.Chdir(dir)
 
 	h := &Engine{config: cfg, deps: promptDeps{cfg: cfg}}
-	got, err := h.resolvePrompt("test-session", "task")
+	got, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestResolvePrompt_ExplicitEnvVarOverridesFallback(t *testing.T) {
 func TestResolvePrompt_MissingFallbackFilesNoError(t *testing.T) {
 	h, _ := makeHandlers(t)
 	// No agent.md or prompt.md created — should not error, just use defaults.
-	_, err := h.resolvePrompt("test-session", "task")
+	_, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("missing fallback files should not cause error, got: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestBootstrapPaths_PrefersMemoryDir(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("CWD AGENT"), 0644)
 	os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("CWD PROMPT"), 0644)
 
-	got, err := h.resolvePrompt("test-session", "task")
+	got, err := h.resolvePrompt("test-session", "task", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestResolvePrompt_SubstitutesSessionID(t *testing.T) {
 		t.Fatalf("write agent.md: %v", err)
 	}
 
-	got, err := h.resolvePrompt("agent-abc123", "do the thing")
+	got, err := h.resolvePrompt("agent-abc123", "do the thing", h.config.MemoryDir)
 	if err != nil {
 		t.Fatalf("resolvePrompt: %v", err)
 	}

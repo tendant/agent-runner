@@ -137,6 +137,24 @@ stay denied).
 A tool that fails reading something outside the allowlist (a cache, a toolchain in your home)
 needs that path in `AGENT_SANDBOX_READ_ALLOW`.
 
+## Memory
+
+The memory dir is read-only in the sandbox (its `.git` hidden). A sandboxed agent is pointed at a
+copy instead, in its sandbox home (`{{MEMORY_DIR}}` is the copy), and when the session ends the
+runner merges back, under the memory lock and before the daily log, curation and push:
+
+* **Saved:** changes to top-level lowercase `.md` files, new ones included (at most 10 per
+  session, each growing by at most 64 KiB); `lessons.md` only takes appends.
+* **Not saved:** `agent.md`, `prompt.md`, upper-case files (`HEARTBEAT.md`, `SOUL.md`, ...),
+  daily logs, deletions, subdirectories, links and binary files. A hijacked agent cannot rewrite
+  the instructions every later session starts from, nor pull a host file into memory (which is
+  pushed to its remote) through a link.
+* **Concurrent writers:** a file another session or the curator changed meanwhile takes this
+  session's change only when it is a pure append (added on top); a rewrite is refused, not lost.
+
+Whatever is refused shows as a session warning (`memory changes not saved: ...`). Unsandboxed
+runs write the memory dir directly, as before.
+
 ## How a run is confined
 
 ```
