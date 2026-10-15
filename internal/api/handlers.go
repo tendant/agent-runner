@@ -195,6 +195,11 @@ func (h *Handlers) AgentManager() *agent.Manager {
 	return h.agentManager
 }
 
+// PromptPreview composes the prompt a session for message would get now.
+func (h *Handlers) PromptPreview(message string) (string, error) {
+	return h.execEngine.PreviewPrompt(message)
+}
+
 // AgentStarter returns the session-starting facade (the execution engine).
 func (h *Handlers) AgentStarter() botcommon.AgentStarter {
 	return h.execEngine

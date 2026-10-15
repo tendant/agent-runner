@@ -78,6 +78,7 @@ func NewServer(cfg *config.Config) *Server {
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
 
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
+	upgradeDefaultPrompts(handlers)
 
 	// Setup router
 	mux := http.NewServeMux()
@@ -541,4 +542,27 @@ func (s *Server) Handlers() *Handlers {
 // SetScheduler sets the workflow scheduler on the server for lifecycle management.
 func (s *Server) SetScheduler(r *scheduler.Scheduler) {
 	s.scheduler = r
+}
+
+// upgradeDefaultPrompts replaces an agent.md or prompt.md that is an earlier
+// default nobody edited with the current one, and says what is out of date
+// in edited ones (MEMORY_DESIGN.md §3).
+func upgradeDefaultPrompts(h *Handlers) {
+	systemPath, promptPath := h.BootstrapPaths()
+	done, err := clisetup.UpgradeDefaultPrompts(systemPath, promptPath)
+	if err != nil {
+		slog.Warn("prompts: upgrading an unedited default failed", "error", err)
+	}
+	for _, p := range done {
+		slog.Info("prompts: replaced an unedited earlier default with the current one (the old one is in the memory git history, if any)", "path", p)
+	}
+	for _, p := range []string{systemPath, promptPath} {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if problems := clisetup.PromptCheck(string(b)); len(problems) > 0 {
+			slog.Warn("prompts: out of date with how the runner works now; see /prompt check", "path", p, "problems", strings.Join(problems, "; "))
+		}
+	}
 }

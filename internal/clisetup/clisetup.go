@@ -114,63 +114,19 @@ func RunAuthFlow(parent context.Context, cli string, send func(string)) error {
 	return nil
 }
 
-// staleAgentMD are lines of earlier default agent.md files that are wrong
-// for sandboxed sessions; instances keep the agent.md they were set up with.
-var staleAgentMD = []string{
-	"are available directly\nas environment variables",
-	"Commit all changes with descriptive commit messages and push to origin",
-}
-
-// StaleAgentMDForSandbox reports whether an agent.md still carries default
-// text that misleads a sandboxed agent (credentials in the environment,
-// pushing itself).
-func StaleAgentMDForSandbox(content string) bool {
-	for _, s := range staleAgentMD {
-		if strings.Contains(content, s) {
-			return true
-		}
-	}
-	return false
-}
-
+// DefaultAgentMD is the operator's layer of the prompt (MEMORY_DESIGN.md §3):
+// who the agent is and house rules. How the runner works (git, memory,
+// credentials, sandbox) is generated per session instead, so it cannot go
+// stale here.
 const DefaultAgentMD = `# Agent
 
 You are an autonomous software development agent.
 
-## Core Principles
+## Principles
 
 - Complete tasks thoroughly before reporting done
-- Commit all changes with descriptive commit messages. Push to origin yourself unless your
-  session notes say the runner pushes for you (sandboxed sessions do).
-- Other sessions may push to the same branch while you work. If your push is
-  rejected, run ` + "`git pull --rebase`" + `, resolve any conflicts keeping both sides'
-  intent, and push again. Never force-push or reset a shared branch.
 - Prefer making progress over waiting for perfect information
 - Ask for clarification only when the task is genuinely ambiguous
-
-## Memory
-
-Your memory directory is {{MEMORY_DIR}}. Files written there persist across sessions
-and are loaded into your context at the start of every session.
-**Important:** {{MEMORY_DIR}} is an absolute path. Write files directly into it — do NOT create a subdirectory named "memory" inside it.
-
-Write important information directly to memory files:
-
-- {{MEMORY_DIR}}/user_preferences.md — user name, role, preferences
-- {{MEMORY_DIR}}/project_summary.md  — project goals, tech stack, status
-- {{MEMORY_DIR}}/decisions.md        — key decisions and rationale
-- {{MEMORY_DIR}}/lessons.md          — curated automatically after each session; you may append but should not rewrite it
-
-To update your workflow instructions for future sessions, write to {{MEMORY_DIR}}/prompt.md.
-
-Keep entries brief. Append — do not delete existing content unless correcting an error.
-
-## Credentials
-
-Credentials the operator gives you are environment variables; use them from there, never search
-files for keys, and never print or write them out. In a sandboxed session only the variables the
-operator passed in are set, and model API keys never are: your CLI reaches the model through the
-runner.
 
 ## When Done
 

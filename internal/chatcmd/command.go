@@ -32,6 +32,7 @@ const (
 	cmdSetAgent  = "/set-agent"
 	cmdSetPrompt = "/set-prompt"
 	cmdMemory    = "/memory"
+	cmdPrompt    = "/prompt"
 	cmdRepo      = "/repo"
 )
 
@@ -48,6 +49,8 @@ type Runtime interface {
 	// AgentStarter returns the session-starting facade used for
 	// command-initiated agent sessions.
 	AgentStarter() botcommon.AgentStarter
+	// PromptPreview composes the prompt a session for message would get now.
+	PromptPreview(message string) (string, error)
 }
 
 // Commander handles chat configuration commands. Zero LLM dependencies —
@@ -122,6 +125,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 		"/auth":          "usage: /auth [claude|codex] — only available via chat",
 		cmdMemory:        "usage: " + cmdMemory + " [show|clear|git <url>]",
+		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 		cmdRepo:          "usage: " + cmdRepo + " [add|remove|list] <url>",
 		"/stop":          "usage: /stop [session-id]",
 		"/logs":          "usage: /logs [session-id-prefix]",
@@ -161,6 +165,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
 		arg := strings.TrimSpace(text[len("/auth"):])
 		return r(c.handleAuth(arg, send))
+	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
+		return r(c.handlePrompt(strings.TrimSpace(text[len(cmdPrompt):])))
 	case lower == cmdMemory || strings.HasPrefix(lower, cmdMemory+" "):
 		arg := strings.TrimSpace(text[len(cmdMemory):])
 		return r(c.handleMemory(arg))
@@ -1324,6 +1330,9 @@ Examples: /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\> · /set DEE
 
 **/set-agent** _\<content\>_ — overwrite agent.md
 **/set-prompt** _\<content\>_ — overwrite prompt.md
+**/prompt show** _[agent|workflow]_ — show agent.md and prompt.md
+**/prompt check** — what in them is out of date with how the runner works now
+**/prompt preview** _[full] [message]_ — the prompt a session would get: sections and sizes, or all of it
 
 **/memory git** _\<remote-url\>_ — init or update git remote for memory dir
   HTTPS: /set MEMORY\_GIT\_TOKEN \<token\> · /set MEMORY\_GIT\_USER \<username\> (optional, defaults to oauth2) · SSH: /memory keygen

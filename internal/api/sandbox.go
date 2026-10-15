@@ -64,10 +64,6 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	slog.Info("sandbox enabled", "mode", mode, "backend", "agentbox:"+clisetup.SandboxBackendName())
-	if b, err := os.ReadFile(filepath.Join(cfg.MemoryDir, "agent.md")); err == nil && clisetup.StaleAgentMDForSandbox(string(b)) {
-		slog.Warn("sandbox: memory/agent.md has old default text telling agents API keys are in their environment and to push themselves; " +
-			"compare it with the current default (/bootstrap creates it only when missing) and update the Core Principles and Credentials sections")
-	}
 	for _, p := range clisetup.SandboxProblems(string(mode), cfg.Agent.SandboxBackend) {
 		slog.Error("sandbox: every agent run will be rejected: " + p)
 	}
