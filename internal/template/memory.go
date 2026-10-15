@@ -84,12 +84,7 @@ func AppendDailyLog(memoryDir, entry string) error {
 	if err := os.MkdirAll(memoryDir, 0755); err != nil {
 		return fmt.Errorf("create memory dir: %w", err)
 	}
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "local"
-	}
-	filename := time.Now().Format("2006-01-02") + "-" + sanitizeForFilename(hostname) + ".md"
-	path := filepath.Join(memoryDir, filename)
+	path := filepath.Join(memoryDir, DailyLogName())
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -101,6 +96,15 @@ func AppendDailyLog(memoryDir, entry string) error {
 		return fmt.Errorf("write daily log: %w", err)
 	}
 	return nil
+}
+
+// DailyLogName is today's daily log file name for this host.
+func DailyLogName() string {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "local"
+	}
+	return time.Now().Format("2006-01-02") + "-" + sanitizeForFilename(hostname) + ".md"
 }
 
 // sanitizeForFilename replaces characters unsafe in filenames with hyphens.

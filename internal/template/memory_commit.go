@@ -37,6 +37,39 @@ func CommitMemory(memoryDir, message string) (bool, error) {
 	return commitAll(memoryDir, message)
 }
 
+// CommitMemoryFiles commits only the named files (paths relative to
+// memoryDir), whatever else in it changed: one step's own changes, not an
+// edit someone else left uncommitted. Nothing is pushed.
+func CommitMemoryFiles(memoryDir, message string, files ...string) (bool, error) {
+	if !memoryIsRepo(memoryDir) || len(files) == 0 {
+		return false, nil
+	}
+	memoryMu.Lock()
+	defer memoryMu.Unlock()
+	return commitPaths(memoryDir, message, files)
+}
+
+// commitPaths commits the current content of files only; the caller holds
+// the memory lock.
+func commitPaths(memoryDir, message string, files []string) (bool, error) {
+	args := append([]string{"add", "-A", "--"}, files...)
+	if err := gitRunEnv(memoryDir, nil, args...); err != nil {
+		return false, err
+	}
+	out, err := gitOutput(memoryDir, append([]string{"status", "--porcelain", "--"}, files...)...)
+	if err != nil {
+		return false, err
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return false, nil
+	}
+	ensureMemoryIdentity(memoryDir)
+	if err := gitRunEnv(memoryDir, nil, append([]string{"commit", "-q", "-m", message, "--only", "--"}, files...)...); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func commitAll(memoryDir, message string) (bool, error) {
 	if err := gitRunEnv(memoryDir, nil, "add", "-A"); err != nil {
 		return false, err
@@ -81,10 +114,12 @@ func MemoryLog(memoryDir string, n int) ([]string, error) {
 
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// UndoMemorySession reverts the commits of one session's saved notes, newest
-// first, as new commits; the daily log and curation commits stay. If a later
-// change touched the same lines the revert is abandoned and nothing changes.
-// Returns the commits reverted (short hash and message). Push with
+// UndoMemorySession takes back one session's saved notes (not its daily
+// log or curation), as a new commit. A session's change that was a pure
+// append (what agents are told to do) is removed where it now sits, even
+// after later sessions appended to the same file; anything else is undone
+// with git revert, and if later changes touched the same lines nothing
+// changes. Returns the commits undone (short hash and message). Push with
 // CommitAndPushMemory.
 func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 	if !sessionIDPattern.MatchString(sessionID) {
@@ -96,13 +131,18 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 	memoryMu.Lock()
 	defer memoryMu.Unlock()
 
-	out, err := gitOutput(memoryDir, "log", "--fixed-strings", "--grep="+sessionCommitPrefix+sessionID+" ", "--format=%h %s")
+	out, err := gitOutput(memoryDir, "log", "--format=%h %s")
 	if err != nil {
 		return nil, err
 	}
+	prefix := sessionCommitPrefix + sessionID + " "
 	var commits []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if l != "" && strings.HasPrefix(l[strings.Index(l, " ")+1:], sessionCommitPrefix+sessionID+" ") {
+		subject := l[strings.Index(l, " ")+1:]
+		switch {
+		case subject == undoCommitPrefix+sessionID || strings.HasPrefix(subject, `Revert "`+prefix):
+			return nil, fmt.Errorf("session %s's notes are already undone", sessionID)
+		case strings.HasPrefix(subject, prefix):
 			commits = append(commits, l)
 		}
 	}
@@ -114,6 +154,24 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 			return nil, err
 		}
 	}
+	if edits, ok := appendUndo(memoryDir, commits); ok {
+		var files []string
+		for name, content := range edits {
+			files = append(files, name)
+			if content == "" {
+				os.Remove(filepath.Join(memoryDir, name)) //nolint:errcheck // a file the session created
+				continue
+			}
+			if err := writeMemoryFile(memoryDir, name, content); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := commitPaths(memoryDir, undoCommitPrefix+sessionID, files); err != nil {
+			return nil, err
+		}
+		return commits, nil
+	}
+
 	head, err := gitOutput(memoryDir, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
@@ -124,10 +182,51 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 		if err := gitRunEnv(memoryDir, nil, "revert", "--no-edit", hash); err != nil {
 			_ = gitRunEnv(memoryDir, nil, "revert", "--abort")
 			_ = gitRunEnv(memoryDir, nil, "reset", "-q", "--hard", strings.TrimSpace(string(head)))
-			return nil, fmt.Errorf("later changes touched the same lines as %s; nothing was undone (edit the files instead)", c)
+			return nil, fmt.Errorf("later changes rewrote what %s changed; nothing was undone (edit the files instead)", c)
 		}
 	}
 	return commits, nil
+}
+
+const undoCommitPrefix = "memory: undo session "
+
+// appendUndo works out, for commits that only appended to files, each file's
+// content with those appends removed from where they now are. ok is false
+// if any change was not a pure append or its text is no longer there.
+func appendUndo(memoryDir string, commits []string) (map[string]string, bool) {
+	edits := map[string]string{}
+	for _, c := range commits { // newest first
+		hash := c[:strings.Index(c, " ")]
+		names, err := gitOutput(memoryDir, "show", "--name-only", "--format=", hash)
+		if err != nil {
+			return nil, false
+		}
+		for _, name := range strings.Split(strings.TrimSpace(string(names)), "\n") {
+			if name == "" {
+				continue
+			}
+			before, _ := gitOutput(memoryDir, "show", hash+"^:"+name) // "" for a file the commit created
+			after, err := gitOutput(memoryDir, "show", hash+":"+name)
+			if err != nil || !strings.HasPrefix(string(after), string(before)) || len(after) == len(before) {
+				return nil, false
+			}
+			added := string(after[len(before):])
+			cur, seen := edits[name]
+			if !seen {
+				b, err := os.ReadFile(filepath.Join(memoryDir, name))
+				if err != nil {
+					return nil, false
+				}
+				cur = string(b)
+			}
+			i := strings.LastIndex(cur, added)
+			if i < 0 {
+				return nil, false
+			}
+			edits[name] = cur[:i] + cur[i+len(added):]
+		}
+	}
+	return edits, true
 }
 
 // memoryIsRepo reports whether memoryDir is its own git repo (/memory git).
@@ -137,4 +236,40 @@ func memoryIsRepo(memoryDir string) bool {
 	}
 	fi, err := os.Stat(filepath.Join(memoryDir, ".git"))
 	return err == nil && fi.IsDir()
+}
+
+// WriteInstructions writes an instructions file (agent.md, prompt.md) for
+// the operator, under the memory lock, and when it lives in a memory git
+// repo commits it alone with message: an operator's edit is never swept
+// into a session's commit, so undoing a session cannot take it back.
+func WriteInstructions(memoryDir, path, content, message string) error {
+	memoryMu.Lock()
+	defer memoryMu.Unlock()
+	if err := writeMemoryFile(filepath.Dir(path), filepath.Base(path), content); err != nil {
+		return err
+	}
+	return commitInstructions(memoryDir, path, message)
+}
+
+// CommitInstructions commits an instructions file something else wrote
+// (the startup upgrade of an unedited default), when it is in a memory git
+// repo.
+func CommitInstructions(memoryDir, path, message string) error {
+	memoryMu.Lock()
+	defer memoryMu.Unlock()
+	return commitInstructions(memoryDir, path, message)
+}
+
+func commitInstructions(memoryDir, path, message string) error {
+	if !memoryIsRepo(memoryDir) {
+		return nil
+	}
+	absMem, _ := filepath.Abs(memoryDir)
+	absPath, _ := filepath.Abs(path)
+	rel, err := filepath.Rel(absMem, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return nil // outside the memory dir (AGENT_SYSTEM_PROMPT elsewhere)
+	}
+	_, err = commitPaths(memoryDir, message, []string{rel})
+	return err
 }

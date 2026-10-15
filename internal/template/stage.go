@@ -91,12 +91,32 @@ type MergeResult struct {
 // copy. Only changed, allowed files are written. A file another writer
 // changed meanwhile takes the session's change only if it is a pure append,
 // added to the current content. Deletions are not applied.
-func (st *MemoryStage) Merge() (MergeResult, error) {
+func (st *MemoryStage) Merge() (MergeResult, error) { return st.MergeAndCommit(nil) }
+
+// MergeAndCommit is Merge, then (when the memory dir is a git repo and
+// message is set) a commit of exactly the files it saved, message(saved)
+// its message: all under one hold of the memory lock, so the commit holds
+// this session's changes and nothing another writer made meanwhile.
+func (st *MemoryStage) MergeAndCommit(message func(saved []string) string) (MergeResult, error) {
 	var res MergeResult
 	if st == nil {
 		return res, nil
 	}
 	defer os.RemoveAll(st.Dir) //nolint:errcheck
+	memoryMu.Lock()
+	defer memoryMu.Unlock()
+	res, err := st.merge()
+	if err == nil && message != nil && len(res.Saved) > 0 && memoryIsRepo(st.memory) {
+		if _, cerr := commitPaths(st.memory, message(res.Saved), res.Saved); cerr != nil {
+			return res, fmt.Errorf("commit: %w", cerr)
+		}
+	}
+	return res, err
+}
+
+// merge applies the copy's changes; the caller holds the memory lock.
+func (st *MemoryStage) merge() (MergeResult, error) {
+	var res MergeResult
 	ents, err := os.ReadDir(st.Dir)
 	if err != nil {
 		return res, err
@@ -154,7 +174,7 @@ func (st *MemoryStage) Merge() (MergeResult, error) {
 // session's version if the file is as it was copied, else its appended tail.
 func (st *MemoryStage) apply(name string, base []byte, existed bool, data []byte) (bool, string, error) {
 	saved, why := false, ""
-	err := WithMemoryLock(func() error {
+	err := func() error { // under the memory lock (merge's caller)
 		cur, err := os.ReadFile(filepath.Join(st.memory, name))
 		if err != nil && !os.IsNotExist(err) {
 			return err
@@ -171,7 +191,7 @@ func (st *MemoryStage) apply(name string, base []byte, existed bool, data []byte
 		}
 		saved = true
 		return writeMemoryFile(st.memory, name, string(data))
-	})
+	}()
 	return saved, why, err
 }
 

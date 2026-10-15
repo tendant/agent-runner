@@ -61,7 +61,8 @@ it end to end. Details: [docs/sandbox.md](docs/sandbox.md).
 ## Docker
 
 ```bash
-docker run -d -v agent-data:/data -e DATA_DIR=/data -e DEEPSEEK_API_KEY=sk-... -p 8080:8080 agent-runner
+docker run -d -v agent-data:/data -e DATA_DIR=/data -e DEEPSEEK_API_KEY=sk-... \
+  -e API_BIND=0.0.0.0:8080 -e API_KEY=<a long random key> -p 8080:8080 agent-runner
 ```
 
 The image runs as uid/gid `1000:1000`; for a bind mount owned by someone else, build with

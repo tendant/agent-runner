@@ -15,7 +15,7 @@ Inside one run, agent-runner already has a plan → work → iterate loop
 
 | What | Today | Where |
 |---|---|---|
-| Workspace | deleted after repos are cached back | `engine.go` top-level defer, `CleanupWorkspace` |
+| Workspace | deleted when the session ends | `engine.go` top-level defer, `CleanupWorkspace` |
 | Agent conversation | gone; `pi` runs `--mode rpc --no-session` for one run; claude, codex and opencode run one prompt per call | `executor/pi_backend.go`, `executor/executor.go` |
 | Plan and progress | gone with the workspace; the next run re-plans from scratch | `subagent/planner.go`, `_progress.json` |
 | Context | the thread's chat transcript as text, compacted past 20 messages | `botcommon/engine.go` `HandleConfirmation` |
@@ -220,7 +220,7 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 | `thread` | `TaskID`; task states; routing helpers |
 | new `task` | record type, load/save, sweep, budget accounting |
 | `botcommon` (engine) | routing table (§8); `HandleConfirmation` starts or resumes a task turn; `watchSession` merges results into the task and sets the status |
-| `execution` | a task-scoped workspace in place of the per-session one; cache-back and clean-up at task end; stop on `needs_input`; context block; summaries |
+| `execution` | a task-scoped workspace in place of the per-session one; clean-up at task end; stop on `needs_input`; context block; summaries |
 | `subagent` | `_progress.json` extensions; instructions; planner revise mode |
 | `executor` | resume per backend (§7): `pi` session file, claude `--resume`, codex resume |
 | `sessionjournal` | `task_id` on entries |
@@ -230,7 +230,7 @@ Time spent in `awaiting_input` or `paused` doesn't count as working time.
 ## 13. Testing
 
 - **State machine:** every row of the routing table; `needs_input` → reply → resume in the same workspace with the answer in context; feedback after done; pause at turn limit → continue; `/cancel` cleans up.
-- **Workspace:** a file written in turn 1 is visible in turn 2; cache-back happens only at task end; the clean-up sweep respects the TTLs.
+- **Workspace:** a file written in turn 1 is visible in turn 2; the clean-up sweep respects the TTLs.
 - **Protocol:** `_progress.json` with and without the new fields, so old prompts still work; `TASK: DONE` still ends the turn.
 - **Context block:** assembled from the record, and trimmed to a budget as turns accumulate.
 - **Resume:** per backend, with a fake CLI that records its arguments; the fallback when a resume fails.

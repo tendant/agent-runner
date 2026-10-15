@@ -8,7 +8,7 @@ Agent tasks sometimes need to call external authorized services (e.g. a Stripe l
 
 ## Current state
 
-- All configuration (including agent-runner's own operational secrets — `ANTHROPIC_API_KEY`, `GIT_TOKEN`, `MEMORY_GIT_TOKEN`, bot tokens, etc.) lives in one flat env var / `.env` / `.env.local` namespace. `.env`/`.env.local` are gitignored; `.env.local` is written with `0600` perms (parent dir `0700`).
+- All configuration (including agent-runner's own operational secrets — `ANTHROPIC_API_KEY`, `MEMORY_GIT_TOKEN`, bot tokens, etc.; at the time also `GIT_TOKEN`, since replaced by per-repo `/secret`s) lives in one flat env var / `.env` / `.env.local` namespace. `.env`/`.env.local` are gitignored; `.env.local` is written with `0600` perms (parent dir `0700`).
 - Git tokens (`GIT_TOKEN`, `MEMORY_GIT_TOKEN`) are handled well already: a git `credential.helper` script reads the token from the *subprocess environment* at invocation time (`echo "password=$GIT_TOKEN"`), so the raw value is never written to git config, never embedded in a remote URL, and never appears in the agent's prompt or the markdown audit log. This is the pattern the proposed design below reuses.
 - Two real gaps found while reviewing this:
   1. **`isSensitiveKey()` bug** (`internal/api/command.go:1365`) — matches suffixes `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD`, but the bare `API_KEY` var (agent-runner's own REST API auth key) is one character short of ever matching `_API_KEY`. `/set API_KEY <value>` echoes the raw value back in the chat reply, unlike every other secret. Not yet fixed.

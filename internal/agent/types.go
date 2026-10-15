@@ -101,7 +101,7 @@ type Session struct {
 
 	// TaskWorkspace, when set, makes this run one turn of a multi-turn task
 	// (TASKS_DESIGN.md): the workspace at this path is reused from earlier
-	// turns and kept afterwards instead of being cached back and deleted.
+	// turns and kept afterwards instead of being deleted.
 	TaskWorkspace string `json:"-"`
 	// TaskFeedback is the user's feedback that started this turn; with a
 	// saved plan the planner revises it (revise mode) before work resumes.

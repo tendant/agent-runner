@@ -166,9 +166,9 @@ session's audit log. Unsandboxed sessions work the same way, on a copy next to t
 
 Two kinds, kept apart:
 
-* **agent-runner's own** (`.env`, `/set`): model keys, `GIT_TOKEN`, `MEMORY_GIT_TOKEN`, bot
-  tokens, `API_KEY`. Never in the sandbox: the model proxy and the runner's push use them for
-  the agent.
+* **agent-runner's own** (`.env`, `/set`): model keys, `MEMORY_GIT_TOKEN`, bot tokens,
+  `API_KEY`. Never in the sandbox: the model proxy uses the model keys for the agent. (Repos
+  log in with the `/secret` each names, not with these.)
 * **The agent user's** (`/secret set NAME VALUE [description]`, kept in `DATA_DIR/secrets.json`,
   0600): what agents need for their tasks, such as `GITEE_TOKEN`. In every session's environment,
   sandboxed or not, and named with their descriptions (never values) in the prompt. They are not

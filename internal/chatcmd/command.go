@@ -738,10 +738,7 @@ func (c *Commander) handleSetFile(name, content string, isSystem bool) string {
 	if isSystem {
 		path = systemPath
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Sprintf("error: create dir for %s: %v", name, err)
-	}
-	if err := os.WriteFile(path, []byte(content+"\n"), 0644); err != nil {
+	if err := tmpl.WriteInstructions(c.cfg.MemoryDir, path, content+"\n", "memory: "+name+" edited by the operator (chat)"); err != nil {
 		return fmt.Sprintf("error: write %s: %v", name, err)
 	}
 	return fmt.Sprintf("ok wrote %s (%d bytes)", name, len(content))

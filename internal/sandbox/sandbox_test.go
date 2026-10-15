@@ -30,7 +30,6 @@ func TestParseSpecStrict(t *testing.T) {
 		"bad wildcard":         `{"version":1,"network":{"egress":"restricted","egress_allow":["*.*.com"]}}`,
 		"allow w/o restricted": `{"version":1,"network":{"egress":"none","egress_allow":["a.com"]}}`,
 		"unknown cap":          `{"version":1,"requirements":["fs.magic"]}`,
-		"dup secret":           `{"version":1,"secrets":[{"name":"a","delivery":"fd"},{"name":"a","delivery":"fd"}]}`,
 	} {
 		if _, err := ParseSpec([]byte(in)); err == nil {
 			t.Errorf("%s: expected error", name)

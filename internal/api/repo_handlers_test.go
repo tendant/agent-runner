@@ -44,3 +44,13 @@ func TestHandleRepos(t *testing.T) {
 		t.Errorf("delete again: %d", w.Code)
 	}
 }
+
+func TestHandleRunRefusesReadOnlyRepo(t *testing.T) {
+	env := setupTestEnv(t)
+	repos.AllowLocalPaths = true
+	repos.New(env.handlers.config.ReposFile).Put(repos.Repo{Name: "docs", URL: filepath.Join(t.TempDir(), "docs.git"), Push: false})
+	w := postJSON(env.handlers.HandleRun, map[string]any{"project": "docs", "instruction": "x", "paths": []string{"src/"}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "read-only") {
+		t.Errorf("got %d %s", w.Code, w.Body)
+	}
+}

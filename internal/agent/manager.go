@@ -54,7 +54,7 @@ type Manager struct {
 //
 // Anything a session touches outside its own workspace has to tolerate
 // maxConcurrent > 1 — see internal/template for the memory-dir lock and
-// internal/executor for repo-cache write-back.
+// internal/repos for the per-repo cache lock.
 func NewManager(sessionRetentionSeconds, maxQueueSize, maxConcurrent int) *Manager {
 	if maxQueueSize <= 0 {
 		maxQueueSize = 10

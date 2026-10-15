@@ -9,12 +9,11 @@ import (
 )
 
 // A sandboxed agent can edit its repos' .git/config, but the runner runs git
-// on the host in those repos (push, rebase, cache-back, the next session's
-// fetch). gitsafe neutralizes the settings it knows about; this goes further
+// on the host in those repos (push, rebase). gitsafe neutralizes the settings it knows about; this goes further
 // and never lets the runner use a config the agent wrote. Each repo's config
 // is saved as the runner left it after workspace preparation, outside the
 // sandbox's view, and put back before every host-side git step. Repos with
-// no saved config (the agent made them) are not pushed or cached.
+// no saved config (the agent made them) are never pushed.
 
 // trustedGitDir holds the saved configs, next to the agent's checkout: in
 // the session workspace, which the sandbox cannot see.

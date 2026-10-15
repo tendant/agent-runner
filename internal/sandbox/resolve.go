@@ -23,8 +23,7 @@ type Layer struct {
 
 // Resolve folds layers (System → Bot → Agent → Workspace → Run) into one spec.
 // Unset fields inherit; a layer that tries to widen anything is an error naming
-// the layer and field (fail closed). Deny lists and requirements only grow;
-// secrets can only be granted by the first layer and later layers may drop them.
+// the layer and field (fail closed). Deny lists and requirements only grow.
 func Resolve(layers ...Layer) (SandboxSpec, error) {
 	if len(layers) == 0 {
 		return SandboxSpec{}, fmt.Errorf("sandbox resolve: no policy layers")

@@ -226,3 +226,44 @@ func TestSSHAuth(t *testing.T) {
 		t.Errorf("ssh without a secret: %v", err)
 	}
 }
+
+// A remote that renames its default branch: the next checkout follows it
+// instead of coming out empty.
+func TestSyncFollowsRenamedDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	origin := filepath.Join(base, "origin.git")
+	src := filepath.Join(base, "src")
+	g := func(dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	g(base, "init", "-q", "--bare", "-b", "master", origin)
+	g(base, "clone", "-q", origin, src)
+	os.WriteFile(filepath.Join(src, "a.txt"), []byte("a"), 0o644)
+	g(src, "add", "-A")
+	g(src, "-c", "user.email=t@t", "-c", "user.name=T", "commit", "-qm", "one")
+	g(src, "push", "-q", "origin", "HEAD:master")
+	cache := filepath.Join(base, "cache")
+	rp := Repo{Name: "site", URL: origin}
+	if err := Checkout(ctx, rp, cache, filepath.Join(base, "w1", "site"), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Rename master -> main on the remote.
+	g(src, "push", "-q", "origin", "HEAD:main")
+	g(origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	g(src, "push", "-q", "origin", ":master")
+
+	dst := filepath.Join(base, "w2", "site")
+	if err := Checkout(ctx, rp, cache, dst, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "a.txt")); string(b) != "a" {
+		t.Errorf("checkout after the rename is empty")
+	}
+	if out, _ := exec.Command("git", "-C", dst, "branch", "--show-current").Output(); strings.TrimSpace(string(out)) != "main" {
+		t.Errorf("branch %s, want main", out)
+	}
+}

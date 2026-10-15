@@ -58,3 +58,20 @@ func TestPromptCheck(t *testing.T) {
 		t.Errorf("each problem should quote its line:\n%s", got)
 	}
 }
+
+// The current defaults' hashes. When a default changes, this fails: add the
+// old hash to pastAgentMDs or pastPromptMDs (so unedited instances upgrade
+// from it) and put the new one here.
+const (
+	currentAgentMDHash  = "a0149d5a38ad0ea3515f2905426c1cb9ed87683fafac4b15334a5bfa8380c02d"
+	currentPromptMDHash = "0be2b2d29b3b850c02b8931d912180481ca43ed967dfea8ef7d32fd5b2988af8"
+)
+
+func TestDefaultPromptHashesRecorded(t *testing.T) {
+	if h := promptHash(DefaultAgentMD); h != currentAgentMDHash {
+		t.Errorf("DefaultAgentMD changed: add %s to pastAgentMDs and set currentAgentMDHash to %s", currentAgentMDHash, h)
+	}
+	if h := promptHash(DefaultPromptMD); h != currentPromptMDHash {
+		t.Errorf("DefaultPromptMD changed: add %s to pastPromptMDs and set currentPromptMDHash to %s", currentPromptMDHash, h)
+	}
+}

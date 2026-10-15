@@ -57,7 +57,35 @@ func Sync(ctx context.Context, rp Repo, cacheRoot string, secrets *agentsecrets.
 	if err := run(ctx, cache, auth, "fetch", "--quiet", "--prune", "origin", "+refs/heads/*:refs/heads/*"); err != nil {
 		return rp.explain("fetch", err)
 	}
+	// The cache's HEAD names the default branch as it was at the clone. If
+	// that branch is gone (the remote renamed it, or the URL changed),
+	// follow the remote's: a checkout would otherwise be an empty repo.
+	if run(ctx, cache, gitpkg.Auth{}, "rev-parse", "--verify", "--quiet", "HEAD") != nil {
+		if err := repointHead(ctx, rp, cache, auth); err != nil {
+			return rp.explain("finding the default branch", err)
+		}
+	}
 	return nil
+}
+
+// repointHead sets the cache's HEAD to the remote's default branch.
+func repointHead(ctx context.Context, rp Repo, cache string, auth gitpkg.Auth) error {
+	cmd := gitsafe.CommandContext(ctx, append(append([]string{}, auth.Args...), "ls-remote", "--symref", "origin", "HEAD")...)
+	cmd.Dir = cache
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), auth.Env...)
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if ref, ok := strings.CutPrefix(line, "ref: "); ok {
+			ref, _, _ = strings.Cut(ref, "\t")
+			if strings.HasPrefix(ref, "refs/heads/") {
+				return run(ctx, cache, gitpkg.Auth{}, "symbolic-ref", "HEAD", ref)
+			}
+		}
+	}
+	return fmt.Errorf("%s does not say what its default branch is", rp.URL)
 }
 
 // Checkout puts a working copy of the repo at dst, cloned from its cache

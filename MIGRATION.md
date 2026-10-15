@@ -93,8 +93,9 @@ New, opt-in:
 - `AGENT_MEMORY_CURATION_ENABLED=true` — post-session LLM pass that distills
   lessons into `lessons.md` and compacts over-budget memory files (uses the
   fast-LLM slot; one small LLM call per session).
-- `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` now fall back to
-  `GIT_TOKEN` / `GIT_SSH_KEY` — single-host setups can delete the duplicates.
+- `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` fell back to `GIT_TOKEN` /
+  `GIT_SSH_KEY` in this release. That fallback has since been removed with
+  `GIT_TOKEN` itself (REPOS_DESIGN.md): set the memory credentials explicitly.
 
 ---
 

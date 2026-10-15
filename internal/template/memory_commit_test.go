@@ -138,3 +138,68 @@ func TestPullMemoryIntoEmptyRepo(t *testing.T) {
 		t.Error("shortHash")
 	}
 }
+
+// Two sessions merging at once each get a commit of their own files only,
+// and an operator's uncommitted edit is in neither.
+func TestMergeCommitsOnlyOwnFiles(t *testing.T) {
+	dir := memRepo(t)
+	a, _ := StageMemory(dir, filepath.Join(t.TempDir(), "a"))
+	b, _ := StageMemory(dir, filepath.Join(t.TempDir(), "b"))
+	os.WriteFile(filepath.Join(a.Dir, "alpha.md"), []byte("a\n"), 0o644)
+	os.WriteFile(filepath.Join(b.Dir, "beta.md"), []byte("b\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "agent.md"), []byte("operator edit\n"), 0o644) // not committed
+	done := make(chan struct{})
+	go func() {
+		a.MergeAndCommit(func(s []string) string { return SessionCommitMessage("A", "t", s) })
+		close(done)
+	}()
+	b.MergeAndCommit(func(s []string) string { return SessionCommitMessage("B", "t", s) })
+	<-done
+	files := func(subject string) string {
+		out, _ := exec.Command("git", "-C", dir, "log", "--format=", "--name-only", "--grep", subject).Output()
+		return strings.TrimSpace(string(out))
+	}
+	if got := files("session A "); got != "alpha.md" {
+		t.Errorf("A's commit: %q", got)
+	}
+	if got := files("session B "); got != "beta.md" {
+		t.Errorf("B's commit: %q", got)
+	}
+	if out, _ := exec.Command("git", "-C", dir, "status", "--porcelain").Output(); !strings.Contains(string(out), "agent.md") {
+		t.Error("the operator's edit must stay uncommitted, not swept into a session's commit")
+	}
+}
+
+// A session's append is undone even after a later session appended to the
+// same file; undoing it twice says so.
+func TestUndoAppendAfterLaterAppend(t *testing.T) {
+	dir := memRepo(t) // decisions.md = "d1\n"
+	write := func(body, msg string) {
+		os.WriteFile(filepath.Join(dir, "decisions.md"), []byte(body), 0o644)
+		CommitMemoryFiles(dir, msg, "decisions.md")
+	}
+	write("d1\nfrom-1\n", SessionCommitMessage("agent-1", "t", []string{"decisions.md"}))
+	write("d1\nfrom-1\nfrom-2\n", SessionCommitMessage("agent-2", "t", []string{"decisions.md"}))
+	if _, err := UndoMemorySession(dir, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "decisions.md")); string(b) != "d1\nfrom-2\n" {
+		t.Errorf("after undo: %q", b)
+	}
+	if _, err := UndoMemorySession(dir, "agent-1"); err == nil || !strings.Contains(err.Error(), "already undone") {
+		t.Errorf("second undo: %v", err)
+	}
+}
+
+// An operator's edit to agent.md is its own commit.
+func TestWriteInstructionsCommitsAlone(t *testing.T) {
+	dir := memRepo(t)
+	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("left over\n"), 0o644)
+	if err := WriteInstructions(dir, filepath.Join(dir, "agent.md"), "be kind\n", "memory: agent.md edited by the operator (chat)"); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := exec.Command("git", "-C", dir, "show", "--name-only", "--format=%s", "HEAD").Output()
+	if got := strings.TrimSpace(string(out)); got != "memory: agent.md edited by the operator (chat)\n\nagent.md" {
+		t.Errorf("HEAD: %q", got)
+	}
+}

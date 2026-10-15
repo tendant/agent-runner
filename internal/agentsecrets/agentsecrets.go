@@ -1,6 +1,6 @@
 // Package agentsecrets keeps the secrets agent users give their agents
 // (a Gitee token, a Stripe key), apart from agent-runner's own (.env:
-// model keys, GIT_TOKEN, bot tokens). They live in DATA_DIR/secrets.json,
+// model keys, bot tokens, the memory repo's token). They live in DATA_DIR/secrets.json,
 // are set with /secret, and reach every agent session as environment
 // variables, sandboxed or not: they are for the agent, so the sandbox does
 // not hide them. Agents are told each one's name and description, never
@@ -215,7 +215,7 @@ var runnerPrefixes = []string{
 var runnerNames = map[string]bool{
 	"API_KEY": true, "API_BIND": true, "DATA_DIR": true, "INSTANCE": true, "LOGS_ROOT": true,
 	"STATE_ROOT": true, "TMP_ROOT": true, "OUTPUTS_ROOT": true, "UPLOADS_ROOT": true,
-	"REPO_CACHE_ROOT": true, "ALLOWED_PROJECTS": true, "ANALYZER_TIMEOUT_SECONDS": true,
+	"REPO_CACHE_ROOT": true, "ANALYZER_TIMEOUT_SECONDS": true,
 	"CLEANUP_STALE_JOBS": true, "LOG_RETENTION_DAYS": true, "TRACING_ENABLED": true,
 	"WELCOME_ENABLED": true, "IS_SANDBOX": true,
 	"PATH": true, "HOME": true, "USER": true, "SHELL": true, "TMPDIR": true, "LANG": true, "TERM": true,
