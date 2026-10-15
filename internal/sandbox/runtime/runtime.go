@@ -382,6 +382,15 @@ func (r *Run) Egress() []EgressHost {
 	return r.egress.summary()
 }
 
+// Home is the run's sandbox home on the host: writable inside, kept for the
+// thread. "" with mode off.
+func (r *Run) Home() string {
+	if r == nil {
+		return ""
+	}
+	return r.roots[sandbox.RootHome]
+}
+
 // Begin prepares a run. With mode off it returns ctx unchanged.
 func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	if r.initErr != nil {

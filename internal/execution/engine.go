@@ -185,19 +185,31 @@ pushed meanwhile, it rebases them for you, and asks you to resolve the conflicts
 that rebase conflicts.
 `
 
+// sandboxMemoryNote tells a sandboxed agent what happens to its memory
+// writes: they go to a copy, merged back when the session ends.
+const sandboxMemoryNote = `
+
+## Memory in this sandbox
+
+The memory directory above is your own copy. Changes to its lowercase ` + "`.md`" + ` files (new ones
+too) are saved when the session ends; ` + "`lessons.md`" + ` only takes appends. ` + "`agent.md`" + `,
+` + "`prompt.md`" + `, upper-case files such as ` + "`HEARTBEAT.md`" + `, daily logs, deletions, subdirectories and
+links are not saved: ask the user to change those.
+`
+
 // beginSandbox confines the run's agent CLIs. The returned context carries the
 // sandbox launcher, so the planner, session and reviewer are all covered. A
 // strict-mode rejection fails the session before any work starts. egress
 // reports what the run's egress gateway allowed and refused (nil without a
 // sandbox).
-func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (_ context.Context, finish func(), egress func() []sandboxrt.EgressHost, aborted bool) {
+func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (_ context.Context, run *sandboxrt.Run, aborted bool) {
 	if h.sandbox == nil || h.sandbox.Mode() == "off" {
-		return ctx, func() {}, nil, false
+		return ctx, nil, false
 	}
 	// Fail now, in words, rather than deep in the CLI with an auth error.
 	if clisetup.ResolveCLI(h.config.Agent.CLI) == "claude" && !clisetup.SandboxedClaudeAuth(h.config.Agent.SandboxEnvAllow, h.config.Agent.SandboxModelProxy) {
 		h.FailSession(sessionID, "sandbox: claude has no credentials: "+clisetup.SandboxedClaudeAuthHelp)
-		return ctx, func() {}, nil, true
+		return ctx, nil, true
 	}
 	thread := sessionID
 	if live.TaskWorkspace != "" {
@@ -206,9 +218,46 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 	run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds})
 	if err != nil {
 		h.FailSession(sessionID, "sandbox: "+err.Error())
-		return ctx, func() {}, nil, true
+		return ctx, nil, true
 	}
-	return run.Ctx, run.Finish, run.Egress, false
+	return run.Ctx, run, false
+}
+
+// stageMemory gives a sandboxed run a writable copy of the memory dir in
+// its sandbox home (the memory dir itself is read-only there); the session's
+// changes are merged back when it ends (mergeMemory). nil, and the agent
+// keeps read-only memory, if the copy cannot be made.
+func (h *Engine) stageMemory(sessionID string, live *agent.Session, run *sandboxrt.Run) *tmpl.MemoryStage {
+	if run == nil || run.Home() == "" || h.config.MemoryDir == "" {
+		return nil
+	}
+	st, err := tmpl.StageMemory(h.config.MemoryDir, filepath.Join(run.Home(), "memory"))
+	if err != nil {
+		slog.Warn("sandbox: memory copy failed; memory is read-only this session", "session_id", sessionID, "error", err)
+		live.AddWarning("memory is read-only this session: " + err.Error())
+		return nil
+	}
+	return st
+}
+
+// mergeMemory saves what a sandboxed session changed in its memory copy,
+// and says what it refused.
+func (h *Engine) mergeMemory(sessionID string, live *agent.Session, st *tmpl.MemoryStage) {
+	if st == nil {
+		return
+	}
+	res, err := st.Merge()
+	if err != nil {
+		slog.Warn("memory merge failed", "session_id", sessionID, "error", err)
+		live.AddWarning("memory changes not saved: " + err.Error())
+	}
+	if len(res.Saved) > 0 {
+		slog.Info("memory: saved the session's changes", "session_id", sessionID, "files", strings.Join(res.Saved, ", "))
+	}
+	if len(res.Skipped) > 0 {
+		slog.Warn("memory: changes not saved", "session_id", sessionID, "skipped", strings.Join(res.Skipped, "; "))
+		live.AddWarning("memory changes not saved: " + strings.Join(res.Skipped, "; "))
+	}
 }
 
 // CallbackPayload is the body POSTed to a session's CallbackURL: the same
@@ -274,6 +323,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	liveSession, _ := h.agentManager.GetSessionDirect(sessionID)
 	var plannerPromptText string
 	var sandboxEgress func() []sandboxrt.EgressHost // set once the sandbox starts
+	var memoryStage *tmpl.MemoryStage               // a sandboxed run's memory copy
 
 	// Root span for the run; every phase below is a child. The trace id is
 	// stored on the session so API responses and logs can be joined to it.
@@ -374,6 +424,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		} else {
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
+
+		// A sandboxed agent's memory changes, before the daily log and the
+		// push below so they ride the same commit.
+		h.mergeMemory(sessionID, liveSession, memoryStage)
 
 		// Write daily memory log with rich session details
 		msgPreview := message
@@ -503,22 +557,6 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		}
 	}
 
-	// Resolve prompt: combine base system prompt (agent.md) + workflow template (prompt.md)
-	if h.config.Agent.SystemPrompt != "" {
-		slog.Info("system prompt configured", "session_id", sessionID, "path", h.config.Agent.SystemPrompt)
-	}
-	if h.config.Agent.PromptFile != "" {
-		slog.Info("workflow prompt configured", "session_id", sessionID, "path", h.config.Agent.PromptFile)
-	}
-
-	_, promptSpan := tracing.Start(ctx, "agent.prompt.resolve")
-	preamble, err := h.resolvePrompt(sessionID, message)
-	tracing.End(promptSpan, err)
-	if err != nil {
-		h.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
-		return
-	}
-
 	_, wsSpan := tracing.Start(ctx, "agent.workspace.prepare", attribute.StringSlice("session.paths", liveSession.Paths))
 	checkoutPath, aborted := h.prepareWorkspace(sessionID, liveSession)
 	if aborted {
@@ -528,17 +566,42 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if aborted {
 		return
 	}
-	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
-
-	ctx, sandboxFinish, egress, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
+	ctx, sandboxRun, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
 	if sandboxAborted {
 		return
 	}
-	sandboxEgress = egress
+	memoryDir := h.config.MemoryDir // what the prompt points the agent at
+	if sandboxRun != nil {
+		defer sandboxRun.Finish()
+		sandboxEgress = sandboxRun.Egress
+		if memoryStage = h.stageMemory(sessionID, liveSession, sandboxRun); memoryStage != nil {
+			memoryDir = memoryStage.Dir
+		}
+	}
+
+	// Resolve prompt: combine base system prompt (agent.md) + workflow template (prompt.md)
+	if h.config.Agent.SystemPrompt != "" {
+		slog.Info("system prompt configured", "session_id", sessionID, "path", h.config.Agent.SystemPrompt)
+	}
+	if h.config.Agent.PromptFile != "" {
+		slog.Info("workflow prompt configured", "session_id", sessionID, "path", h.config.Agent.PromptFile)
+	}
+
+	_, promptSpan := tracing.Start(ctx, "agent.prompt.resolve")
+	preamble, err := h.resolvePrompt(sessionID, message, memoryDir)
+	tracing.End(promptSpan, err)
+	if err != nil {
+		h.FailSession(sessionID, "Failed to resolve prompt: "+err.Error())
+		return
+	}
+
 	if h.sandboxed() {
 		preamble += sandboxGitNote
+		if memoryStage != nil {
+			preamble += sandboxMemoryNote
+		}
 	}
-	defer sandboxFinish()
+	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
 	planCtx, planSpan := tracing.Start(ctx, "agent.planner", attribute.Bool("planner.enabled", h.config.Agent.PlannerEnabled))
 	plan, plannerText, aborted := h.runPlanner(planCtx, sessionID, liveSession, checkoutPath, preamble, message)
@@ -1155,7 +1218,10 @@ func (h *Engine) determineFinalStatus(ctx context.Context, sessionID string, liv
 
 // resolvePrompt builds the combined system prompt using the new single-agent
 // memory architecture: system instructions → memory sections → current request.
-func (h *Engine) resolvePrompt(sessionID, message string) (string, error) {
+//
+// memoryDir is the memory dir as the agent sees it: the real one, or a
+// sandboxed run's copy. Memory content is always read from the real one.
+func (h *Engine) resolvePrompt(sessionID, message, memoryDir string) (string, error) {
 	systemPromptPath, promptFilePath := h.deps.BootstrapPaths()
 
 	// Read system instructions (agent.md); empty string if file missing — no error.
@@ -1206,7 +1272,7 @@ func (h *Engine) resolvePrompt(sessionID, message string) (string, error) {
 
 	// Build vars map.
 	runnerURL := "http://" + h.config.API.Bind
-	absMemoryDir, _ := filepath.Abs(h.config.MemoryDir)
+	absMemoryDir, _ := filepath.Abs(memoryDir)
 	vars := map[string]string{
 		tmpl.VarMessage:    message,
 		tmpl.VarDate:       time.Now().Format("2006-01-02"),
