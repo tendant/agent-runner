@@ -41,6 +41,10 @@ jobs:
         run: |
           sudo apt-get install -y -qq nftables iproute2 >/dev/null
           bash "$(go list -m -f '{{.Dir}}' github.com/tendant/agentbox)/scripts/install-runsc.sh"
+      # The real claude CLI, for the smoke's free fake-API session.
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install -g @anthropic-ai/claude-code >/dev/null
       # /tmp, not $RUNNER_TEMP: that is inside the runner's home, which the
       # run's own directories would then show in the home probe.
       - name: Smoke

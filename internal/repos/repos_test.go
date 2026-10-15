@@ -17,7 +17,7 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("empty: %v %v", list, err)
 	}
 	a := Repo{Name: "oam-server", URL: "https://lei@gitee.com/org/oam-server.git", Secret: "GITEE_TOKEN", Push: true}
-	b := Repo{Name: "docs", URL: "git@github.com:org/docs.git"}
+	b := Repo{Name: "docs", URL: "git@github.com:org/docs.git", Secret: "GH_DEPLOY_KEY"}
 	for _, rp := range []Repo{a, b} {
 		if err := r.Put(rp); err != nil {
 			t.Fatal(err)
@@ -165,5 +165,64 @@ func TestSyncAndCheckout(t *testing.T) {
 	}
 	if err := Checkout(ctx, Repo{Name: "nope", URL: filepath.Join(base, "missing.git")}, cache, filepath.Join(base, "ws4", "nope"), nil); err == nil {
 		t.Error("a missing remote must fail")
+	}
+}
+
+// An ssh repo logs in with the secret's key as a file of its own, through
+// agent-runner's ssh command (never the host's keys, agent or config), over
+// a core.sshCommand planted in the repo.
+func TestSSHAuth(t *testing.T) {
+	dir := t.TempDir()
+	secrets := agentsecrets.New(filepath.Join(dir, "secrets.json"))
+	key := "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
+	secrets.Set("GITEE_SSH_KEY", key, "")
+
+	fake := filepath.Join(dir, "fake-ssh")
+	argLog := filepath.Join(dir, "ssh-args")
+	os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argLog+"\nexit 1\n"), 0o755)
+	saved := sshProgram
+	sshProgram = fake
+	defer func() { sshProgram = saved }()
+
+	rp := Repo{Name: "x", URL: "git@gitee.com:org/x.git", Secret: "GITEE_SSH_KEY", Push: true}
+	if err := rp.Check(); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := rp.Auth(secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	exec.Command("git", "-C", repo, "init", "-q").Run()
+	exec.Command("git", "-C", repo, "config", "core.sshCommand", "touch "+filepath.Join(dir, "planted")).Run()
+	cmd := exec.Command("git", append(auth.Args, "ls-remote", rp.URL)...)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), auth.Env...)
+	cmd.Run() // fails: the fake ssh exits 1
+
+	if _, err := os.Stat(filepath.Join(dir, "planted")); err == nil {
+		t.Fatal("the repo's core.sshCommand ran")
+	}
+	args, err := os.ReadFile(argLog)
+	if err != nil {
+		t.Fatalf("agent-runner's ssh did not run: %v", err)
+	}
+	keyFile := filepath.Join(agentsecrets.FilesDir(secrets.Path()), "GITEE_SSH_KEY")
+	for _, want := range []string{"-i\n" + keyFile, "IdentityAgent=none", "-F\n/dev/null", "StrictHostKeyChecking=accept-new", "git@gitee.com"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("ssh args lack %q:\n%s", want, args)
+		}
+	}
+	if b, _ := os.ReadFile(keyFile); string(b) != key+"\n" {
+		t.Errorf("key file %q", b)
+	}
+	if fi, _ := os.Stat(keyFile); fi.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode %v", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(filepath.Dir(keyFile)); fi.Mode().Perm() != 0o700 {
+		t.Errorf("key dir mode %v", fi.Mode().Perm())
+	}
+	if err := (Repo{Name: "y", URL: "git@gitee.com:org/y.git"}).Check(); err == nil || !strings.Contains(err.Error(), "needs a key") {
+		t.Errorf("ssh without a secret: %v", err)
 	}
 }

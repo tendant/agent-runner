@@ -37,11 +37,19 @@ func (c *Commander) handleSecret(arg string) string {
 		}
 		return strings.TrimSpace(b.String())
 	case "set":
-		if len(fields) < 3 {
-			return "error: usage: /secret set NAME VALUE [description]"
+		// One line: NAME VALUE [description]. A value of several lines (a
+		// private key) goes on the lines after: NAME [description] first.
+		head, body, multiline := strings.Cut(arg, "\n")
+		hf := strings.Fields(head)
+		var name, value, desc string
+		switch {
+		case multiline && strings.TrimSpace(body) != "" && len(hf) >= 2:
+			name, value, desc = hf[1], strings.TrimSpace(body), strings.Join(hf[2:], " ")
+		case len(fields) >= 3 && !multiline:
+			name, value, desc = fields[1], fields[2], strings.Join(fields[3:], " ")
+		default:
+			return "error: usage: /secret set NAME VALUE [description], or for a value of several lines (a private key): /secret set NAME [description] and the value on the lines after"
 		}
-		name, value := fields[1], fields[2]
-		desc := strings.Join(fields[3:], " ")
 		if err := store.Set(name, value, desc); err != nil {
 			return "error: " + err.Error()
 		}

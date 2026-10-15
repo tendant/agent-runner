@@ -94,3 +94,27 @@ func TestUndoMemorySessionConflict(t *testing.T) {
 		t.Errorf("repo left dirty: %s", out)
 	}
 }
+
+// A memory dir inside some other repo (DATA_DIR defaults to the current
+// folder) is not committed there unless MEMORY_GIT_PARENT_REPO asks.
+func TestCommitAndPushMemoryParentRepoOptIn(t *testing.T) {
+	outer := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "T"}} {
+		exec.Command("git", append([]string{"-C", outer}, args...)...).Run()
+	}
+	mem := filepath.Join(outer, "memory")
+	os.MkdirAll(mem, 0o755)
+	os.WriteFile(filepath.Join(mem, "decisions.md"), []byte("d\n"), 0o644)
+	count := func() string {
+		out, _ := exec.Command("git", "-C", outer, "rev-list", "--all", "--count").Output()
+		return strings.TrimSpace(string(out))
+	}
+	t.Setenv("MEMORY_GIT_PARENT_REPO", "")
+	if err := CommitAndPushMemory(mem, MemoryGitCreds{}); err != nil || count() != "0" {
+		t.Errorf("committed into the outer repo unasked: %v, %s commits", err, count())
+	}
+	t.Setenv("MEMORY_GIT_PARENT_REPO", "true")
+	if err := CommitAndPushMemory(mem, MemoryGitCreds{}); err != nil || count() != "1" {
+		t.Errorf("opt-in: %v, %s commits", err, count())
+	}
+}
