@@ -29,7 +29,7 @@ func TestSecretCommand(t *testing.T) {
 	if reply, _, _ := c.Handle("/secret remove GITEE_TOKEN", nil); !strings.HasPrefix(reply, "ok") {
 		t.Errorf("remove: %q", reply)
 	}
-	if reply, _, _ := c.Handle("/secret set ONLYNAME", nil); !strings.Contains(reply, "usage") {
+	if reply, _, _ := c.Handle("/secret set ONLYNAME", nil); !strings.Contains(reply, "needs a name and a value") || !strings.Contains(reply, "/secret set GITEE_TOKEN") {
 		t.Errorf("usage: %q", reply)
 	}
 }
@@ -53,5 +53,17 @@ func TestSecretSetMultiline(t *testing.T) {
 	list, _ := agentsecrets.New(env.cfg.SecretsFile).List()
 	if len(list) != 1 || list[0].Value != key || list[0].Description != "deploy key for oam" {
 		t.Errorf("stored %+v", list)
+	}
+}
+
+func TestSecretHelp(t *testing.T) {
+	env := setupTestEnv(t)
+	env.cfg.SecretsFile = filepath.Join(t.TempDir(), "secrets.json")
+	c := NewCommander(env.cfg, env.rt)
+	reply, _, _ := c.Handle("/secret help", nil)
+	for _, want := range []string{"/secret set GITEE_TOKEN", "BEGIN OPENSSH PRIVATE KEY", "/repo add", "only with\n/secret"} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("help lacks %q", want)
+		}
 	}
 }

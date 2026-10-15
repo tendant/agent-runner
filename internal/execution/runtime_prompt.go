@@ -78,7 +78,10 @@ func runtimeInstructions(f runtimeFacts) string {
 	b.WriteString("\n### Credentials\n\n")
 	b.WriteString("Credentials for your tasks are environment variables: use them from there, never search files\n" +
 		"for keys, and do not write them into files, commits or memory. agent-runner's own credentials\n" +
-		"(model keys) are never yours to use: it calls the model for you.")
+		"(model keys) are never yours to use: it calls the model for you. If a task needs a credential you\n" +
+		"do not have, ask the user to add it in chat with `/secret set NAME VALUE description` (e.g.\n" +
+		"`/secret set GITEE_TOKEN <token> Gitee API`; `/secret help` shows the format) and to start a new\n" +
+		"session; never ask them to paste it into a message, which reaches your model and the logs.")
 	b.WriteString("\n")
 	if len(f.Secrets) > 0 {
 		b.WriteString("\nSet for you (`/secret` in chat adds more):\n\n")
