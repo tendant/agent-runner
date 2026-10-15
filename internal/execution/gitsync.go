@@ -64,8 +64,14 @@ func (h *Engine) syncWorkspaceRepos(
 				liveSession.AddWarning(w)
 			}
 		}
-		conflicts, warnings := pushRepos(ctx, ops, candidates, sessionID)
+		// Git work on its own bounded context, not cancelled with the
+		// session: commits are pushed or parked even during a shutdown, and
+		// a conflict turn that used up time cannot leave the next round
+		// with a dead context.
+		gitCtx, cancelGit := keepWorkCtx(ctx)
+		conflicts, warnings := pushRepos(gitCtx, ops, candidates, sessionID)
 		if len(conflicts) == 0 {
+			cancelGit()
 			for _, w := range warnings {
 				liveSession.AddWarning(w)
 			}
@@ -79,10 +85,12 @@ func (h *Engine) syncWorkspaceRepos(
 				liveSession.AddWarning(w)
 			}
 			for _, rc := range conflicts {
-				liveSession.AddWarning(parkConflictedWork(ctx, ops[rc.RepoPath], rc, sessionID))
+				liveSession.AddWarning(parkConflictedWork(gitCtx, ops[rc.RepoPath], rc, sessionID))
 			}
+			cancelGit()
 			return
 		}
+		cancelGit()
 
 		// Hand the conflict to the agent as a corrective iteration, the same
 		// way reviewer feedback is.
@@ -158,20 +166,19 @@ func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos 
 		}
 		name := filepath.Base(repo)
 		if ops.RebaseInProgress(ctx, repo) {
-			// The agent resolved the markers but didn't finish, or didn't
-			// touch it at all. Try to finish; what's left conflicted is the
-			// agent's to resolve.
+			// Still conflicted: the agent's to resolve.
 			if files := ops.ConflictedFiles(ctx, repo); len(files) > 0 {
 				branch := rebaseBranch(ctx, ops, repo)
 				conflicts = append(conflicts, &gitpkg.RebaseConflictError{RepoPath: repo, Branch: branch, Files: files})
 				continue
 			}
-			if err := ops.ContinueRebase(ctx, repo); err != nil {
-				if files := ops.ConflictedFiles(ctx, repo); len(files) > 0 {
-					conflicts = append(conflicts, &gitpkg.RebaseConflictError{RepoPath: repo, Branch: rebaseBranch(ctx, ops, repo), Files: files, Err: err})
-					continue
-				}
-				warnings = append(warnings, fmt.Sprintf("%s: could not finish in-progress rebase: %v", name, err))
+			// Never continued here: the rebase's state files were the
+			// agent's to write, and continuing would act on them on the
+			// host. Abort it, and Push below rebases again from the refs
+			// (conflicting again if the agent's resolution was not
+			// committed, which hands it back).
+			if err := ops.AbortRebase(ctx, repo); err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: could not abort the rebase left in progress: %v", name, err))
 				continue
 			}
 		}
@@ -316,6 +323,14 @@ func hasCommits(repoPath string) bool {
 // ahead of the upstream, or on a branch the agent made (no upstream yet),
 // or on a detached HEAD.
 func hasUnpushedCommits(ctx context.Context, repoPath string) bool {
-	out, err := gitCmd(ctx, repoPath, "rev-list", "--count", "HEAD", "--not", "--remotes=origin").Output()
-	return err == nil && strings.TrimSpace(string(out)) != "" && strings.TrimSpace(string(out)) != "0"
+	// A branch with an upstream is ahead of it, even if its commits are on
+	// some other origin branch already (main fast-forwarded to a pushed
+	// feature branch); without one, commits origin has on no branch.
+	args := []string{"rev-list", "--count", "@{u}..HEAD"}
+	if gitCmd(ctx, repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").Run() != nil {
+		args = []string{"rev-list", "--count", "HEAD", "--not", "--remotes=origin"}
+	}
+	out, err := gitCmd(ctx, repoPath, args...).Output()
+	n := strings.TrimSpace(string(out))
+	return err == nil && n != "" && n != "0"
 }

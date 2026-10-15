@@ -413,9 +413,13 @@ func (m *Manager) evictStale() {
 	for chatID, conv := range m.threads {
 		conv.mu.Lock()
 		updatedAt := conv.UpdatedAt
+		executing := conv.State == StateExecuting
 		conv.mu.Unlock()
 
-		if updatedAt.Before(cutoff) {
+		// A thread whose agent is still running is not idle, however long
+		// the run takes: evicting it would let the next message start a
+		// second run (and, with tasks, release the running one's workspace).
+		if updatedAt.Before(cutoff) && !executing {
 			delete(m.threads, chatID)
 			if m.dir != "" {
 				os.Remove(m.convFilePath(chatID))

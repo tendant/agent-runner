@@ -85,6 +85,9 @@ func repointHead(ctx context.Context, rp Repo, cache string, auth gitpkg.Auth) e
 			}
 		}
 	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil // an empty repo: no branch yet, nothing to point at
+	}
 	return fmt.Errorf("%s does not say what its default branch is", rp.URL)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"log/slog"
 	"os"
@@ -114,7 +115,7 @@ func New(cfg *config.Config, mgr *agent.Manager, wm *executor.WorkspaceManager, 
 func collectScheduleEntries(workspacePath string) ([]ScheduleEntry, error) {
 	path := filepath.Join(workspacePath, scheduleFileName)
 	slog.Debug("scheduler: reading schedule file", "path", path)
-	data, err := os.ReadFile(path)
+	data, err := safefs.Read(workspacePath, scheduleFileName, 1<<20) // agent-written
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Debug("scheduler: no schedule file", "path", path)

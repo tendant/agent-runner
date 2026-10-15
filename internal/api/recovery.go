@@ -172,8 +172,12 @@ func (s *Server) recoverTasks() {
 			continue
 		}
 		if t := rec.LastTurn(); t != nil {
-			if _, live := s.agentManager.GetSession(t.SessionID); live {
-				continue
+			// Live only if it is still to run: recoverSessions also
+			// registers interrupted sessions, already failed.
+			if sess, ok := s.agentManager.GetSession(t.SessionID); ok {
+				if st := sess.Snapshot().Status; st == agent.SessionStatusQueued || st == agent.SessionStatusRunning {
+					continue
+				}
 			}
 		}
 		_, _ = s.tasks.Update(rec.ThreadKey, func(r *task.Record) {

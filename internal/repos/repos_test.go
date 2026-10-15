@@ -267,3 +267,18 @@ func TestSyncFollowsRenamedDefaultBranch(t *testing.T) {
 		t.Errorf("branch %s, want main", out)
 	}
 }
+
+// An empty registered repo (no branch yet) can be checked out again.
+func TestCheckoutEmptyRepoTwice(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	origin := filepath.Join(base, "empty.git")
+	exec.Command("git", "init", "-q", "--bare", origin).Run()
+	rp := Repo{Name: "empty", URL: origin}
+	cache := filepath.Join(base, "cache")
+	for i := 0; i < 2; i++ {
+		if err := Checkout(ctx, rp, cache, filepath.Join(base, "w"+string(rune('0'+i)), "empty"), nil); err != nil {
+			t.Fatalf("checkout %d: %v", i+1, err)
+		}
+	}
+}

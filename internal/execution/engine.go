@@ -27,6 +27,7 @@ import (
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/metrics"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"github.com/agent-runner/agent-runner/internal/textutil"
@@ -655,15 +656,17 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	promptBuilder, stopReason, completed, blockedOrStuck, aborted := h.runIterationLoop(
 		ctx, sessionID, source, liveSession, checkoutPath, preamble, message, maxIter, maxSeconds, startTime, deadline, plan, as)
 	if aborted {
-		// The session has failed, but what the agent committed and left
-		// in _send/ is still the user's: push it (no conflict turn: work
-		// that cannot be merged is parked on agent-rescue/<id>) and deliver
-		// the files before the workspace goes.
+		// The session fails (stopReason says why), but what the agent
+		// committed and left in _send/ is still the user's: push it (no
+		// conflict turn: work that cannot be merged is parked on
+		// agent-rescue/<id>) and collect the files, then fail it, so a
+		// watcher reporting the failure has them.
 		as.Close()
-		keepCtx, cancel := keepWorkCtx(ctx)
+		h.syncWorkspaceRepos(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil)
+		finCtx, cancel := keepWorkCtx(ctx)
 		defer cancel()
-		h.syncWorkspaceRepos(keepCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil)
-		h.finalizeAgentOutputs(keepCtx, sessionID, liveSession, checkoutPath)
+		h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
+		h.FailSession(sessionID, stopReason)
 		return
 	}
 
@@ -681,11 +684,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	reviewSpan.End()
 
-	// Not cancelled with the session (a shutdown cancels it): the agent's
-	// commits are pushed or parked either way.
+	// The sync runs its git work on contexts a shutdown does not cancel
+	// (see syncWorkspaceRepos); ctx itself still says whether to start
+	// a conflict-resolution turn.
 	keepCtx, cancelKeep := keepWorkCtx(ctx)
 	defer cancelKeep()
-	syncCtx, syncSpan := tracing.Start(keepCtx, "agent.git.sync")
+	syncCtx, syncSpan := tracing.Start(ctx, "agent.git.sync")
 	h.syncWorkspaceRepos(syncCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as)
 	syncSpan.End()
 
@@ -879,8 +883,7 @@ func (h *Engine) runIterationLoop(
 				failMsg += ": " + lastErr
 			}
 			slog.Error("aborting session", "session_id", sessionID, "reason", failMsg)
-			h.FailSession(sessionID, failMsg)
-			return promptBuilder, stopReason, completed, blockedOrStuck, true
+			return promptBuilder, failMsg, completed, blockedOrStuck, true
 		}
 
 		// Exponential backoff on consecutive failures
@@ -959,8 +962,7 @@ func (h *Engine) runIterationLoop(
 
 		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
-			h.FailSession(sessionID, result.Error)
-			return promptBuilder, stopReason, completed, blockedOrStuck, true
+			return promptBuilder, result.Error, completed, blockedOrStuck, true
 		}
 
 		// A dead session process (persistent backends) gets one restart with
@@ -969,8 +971,7 @@ func (h *Engine) runIterationLoop(
 		if died && !as.restarted && !liveSession.StopRequested() && ctx.Err() == nil {
 			slog.Warn("agent session process died; restarting once", "session_id", sessionID, "iteration", i)
 			if err := as.restart(ctx, checkoutPath); err != nil {
-				h.FailSession(sessionID, "agent session restart failed: "+err.Error())
-				return promptBuilder, stopReason, completed, blockedOrStuck, true
+				return promptBuilder, "agent session restart failed: " + err.Error(), completed, blockedOrStuck, true
 			}
 			liveSession.AddWarning("agent session process died; restarted with full context rebuild")
 		}
@@ -1161,7 +1162,7 @@ func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liv
 		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
 		liveSession.SetOutputFiles(outputFiles)
 		if h.config.OutputsRoot != "" {
-			if err := persistOutputFiles(sendDir, h.config.OutputsRoot, sessionID); err != nil {
+			if err := persistOutputFiles(outputFiles, h.config.OutputsRoot, sessionID); err != nil {
 				slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
 			}
 		}
@@ -1476,65 +1477,51 @@ const (
 // collectOutputFiles reads files from the _send/ directory and returns them
 // as OutputFile slices. Caps at maxOutputFiles files and maxOutputTotalSize total bytes.
 func collectOutputFiles(sendDir string) ([]agent.OutputFile, error) {
+	if _, err := os.Lstat(sendDir); os.IsNotExist(err) {
+		return nil, nil
+	}
+	// The agent wrote _send/: read it without following a link out of it
+	// (a file of the runner's would go to chat), and only regular files,
+	// each within what is left of the size cap.
+	root, err := safefs.Open(sendDir)
+	if err != nil {
+		return nil, fmt.Errorf("read _send/ dir: %w", err)
+	}
+	defer root.Close()
 	entries, err := os.ReadDir(sendDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("read _send/ dir: %w", err)
 	}
 
 	var files []agent.OutputFile
 	var totalSize int64
-
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+		if !entry.Type().IsRegular() {
+			continue // directories, links, FIFOs, devices
 		}
 		if len(files) >= maxOutputFiles {
 			slog.Warn("output file limit reached, skipping remaining", "limit", maxOutputFiles)
 			break
 		}
-
-		path := filepath.Join(sendDir, entry.Name())
-		info, err := entry.Info()
+		data, err := safefs.ReadIn(root, entry.Name(), maxOutputTotalSize-totalSize)
 		if err != nil {
 			slog.Warn("skipping output file", "file", entry.Name(), "error", err)
 			continue
 		}
-
-		if totalSize+info.Size() > maxOutputTotalSize {
-			slog.Warn("skipping output file, would exceed size limit", "file", entry.Name(), "limit_mb", maxOutputTotalSize>>20)
-			continue
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			slog.Warn("skipping output file", "file", entry.Name(), "error", err)
-			continue
-		}
-
-		contentType := http.DetectContentType(data)
 		totalSize += int64(len(data))
-
 		files = append(files, agent.OutputFile{
 			Name:        entry.Name(),
 			Data:        data,
-			ContentType: contentType,
+			ContentType: http.DetectContentType(data),
 		})
 	}
-
 	return files, nil
 }
 
 // persistOutputFiles copies files from sendDir to outputsRoot/<date>/<sessionID>/
 // so they survive workspace cleanup and are accessible to subsequent sessions.
-func persistOutputFiles(sendDir, outputsRoot, sessionID string) error {
-	entries, err := os.ReadDir(sendDir)
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
+func persistOutputFiles(files []agent.OutputFile, outputsRoot, sessionID string) error {
+	if len(files) == 0 {
 		return nil
 	}
 	date := time.Now().UTC().Format("2006-01-02")
@@ -1542,14 +1529,11 @@ func persistOutputFiles(sendDir, outputsRoot, sessionID string) error {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		src := filepath.Join(sendDir, entry.Name())
-		dst := filepath.Join(destDir, entry.Name())
-		if err := copyFile(src, dst); err != nil {
-			slog.Warn("failed to persist output file", "file", entry.Name(), "error", err)
+	// The bytes already collected (and checked): _send/ is not opened again.
+	for _, f := range files {
+		dst := filepath.Join(destDir, filepath.Base(f.Name))
+		if err := os.WriteFile(dst, f.Data, 0o644); err != nil {
+			slog.Warn("failed to persist output file", "file", f.Name, "error", err)
 		} else {
 			slog.Info("persisted output file", "path", dst)
 		}
@@ -1683,6 +1667,7 @@ func pushUnpushedCommits(ctx context.Context, repoPath string, retries, retryDel
 func gitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
 	cmd := gitsafe.CommandContext(ctx, args...)
 	cmd.Dir = repoPath
+	cmd.Env = append(os.Environ(), gitsafe.RepoEnv(repoPath)...)
 	return cmd
 }
 

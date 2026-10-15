@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,16 +28,20 @@ var claudeConfigEntries = []string{"settings.json", "CLAUDE.md", "agents", "comm
 // the onboarding flag. Not oauthAccount, not per-project history.
 var claudeStateKeys = []string{"mcpServers", "hasCompletedOnboarding"}
 
-// seedClaudeConfig refreshes dst, the sandbox home's claude config dir, from
-// seed before a run: the allowlisted entries are replaced with the seed's
-// current copies (or removed when the seed no longer has them) and the
-// allowlisted .claude.json keys are merged in. Everything else in dst, such as
-// the CLI's own session transcripts that a task's next turn resumes, is kept.
-func seedClaudeConfig(seed ClaudeSeed, dst string) error {
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+// seedClaudeConfig refreshes rel, the claude config dir under the sandbox
+// home, from seed before a run: the allowlisted entries are replaced with
+// the seed's current copies (or removed when the seed no longer has them)
+// and the allowlisted .claude.json keys are merged in. Everything else there,
+// such as the CLI's own session transcripts that a task's next turn resumes,
+// is kept. The home is the agent's to write, so everything goes through a
+// root at it: a link it planted is never followed (internal/safefs).
+func seedClaudeConfig(seed ClaudeSeed, home, rel string) error {
+	root, err := safefs.Open(home)
+	if err != nil {
 		return err
 	}
-	if err := seedDir(seed.Dir, dst, claudeConfigEntries); err != nil {
+	defer root.Close()
+	if err := seedDirIn(seed.Dir, root, rel, claudeConfigEntries); err != nil {
 		return err
 	}
 	if seed.StateFile == "" {
@@ -50,9 +55,9 @@ func seedClaudeConfig(seed ClaudeSeed, dst string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	statePath := filepath.Join(dst, ".claude.json")
+	statePath := filepath.Join(rel, ".claude.json")
 	state := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(statePath); err == nil {
+	if b, err := safefs.ReadIn(root, statePath, 4<<20); err == nil {
 		_ = json.Unmarshal(b, &state) // a corrupt copy is rebuilt
 	}
 	for _, k := range claudeStateKeys {
@@ -66,26 +71,35 @@ func seedClaudeConfig(seed ClaudeSeed, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(statePath, b, 0o600)
+	return safefs.WriteIn(root, statePath, b, 0o600)
 }
 
-// seedDir refreshes the allowlisted entries of dst from src: each is replaced
-// with src's current copy, or removed when src no longer has it. Other entries
-// in dst (the CLI's own sessions and state) are kept. An empty src only makes
-// sure dst exists.
-func seedDir(src, dst string, entries []string) error {
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+// seedDir refreshes the allowlisted entries of rel (under the sandbox home)
+// from src: each is replaced with src's current copy, or removed when src no
+// longer has it. Other entries (the CLI's own sessions and state) are kept.
+// An empty src only makes sure rel exists.
+func seedDir(src, home, rel string, entries []string) error {
+	root, err := safefs.Open(home)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return seedDirIn(src, root, rel, entries)
+}
+
+func seedDirIn(src string, root *os.Root, rel string, entries []string) error {
+	if err := root.MkdirAll(rel, 0o700); err != nil {
 		return err
 	}
 	if src == "" {
 		return nil
 	}
 	for _, name := range entries {
-		target := filepath.Join(dst, name)
-		if err := os.RemoveAll(target); err != nil {
+		target := filepath.Join(rel, name)
+		if err := root.RemoveAll(target); err != nil {
 			return err
 		}
-		if err := copyEntry(filepath.Join(src, name), target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := copyEntry(filepath.Join(src, name), root, target); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -102,14 +116,15 @@ var (
 	piConfigEntries    = []string{"AGENTS.md", "settings.json", "prompts", "skills"}
 )
 
-// copyEntry copies a file or directory tree, following symlinks to their
-// content so nothing in dst points back outside the sandbox. A directory
-// reached twice through symlinks (a loop) is copied once.
-func copyEntry(src, dst string) error {
-	return copyResolved(src, dst, map[string]bool{})
+// copyEntry copies a host file or directory tree (src, trusted) to dst
+// under root, following src's symlinks to their content so nothing in dst
+// points back outside the sandbox. A directory reached twice through
+// symlinks (a loop) is copied once.
+func copyEntry(src string, root *os.Root, dst string) error {
+	return copyResolved(src, root, dst, map[string]bool{})
 }
 
-func copyResolved(src, dst string, seen map[string]bool) error {
+func copyResolved(src string, root *os.Root, dst string, seen map[string]bool) error {
 	real, err := filepath.EvalSymlinks(src)
 	if err != nil {
 		return err
@@ -119,13 +134,17 @@ func copyResolved(src, dst string, seen map[string]bool) error {
 		return err
 	}
 	if !info.IsDir() {
-		return copyFile(real, dst)
+		b, err := os.ReadFile(real)
+		if err != nil {
+			return err
+		}
+		return safefs.WriteIn(root, dst, b, 0o600)
 	}
 	if seen[real] {
 		return nil
 	}
 	seen[real] = true
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	if err := root.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
 	ents, err := os.ReadDir(real)
@@ -133,21 +152,10 @@ func copyResolved(src, dst string, seen map[string]bool) error {
 		return err
 	}
 	for _, e := range ents {
-		err := copyResolved(filepath.Join(real, e.Name()), filepath.Join(dst, e.Name()), seen)
+		err := copyResolved(filepath.Join(real, e.Name()), root, filepath.Join(dst, e.Name()), seen)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) { // a dangling symlink is skipped
 			return err
 		}
 	}
 	return nil
-}
-
-func copyFile(src, dst string) error {
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(dst, b, 0o600)
 }

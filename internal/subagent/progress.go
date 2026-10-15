@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"encoding/json"
+	"github.com/agent-runner/agent-runner/internal/safefs"
 	"os"
 	"path/filepath"
 )
@@ -35,7 +36,7 @@ type ProgressResult struct {
 // ReadProgress reads _progress.json from workspacePath.
 // Returns a zero ProgressResult if the file is missing or invalid.
 func ReadProgress(workspacePath string) ProgressResult {
-	data, err := os.ReadFile(filepath.Join(workspacePath, "_progress.json"))
+	data, err := safefs.Read(workspacePath, "_progress.json", 1<<20) // agent-written
 	if err != nil {
 		return ProgressResult{}
 	}
@@ -51,8 +52,7 @@ func ReadProgress(workspacePath string) ProgressResult {
 // left by the previous turn would end the new turn at its first iteration,
 // and a stale blocked step would stop it outright. A missing file is fine.
 func ResetTurnFields(workspacePath string) error {
-	path := filepath.Join(workspacePath, "_progress.json")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(workspacePath, "_progress.json")); os.IsNotExist(err) {
 		return nil
 	}
 	p := ReadProgress(workspacePath)
@@ -62,7 +62,7 @@ func ResetTurnFields(workspacePath string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return safefs.Write(workspacePath, "_progress.json", data, 0o644)
 }
 
 // SyncCompletedSteps rewrites _progress.json's completed_steps to the plan's
@@ -80,7 +80,7 @@ func SyncCompletedSteps(workspacePath string, plan *PlanResult) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(workspacePath, "_progress.json"), data, 0o644)
+	return safefs.Write(workspacePath, "_progress.json", data, 0o644)
 }
 
 // planFile is where a task keeps its plan between turns: the runner's state

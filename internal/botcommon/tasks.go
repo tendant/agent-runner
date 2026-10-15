@@ -2,6 +2,7 @@ package botcommon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -22,6 +23,23 @@ type TaskStarter interface {
 	StartTaskTurn(turn agent.TaskTurn) (sessionID string, err error)
 	TaskWorkspacePath(taskKey string) string
 	FinishTaskWorkspace(taskDir string)
+}
+
+// SessionStopper is implemented by a starter that can stop a session.
+type SessionStopper interface {
+	StopSession(sessionID string) error
+}
+
+// errTurnRunning: a task's turn has not ended, so its workspace is still in
+// use; nothing new starts in the thread until it has.
+var errTurnRunning = errors.New("the current task's turn is still finishing; send this again in a moment, or /cancel it")
+
+// liveTurn returns the session id of the record's turn that has not ended.
+func liveTurn(rec *task.Record) string {
+	if t := rec.LastTurn(); t != nil && t.EndedAt.IsZero() && (rec.Status == task.StatusWorking || rec.Status == task.StatusCancelled) {
+		return t.SessionID
+	}
+	return ""
 }
 
 // taskStarter returns the starter's task support when task mode is on.
@@ -217,6 +235,11 @@ func (e *Engine) resumeTask(ctx context.Context, id string, conv *thread.Thread,
 // latest message.
 func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request string, feedback bool) (string, error) {
 	rec, ok := e.Tasks.Get(id)
+	if ok && liveTurn(rec) != "" {
+		// Its workspace is in use (a message that lost the thread's state,
+		// or one right after /cancel): never released or reused under it.
+		return "", errTurnRunning
+	}
 	continuing := ok && (rec.Status.Resumable() || (feedback && rec.Status == task.StatusDone && !rec.WorkspaceRemoved))
 	turn := agent.TaskTurn{Source: e.Source, ConvID: id}
 	if continuing {
@@ -373,11 +396,12 @@ func budgetNotice(rec *task.Record, over string) string {
 func (e *Engine) ResetThread(id string) {
 	var next string
 	if ts, ok := e.taskStarter(); ok {
-		var release string
+		var release, stop string
 		_, _ = e.Tasks.Update(id, func(rec *task.Record) {
 			if rec.Status.Finished() {
 				return
 			}
+			stop = liveTurn(rec)
 			running := rec.Status == task.StatusWorking
 			rec.Status = task.StatusCancelled
 			rec.OpenQuestion = ""
@@ -389,6 +413,13 @@ func (e *Engine) ResetThread(id string) {
 		})
 		if release != "" {
 			ts.FinishTaskWorkspace(release)
+		}
+		if stop != "" {
+			// Cancel means stop: the running turn ends now, and its
+			// workspace is released when it has (finishTaskTurn).
+			if s, ok := e.Starter.(SessionStopper); ok {
+				_ = s.StopSession(stop)
+			}
 		}
 		next = e.popQueued(id)
 	}

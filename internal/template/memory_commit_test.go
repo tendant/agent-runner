@@ -203,3 +203,34 @@ func TestWriteInstructionsCommitsAlone(t *testing.T) {
 		t.Errorf("HEAD: %q", got)
 	}
 }
+
+// Committing a file that never existed (lessons.md before the first lesson)
+// commits what does exist instead of failing.
+func TestCommitMemoryFilesSkipsMissing(t *testing.T) {
+	dir := memRepo(t)
+	os.WriteFile(filepath.Join(dir, "decisions.md"), []byte("d1\nd2\n"), 0o644)
+	ok, err := CommitMemoryFiles(dir, "memory: curation (session s)", "lessons.md", "decisions.md")
+	if err != nil || !ok {
+		t.Fatalf("commit: %v %v", ok, err)
+	}
+	if ok, err := CommitMemoryFiles(dir, "nothing", "lessons.md"); ok || err != nil {
+		t.Errorf("only a missing file: %v %v", ok, err)
+	}
+}
+
+// The session's own append is removed, not a later identical one.
+func TestUndoRemovesTheSessionsOwnAppend(t *testing.T) {
+	dir := memRepo(t) // decisions.md = "d1\n"
+	write := func(body, msg string) {
+		os.WriteFile(filepath.Join(dir, "decisions.md"), []byte(body), 0o644)
+		CommitMemoryFiles(dir, msg, "decisions.md")
+	}
+	write("d1\n- a\n", SessionCommitMessage("s1", "t", []string{"decisions.md"}))
+	write("d1\n- a\n- b\n- a\n", SessionCommitMessage("s2", "t", []string{"decisions.md"}))
+	if _, err := UndoMemorySession(dir, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "decisions.md")); string(b) != "d1\n- b\n- a\n" {
+		t.Errorf("after undo: %q", b)
+	}
+}

@@ -306,7 +306,9 @@ func (o *Operations) RebaseInProgress(ctx context.Context, repoPath string) bool
 }
 
 // ContinueRebase resumes a rebase whose conflicts have been staged,
-// accepting the original commit messages.
+// accepting the original commit messages. Only for a rebase the caller
+// started and whose state nobody else could write: never for one an agent
+// had in its workspace (its state files can make git run commands).
 func (o *Operations) ContinueRebase(ctx context.Context, repoPath string) error {
 	return o.runGitCommandEnv(ctx, repoPath, []string{"GIT_EDITOR=true"}, "rebase", "--continue")
 }
@@ -415,9 +417,9 @@ func (o *Operations) runGitCommand(ctx context.Context, repoPath string, args ..
 func (o *Operations) runGitCommandEnv(ctx context.Context, repoPath string, extraEnv []string, args ...string) error {
 	cmd := gitsafe.CommandContext(ctx, append(append([]string{}, o.Auth.Args...), args...)...)
 	cmd.Dir = repoPath
-	if env := append(append([]string{}, o.Auth.Env...), extraEnv...); len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	// Pinned to the repo's own .git: a file in it cannot send git elsewhere.
+	env := append(append(gitsafe.RepoEnv(repoPath), o.Auth.Env...), extraEnv...)
+	cmd.Env = append(os.Environ(), env...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

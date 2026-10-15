@@ -34,7 +34,7 @@ func TestSeedClaudeConfigCopiesTheAllowlistOnly(t *testing.T) {
 	write(t, filepath.Join(dst, "projects", "ws", "session.jsonl"), "resume me")
 	write(t, filepath.Join(dst, "commands", "stale.md"), "gone from the host")
 
-	if err := seedClaudeConfig(ClaudeSeed{Dir: src, StateFile: state}, dst); err != nil {
+	if err := seedClaudeConfig(ClaudeSeed{Dir: src, StateFile: state}, filepath.Dir(dst), filepath.Base(dst)); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"settings.json", "CLAUDE.md", "skills/deploy/SKILL.md", "projects/ws/session.jsonl"} {
@@ -63,14 +63,14 @@ func TestSeedClaudeConfigCopiesTheAllowlistOnly(t *testing.T) {
 
 func TestSeedClaudeConfigWithoutASource(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), ".claude")
-	if err := seedClaudeConfig(ClaudeSeed{}, dst); err != nil {
+	if err := seedClaudeConfig(ClaudeSeed{}, filepath.Dir(dst), filepath.Base(dst)); err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(dst); err != nil || !fi.IsDir() {
 		t.Errorf("config dir not created: %v", err)
 	}
 	missing := ClaudeSeed{Dir: filepath.Join(dst, "nope"), StateFile: filepath.Join(dst, "nope.json")}
-	if err := seedClaudeConfig(missing, dst); err != nil {
+	if err := seedClaudeConfig(missing, filepath.Dir(dst), filepath.Base(dst)); err != nil {
 		t.Errorf("a missing source is not an error: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestSeedClaudeConfigFollowsSymlinksWithoutLooping(t *testing.T) {
 	os.Symlink(filepath.Join(host, "gone"), filepath.Join(shared, "dangling")) // and dangles
 
 	dst := filepath.Join(t.TempDir(), ".claude")
-	if err := seedClaudeConfig(ClaudeSeed{Dir: src}, dst); err != nil {
+	if err := seedClaudeConfig(ClaudeSeed{Dir: src}, filepath.Dir(dst), filepath.Base(dst)); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Lstat(filepath.Join(dst, "skills"))
@@ -97,5 +97,34 @@ func TestSeedClaudeConfigFollowsSymlinksWithoutLooping(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "skills", "deploy", "SKILL.md")); err != nil {
 		t.Error(err)
+	}
+}
+
+// The sandbox home is the agent's to write: a link it planted where the
+// runner seeds config is replaced, never written through.
+func TestSeedDoesNotFollowPlantedLinks(t *testing.T) {
+	home := t.TempDir()
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "settings.json"), []byte(`{"seed":true}`), 0o600)
+	runnerFile := filepath.Join(t.TempDir(), "runner.json")
+	os.WriteFile(runnerFile, []byte("runner"), 0o600)
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o700)
+	os.Symlink(runnerFile, filepath.Join(home, ".claude", ".claude.json"))
+	state := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(state, []byte(`{"hasCompletedOnboarding":true}`), 0o600)
+	if err := seedClaudeConfig(ClaudeSeed{Dir: src, StateFile: state}, home, ".claude"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(runnerFile); string(b) != "runner" {
+		t.Errorf("wrote through the planted link: %q", b)
+	}
+	// A whole config dir replaced by a link to a runner directory.
+	runnerDir := t.TempDir()
+	os.RemoveAll(filepath.Join(home, ".codex"))
+	os.Symlink(runnerDir, filepath.Join(home, ".codex"))
+	if err := seedDir(src, home, ".codex", []string{"settings.json"}); err == nil {
+		if _, err := os.Stat(filepath.Join(runnerDir, "settings.json")); err == nil {
+			t.Error("seeded into the linked runner directory")
+		}
 	}
 }

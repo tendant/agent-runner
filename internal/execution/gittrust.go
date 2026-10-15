@@ -64,6 +64,9 @@ func restoreGitConfigs(checkoutPath string) (trusted, untrusted []string) {
 		if err == nil {
 			err = writeGitConfig(repo, data)
 		}
+		if err == nil {
+			err = gitsafe.CheckRepo(repo)
+		}
 		if err != nil {
 			untrusted = append(untrusted, repo)
 			continue

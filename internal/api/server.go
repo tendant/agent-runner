@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -128,6 +130,10 @@ func NewServer(cfg *config.Config) *Server {
 	if cfg.API.APIKey != "" {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
 	}
+	// Outermost: a web page in the operator's browser cannot drive the API
+	// (it has no key, and with none set the loopback bind would not stop
+	// it), and no request body is unbounded.
+	handler = sameOriginMiddleware(maxBodyMiddleware(maxRequestBody, handler))
 
 	if cfg.Agent.MemoryCurationEnabled {
 		slog.Info("memory curation enabled", "timeout_seconds", cfg.Agent.MemoryCurationTimeoutSeconds)
@@ -503,7 +509,7 @@ func apiKeyMiddleware(apiKey string, next http.Handler) http.Handler {
 			return
 		}
 		providedKey := r.Header.Get("X-API-Key")
-		if providedKey != apiKey {
+		if subtle.ConstantTimeCompare([]byte(providedKey), []byte(apiKey)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"error":"Invalid or missing API key"}`))
@@ -575,4 +581,41 @@ func upgradeDefaultPrompts(h *Handlers) {
 			slog.Warn("prompts: out of date with how the runner works now; see /prompt check", "path", p, "problems", strings.Join(problems, "; "))
 		}
 	}
+}
+
+// maxRequestBody bounds every request body (uploads included).
+const maxRequestBody = 32 << 20
+
+func maxBodyMiddleware(limit int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOriginMiddleware refuses a state-changing request a browser sends
+// from another site. Browsers send Origin on cross-site POSTs, even
+// "simple" ones that skip CORS preflight; API clients (curl, bots, other
+// services) send none, or their own host.
+func sameOriginMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"cross-origin request refused"}`))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sameHost(origin, host string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && u.Host != "" && strings.EqualFold(u.Host, host)
 }
