@@ -55,6 +55,48 @@ then describe the task in a message
 - **Setup:** `/set KEY VALUE` configures a running instance (saved to `.env.local`, applied
   immediately); `/config` and `/status` show it.
 
+### Secrets and repos as files
+
+`/secret` and `/repo add` write two files in `DATA_DIR`, which you can also write yourself, keep in
+git (encrypted) and deploy, so a bot's setup is repeatable. Both are read when used: changes apply
+at the next session, without a restart.
+
+`secrets.json`, the agent's secrets (multi-line values such as SSH keys are ordinary strings):
+
+```json
+{
+  "GITEE_TOKEN": { "value": "1a2b3c…", "description": "Gitee API and git for oam-server" },
+  "GITEE_SSH_KEY": { "value": "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----\n",
+                     "description": "deploy key for oam-ops" }
+}
+```
+
+`repos.json`, the repos every session gets:
+
+```json
+[
+  { "name": "oam-server", "url": "https://lei@gitee.com/org/oam-server.git", "secret": "GITEE_TOKEN", "branch": "develop", "push": true },
+  { "name": "docs", "url": "https://github.com/org/docs.git", "push": false }
+]
+```
+
+Encrypt only the values with [sops](https://github.com/getsops/sops), so a diff still shows which
+secret changed and what it is for, and decrypt on the bot's host when deploying:
+
+```sh
+sops --encrypt --age <recipient> --encrypted-regex '^value$' secrets.json > agent-secrets.sops.json   # commit this
+sops --decrypt agent-secrets.sops.json > "$DATA_DIR/secrets.json" && chmod 600 "$DATA_DIR/secrets.json"
+cp repos.json "$DATA_DIR/repos.json"                                                                    # no secrets in it
+```
+
+- Prefer this to `/secret set` in chat for anything long-lived: a value typed in chat stays
+  stored as a message on the chat server (agent-runner keeps it out of the agent's history, but
+  not off the server).
+- Names agent-runner reads itself are skipped even in a hand-written file: agent-runner's own
+  keys stay in `.env` (`SECRETS.md`) and never reach the agent.
+- `/repo add` fetches a repo to check its URL, branch and token; a hand-written entry is first
+  fetched at the next session, so a mistake shows up there (and in `/repo list`).
+
 ### Sandboxed agents
 
 To run every agent CLI in a sandbox ([agentbox](https://github.com/tendant/agentbox): gVisor on

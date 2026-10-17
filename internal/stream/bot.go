@@ -148,10 +148,24 @@ func (b *Bot) threadHistory(ctx context.Context, key string) ([]botcommon.Histor
 		return nil, err
 	}
 	out := make([]botcommon.HistoryMessage, 0, len(msgs))
+	afterCommand := false // the message before was a chat command
 	for _, m := range msgs {
 		if m.DeletedAt != nil {
 			continue
 		}
+		self := m.UserID == b.botUserID && m.SenderKind == "bot"
+		// Chat commands (/secret set, /set KEY VALUE, ...) are agent-runner's,
+		// never the agent's: they can carry a secret's value, and agent-runner's
+		// own keys must not reach the agent. The reply right after goes too.
+		if m.SenderKind == "human" && strings.HasPrefix(strings.TrimSpace(m.Content), "/") {
+			afterCommand = true
+			continue
+		}
+		if afterCommand && self {
+			afterCommand = false
+			continue
+		}
+		afterCommand = false
 		content := strings.TrimSpace(m.Content)
 		if n := len(m.FileIDs); n > 0 {
 			content = strings.TrimSpace(fmt.Sprintf("%s\n(attached %d file(s))", content, n))
@@ -163,7 +177,7 @@ func (b *Bot) threadHistory(ctx context.Context, key string) ([]botcommon.Histor
 			Speaker: b.speaker(m),
 			Content: content,
 			Time:    m.CreatedAt,
-			Self:    m.UserID == b.botUserID && m.SenderKind == "bot",
+			Self:    self,
 		})
 	}
 	return out, nil
