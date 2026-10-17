@@ -97,9 +97,23 @@ type noopReporter struct{}
 
 func (noopReporter) OnIterationComplete(agent.IterationResult) {}
 func (noopReporter) OnIterationStart(int, int)                 {}
-func (noopReporter) OnFinal(*agent.Session)                    {}
+func (noopReporter) OnFinal(*agent.Session, string)            {}
 func (noopReporter) OnNotFound()                               {}
 func (noopReporter) OnTimeout()                                {}
+
+// footerReporter posts only the footer of the result message, as a final,
+// so tests can assert on the task's notice.
+type footerReporter struct {
+	noopReporter
+	sender Sender
+	id     string
+}
+
+func (r footerReporter) OnFinal(_ *agent.Session, footer string) {
+	if footer != "" {
+		r.sender.Final(context.Background(), r.id, footer)
+	}
+}
 
 // fakeAnalyzerClient returns canned analyzer output.
 type fakeAnalyzerClient struct {
@@ -162,7 +176,7 @@ func newEngineFixture(t *testing.T, analyzerOutput string) *engineFixture {
 		StartText:            "Starting agent...",
 		SessionStartedFormat: "Agent session started: %s",
 		AnnounceQueued:       true,
-		NewReporter:          func(string) Reporter { return noopReporter{} },
+		NewReporter:          func(id string) Reporter { return footerReporter{sender: sender, id: id} },
 		WG:                   &sync.WaitGroup{},
 	}
 	return &engineFixture{engine: e, sender: sender, starter: starter, conv: mgr.GetOrCreate("conv-1"), mgr: mgr}

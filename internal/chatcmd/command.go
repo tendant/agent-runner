@@ -33,6 +33,7 @@ const (
 	cmdPrompt    = "/prompt"
 	cmdSecret    = "/secret"
 	cmdRepo      = "/repo"
+	cmdAlerts    = "/alerts"
 )
 
 // Runtime is the narrow surface of the API layer the Commander needs. It
@@ -129,6 +130,7 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
 		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 		cmdRepo:          repoUsage,
+		cmdAlerts:        "usage: " + cmdAlerts + " [set <policy>|clear]",
 		"/stop":          "usage: /stop [session-id]",
 		"/logs":          "usage: /logs [session-id-prefix]",
 		"/update-prompt": "usage: /update-prompt <content>",
@@ -177,6 +179,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	case lower == "/auth" || strings.HasPrefix(lower, "/auth "):
 		arg := strings.TrimSpace(text[len("/auth"):])
 		return r(c.handleAuth(arg, send))
+	case lower == cmdAlerts || strings.HasPrefix(lower, cmdAlerts+" "):
+		return r(c.handleAlerts(strings.TrimSpace(text[len(cmdAlerts):])))
 	case lower == cmdSecret || strings.HasPrefix(lower, cmdSecret+" "):
 		return r(c.handleSecret(strings.TrimSpace(text[len(cmdSecret):])))
 	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
@@ -1098,6 +1102,7 @@ More: **/help secret** · **/help repo** · **/help memory**
 **/memory status** · **/memory pull** · **/memory push** · **/memory git** _\<remote-url\>_ · **/memory keygen** · **/memory pubkey**
 **/prompt show** _[agent|workflow]_ · **/prompt check** — out-of-date lines · **/prompt preview** _[full] [message]_ — what a session would get
 **/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
+**/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
 
 **Setup** (agent-runner itself)
 **/config** — settings and readiness

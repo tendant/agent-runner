@@ -225,8 +225,11 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 		t.Fatalf("plan not tracked across turns: %+v", rec.Plan)
 	}
 	done := botMessageContaining(t, human, thread, "Task done")
-	if !strings.Contains(done, "✅ 1. prepare the deploy") {
-		t.Fatalf("done notice has no checklist: %q", done)
+	if !strings.Contains(done, "✅ Task done (all 2 plan steps)") || strings.Contains(done, "1. prepare the deploy") {
+		t.Fatalf("done notice should sum up the plan, not list it: %q", done)
+	}
+	if !strings.Contains(done, "Deployed to staging.") {
+		t.Fatalf("the done notice is not part of the turn's result message: %q", done)
 	}
 	checkClaudeResumed(t, claudeLog, filepath.Join(workspace, "workspace"))
 
@@ -299,6 +302,23 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 	}
 	if rec := readTask(t, dataDir, forOther.MessageID); len(rec.Turns) != 0 {
 		t.Fatal("a task was started for a thread addressed to another bot")
+	}
+
+	// 8. Brought into that thread later, ours gets its whole history from
+	// agent-stream, including the message it was never addressed.
+	human.do("POST", "/v2/threads/"+forOther.MessageID+"/messages", map[string]any{
+		"content": "@runner please take this over", "mentions": []string{st.botUserID},
+	}, nil)
+	waitBotMessage(t, human, forOther.MessageID, "Which environment should I deploy to?", logs)
+	calls, _ := os.ReadFile(claudeLog)
+	var agentPrompt string
+	for _, line := range strings.Split(string(calls), "\n") {
+		if strings.Contains(line, "please take this over") && strings.Contains(line, "Conversation History") {
+			agentPrompt = line
+		}
+	}
+	if !strings.Contains(agentPrompt, "@other deploy the admin panel") {
+		t.Fatalf("the agent's prompt lacks the thread's earlier message:\n%s", tail(string(calls), 5))
 	}
 }
 

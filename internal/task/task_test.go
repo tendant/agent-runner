@@ -164,3 +164,31 @@ func TestContextBlockFeedback(t *testing.T) {
 		t.Errorf("feedback label missing:\n%s", got)
 	}
 }
+
+// Feedback whose turn ended in a plan revision awaiting approval must reach
+// the turn the approval starts, attachments included.
+func TestContextBlockCarriesEarlierRequests(t *testing.T) {
+	rec := New("m_1", "fix the alerts page", "")
+	long := strings.Repeat("还是近30日 ", 300)
+	rec.Turns = []Turn{
+		{Request: "fix the alerts page", Summary: "changed the default"},
+		{Request: "如红框中所示，问题并没有解决\n\n[Image: /data/uploads/2026-10-16/1-shot.png]", StopReason: "needs_input", Question: "I've revised the plan. Proceed?"},
+		{Request: long + "[File 'log.txt': /data/uploads/2026-10-16/2-log.txt]"},
+	}
+	got := ContextBlock(rec, "yes", false)
+	for _, want := range []string{
+		"the user said: 如红框中所示，问题并没有解决 [Image: /data/uploads/2026-10-16/1-shot.png]",
+		"[File 'log.txt': /data/uploads/2026-10-16/2-log.txt]",
+		"User's reply: yes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("context block missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "the user said: fix the alerts page") != 0 {
+		t.Error("the first turn's request repeats the goal")
+	}
+	if len([]rune(got)) > 3000 {
+		t.Errorf("a long earlier request was not capped (%d runes)", len([]rune(got)))
+	}
+}

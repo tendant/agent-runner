@@ -645,3 +645,23 @@ func TestLoad_TasksEnabledByDefault(t *testing.T) {
 		t.Error("AGENT_TASKS_ENABLED=false should turn tasks off")
 	}
 }
+
+// An API reachable from other machines needs API_KEY (or an explicit opt-out).
+func TestAPIConfig_ExposedWithoutKey(t *testing.T) {
+	for bind, exposed := range map[string]bool{
+		"127.0.0.1:8080": false, "localhost:8080": false, "[::1]:8080": false,
+		"0.0.0.0:8080": true, ":8080": true, "192.168.3.110:8080": true, "[::]:8080": true,
+	} {
+		if got := (APIConfig{Bind: bind}).ExposedWithoutKey(); got != exposed {
+			t.Errorf("%s: exposed = %v, want %v", bind, got, exposed)
+		}
+	}
+	if (APIConfig{Bind: "0.0.0.0:8080", APIKey: "k"}).ExposedWithoutKey() || (APIConfig{Bind: "0.0.0.0:8080", AllowNoKey: true}).ExposedWithoutKey() {
+		t.Error("a key or the opt-out should allow a public bind")
+	}
+	cfg := DefaultConfig()
+	cfg.API.Bind = "0.0.0.0:8080"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "API_KEY") {
+		t.Errorf("Validate: %v", err)
+	}
+}

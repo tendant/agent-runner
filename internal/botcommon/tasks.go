@@ -232,8 +232,9 @@ func (e *Engine) resumeTask(ctx context.Context, id string, conv *thread.Thread,
 // task (resumable, or done with feedback) with its context block, or starts
 // a new task (releasing a finished predecessor's workspace and inheriting
 // its queue). message is the prompt for a new task; request is the user's
-// latest message.
-func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request string, feedback bool) (string, error) {
+// latest message; prefix goes before a continuing task's context block (the
+// thread's latest messages, a run note).
+func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request, prefix string, feedback bool) (string, error) {
 	rec, ok := e.Tasks.Get(id)
 	if ok && liveTurn(rec) != "" {
 		// Its workspace is in use (a message that lost the thread's state,
@@ -244,6 +245,7 @@ func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request string, feed
 	turn := agent.TaskTurn{Source: e.Source, ConvID: id}
 	if continuing {
 		turn.Message = task.ContextBlock(rec, request, feedback)
+		turn.Message = prefix + turn.Message
 		if feedback {
 			turn.Feedback = request
 		}
@@ -378,7 +380,27 @@ func doneNotice(rec *task.Record, chat bool) string {
 	if chat {
 		next = "Reply with feedback to revise it, or send a new request."
 	}
-	return withChecklist(rec, "✅ Task done. "+next)
+	return "✅ Task done" + planProgress(rec) + ". " + next
+}
+
+// planProgress is a done task's plan in brief: the full checklist belongs to
+// unfinished work, and a done task's plan often has steps it never needed
+// (a plan revised along the way). "" without a plan.
+func planProgress(rec *task.Record) string {
+	total := len(rec.Plan)
+	if total == 0 {
+		return ""
+	}
+	done := 0
+	for _, st := range rec.Plan {
+		if st.Done {
+			done++
+		}
+	}
+	if done == total {
+		return fmt.Sprintf(" (all %d plan steps)", total)
+	}
+	return fmt.Sprintf(" (%d of %d plan steps checked off)", done, total)
 }
 
 func pausedNotice(rec *task.Record) string {

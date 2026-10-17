@@ -41,6 +41,14 @@ def is_small_talk(msg):
     return msg.lower().strip(" !.") in ("thanks", "thank you", "great", "ok")
 
 
+if "You triage automated alerts" in text:
+    alert = text[text.rfind("[Automated alert"):]
+    if "RESOLVED" in alert:
+        result(json.dumps({"action": "ignore", "message": "resolved by itself"}))
+    if "There is no alert policy" in text:
+        result(json.dumps({"action": "plan", "message": "CI is failing. I propose to investigate and fix it."}))
+    result(json.dumps({"action": "execute", "message": "Fixing the alert now."}))
+
 if "You are a conversation router" in text:
     msg = last_line_after("user:")
     if is_small_talk(msg):
@@ -87,6 +95,11 @@ if "User's reply: staging" in prompt:
     write_progress({"completed_steps": ["1", "2"], "status": "done",
                     "summary": "deployed to staging"})
     result("Deployed to staging.")
+
+if "Automated alert" in prompt or "Alert from webhook" in prompt:
+    write_progress({"completed_steps": ["1", "2"], "status": "done",
+                    "summary": "fixed what the alert reported"})
+    result("Fixed what the alert reported.")
 
 # First turn: leave scratch work behind and ask a question.
 with open("notes.txt", "w") as f:

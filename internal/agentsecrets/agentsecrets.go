@@ -213,7 +213,7 @@ var runnerPrefixes = []string{
 // runnerNames are single names agent-runner reads, or sets for every agent
 // process (proxies, HOME, ...).
 var runnerNames = map[string]bool{
-	"API_KEY": true, "API_BIND": true, "DATA_DIR": true, "INSTANCE": true, "LOGS_ROOT": true,
+	"API_KEY": true, "API_BIND": true, "API_ALLOW_NO_KEY": true, "DATA_DIR": true, "INSTANCE": true, "LOGS_ROOT": true,
 	"STATE_ROOT": true, "TMP_ROOT": true, "OUTPUTS_ROOT": true, "UPLOADS_ROOT": true,
 	"REPO_CACHE_ROOT": true, "ANALYZER_TIMEOUT_SECONDS": true,
 	"CLEANUP_STALE_JOBS": true, "LOG_RETENTION_DAYS": true, "TRACING_ENABLED": true,
