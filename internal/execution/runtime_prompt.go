@@ -32,6 +32,7 @@ func runtimeInstructions(f runtimeFacts) string {
 	b.WriteString("Written by agent-runner for this session. Where anything above disagrees, this wins.\n")
 
 	b.WriteString("\n### Git\n\n")
+	var selfPush []repos.Repo
 	if len(f.Repos) > 0 {
 		b.WriteString("The repos in your working directory, set up by the people you work for (`/repo`):\n\n")
 		for _, r := range f.Repos {
@@ -40,18 +41,35 @@ func runtimeInstructions(f runtimeFacts) string {
 				branch = "its default branch"
 			}
 			push := "pushed for you"
-			if !r.Push {
+			switch {
+			case !r.Push:
 				push = "read-only: never pushed"
+			case r.Secret != "":
+				push = "pushed for you; you may also push it yourself (below)"
+				selfPush = append(selfPush, r)
 			}
 			b.WriteString("- `" + r.Name + "/`: " + r.URL + ", on " + branch + ", " + push + "\n")
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("Commit your work with descriptive messages, but do not `git push`, `git pull` or change remotes:\n" +
+	b.WriteString("Commit your work with descriptive messages, but do not `git pull`, change remotes or git config:\n" +
 		"when the session ends, agent-runner pushes your commits to the branch you are on. If another session\n" +
 		"pushed meanwhile, it rebases them for you, and asks you to resolve the conflicts only if that rebase\n" +
 		"conflicts. Repos you clone or create yourself are not pushed: to work on another repo, ask the user\n" +
 		"to add it with `/repo add`.\n")
+	if len(selfPush) > 0 {
+		b.WriteString("\nWhen your commits need to be on the remote before the session ends (to trigger CI or a deploy\n" +
+			"and check the result), push them yourself, to the branch you are on, with the repo's command below;\n" +
+			"its login is the repo's secret, already in your environment. Never force-push or push to another\n" +
+			"branch. If the push is rejected because the remote moved, leave it: agent-runner rebases and pushes\n" +
+			"at the end, and you can check the result in the next turn.\n\n")
+		for _, r := range selfPush {
+			b.WriteString("- `" + r.Name + "/`: `" + selfPushCommand(r) + "`\n")
+		}
+		b.WriteString("\nOtherwise, do not `git push`.\n")
+	} else {
+		b.WriteString("Leave the pushing to agent-runner: do not `git push`.\n")
+	}
 
 	if f.MemoryDir != "" {
 		dir, _ := filepath.Abs(f.MemoryDir)
@@ -142,4 +160,16 @@ func (h *Engine) agentSecrets(sessionID string, live *agent.Session) []agentsecr
 		return nil
 	}
 	return list
+}
+
+// selfPushCommand is the command the agent pushes repo r with: the login is
+// r's secret from the agent's environment, given for that one command (a
+// credential helper on the command line, or an ssh key in a temporary file),
+// so nothing is written to git config, where the runner's host-side git
+// would read it.
+func selfPushCommand(r repos.Repo) string {
+	if r.IsSSH() {
+		return `k=$(mktemp) && printf '%s\n' "$` + r.Secret + `" > "$k" && chmod 600 "$k" && GIT_SSH_COMMAND="ssh -i $k -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" git -C ` + r.Name + ` push origin HEAD; rm -f "$k"`
+	}
+	return `git -C ` + r.Name + ` -c credential.helper= -c credential.helper='!f() { echo username=` + r.User() + `; echo "password=$` + r.Secret + `"; }; f' push origin HEAD`
 }

@@ -91,10 +91,16 @@ parks unmergeable work on `agent-rescue/<session>`. The differences:
 An authentication failure becomes a session warning naming the repo and its secret
 (`oam-server: push refused, check /secret GITEE_TOKEN`).
 
-The agent could push itself, since the token is in its environment and egress allows the host.
-The runtime section tells it not to, so pushes stay in one place, with conflict handling and the
-saved config. This is a convention, not enforcement, which fits secrets the operator decided not
-to hide.
+The agent may also push itself, mid-session, a repo agent-runner would push (`push=true`) that
+logs in with a secret: when its commits need to be on the remote before the session ends, to
+trigger CI or a deploy and check the result. The runtime section gives it the exact command per
+repo: the secret, already in its environment, goes to a credential helper on the command line (or,
+for SSH, a key in a temporary file) for that one push, never into git config, where agent-runner's
+host-side git would read it. It pushes only the branch it is on, never force-pushes, and leaves a
+rejected push (the remote moved) to agent-runner's end-of-session push, which rebases. A branch the
+agent pushed has nothing left for that push to do. Otherwise it does not push: pulls, remotes and
+config stay agent-runner's. This is a convention, not enforcement, which fits secrets the operator
+decided not to hide.
 
 ## 6. What goes away
 
