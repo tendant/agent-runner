@@ -48,6 +48,10 @@ then describe the task in a message
 - **Memory and instructions** (`/help memory`): `/memory log` lists what each session saved,
   `/memory undo <session-id>` takes it back; `/prompt show|check|preview` shows `agent.md`,
   `prompt.md` and the prompt a session gets ([MEMORY_DESIGN.md](MEMORY_DESIGN.md)).
+- **Alerts** (`/alerts`): CI, monitoring or GitHub post to an agent-stream channel through an
+  incoming webhook (`asctl webhooks create <channel-id> ci`); the bot triages each alert: ignores
+  noise, summarizes, or proposes a fix and waits for a yes in the thread. `/alerts set <policy>`
+  says what it may fix without asking. Alert text never runs a command.
 - **Setup:** `/set KEY VALUE` configures a running instance (saved to `.env.local`, applied
   immediately); `/config` and `/status` show it.
 

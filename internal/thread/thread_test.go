@@ -2,6 +2,7 @@ package thread
 
 import (
 	"testing"
+	"time"
 )
 
 func TestLoadAll_ResetsExecutingConversations(t *testing.T) {
@@ -194,5 +195,33 @@ func TestConversation_SetPlan(t *testing.T) {
 	}
 	if conv.GetState() != StateConfirming {
 		t.Errorf("expected confirming state, got %s", conv.GetState())
+	}
+}
+
+// A thread's history outlives its run and a restart, until it has been idle
+// for the retention.
+func TestManager_KeepsCompletedThreadHistory(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir)
+	c := m.GetOrCreate("t1")
+	c.AddMessage("user", "the export is broken")
+	c.AddMessage("assistant", "fixed it")
+	m.Complete("t1")
+	m.Stop()
+
+	m2 := NewManager(dir)
+	defer m2.Stop()
+	got := m2.GetOrCreate("t1")
+	if len(got.GetMessages()) != 2 || got.GetState() != StateGathering {
+		t.Fatalf("after restart: %d messages, state %s", len(got.GetMessages()), got.GetState())
+	}
+
+	got.mu.Lock()
+	got.UpdatedAt = time.Now().Add(-2 * time.Hour)
+	got.mu.Unlock()
+	m2.SetRetention(time.Hour)
+	m2.evictStale()
+	if _, ok := m2.Get("t1"); ok {
+		t.Fatal("a thread idle past the retention was kept")
 	}
 }

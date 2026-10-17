@@ -507,8 +507,8 @@ func (r *wechatReporter) OnIterationComplete(iter agent.IterationResult) {
 	r.bot.sendText(context.Background(), r.userID, formatIteration(iter))
 }
 func (r *wechatReporter) OnIterationStart(current, max int) {}
-func (r *wechatReporter) OnFinal(session *agent.Session) {
-	r.bot.sendText(context.Background(), r.userID, formatFinalResult(session))
+func (r *wechatReporter) OnFinal(session *agent.Session, footer string) {
+	r.bot.sendText(context.Background(), r.userID, botcommon.WithFooter(formatFinalResult(session), footer))
 }
 func (r *wechatReporter) OnNotFound() {
 	r.bot.sendText(context.Background(), r.userID, "Session not found.")

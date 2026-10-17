@@ -143,6 +143,7 @@ func NewServer(cfg *config.Config) *Server {
 	// clients) are built by RefreshRuntime below, which is also re-run after
 	// /set so runtime config changes apply without a restart.
 	threadManager := thread.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
+	threadManager.SetRetention(cfg.Agent.ThreadRetention)
 	analyzer := thread.NewAnalyzer(nil)
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
@@ -157,6 +158,7 @@ func NewServer(cfg *config.Config) *Server {
 			slog.Warn("analyzer: could not read system prompt for context", "path", cfg.Agent.SystemPrompt, "error", err)
 		}
 	}
+	analyzer.SetAlertPolicyPath(filepath.Join(cfg.MemoryDir, tmpl.AlertPolicyFile))
 	handlers.SetAnalyzer(analyzer)
 	handlers.RefreshRuntime() // builds executor + planner/curator/analyzer clients
 	commander := chatcmd.NewCommander(cfg, handlers)

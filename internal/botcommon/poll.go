@@ -33,8 +33,10 @@ type Reporter interface {
 	// that report progress per started iteration (stream) implement this;
 	// others can leave it a no-op.
 	OnIterationStart(current, max int)
-	// OnFinal is called exactly once, when the session reaches a terminal status.
-	OnFinal(session *agent.Session)
+	// OnFinal is called exactly once, when the session reaches a terminal
+	// status. footer, when not empty, goes at the end of the result message
+	// (the task's notice), so a turn ends in one message rather than two.
+	OnFinal(session *agent.Session, footer string)
 	// OnNotFound is called if the session ID can't be found.
 	OnNotFound()
 	// OnTimeout is called if the session exceeds its deadline without
@@ -49,7 +51,10 @@ type Reporter interface {
 // On each tick, newly completed iterations and a newly started iteration are
 // both reported (in that order) before the terminal-status check, so a
 // session's last iteration is always reported before its final result.
-func PollAndReport(starter AgentStarter, sessionID string, r Reporter) {
+//
+// footer, if not nil, is called once with the finished session, just before
+// OnFinal, for text to end the result message with.
+func PollAndReport(starter AgentStarter, sessionID string, r Reporter, footer func(*agent.Session) string) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -89,7 +94,11 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter) {
 			}
 
 			if session.Status == agent.SessionStatusCompleted || session.Status == agent.SessionStatusFailed || session.Status == agent.SessionStatusStopped {
-				r.OnFinal(session)
+				f := ""
+				if footer != nil {
+					f = footer(session)
+				}
+				r.OnFinal(session, f)
 				return
 			}
 
@@ -98,4 +107,13 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter) {
 			return
 		}
 	}
+}
+
+// WithFooter ends text with footer, separated by a blank line; text alone
+// when footer is empty.
+func WithFooter(text, footer string) string {
+	if footer == "" {
+		return text
+	}
+	return text + "\n\n" + footer
 }

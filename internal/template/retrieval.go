@@ -21,6 +21,12 @@ var wellKnownFiles = []struct {
 	{"lessons.md", "Lessons"},
 }
 
+// AlertPolicyFile is the operator's alert policy in the memory dir: which
+// alerts from incoming webhooks the agent may act on without asking. Upper
+// case so a session cannot rewrite it (see stageWritable): an alert must not
+// be able to talk the agent into widening its own permissions.
+const AlertPolicyFile = "ALERTS.md"
+
 // datePrefix matches YYYY-MM-DD at the start of a filename stem.
 var datePrefix = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)
 
@@ -63,10 +69,11 @@ func Retrieve(memoryDir string) Retrieval {
 	// Files to skip — prompt template files, heartbeat template, and
 	// date-prefixed daily logs are excluded from memory loading.
 	skipExact := map[string]struct{}{
-		"agent.md":     {},
-		"prompt.md":    {},
-		"HEARTBEAT.md": {},
-		"WELCOME.md":   {},
+		"agent.md":      {},
+		"prompt.md":     {},
+		"HEARTBEAT.md":  {},
+		"WELCOME.md":    {},
+		AlertPolicyFile: {},
 	}
 
 	for _, entry := range entries {

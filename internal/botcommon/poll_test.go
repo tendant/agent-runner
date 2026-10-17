@@ -83,7 +83,7 @@ func (r *recordingReporter) OnIterationStart(current, max int) {
 	r.starts = append(r.starts, [2]int{current, max})
 }
 
-func (r *recordingReporter) OnFinal(session *agent.Session) {
+func (r *recordingReporter) OnFinal(session *agent.Session, _ string) {
 	r.mu.Lock()
 	r.final = session
 	r.mu.Unlock()
@@ -127,7 +127,7 @@ func TestPollAndReport_IterationCompleteThenFinal(t *testing.T) {
 	}}
 	r := newRecordingReporter()
 
-	go PollAndReport(starter, "s1", r)
+	go PollAndReport(starter, "s1", r, nil)
 	waitDone(t, r)
 
 	r.mu.Lock()
@@ -150,7 +150,7 @@ func TestPollAndReport_IterationStart(t *testing.T) {
 	}}
 	r := newRecordingReporter()
 
-	go PollAndReport(starter, "s1", r)
+	go PollAndReport(starter, "s1", r, nil)
 	waitDone(t, r)
 
 	r.mu.Lock()
@@ -181,7 +181,7 @@ func TestPollAndReport_ReportsBeforeFinal(t *testing.T) {
 	}}
 	r := newRecordingReporter()
 
-	go PollAndReport(starter, "s1", r)
+	go PollAndReport(starter, "s1", r, nil)
 	waitDone(t, r)
 
 	r.mu.Lock()
@@ -203,7 +203,7 @@ func TestPollAndReport_NotFound(t *testing.T) {
 	starter := &fakeStarter{missing: true}
 	r := newRecordingReporter()
 
-	go PollAndReport(starter, "missing-session", r)
+	go PollAndReport(starter, "missing-session", r, nil)
 	waitDone(t, r)
 
 	r.mu.Lock()
@@ -226,7 +226,7 @@ func TestPollAndReport_Timeout(t *testing.T) {
 	}}
 	r := newRecordingReporter()
 
-	go PollAndReport(starter, "s1", r)
+	go PollAndReport(starter, "s1", r, nil)
 	waitDone(t, r)
 
 	r.mu.Lock()

@@ -167,6 +167,14 @@ States: `gathering → confirming → executing → completed`
 - **Executing**: agent session running, user messages queued
 - **Completed**: session done, conversation reset
 
+**History the agent gets.** A new task's prompt starts with `## Conversation History`; a continuing
+task's turn gets its context block (goal, plan, decisions, each turn's summary and what the user
+sent) plus `## Recent Thread Messages`, next to the agent CLI's own resumed conversation. On
+agent-stream the history is the thread as the server keeps it (`Engine.History`): every message,
+labeled by sender, alerts marked untrusted, newest kept within a size cap. Elsewhere it is the
+bot's own record of the thread, kept across runs and restarts until idle for
+`AGENT_THREAD_RETENTION` (7 days).
+
 ### Stream Bot (`stream/`)
 
 Connects to an [agent-stream](https://github.com/tendant/agent-stream) server via SSE for web-based access.
@@ -176,6 +184,25 @@ Connects to an [agent-stream](https://github.com/tendant/agent-stream) server vi
 - Uploads output files via `POST /v1/conversations/{id}/files`
 - Sends file attachments via `POST /v1/conversations/{id}/messages` with `file_ids`
 - Downloads user-attached files (text inlined, binary saved to temp)
+- Treats messages with `sender_kind: webhook` as alerts (below)
+
+### Alerts (incoming webhooks)
+
+Outside systems (CI, Alertmanager, GitHub) post into an agent-stream channel through its incoming
+webhooks; agent-stream turns their payloads into a message and groups an alert's follow-ups
+(resolved, re-run) into one thread. agent-runner's stream bot gets them addressed like any
+message, with `sender_kind: webhook`, and handles them as untrusted (`stream.handleAlert`):
+
+- never passed to chat commands, and never a yes/no to a pending plan;
+- stored as alert messages (`thread.Message.Alert`), so the analyzer triages them
+  (`Analyzer.triageAlert`) instead of routing them: `ignore` (nothing posted), `ask` (a summary
+  for people), `plan` (proposal, waits for a yes; the default) or `execute`;
+- `execute` only when the operator's alert policy allows it: `ALERTS.md` in the memory dir, set
+  with `/alerts set`. Upper case, so a session can't edit it. Without a policy, and whenever
+  triage fails, nothing runs on an alert's say-so.
+
+People's replies in an alert thread are ordinary messages. `POST /notify` is the other direction:
+agent-runner broadcasting to its chats.
 
 ### Telegram Bot (`telegram/`)
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -405,6 +406,12 @@ func ContextBlock(rec *Record, reply string, feedback bool) string {
 				fmt.Fprintf(&sb, " (asked: %q)", t.Question)
 			}
 			sb.WriteString("\n")
+			// What the user sent for a later turn (the first is the goal):
+			// a turn can end before the agent sees it (a plan revision
+			// waiting for approval), and its files must still reach the next.
+			if req := turnRequest(t.Request); i > 0 && req != "" {
+				fmt.Fprintf(&sb, "    the user said: %s\n", req)
+			}
 		}
 	}
 	if reply = strings.TrimSpace(reply); reply != "" {
@@ -415,6 +422,30 @@ func ContextBlock(rec *Record, reply string, feedback bool) string {
 		fmt.Fprintf(&sb, "\n%s: %s\n", label, reply)
 	}
 	return sb.String()
+}
+
+// maxTurnRequest caps how much of an earlier turn's message the context
+// block repeats; attachment references are kept even past the cap.
+const maxTurnRequest = 1000
+
+// attachmentRef matches the references bots put in a message for files the
+// user attached ([Image: /path], [File 'name': /path]).
+var attachmentRef = regexp.MustCompile(`\[(?:Image: [^\]]+|File '[^']*': [^\]]+)\]`)
+
+// turnRequest renders an earlier turn's message for the context block: on
+// one line, capped, with every attachment reference kept.
+func turnRequest(req string) string {
+	req = strings.Join(strings.Fields(req), " ")
+	if r := []rune(req); len(r) > maxTurnRequest {
+		short := string(r[:maxTurnRequest]) + " …"
+		for _, ref := range attachmentRef.FindAllString(req, -1) {
+			if !strings.Contains(short, ref) {
+				short += " " + ref
+			}
+		}
+		req = short
+	}
+	return req
 }
 
 func orDefault(s, def string) string {

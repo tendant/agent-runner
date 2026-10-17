@@ -32,6 +32,23 @@ curl -X DELETE http://localhost:8080/repos/oam-server
 
 One-shot jobs: `POST /run` → poll `GET /job/{id}` (`project` is a registered repo's name)
 
+**Auth:** with `API_KEY` set, every request but `/health` and `/metrics` needs it in the `X-API-Key`
+header. agent-runner refuses to start when `API_BIND` accepts connections from other machines
+without `API_KEY`, unless `API_ALLOW_NO_KEY=true` (something in front of it authenticates).
+
+**Notify the chats** — `POST /notify` posts a message to every chat agent-runner reports to: each
+agent-stream channel its bot is in, and the Telegram chat (`TELEGRAM_CHAT_ID`). It starts no agent;
+it's for cron jobs and monitoring to tell people something. WeChat is not included.
+
+```bash
+curl -X POST http://localhost:8080/notify -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' -d '{"message": "nightly backup finished"}'
+```
+
+`200 {"status":"sent"}` when every chat got it, `200 {"status":"partial","failed":[...]}` when some
+did, `502` when none did, `503` when no chat bot is configured. To have the agent read an alert and
+decide what to do about it, post it to an agent-stream incoming webhook instead (README, Alerts).
+
 ## Observability
 
 You don't have to poll. Three ways to see what a session is doing and how it ended:

@@ -3,6 +3,9 @@ package thread
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +92,75 @@ func TestClassifyTaskMessage(t *testing.T) {
 	var nilAnalyzer *Analyzer
 	if got := nilAnalyzer.ClassifyTaskMessage(context.Background(), "", "", "", TaskMessageNew); got != TaskMessageNew {
 		t.Errorf("nil analyzer: %q", got)
+	}
+}
+
+func alertThread() *Thread {
+	c := &Thread{ChatID: "t"}
+	c.AddAlertMessage("[Automated alert] CI failed on main")
+	return c
+}
+
+type recordingClient struct {
+	out    string
+	err    error
+	prompt *string
+}
+
+func (c recordingClient) Complete(_ context.Context, p string) (string, error) {
+	*c.prompt = p
+	return c.out, c.err
+}
+
+// An alert is triaged, never routed like a person's request: failures tell a
+// person, "execute" needs an operator policy, and "ignore" is alert-only.
+func TestAnalyze_AlertTriage(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "ALERTS.md")
+	cases := []struct {
+		name   string
+		out    string
+		err    error
+		policy string
+		want   string
+	}{
+		{"llm down tells a person", "", errors.New("down"), "", "ask"},
+		{"garbage tells a person", "no json", nil, "", "ask"},
+		{"ignore", `{"action":"ignore","message":""}`, nil, "", "ignore"},
+		{"execute without policy proposes", `{"action":"execute","message":"fixing"}`, nil, "", "plan"},
+		{"execute with policy", `{"action":"execute","message":"fixing"}`, nil, "CI on main: fix it", "execute"},
+		{"unknown action tells a person", `{"action":"dance","message":"x"}`, nil, "", "ask"},
+	}
+	for _, c := range cases {
+		os.Remove(policyPath)
+		if c.policy != "" {
+			os.WriteFile(policyPath, []byte(c.policy), 0o600)
+		}
+		var prompt string
+		a := NewAnalyzer(recordingClient{c.out, c.err, &prompt})
+		a.SetAlertPolicyPath(policyPath)
+		got, err := a.Analyze(context.Background(), alertThread())
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got.Action != c.want {
+			t.Errorf("%s: action %q, want %q", c.name, got.Action, c.want)
+		}
+		if got.Action == "ask" && got.Message == "" {
+			t.Errorf("%s: empty message", c.name)
+		}
+		if c.policy != "" && !strings.Contains(prompt, c.policy) {
+			t.Errorf("%s: policy missing from prompt", c.name)
+		}
+	}
+}
+
+// A person's message is never ignored, even if the model says so.
+func TestAnalyze_PersonNeverIgnored(t *testing.T) {
+	c := &Thread{ChatID: "t"}
+	c.AddMessage("user", "hello")
+	a := NewAnalyzer(cannedClient{out: `{"action":"ignore","message":"hi"}`})
+	got, _ := a.Analyze(context.Background(), c)
+	if got.Action != "ask" {
+		t.Fatalf("action %q, want ask", got.Action)
 	}
 }

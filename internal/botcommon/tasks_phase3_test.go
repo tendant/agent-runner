@@ -83,12 +83,12 @@ func TestTask_PlanApproval(t *testing.T) {
 
 // Feedback on a done task (agent-stream: no analyzer, same thread) resumes it
 // in its workspace with the feedback for the planner, and the done notice
-// carries the checklist.
+// sums up the plan rather than listing it.
 func TestTask_FeedbackOnDoneTask(t *testing.T) {
 	f, ts := newTaskFixture(t)
 	ts.setSession(planned(completedSession("built"), true, true))
 	send(f, "build it")
-	if n := lastFinal(f); !strings.Contains(n, "✅ 1. step 1") || !strings.Contains(n, "Task done") {
+	if n := lastFinal(f); !strings.Contains(n, "✅ Task done (all 2 plan steps)") || strings.Contains(n, "1. step 1") {
 		t.Fatalf("done notice = %q", n)
 	}
 
@@ -252,5 +252,15 @@ func TestTask_NoDuplicateQuestion(t *testing.T) {
 		if strings.HasPrefix(m, "❓") {
 			t.Fatalf("question posted again as a notice: %q", m)
 		}
+	}
+}
+
+func TestDoneNotice_SumsUpPlan(t *testing.T) {
+	rec := &task.Record{Plan: []task.PlanStep{{ID: "1", Done: true}, {ID: "2"}, {ID: "3", Done: true}}}
+	if got := doneNotice(rec, false); !strings.HasPrefix(got, "✅ Task done (2 of 3 plan steps checked off). ") {
+		t.Errorf("partial plan: %q", got)
+	}
+	if got := doneNotice(&task.Record{}, false); !strings.HasPrefix(got, "✅ Task done. ") {
+		t.Errorf("no plan: %q", got)
 	}
 }

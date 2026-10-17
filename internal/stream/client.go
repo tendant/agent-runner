@@ -468,3 +468,38 @@ func (c *Client) readSSE(ctx context.Context, r io.Reader, ch chan<- Event) int 
 	}
 	return count
 }
+
+// ThreadMessage is a Message in a thread's history, as the server lists it.
+type ThreadMessage struct {
+	MessageID   string     `json:"message_id"`
+	UserID      string     `json:"user_id"`
+	SenderKind  string     `json:"sender_kind"` // human, bot, webhook, system
+	Content     string     `json:"content"`
+	FileIDs     []string   `json:"file_ids,omitempty"`
+	WebhookName string     `json:"webhook_name,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+}
+
+// ThreadMessages returns a thread's messages, root first, oldest to newest.
+func (c *Client) ThreadMessages(ctx context.Context, threadID string) ([]ThreadMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/threads/"+threadID+"/messages", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("thread messages: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("thread messages: status %d: %s", resp.StatusCode, string(body))
+	}
+	var msgs []ThreadMessage
+	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+		return nil, fmt.Errorf("thread messages: decode: %w", err)
+	}
+	return msgs, nil
+}

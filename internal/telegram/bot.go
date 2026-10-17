@@ -275,8 +275,8 @@ func (r *telegramReporter) OnIterationComplete(iter agent.IterationResult) {
 	r.bot.send(r.chatID, FormatIteration(iter))
 }
 func (r *telegramReporter) OnIterationStart(current, max int) {}
-func (r *telegramReporter) OnFinal(session *agent.Session) {
-	r.bot.send(r.chatID, FormatFinalResult(session))
+func (r *telegramReporter) OnFinal(session *agent.Session, footer string) {
+	r.bot.send(r.chatID, botcommon.WithFooter(FormatFinalResult(session), footer))
 }
 func (r *telegramReporter) OnNotFound() { r.bot.send(r.chatID, "Session not found.") }
 func (r *telegramReporter) OnTimeout() {

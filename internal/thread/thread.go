@@ -27,6 +27,9 @@ type Message struct {
 	Role    string    `json:"role"` // "user" or "assistant"
 	Content string    `json:"content"`
 	Time    time.Time `json:"time"`
+	// Alert marks a user message that came from an incoming webhook (CI,
+	// monitoring): untrusted content to triage, not a person's request.
+	Alert bool `json:"alert,omitempty"`
 }
 
 // Thread tracks one unit of a user's work with the bot: its history, state
@@ -45,8 +48,11 @@ type Thread struct {
 	// activeSessionID is the agent session currently executing for this
 	// thread ("" when idle) — used to steer the live run.
 	activeSessionID string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// runNote is put at the top of the next run's prompt, once (see
+	// SetRunNote); not persisted.
+	runNote   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 const maxMessages = 20
@@ -60,13 +66,33 @@ type Summarizer interface {
 // When messages exceed maxMessages, old messages are compacted: if a Summarizer
 // is set, they are summarized; otherwise the oldest are dropped.
 func (c *Thread) AddMessage(role, content string) {
+	c.addMessage(Message{Role: role, Content: content, Time: time.Now()})
+}
+
+// AddAlertMessage appends a user message that came from an incoming webhook
+// (see Message.Alert).
+func (c *Thread) AddAlertMessage(content string) {
+	c.addMessage(Message{Role: "user", Content: content, Time: time.Now(), Alert: true})
+}
+
+// LastUserMessageIsAlert reports whether the latest user message came from
+// an incoming webhook rather than a person.
+func (c *Thread) LastUserMessageIsAlert() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Messages = append(c.Messages, Message{
-		Role:    role,
-		Content: content,
-		Time:    time.Now(),
-	})
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		if c.Messages[i].Role == "user" {
+			return c.Messages[i].Alert
+		}
+	}
+	return false
+}
+
+func (c *Thread) addMessage(m Message) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	role, content := m.Role, m.Content
+	c.Messages = append(c.Messages, m)
 	if len(c.Messages) > maxMessages {
 		c.compact()
 	}
@@ -177,6 +203,24 @@ func (c *Thread) Reset() {
 	c.UpdatedAt = time.Now()
 }
 
+// SetRunNote sets text for the top of the next run's prompt: something the
+// runner, not any message, tells the agent (e.g. that the operator's alert
+// policy authorizes acting on an alert).
+func (c *Thread) SetRunNote(note string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.runNote = note
+}
+
+// TakeRunNote returns the run note and clears it.
+func (c *Thread) TakeRunNote() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.runNote
+	c.runNote = ""
+	return n
+}
+
 // SetActiveSession records the agent session executing for this
 // thread; pass "" when the run ends.
 func (c *Thread) SetActiveSession(sessionID string) {
@@ -247,7 +291,9 @@ func (c *Thread) GetFormattedHistory() string {
 	return strings.TrimSpace(sb.String())
 }
 
-const threadIdleTimeout = 30 * time.Minute
+// DefaultRetention is how long an idle thread's history is kept (in memory
+// and on disk, across restarts): the context a chat's next message gets.
+const DefaultRetention = 7 * 24 * time.Hour
 
 // Manager manages active threads keyed by thread key (see Thread.ChatID).
 // Persisted files keep the conv- prefix so existing state loads after upgrade.
@@ -258,22 +304,36 @@ type Manager struct {
 	stopCh  chan struct{}
 	doneCh  chan struct{} // closed when the cleanup loop has exited
 	dir     string        // persistence directory; "" = disabled
+	// retention is how long an idle thread is kept (DefaultRetention).
+	retention time.Duration
 }
 
 // NewManager creates a new thread manager. dir is the directory used to
 // persist threads to disk across restarts; pass "" to disable persistence.
 func NewManager(dir string) *Manager {
 	m := &Manager{
-		threads: make(map[string]*Thread),
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
-		dir:     dir,
+		threads:   make(map[string]*Thread),
+		stopCh:    make(chan struct{}),
+		doneCh:    make(chan struct{}),
+		dir:       dir,
+		retention: DefaultRetention,
 	}
 	if dir != "" {
 		m.loadAll()
 	}
 	go m.cleanupLoop()
 	return m
+}
+
+// SetRetention sets how long an idle thread is kept (non-positive: the
+// default).
+func (m *Manager) SetRetention(d time.Duration) {
+	if d <= 0 {
+		d = DefaultRetention
+	}
+	m.mu.Lock()
+	m.retention = d
+	m.mu.Unlock()
 }
 
 // convFilePath returns the JSON file path for a thread.
@@ -352,12 +412,12 @@ func (m *Manager) loadAll() {
 			os.Remove(path)
 			continue
 		}
-		if conv.State == StateCompleted {
-			continue // skip completed threads
-		}
 		if conv.ChatID == "" {
 			continue
 		}
+		// A completed thread is loaded too: its history is the context of
+		// the chat's next message (GetOrCreate reopens it). Only threads
+		// idle past the retention are dropped (evictStale).
 		// A thread persisted as executing belonged to a session that
 		// died with the previous process — left as-is it would queue every
 		// new message forever ("Message queued…"). Downgrade so the chat
@@ -427,7 +487,7 @@ func (m *Manager) evictStale() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cutoff := time.Now().Add(-threadIdleTimeout)
+	cutoff := time.Now().Add(-m.retention)
 	for chatID, conv := range m.threads {
 		conv.mu.Lock()
 		updatedAt := conv.UpdatedAt
@@ -491,9 +551,8 @@ func (m *Manager) Complete(chatID string) {
 	conv, ok := m.threads[chatID]
 	m.mu.RUnlock()
 	if ok {
+		// Kept, history and all, until it has been idle for the retention.
 		conv.SetState(StateCompleted)
-		if m.dir != "" {
-			os.Remove(m.convFilePath(chatID))
-		}
+		m.persist(conv)
 	}
 }

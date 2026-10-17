@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/gitsafe"
@@ -30,6 +31,8 @@ import (
 	"github.com/agent-runner/agent-runner/internal/locks"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
+	"github.com/agent-runner/agent-runner/internal/stream"
+	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/textutil"
 	"github.com/agent-runner/agent-runner/internal/thread"
 )
@@ -54,14 +57,42 @@ func NewMultiNotifier(notifiers ...Notifier) *MultiNotifier {
 	return &MultiNotifier{notifiers: ns}
 }
 
+// SendNotification sends message through every backend. A backend's failure
+// doesn't stop the others; the error (a *NotifyError) says which failed and
+// how many got it.
 func (m *MultiNotifier) SendNotification(ctx context.Context, message string) error {
-	var lastErr error
+	ne := &NotifyError{}
 	for _, n := range m.notifiers {
 		if err := n.SendNotification(ctx, message); err != nil {
-			lastErr = err
+			ne.Failed = append(ne.Failed, fmt.Sprintf("%s: %v", notifierName(n), err))
+		} else {
+			ne.Sent++
 		}
 	}
-	return lastErr
+	if len(ne.Failed) == 0 {
+		return nil
+	}
+	return ne
+}
+
+// NotifyError reports a notification that some or all backends failed to
+// send: Sent got it, Failed lists the others with their errors.
+type NotifyError struct {
+	Sent   int
+	Failed []string
+}
+
+func (e *NotifyError) Error() string { return strings.Join(e.Failed, "; ") }
+
+// notifierName names a notification backend for error reports.
+func notifierName(n Notifier) string {
+	switch n.(type) {
+	case *stream.Bot:
+		return "agent-stream"
+	case *telegram.Bot:
+		return "telegram"
+	}
+	return fmt.Sprintf("%T", n)
 }
 
 // Handlers contains all HTTP handlers
@@ -693,8 +724,12 @@ func summarizeAction(instruction string) string {
 	return instruction
 }
 
-// HandleNotify handles POST /notify — sends a message to all configured stream conversations.
-// External systems can use this for monitoring alerts, scheduled job notifications, etc.
+// HandleNotify handles POST /notify {"message": "..."} — sends a message to
+// every chat agent-runner reports to: each agent-stream channel its bot is
+// in, and the Telegram chat (TELEGRAM_CHAT_ID). For outside systems (cron
+// jobs, monitoring) to tell the people there something; it starts no agent.
+// 200 {"status":"sent"} when all got it, 200 {"status":"partial", "failed"}
+// when some did, 502 when none did.
 func (h *Handlers) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -714,7 +749,7 @@ func (h *Handlers) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.notifier == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "stream bot not configured")
+		h.writeError(w, http.StatusServiceUnavailable, "no chat to notify: neither the agent-stream nor the Telegram bot is configured")
 		return
 	}
 
@@ -722,6 +757,11 @@ func (h *Handlers) HandleNotify(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.notifier.SendNotification(ctx, req.Message); err != nil {
+		var ne *NotifyError
+		if errors.As(err, &ne) && ne.Sent > 0 {
+			h.writeJSON(w, http.StatusOK, map[string]any{"status": "partial", "failed": ne.Failed})
+			return
+		}
 		h.writeError(w, http.StatusBadGateway, "failed to send notification: "+err.Error())
 		return
 	}

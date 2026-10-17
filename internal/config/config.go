@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -127,6 +128,7 @@ type AgentConfig struct {
 	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
 	TaskMaxCostUSD    float64       // AGENT_TASK_MAX_COST_USD — spend before a task pauses (default 0 = no limit)
 	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude/codex conversations across task turns
+	ThreadRetention   time.Duration // AGENT_THREAD_RETENTION: how long an idle chat thread's history is kept (default 7 days)
 	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays        int           // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart bool          // Pull memory from git before each session
@@ -202,6 +204,31 @@ type ValidationConfig struct {
 type APIConfig struct {
 	Bind   string
 	APIKey string
+	// AllowNoKey (API_ALLOW_NO_KEY) lets the API listen beyond loopback
+	// without API_KEY: for when something in front of it (a proxy, a
+	// firewall) does the authentication.
+	AllowNoKey bool
+}
+
+// ExposedWithoutKey reports whether the API listens beyond this machine
+// with no API_KEY: anyone who reaches it could start agents, read their
+// logs and change repos.
+func (a APIConfig) ExposedWithoutKey() bool {
+	return a.APIKey == "" && !a.AllowNoKey && !loopbackBind(a.Bind)
+}
+
+// loopbackBind reports whether a listen address only accepts connections
+// from this machine (an empty host listens on every interface).
+func loopbackBind(bind string) bool {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		host = bind
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // DefaultConfig returns a configuration with default values
@@ -357,6 +384,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.API.Bind = envOrDefault("API_BIND", cfg.API.Bind)
 	cfg.API.APIKey = envOrDefault("API_KEY", cfg.API.APIKey)
+	cfg.API.AllowNoKey = envBoolOrDefault("API_ALLOW_NO_KEY", cfg.API.AllowNoKey)
 
 	cfg.Agent.SystemPrompt = envOrDefault("AGENT_SYSTEM_PROMPT", cfg.Agent.SystemPrompt)
 	cfg.Agent.PromptFile = envOrDefault("AGENT_PROMPT_FILE", cfg.Agent.PromptFile)
@@ -450,6 +478,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TaskMaxSeconds = envSecondsOrDefault("AGENT_TASK_MAX_SECONDS", cfg.Agent.TaskMaxSeconds)
 	cfg.Agent.TaskMaxCostUSD = envFloatOrDefault("AGENT_TASK_MAX_COST_USD", cfg.Agent.TaskMaxCostUSD)
 	cfg.Agent.TaskResumeBackend = envBoolOrDefault("AGENT_TASK_RESUME_BACKEND", cfg.Agent.TaskResumeBackend)
+	cfg.Agent.ThreadRetention = envDurationOrDefault("AGENT_THREAD_RETENTION", cfg.Agent.ThreadRetention)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
@@ -535,6 +564,9 @@ func (c *Config) Validate() error {
 	}
 	if c.API.Bind == "" {
 		return fmt.Errorf("api.bind is required")
+	}
+	if c.API.ExposedWithoutKey() {
+		return fmt.Errorf("API_BIND=%s accepts connections from other machines but API_KEY is not set: anyone who reaches it could start agents and change repos. Set API_KEY (clients send it as X-API-Key), bind to 127.0.0.1, or set API_ALLOW_NO_KEY=true if something in front of it authenticates", c.API.Bind)
 	}
 	return nil
 }
