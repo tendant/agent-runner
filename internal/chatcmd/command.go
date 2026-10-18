@@ -97,6 +97,12 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		}
 	}
 
+	// "/secrets" is a common slip for "/secret".
+	if w, rest, _ := strings.Cut(text, " "); strings.EqualFold(w, "/secrets") {
+		text = strings.TrimSpace(cmdSecret + " " + rest)
+		lower = strings.ToLower(text)
+	}
+
 	r := func(s string) (string, string, bool) { return s, "", true }
 
 	// "Update prompt:" / "update prompt " — write prompt and optionally start session.
@@ -207,9 +213,16 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 
 	// If the first word is a known command, the user typed it with wrong
 	// arguments — return the specific usage hint rather than "Unknown command".
-	cmdWord := strings.SplitN(lower, " ", 2)[0]
+	cmdWord := strings.Fields(lower + " ")[0]
 	if usage, ok := knownCommands[cmdWord]; ok {
 		return "error: " + usage, "", true
+	}
+	// A near miss (/secert, /scret) is answered with the command meant, and
+	// nothing is done: never echo the rest, which may hold a value.
+	if strings.HasPrefix(cmdWord, "/") {
+		if near := nearestCommand(cmdWord, knownCommands); near != "" {
+			return "error: unknown command. Did you mean " + near + "? Nothing was saved or run.", "", true
+		}
 	}
 	return "", "", false
 }
@@ -617,6 +630,9 @@ func (c *Commander) handleSet(args string) string {
 	key, val, ok := parseSetArgs(args)
 	if !ok {
 		return "error: usage: /set KEY VALUE  or  /set KEY=VALUE"
+	}
+	if strings.Contains(val, sealedMask) {
+		return errMaskedValue
 	}
 
 	// Apply to the process env first — OS env wins the config merge, so the
@@ -1159,3 +1175,45 @@ var configAPIKeys = []string{
 	"GROQ_API_KEY",
 	"MISTRAL_API_KEY",
 }
+
+// nearestCommand is the known command at most two typos from word, or "".
+func nearestCommand(word string, known map[string]string) string {
+	best, bestDist := "", 3
+	for cmd := range known {
+		if d := editDistance(word, cmd); d < bestDist || d == bestDist && cmd < best {
+			best, bestDist = cmd, d
+		}
+	}
+	if bestDist > 2 || len(word) < 4 {
+		return ""
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between two short strings.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+// sealedMask is what agent-stream shows in place of a sealed command's value.
+// A value containing it is the mask, not the value (a bot that missed the
+// sealed original): never saved.
+const sealedMask = "••••••"
+
+const errMaskedValue = "error: that value is the masked copy (••••••), not the secret: nothing was saved. Send the command again."

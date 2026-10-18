@@ -57,6 +57,9 @@ func (c *Commander) handleSecret(arg string) string {
 		default:
 			return "error: /secret set needs a name and a value.\n\n" + secretHelp
 		}
+		if strings.Contains(value, sealedMask) {
+			return errMaskedValue
+		}
 		if err := store.Set(name, value, desc); err != nil {
 			return "error: " + err.Error() + "\n(/secret help shows the format)"
 		}

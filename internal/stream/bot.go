@@ -785,11 +785,14 @@ type messagePayload struct {
 	Content     string `json:"content"`
 	// Addressees are the bots the server addressed this Message to; a bot
 	// acts only on Messages that list it.
-	Addressees []string          `json:"addressees"`
-	Mentions   []string          `json:"mentions,omitempty"`
-	RunID      string            `json:"run_id,omitempty"`
-	FileIDs    []string          `json:"file_ids,omitempty"`
-	FileURLs   map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
+	Addressees []string `json:"addressees"`
+	Mentions   []string `json:"mentions,omitempty"`
+	RunID      string   `json:"run_id,omitempty"`
+	// Sealed marks a secret command the server keeps masked: the original
+	// is read once from it (Client.SealedMessage), never stored or logged.
+	Sealed   bool              `json:"sealed,omitempty"`
+	FileIDs  []string          `json:"file_ids,omitempty"`
+	FileURLs map[string]string `json:"file_urls,omitempty"` // presigned download URLs for files
 }
 
 // newCursor starts tracking channelID's cursor from afterSeq.
@@ -841,7 +844,28 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 	key := threadKey(channelID, msg)
 
 	text := strings.TrimSpace(msg.Content)
-	slog.Info("stream bot: message received", "channel_id", channelID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs))
+	slog.Info("stream bot: message received", "channel_id", channelID, "user_id", msg.UserID, "len", len(text), "files", len(msg.FileIDs), "sealed", msg.Sealed)
+
+	if msg.Sealed {
+		// A secret command: the server has it masked; read the original
+		// once, and only ever hand it to the command gateway, which keeps
+		// it out of the conversation and every log.
+		original, err := b.client.SealedMessage(ctx, msg.MessageID)
+		if err != nil {
+			slog.Warn("stream bot: could not read a sealed command", "message_id", msg.MessageID, "error", err)
+			b.emitFinal(ctx, key, "I couldn't read that command (it expires after 10 minutes and can be read once). Nothing was saved: send it again.")
+			return
+		}
+		if b.gateway == nil {
+			return
+		}
+		reply, _, _ := b.gateway.Handle(strings.TrimSpace(original), func(m string) { b.emitFinal(ctx, key, m) }, func() { b.engine.ResetThread(key) })
+		if reply == "" {
+			reply = "Unknown command. Type /help for available commands."
+		}
+		b.emitFinal(ctx, key, reply)
+		return
+	}
 
 	// Download and inline any attached files
 	if len(msg.FileIDs) > 0 {

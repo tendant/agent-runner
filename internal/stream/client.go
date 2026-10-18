@@ -503,3 +503,28 @@ func (c *Client) ThreadMessages(ctx context.Context, threadID string) ([]ThreadM
 	}
 	return msgs, nil
 }
+
+// SealedMessage reads a sealed command's original text: once, by the bot it
+// was addressed to (agent-stream keeps it masked everywhere else).
+func (c *Client) SealedMessage(ctx context.Context, messageID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/messages/"+messageID+"/sealed", nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sealed message: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("sealed message: status %d", resp.StatusCode)
+	}
+	var out struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Content == "" {
+		return "", fmt.Errorf("sealed message: no content")
+	}
+	return out.Content, nil
+}

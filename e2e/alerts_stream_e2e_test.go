@@ -185,3 +185,40 @@ func TestE2E_AlertsRealClaude(t *testing.T) {
 		t.Fatalf("the agent did not follow the alert policy (no ci-note.txt):\n%s", transcript(thread2))
 	}
 }
+
+// A /secret set typed in chat is saved, and its value is nowhere else: not
+// in the thread as agent-stream lists it, nor in either server's log.
+func TestE2E_SealedSecretOverAgentStream(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is needed for the fake claude CLI")
+	}
+	mockBin := t.TempDir()
+	mock, _ := filepath.Abs("testdata/mock-claude-tasks.py")
+	if err := os.Symlink(mock, filepath.Join(mockBin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	st := startTaskStack(t, mockBin)
+	const value = "tok-e2e-1234567890"
+	thread := st.newThread("/secret set GITEE_TOKEN " + value + " Gitee API")
+	waitBotMessage(t, st.human, thread, "ok: GITEE_TOKEN set", st.logs)
+
+	saved, _ := os.ReadFile(filepath.Join(st.dataDir, "secrets.json"))
+	if !strings.Contains(string(saved), value) {
+		t.Fatalf("the secret was not saved: %s", saved)
+	}
+	var msgs []streamMessage
+	st.human.do("GET", "/v2/threads/"+thread+"/messages", nil, &msgs)
+	for _, m := range msgs {
+		if strings.Contains(m.Content, value) {
+			t.Fatalf("agent-stream lists the value in the thread: %q", m.Content)
+		}
+	}
+	if msgs[0].Content != "/secret set GITEE_TOKEN ••••••" {
+		t.Errorf("thread root = %q", msgs[0].Content)
+	}
+	runnerLog, _ := os.ReadFile(filepath.Join(st.base, "agent-runner.log"))
+	streamLog, _ := os.ReadFile(filepath.Join(st.base, "agent-stream.log"))
+	if strings.Contains(string(runnerLog), value) || strings.Contains(string(streamLog), value) {
+		t.Fatal("a server log contains the value")
+	}
+}

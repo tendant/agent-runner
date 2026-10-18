@@ -44,7 +44,10 @@ then describe the task in a message
   `/secret`; the agent commits, agent-runner pushes ([REPOS_DESIGN.md](REPOS_DESIGN.md)).
 - **Secrets** (`/secret`, `/help secret`): the agent gets them as environment variables, sees only
   their names and descriptions, and their values are redacted from chat, logs and memory.
-  agent-runner's own keys (`.env`, `/set`) never reach the agent.
+  agent-runner's own keys (`.env`, `/set`) never reach the agent. On agent-stream, `/secret set`
+  and `/set` are sealed: the server keeps and shows them masked (`/secret set NAME ••••••`), pushes
+  nobody, and hands the original once to this bot only; malformed or misspelled forms are sealed
+  too.
 - **Memory and instructions** (`/help memory`): `/memory log` lists what each session saved,
   `/memory undo <session-id>` takes it back; `/prompt show|check|preview` shows `agent.md`,
   `prompt.md` and the prompt a session gets ([MEMORY_DESIGN.md](MEMORY_DESIGN.md)).
@@ -89,9 +92,9 @@ sops --decrypt agent-secrets.sops.json > "$DATA_DIR/secrets.json" && chmod 600 "
 cp repos.json "$DATA_DIR/repos.json"                                                                    # no secrets in it
 ```
 
-- Prefer this to `/secret set` in chat for anything long-lived: a value typed in chat stays
-  stored as a message on the chat server (agent-runner keeps it out of the agent's history, but
-  not off the server).
+- Prefer this to `/secret set` in chat for anything long-lived. agent-stream never stores a
+  value typed there (it seals the command), but Telegram and WeChat keep it in the chat, and the
+  sender's own app may show what was typed until it reloads.
 - Names agent-runner reads itself are skipped even in a hand-written file: agent-runner's own
   keys stay in `.env` (`SECRETS.md`) and never reach the agent.
 - `/repo add` fetches a repo to check its URL, branch and token; a hand-written entry is first
