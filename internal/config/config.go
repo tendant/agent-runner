@@ -157,6 +157,9 @@ type StreamConfig struct {
 	PollInterval      time.Duration // STREAM_POLL_INTERVAL — if set, use polling instead of SSE (e.g. "3s")
 	StateDir          string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
 	MaxCatchUpBacklog int           // STREAM_MAX_CATCHUP_BACKLOG — cap on messages reacted to after a reconnect gap; older ones in the burst are skipped, not replayed (default: 100)
+	// AdminUsers (STREAM_ADMIN_USERS) are the agent-stream user IDs that may
+	// run chat commands (/set, /secret, /repo, ...), besides the bot's owner.
+	AdminUsers []string
 }
 
 // WeChatConfig contains WeChat bot settings (iLink API).
@@ -499,6 +502,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Stream.DiscoveryInterval = envDurationOrDefault("STREAM_CHANNEL_DISCOVERY_INTERVAL", 30*time.Second)
 	cfg.Stream.StateDir = envOrDefault("STREAM_STATE_DIR", cfg.TmpRoot)
 	cfg.Stream.MaxCatchUpBacklog = envIntOrDefault("STREAM_MAX_CATCHUP_BACKLOG", 100)
+	cfg.Stream.AdminUsers = envSliceOrDefault("STREAM_ADMIN_USERS", nil)
 
 	cfg.WeChat.Token = envOrDefault("WECHAT_TOKEN", "")
 	cfg.WeChat.AllowedUsers = envSliceOrDefault("WECHAT_ALLOWED_USERS", nil)

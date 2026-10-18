@@ -32,7 +32,9 @@ in [.env.example](.env.example).
 ### In chat
 
 Once a bot is connected (Telegram needs `TELEGRAM_CHAT_ID`: the one chat that controls the agent;
-WeChat answers `WECHAT_ALLOWED_USERS`, or the first user to message it), `/help` shows how to start:
+WeChat answers `WECHAT_ALLOWED_USERS`, or the first user to message it; on agent-stream anyone in a
+channel can talk to the agent, but only the bot's owner and `STREAM_ADMIN_USERS` run commands, and
+only the owner can add the bot to a channel), `/help` shows how to start:
 
 ```
 /secret set GITEE_TOKEN <token> Gitee API and git      a credential for the agent's tasks
@@ -44,7 +46,9 @@ then describe the task in a message
   `/secret`; the agent commits, agent-runner pushes ([REPOS_DESIGN.md](REPOS_DESIGN.md)).
 - **Secrets** (`/secret`, `/help secret`): the agent gets them as environment variables, sees only
   their names and descriptions, and their values are redacted from chat, logs and memory.
-  agent-runner's own keys (`.env`, `/set`) never reach the agent. On agent-stream, `/secret set`
+  agent-runner's own keys (`.env`, `/set`) never reach the agent: bot tokens, `API_KEY` and the
+  memory token are left out of its environment even without the sandbox (the model provider key
+  its CLI needs is kept). `/set` refuses names that change how processes run (`PATH`, `GIT_*`, `LD_*`, ...). On agent-stream, `/secret set`
   and `/set` are sealed: the server keeps and shows them masked (`/secret set NAME ••••••`), pushes
   nobody, and hands the original once to this bot only; malformed or misspelled forms are sealed
   too.

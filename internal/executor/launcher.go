@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 )
 
@@ -41,9 +42,9 @@ type HostLauncher struct{}
 func (HostLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd, func(), error) {
 	cmd := exec.CommandContext(ctx, s.Name, s.Args...)
 	cmd.Dir = s.Dir
-	if len(s.ExtraEnv) > 0 {
-		cmd.Env = append(os.Environ(), s.ExtraEnv...)
-	}
+	// The runner's environment, minus its own credentials (bot tokens, API
+	// key, memory token): the agent gets its secrets in ExtraEnv.
+	cmd.Env = append(agentsecrets.HostAgentEnv(os.Environ()), s.ExtraEnv...)
 	return cmd, func() {}, nil
 }
 

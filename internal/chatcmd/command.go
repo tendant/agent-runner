@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -114,32 +115,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		}
 		reply, sid := c.handleUpdatePrompt(body)
 		return reply, sid, true
-	}
-
-	// knownCommands maps each recognised slash-command name to its usage string.
-	// Any input whose first word appears here but doesn't match a full case
-	// returns the specific usage hint instead of falling through to the
-	// gateway's generic "Unknown command" response.
-	knownCommands := map[string]string{
-		"/help":          "usage: /help [secret|repo|memory]",
-		"/config":        "usage: /config",
-		"/status":        "usage: /status",
-		"/sessions":      "usage: /sessions",
-		"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
-		"/bootstrap":     "usage: /bootstrap [force]",
-		"/install-cli":   "usage: /install-cli [claude|codex|opencode|pi] [force]",
-		"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
-		cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
-		cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
-		"/auth":          "usage: /auth [claude|codex] — only available via chat",
-		cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
-		cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
-		cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
-		cmdRepo:          repoUsage,
-		cmdAlerts:        "usage: " + cmdAlerts + " [set <policy>|clear]",
-		"/stop":          "usage: /stop [session-id]",
-		"/logs":          "usage: /logs [session-id-prefix]",
-		"/update-prompt": "usage: /update-prompt <content>",
 	}
 
 	switch {
@@ -634,6 +609,13 @@ func (c *Commander) handleSet(args string) string {
 	if strings.Contains(val, sealedMask) {
 		return errMaskedValue
 	}
+	if err := checkSettingName(key); err != nil {
+		return "error: " + err.Error()
+	}
+	if strings.ContainsAny(val, "\r\n\x00") {
+		// .env.local is one setting per line: a newline would add others.
+		return "error: a value cannot span lines"
+	}
 
 	// Apply to the process env first — OS env wins the config merge, so the
 	// reload below picks the new value up.
@@ -1079,7 +1061,7 @@ func isSensitiveKey(key string) bool {
 	if upper == "API_KEY" {
 		return true
 	}
-	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD"} {
+	for _, suffix := range []string{"_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASS", "_URL", "_DSN", "_CREDENTIALS"} {
 		if strings.HasSuffix(upper, suffix) {
 			return true
 		}
@@ -1217,3 +1199,90 @@ func editDistance(a, b string) int {
 const sealedMask = "••••••"
 
 const errMaskedValue = "error: that value is the masked copy (••••••), not the secret: nothing was saved. Send the command again."
+
+// settingName is the shape of an environment setting.
+var settingName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// hijackNames and hijackPrefixes are environment variables that change how
+// processes run (which binaries, libraries, interpreters, git and ssh
+// commands, proxies): /set refuses them, since agent-runner and every agent
+// it starts would run whatever they name.
+var hijackNames = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "SHELL": true, "TMPDIR": true, "IFS": true,
+	"ENV": true, "BASH_ENV": true, "PROMPT_COMMAND": true, "LANG": true, "TERM": true,
+	"NODE_OPTIONS": true, "NODE_PATH": true, "NODE_EXTRA_CA_CERTS": true,
+	"SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+	"PERL5LIB": true, "PERL5OPT": true, "RUBYOPT": true, "RUBYLIB": true,
+	"JAVA_TOOL_OPTIONS": true, "_JAVA_OPTIONS": true, "IS_SANDBOX": true,
+}
+var hijackPrefixes = []string{"LD_", "DYLD_", "GIT_", "SSH_", "XDG_", "PYTHON", "BASH_FUNC_"}
+
+func checkSettingName(name string) error {
+	if !settingName.MatchString(name) {
+		return fmt.Errorf("%q: a setting name is upper-case letters, digits and _", name)
+	}
+	if hijackNames[name] {
+		return fmt.Errorf("%s can't be set from chat: it changes how processes run", name)
+	}
+	for _, p := range hijackPrefixes {
+		if strings.HasPrefix(name, p) {
+			return fmt.Errorf("%s can't be set from chat: %s* changes how processes run", name, p)
+		}
+	}
+	return nil
+}
+
+// knownCommands maps each recognised slash-command name to its usage string.
+// Any input whose first word appears here but doesn't match a full case
+// returns the specific usage hint instead of falling through to the
+// gateway's generic "Unknown command" response.
+var knownCommands = map[string]string{
+	"/help":          "usage: /help [secret|repo|memory]",
+	"/config":        "usage: /config",
+	"/status":        "usage: /status",
+	"/sessions":      "usage: /sessions",
+	"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
+	"/bootstrap":     "usage: /bootstrap [force]",
+	"/install-cli":   "usage: /install-cli [claude|codex|opencode|pi] [force]",
+	"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
+	cmdSetAgent:      "usage: " + cmdSetAgent + " <content>",
+	cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
+	"/auth":          "usage: /auth [claude|codex] — only available via chat",
+	cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
+	cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
+	cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
+	cmdRepo:          repoUsage,
+	cmdAlerts:        "usage: " + cmdAlerts + " [set <policy>|clear]",
+	"/stop":          "usage: /stop [session-id]",
+	"/logs":          "usage: /logs [session-id-prefix]",
+	"/update-prompt": "usage: /update-prompt <content>",
+}
+
+// KnownCommand reports whether word ("/secret") names a chat command.
+func KnownCommand(word string) bool {
+	w := strings.ToLower(word)
+	if _, ok := knownCommands[w]; ok {
+		return true
+	}
+	switch w {
+	case "/cancel", "/wechat-login", "/secrets", "/help":
+		return true
+	}
+	return false
+}
+
+// IsCommand reports whether text is a chat command: what Commander.Handle
+// and the gateway would act on, rather than a message for the agent.
+func IsCommand(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(lower, "/") || strings.HasPrefix(lower, "update prompt") {
+		return true
+	}
+	for _, cmd := range bareCommands {
+		if lower == cmd {
+			return true
+		}
+	}
+	return false
+}

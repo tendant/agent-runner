@@ -54,3 +54,21 @@ func toStrings(v any) []string {
 	}
 	return out
 }
+
+// Without API_KEY only requests to a loopback name pass: a web page that
+// rebinds its own name to 127.0.0.1 is refused.
+func TestLoopbackHostMiddleware(t *testing.T) {
+	h := loopbackHostMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+	for host, want := range map[string]int{
+		"127.0.0.1:8080": 200, "localhost:8080": 200, "[::1]:8080": 200,
+		"attacker.example:8080": 403, "192.168.3.110:8080": 403, "evil.localhost.example": 403,
+	} {
+		req := httptest.NewRequest("POST", "/agent", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Host %s: %d, want %d", host, rec.Code, want)
+		}
+	}
+}

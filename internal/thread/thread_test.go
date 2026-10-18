@@ -225,3 +225,17 @@ func TestManager_KeepsCompletedThreadHistory(t *testing.T) {
 		t.Fatal("a thread idle past the retention was kept")
 	}
 }
+
+// An alert during a run is never queued as a person's input: it is flagged
+// for triage after the run.
+func TestThread_AlertDuringRunIsNotPendingInput(t *testing.T) {
+	c := &Thread{ChatID: "t", State: StateExecuting}
+	c.AddAlertMessage("[Automated alert] build red")
+	c.AddMessage("user", "also fix the docs")
+	if got := c.PendingMessages(); len(got) != 1 || got[0] != "also fix the docs" {
+		t.Fatalf("pending input = %q, want only the person's message", got)
+	}
+	if !c.TakePendingAlert() || c.TakePendingAlert() {
+		t.Fatal("the alert was not flagged once for triage")
+	}
+}

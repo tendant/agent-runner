@@ -37,6 +37,7 @@ func TestStreamBot_SealedCommand(t *testing.T) {
 	bot := New(config.StreamConfig{ServerURL: srv.URL, BotToken: "t"}, "", &trackingStarter{}, mgr, nil, gw)
 	bot.botUserID = testBotUserID
 	bot.stateDir = t.TempDir()
+	bot.admins = adminSet([]string{"u_h"})
 
 	send := func(seq int64, id string) {
 		p, _ := json.Marshal(messagePayload{MessageID: id, UserID: "u_h", SenderKind: "human", Content: "/secret set GITEE_TOKEN ••••••", Sealed: true, Addressees: []string{testBotUserID}})

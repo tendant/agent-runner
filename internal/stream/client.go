@@ -278,27 +278,35 @@ func (c *Client) PostMessage(ctx context.Context, key string, m OutMessage) erro
 
 // WhoAmI returns the user ID the bot token authenticates as.
 func (c *Client) WhoAmI(ctx context.Context) (string, error) {
+	id, _, err := c.Me(ctx)
+	return id, err
+}
+
+// Me returns the bot's user ID and, from servers that report it, the user
+// who owns the bot ("" when unknown).
+func (c *Client) Me(ctx context.Context) (userID, ownerID string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/v2/user", nil)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return "", "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("who am i: %w", err)
+		return "", "", fmt.Errorf("who am i: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("who am i: status %d: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("who am i: status %d: %s", resp.StatusCode, string(body))
 	}
 	var u struct {
-		UserID string `json:"user_id"`
+		UserID     string `json:"user_id"`
+		BotOwnerID string `json:"bot_owner_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil || u.UserID == "" {
-		return "", fmt.Errorf("who am i: no user_id in response")
+		return "", "", fmt.Errorf("who am i: no user_id in response")
 	}
-	return u.UserID, nil
+	return u.UserID, u.BotOwnerID, nil
 }
 
 // ListChannels returns the IDs of the channels the bot is a member of.

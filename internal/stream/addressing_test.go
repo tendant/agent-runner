@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,11 @@ func TestStreamBot_ActsOnlyWhenAddressed(t *testing.T) {
 	send("m_6", "m_1", "u_human", "human", "for both", "u_other", "u_me")
 
 	got := gw.handled()
-	want := []string{"for me", "consulting me", "for both"}
+	// Another bot's message is acted on, but never as a command (no gateway).
+	want := []string{"for me", "for both"}
+	if conv, ok := bot.threadManager.Get("m_1"); !ok || !strings.Contains(conv.GetUserMessage(), "consulting me") {
+		t.Fatal("the other bot's message addressed to this bot was not taken in")
+	}
 	if len(got) != len(want) {
 		t.Fatalf("handled %q, want %q", got, want)
 	}

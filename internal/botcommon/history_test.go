@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/agent-runner/agent-runner/internal/thread"
 )
 
 func TestFormatHistory_KeepsNewest(t *testing.T) {
@@ -120,5 +122,24 @@ func TestAlertExecute_CarriesOperatorAuthorization(t *testing.T) {
 	_, msgs = f.starter.counts()
 	if len(msgs) != 2 || strings.Contains(msgs[1], "Operator Authorization") {
 		t.Fatalf("authorization leaked into a later run: %q", msgs)
+	}
+}
+
+// An alert that arrived during a run is triaged when it ends: it neither
+// steers the run nor resumes the task as if a person had replied.
+func TestAlertDuringRun_TriagedAfter(t *testing.T) {
+	f := newEngineFixture(t, `{"action":"plan","message":"CI is red: I propose to look."}`)
+	f.conv.AddMessage("user", "deploy the app")
+	f.conv.SetState(thread.StateExecuting)
+	f.conv.AddAlertMessage("[Automated alert] build red")
+	f.engine.watchSession(context.Background(), "conv-1", "sess-x", f.conv)
+	f.engine.WG.Wait()
+	_, _, finals := f.sender.snapshot()
+	joined := strings.Join(finals, "\n")
+	if !strings.Contains(joined, "I propose to look") {
+		t.Fatalf("the alert was not triaged after the run: %q", finals)
+	}
+	if n, _ := f.starter.counts(); n != 0 {
+		t.Fatalf("an alert during a run started %d sessions", n)
 	}
 }

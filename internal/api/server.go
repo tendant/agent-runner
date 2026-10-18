@@ -129,6 +129,11 @@ func NewServer(cfg *config.Config) *Server {
 	handler = loggingMiddleware(handler)
 	if cfg.API.APIKey != "" {
 		handler = apiKeyMiddleware(cfg.API.APIKey, handler)
+	} else {
+		// Without a key the API is protected by listening on loopback only;
+		// a web page can still reach it by rebinding its own name to
+		// 127.0.0.1 (DNS rebinding), so only loopback Host names pass.
+		handler = loopbackHostMiddleware(handler)
 	}
 	// Outermost: a web page in the operator's browser cannot drive the API
 	// (it has no key, and with none set the loopback bind would not stop
@@ -620,4 +625,24 @@ func sameOriginMiddleware(next http.Handler) http.Handler {
 func sameHost(origin, host string) bool {
 	u, err := url.Parse(origin)
 	return err == nil && u.Host != "" && strings.EqualFold(u.Host, host)
+}
+
+// loopbackHostMiddleware refuses requests whose Host is not a loopback name
+// or address (localhost, 127.0.0.1, [::1]): the API without a key.
+func loopbackHostMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"this API has no API_KEY: it answers only requests to localhost"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -23,6 +23,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
+	"github.com/agent-runner/agent-runner/internal/chatcmd"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/task"
 	"github.com/agent-runner/agent-runner/internal/thread"
@@ -54,6 +55,9 @@ type Bot struct {
 	channelIDs        []string      // fixed channel list; empty = follow the bot's memberships
 	discoveryInterval time.Duration // how often to re-list the bot's channels when following them
 	botUserID         string
+	// admins may run chat commands here: STREAM_ADMIN_USERS plus the bot's
+	// owner, as the server reports it at start. Set before listening.
+	admins            map[string]bool
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	listFailures      int                         // channel listings failed in a row (syncChannels; one goroutine at a time)
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
@@ -104,6 +108,7 @@ func New(cfg config.StreamConfig, uploadsDir string, starter AgentStarter, threa
 		threadManager:     threadMgr,
 		analyzer:          analyzer,
 		channelIDs:        cfg.ChannelIDs,
+		admins:            adminSet(cfg.AdminUsers),
 		discoveryInterval: cfg.DiscoveryInterval,
 		uploadsDir:        uploadsDir,
 		botUserID:         extractBotUserID(cfg.BotToken),
@@ -267,13 +272,25 @@ func (b *Bot) Start(ctx context.Context) error {
 	// The bot recognises Messages addressed to it by its user ID. It is
 	// normally read from the token; ask the server when the token doesn't
 	// carry it.
-	if b.botUserID == "" {
-		id, err := b.client.WhoAmI(ctx)
-		if err != nil {
-			b.cancel()
-			return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
+	// Its owner may run chat commands; servers that predate bot_owner_id
+	// leave that to STREAM_ADMIN_USERS.
+	id, owner, err := b.client.Me(ctx)
+	switch {
+	case err != nil && b.botUserID == "":
+		b.cancel()
+		return fmt.Errorf("stream bot: cannot determine the bot's user ID: %w", err)
+	case err != nil:
+		slog.Warn("stream bot: could not look up the bot's owner; only STREAM_ADMIN_USERS may run commands", "error", err)
+	default:
+		if b.botUserID == "" {
+			b.botUserID = id
 		}
-		b.botUserID = id
+		if owner != "" {
+			b.admins[owner] = true
+		}
+	}
+	if len(b.admins) == 0 {
+		slog.Warn("stream bot: nobody may run chat commands (no owner reported, STREAM_ADMIN_USERS unset)")
 	}
 
 	if len(b.channelIDs) > 0 {
@@ -850,6 +867,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 		// A secret command: the server has it masked; read the original
 		// once, and only ever hand it to the command gateway, which keeps
 		// it out of the conversation and every log.
+		if msg.SenderKind != "human" || !b.isAdmin(msg.UserID) {
+			b.refuseCommand(ctx, key, msg.UserID)
+			return
+		}
 		original, err := b.client.SealedMessage(ctx, msg.MessageID)
 		if err != nil {
 			slog.Warn("stream bot: could not read a sealed command", "message_id", msg.MessageID, "error", err)
@@ -859,7 +880,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 		if b.gateway == nil {
 			return
 		}
-		reply, _, _ := b.gateway.Handle(strings.TrimSpace(original), func(m string) { b.emitFinal(ctx, key, m) }, func() { b.engine.ResetThread(key) })
+		reply, _, _ := b.gateway.Handle(stripLeadingMention(strings.TrimSpace(original)), func(m string) { b.emitFinal(ctx, key, m) }, func() { b.engine.ResetThread(key) })
 		if reply == "" {
 			reply = "Unknown command. Type /help for available commands."
 		}
@@ -886,11 +907,42 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 		return
 	}
 
-	if msg.SenderKind == senderWebhook {
+	switch msg.SenderKind {
+	case senderWebhook:
 		b.handleAlert(ctx, key, msg.WebhookName, text)
 		return
+	case "bot", "system":
+		b.handleBotMessage(ctx, key, text)
+		return
+	}
+	if cmd := stripLeadingMention(text); chatcmd.IsCommand(cmd) {
+		if !b.isAdmin(msg.UserID) {
+			b.refuseCommand(ctx, key, msg.UserID)
+			return
+		}
+		text = cmd
 	}
 	b.handleMessage(ctx, channelID, key, text)
+}
+
+// handleBotMessage handles a message from another bot (one consulting this
+// one by mentioning it). A bot is not a person: it never runs a chat
+// command and never answers a confirmation or a task's question for one.
+func (b *Bot) handleBotMessage(ctx context.Context, key, text string) {
+	if chatcmd.IsCommand(stripLeadingMention(text)) {
+		slog.Info("stream bot: ignored a command from another bot", "thread", key)
+		return
+	}
+	conv := b.threadManager.GetOrCreate(key)
+	conv.AddMessage("user", "[From another bot]\n\n"+text)
+	if conv.GetState() == thread.StateExecuting {
+		b.engine.HandleExecuting(ctx, key, conv, text)
+		return
+	}
+	if b.analyzer == nil {
+		return
+	}
+	b.engine.HandleAnalysis(ctx, key, conv)
 }
 
 // senderWebhook is the sender kind of a Message posted by an incoming
@@ -911,7 +963,8 @@ func (b *Bot) handleAlert(ctx context.Context, key, webhookName, text string) {
 	conv := b.threadManager.GetOrCreate(key)
 	conv.AddAlertMessage(text)
 	if conv.GetState() == thread.StateExecuting {
-		b.engine.HandleExecuting(ctx, key, conv, text)
+		// Not passed to the running agent: triaged when the run ends.
+		slog.Info("stream bot: alert during a run, triaged after it", "thread", key)
 		return
 	}
 	if b.analyzer == nil {
@@ -1447,4 +1500,44 @@ func isPermanentSSEError(err error) bool {
 		}
 	}
 	return false
+}
+
+// adminSet is the user IDs allowed to run chat commands.
+func adminSet(ids []string) map[string]bool {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			m[id] = true
+		}
+	}
+	return m
+}
+
+// isAdmin reports whether a person may run chat commands: /set, /secret,
+// /repo and the rest change what the agent runs with, so on agent-stream,
+// where anyone in a channel can address the bot, only its owner and
+// STREAM_ADMIN_USERS can.
+func (b *Bot) isAdmin(userID string) bool { return userID != "" && b.admins[userID] }
+
+// refuseCommand answers a command from someone who may not run commands.
+func (b *Bot) refuseCommand(ctx context.Context, key, userID string) {
+	if len(b.admins) == 0 {
+		b.emitFinal(ctx, key, "Nobody is set up to run commands for this bot yet. On the bot's host, set STREAM_ADMIN_USERS="+userID+" (your user ID) and restart it.")
+		return
+	}
+	b.emitFinal(ctx, key, "Only the bot's owner (or STREAM_ADMIN_USERS on its host) can run commands. Nothing was done.")
+}
+
+// stripLeadingMention turns "@Agent /status" into "/status" when what
+// follows the mention is a command; anything else is returned as is.
+func stripLeadingMention(text string) string {
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, "@") {
+		return text
+	}
+	head, _, _ := strings.Cut(t, "\n")
+	if i := strings.Index(head, " /"); i > 0 && chatcmd.KnownCommand(strings.Fields(t[i+1:])[0]) {
+		return strings.TrimSpace(t[i+1:])
+	}
+	return text
 }

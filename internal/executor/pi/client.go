@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"io"
 	"os"
 	"os/exec"
@@ -110,9 +111,8 @@ func Start(opts Options) (*Client, error) {
 	} else {
 		cmd = exec.Command(opts.Binary, args...)
 		cmd.Dir = opts.Workspace
-		if len(opts.Env) > 0 {
-			cmd.Env = append(os.Environ(), opts.Env...)
-		}
+		// Without the runner's own credentials (see agentsecrets.HostAgentEnv).
+		cmd.Env = append(agentsecrets.HostAgentEnv(os.Environ()), opts.Env...)
 	}
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

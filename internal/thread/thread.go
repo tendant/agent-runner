@@ -44,6 +44,7 @@ type Thread struct {
 	Messages     []Message
 	Plan         string   // generated plan text
 	pendingInput []string // user messages sent during execution, not yet passed on
+	pendingAlert bool     // an alert arrived during execution: triage it after
 
 	// activeSessionID is the agent session currently executing for this
 	// thread ("" when idle) — used to steer the live run.
@@ -97,7 +98,13 @@ func (c *Thread) addMessage(m Message) {
 		c.compact()
 	}
 	if role == "user" && c.State == StateExecuting {
-		c.pendingInput = append(c.pendingInput, content)
+		if m.Alert {
+			// Never passed to the running agent or taken as a person's
+			// reply: triaged once the run ends.
+			c.pendingAlert = true
+		} else {
+			c.pendingInput = append(c.pendingInput, content)
+		}
 	}
 	c.UpdatedAt = time.Now()
 }
@@ -199,6 +206,7 @@ func (c *Thread) Reset() {
 	defer c.mu.Unlock()
 	c.Plan = ""
 	c.pendingInput = nil
+	c.pendingAlert = false
 	c.State = StateGathering
 	c.UpdatedAt = time.Now()
 }
@@ -234,6 +242,16 @@ func (c *Thread) ActiveSessionID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.activeSessionID
+}
+
+// TakePendingAlert reports whether an alert arrived during execution, and
+// clears that.
+func (c *Thread) TakePendingAlert() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	had := c.pendingAlert
+	c.pendingAlert = false
+	return had
 }
 
 // ClearPendingInput atomically checks and clears the pending input flag.

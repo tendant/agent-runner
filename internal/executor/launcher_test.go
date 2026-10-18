@@ -43,9 +43,21 @@ func TestHostLauncherOverlaysEnv(t *testing.T) {
 	if cmd.Dir != "/tmp" || cmd.Env[len(cmd.Env)-1] != "A=1" || len(cmd.Env) < 2 {
 		t.Errorf("%+v", cmd)
 	}
+	// Never the runner's own credentials, with or without an overlay; the
+	// rest of the environment (the CLI's model key) stays.
+	t.Setenv("STREAM_BOT_TOKEN", "bot-secret")
+	t.Setenv("MEMORY_GIT_TOKEN", "mem-secret")
+	t.Setenv("API_KEY", "api-secret")
+	t.Setenv("ANTHROPIC_API_KEY", "model-key")
 	cmd, _, _ = HostLauncher{}.Command(context.Background(), LaunchSpec{Name: "echo"})
-	if cmd.Env != nil {
-		t.Error("no overlay must inherit env (nil)")
+	env := strings.Join(cmd.Env, "\n")
+	for _, leaked := range []string{"bot-secret", "mem-secret", "api-secret"} {
+		if strings.Contains(env, leaked) {
+			t.Errorf("host-run agent env carries a runner credential (%s)", leaked)
+		}
+	}
+	if !strings.Contains(env, "ANTHROPIC_API_KEY=model-key") {
+		t.Error("host-run agent env lost the model key the CLI needs")
 	}
 }
 

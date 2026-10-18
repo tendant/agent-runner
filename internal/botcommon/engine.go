@@ -180,10 +180,11 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 		}
 		pending := conv.PendingMessages()
 		hasPending := conv.ClearPendingInput()
+		pendingAlert := conv.TakePendingAlert()
 
 		// Clear StateExecuting before slow post-processing so new messages
 		// are accepted immediately instead of being queued.
-		if !hasPending {
+		if !hasPending && !pendingAlert {
 			e.ThreadManager.Complete(id)
 		}
 
@@ -208,6 +209,16 @@ func (e *Engine) watchSession(ctx context.Context, id, sessionID string, conv *t
 			if e.Analyzer == nil {
 				e.HandleConfirmation(ctx, id, conv)
 			} else {
+				e.HandleAnalysis(ctx, id, conv)
+			}
+			return
+		}
+
+		// An alert that arrived during the run is triaged now, like any
+		// alert: never as the reply or go-ahead of a person.
+		if pendingAlert {
+			conv.SetState(thread.StateGathering)
+			if e.Analyzer != nil {
 				e.HandleAnalysis(ctx, id, conv)
 			}
 			return
