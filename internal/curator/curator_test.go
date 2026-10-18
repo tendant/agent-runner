@@ -192,3 +192,28 @@ func TestCurate_ReviewFindingsInPrompt(t *testing.T) {
 		}
 	}
 }
+
+// A file the prompt could show only in part is never compacted: the model's
+// rewrite would replace all of it with a summary of what it saw.
+func TestCurate_RejectsCompactionOfPartlyShownFile(t *testing.T) {
+	dir := t.TempDir()
+	writeMem(t, dir, "decisions.md", strings.Repeat("d", 15000)) // fills most of the prompt
+	big := strings.Repeat("workflow step\n", 600)                // ~8400 chars, over budget
+	writeMem(t, dir, "workflows.md", big)
+	fake := &fakeLLM{response: `{"lessons_append": "", "compact": [{"file": "workflows.md", "content": "steps (short)"}]}`}
+	c := New(fake, Config{MemoryDir: dir, CharCap: 12000})
+
+	sum, err := c.Curate(context.Background(), Input{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sum.FilesCompacted) != 0 {
+		t.Fatalf("compacted %v from a partial view", sum.FilesCompacted)
+	}
+	if got := readMem(t, dir, "workflows.md"); got != big {
+		t.Fatalf("workflows.md was rewritten: %d chars, was %d", len(got), len(big))
+	}
+	if !strings.Contains(fake.prompt, "shown in part") {
+		t.Error("the prompt should say the file is shown in part")
+	}
+}

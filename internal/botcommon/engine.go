@@ -2,6 +2,7 @@ package botcommon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -34,6 +35,7 @@ type Sender interface {
 // OnSessionDone; cosmetic differences via the announce options.
 type Engine struct {
 	analysisLocks sync.Map // thread id -> *sync.Mutex (HandleAnalysis)
+	turnLocks     sync.Map // thread id -> *sync.Mutex (startTaskTurn: one turn per thread)
 
 	Starter       AgentStarter
 	ThreadManager *thread.Manager
@@ -127,6 +129,13 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 		sessionID, err = e.startTaskTurn(ts, id, message, currentMsg, prefix, feedback)
 	} else {
 		sessionID, err = e.Starter.StartAgent(message, e.Source, id)
+	}
+	if errors.Is(err, errTurnRunning) && conv.ActiveSessionID() != "" {
+		// Another turn of this thread started a moment ago (two messages
+		// raced): this one waits for it, like any message sent during a run.
+		conv.QueueInput(currentMsg)
+		e.Sender.Reply(ctx, id, "Message queued — I'll process it after the current task finishes.")
+		return
 	}
 	if err != nil {
 		conv.SetState(thread.StateGathering)

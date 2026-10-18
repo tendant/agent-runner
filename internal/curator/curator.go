@@ -94,7 +94,7 @@ func (c *Curator) Curate(ctx context.Context, in Input) (Summary, error) {
 	}
 
 	overBudget := c.overBudgetFiles()
-	prompt := c.buildPrompt(in, overBudget)
+	prompt, shownWhole := c.buildPrompt(in, overBudget)
 
 	if c.cfg.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -128,6 +128,12 @@ func (c *Curator) Curate(ctx context.Context, in Input) (Summary, error) {
 		orig, ok := overBudget[item.File]
 		if !ok {
 			slog.Warn("curator: rejected compaction of file not over budget", "file", item.File)
+			continue
+		}
+		if !shownWhole[item.File] {
+			// The model saw only part of it: its rewrite would replace the
+			// whole file with a summary of that part.
+			slog.Warn("curator: rejected compaction of a file the prompt showed only in part", "file", item.File)
 			continue
 		}
 		content := strings.TrimSpace(item.Content)
@@ -175,7 +181,10 @@ func (c *Curator) overBudgetFiles() map[string]string {
 
 // buildPrompt assembles the curation prompt: header, session outcome, then
 // each allowlisted file's content with a budget annotation, capped in total.
-func (c *Curator) buildPrompt(in Input, overBudget map[string]string) string {
+// buildPrompt returns the curation prompt and the memory files it shows in
+// full: only those may be compacted.
+func (c *Curator) buildPrompt(in Input, overBudget map[string]string) (string, map[string]bool) {
+	shownWhole := map[string]bool{}
 	var b strings.Builder
 	b.WriteString(curationPromptHeader)
 	b.WriteString("\n\n## Session Outcome\n\n")
@@ -211,12 +220,16 @@ func (c *Curator) buildPrompt(in Input, overBudget map[string]string) string {
 		if content == "" {
 			continue
 		}
-		if len(content) > remaining {
+		whole := len(content) <= remaining
+		if !whole {
 			content = content[:max(remaining, 0)]
 		}
 		remaining -= len(content)
-		if _, isOver := overBudget[name]; isOver {
+		if _, isOver := overBudget[name]; isOver && whole {
+			shownWhole[name] = true
 			fmt.Fprintf(&b, "\n### %s [OVER BUDGET: %d/%d chars — compact this]\n\n%s\n", name, len(content), perFileBudget, content)
+		} else if isOver {
+			fmt.Fprintf(&b, "\n### %s [shown in part — do not compact]\n\n%s\n", name, content)
 		} else {
 			fmt.Fprintf(&b, "\n### %s [within budget — do not compact]\n\n%s\n", name, content)
 		}
@@ -224,7 +237,7 @@ func (c *Curator) buildPrompt(in Input, overBudget map[string]string) string {
 			break
 		}
 	}
-	return b.String()
+	return b.String(), shownWhole
 }
 
 // appendLesson appends a dated lesson entry to lessons.md.

@@ -204,7 +204,16 @@ func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos 
 			conflicts = append(conflicts, rc)
 			continue
 		}
-		warnings = append(warnings, fmt.Sprintf("agent committed in %s but git push failed: %v", name, err))
+		// Not a conflict (network, login, a hook or protected branch): the
+		// commits would be lost with the workspace, so keep them on a
+		// rescue branch, which a hook or protection on the target branch
+		// does not cover.
+		rescue := "agent-rescue/" + sessionID
+		if rerr := ops.PushToBranch(ctx, repo, rescue); rerr == nil {
+			warnings = append(warnings, fmt.Sprintf("agent committed in %s but git push failed: %v; the commits are on branch %s", name, err, rescue))
+		} else {
+			warnings = append(warnings, fmt.Sprintf("agent committed in %s but git push failed: %v (and saving them to %s failed too: %v)", name, err, rescue, rerr))
+		}
 	}
 	return conflicts, warnings
 }

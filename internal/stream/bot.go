@@ -387,6 +387,15 @@ func (b *Bot) startListener(ctx context.Context, channelID string) bool {
 	go func() {
 		defer b.wg.Done()
 		b.listenConversation(lctx, channelID)
+		// Ended on its own (a 404 the server may answer for a passing
+		// error): forget it, so the next channel sync starts it again if
+		// the bot is still in the channel.
+		b.listenersMu.Lock()
+		if lctx.Err() == nil {
+			delete(b.listeners, channelID)
+		}
+		b.listenersMu.Unlock()
+		cancel()
 	}()
 	return true
 }
@@ -682,12 +691,16 @@ func (b *Bot) catchUpSeq(ctx context.Context, channelID string) (int64, bool) {
 
 	// Server doesn't support PollEvents — drain the SSE stream until idle.
 	slog.Debug("stream bot catch-up: poll endpoint not available, using SSE idle-drain", "channel_id", channelID)
-	return b.catchUpViaSSE(ctx, channelID), true
+	return b.catchUpViaSSE(ctx, channelID)
 }
 
 // catchUpViaSSE opens an SSE stream from seq=0 and returns the highest seq seen
 // once the stream has been idle (no events) for 500ms, or 10s have elapsed.
-func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) int64 {
+//
+// ok is false when the stream could not be opened, or ended before the
+// history was drained (the hard cap, a cancel): the caller retries rather
+// than save a cursor that would treat old messages as new.
+func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) (seq int64, ok bool) {
 	const idleTimeout = 500 * time.Millisecond
 	const hardCap = 10 * time.Second
 
@@ -697,7 +710,7 @@ func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) int64 {
 	ch, err := b.client.StreamEvents(capCtx, channelID, 0)
 	if err != nil {
 		slog.Warn("stream bot catch-up (SSE) failed", "channel_id", channelID, "error", err)
-		return 0
+		return 0, false
 	}
 
 	var maxSeq int64
@@ -706,9 +719,11 @@ func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) int64 {
 
 	for {
 		select {
-		case event, ok := <-ch:
-			if !ok {
-				return maxSeq
+		case event, open := <-ch:
+			if !open {
+				// The server ended the stream: a drain only if we weren't
+				// cancelled or capped.
+				return maxSeq, capCtx.Err() == nil
 			}
 			if event.Seq > maxSeq {
 				maxSeq = event.Seq
@@ -727,9 +742,10 @@ func (b *Bot) catchUpViaSSE(ctx context.Context, channelID string) int64 {
 			// Drain the channel so the SSE goroutine can exit.
 			for range ch {
 			}
-			return maxSeq
+			return maxSeq, true
 		case <-capCtx.Done():
-			return maxSeq
+			slog.Warn("stream bot catch-up (SSE) did not finish in time; retrying", "channel_id", channelID)
+			return maxSeq, false
 		}
 	}
 }

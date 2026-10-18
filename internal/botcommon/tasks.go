@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -235,6 +236,12 @@ func (e *Engine) resumeTask(ctx context.Context, id string, conv *thread.Thread,
 // latest message; prefix goes before a continuing task's context block (the
 // thread's latest messages, a run note).
 func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request, prefix string, feedback bool) (string, error) {
+	// One turn per thread: from the live-turn check to the saved record,
+	// so two messages racing (a drain and a new one) can't both start a
+	// session in the same workspace.
+	mu, _ := e.turnLocks.LoadOrStore(id, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 	rec, ok := e.Tasks.Get(id)
 	if ok && liveTurn(rec) != "" {
 		// Its workspace is in use (a message that lost the thread's state,

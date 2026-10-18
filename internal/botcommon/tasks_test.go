@@ -2,9 +2,12 @@ package botcommon
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/subagent"
@@ -208,5 +211,43 @@ func TestTask_DisabledUsesStartAgent(t *testing.T) {
 	}
 	if n, _ := ts.counts(); n != 1 {
 		t.Fatalf("StartAgent calls = %d, want 1", n)
+	}
+}
+
+// slowStarter widens the window between checking for a live turn and
+// saving the new one.
+type slowStarter struct{ *taskStarterFake }
+
+func (s slowStarter) StartTaskTurn(turn agent.TaskTurn) (string, error) {
+	time.Sleep(50 * time.Millisecond)
+	return s.taskStarterFake.StartTaskTurn(turn)
+}
+
+// Two turns racing in one thread (a drain and a new message): exactly one
+// starts; the other finds it running.
+func TestStartTaskTurn_OneTurnPerThread(t *testing.T) {
+	f, ts := newTaskFixture(t)
+	slow := slowStarter{ts}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = f.engine.startTaskTurn(slow, "conv-1", "deploy", "deploy", "", false)
+		}()
+	}
+	wg.Wait()
+	started := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			started++
+		case !errors.Is(err, errTurnRunning):
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if n, _ := ts.counts(); started != 1 || n != 1 {
+		t.Fatalf("started %d turns (%d sessions), want 1", started, n)
 	}
 }

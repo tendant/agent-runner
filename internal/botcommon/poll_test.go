@@ -235,3 +235,30 @@ func TestPollAndReport_Timeout(t *testing.T) {
 		t.Error("expected OnTimeout to be called")
 	}
 }
+
+// A session waiting in the queue longer than its time limit is not timed
+// out: its time starts when it starts running.
+func TestPollAndReport_QueueTimeDoesNotCount(t *testing.T) {
+	withFastPolling(t)
+	var states []*agent.Session
+	for range 150 { // ~1.5s queued, past the 1s limit
+		states = append(states, &agent.Session{Status: agent.SessionStatusQueued, MaxTotalSeconds: 1})
+	}
+	states = append(states,
+		&agent.Session{Status: agent.SessionStatusRunning, MaxTotalSeconds: 1},
+		&agent.Session{Status: agent.SessionStatusCompleted, MaxTotalSeconds: 1})
+	starter := &fakeStarter{states: states}
+	r := newRecordingReporter()
+
+	go PollAndReport(starter, "s1", r, nil)
+	select {
+	case <-r.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PollAndReport did not return")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timedOut || r.final == nil {
+		t.Fatalf("timed out %v, final %v: queue time was counted against the session", r.timedOut, r.final)
+	}
+}

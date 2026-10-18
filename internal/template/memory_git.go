@@ -2,12 +2,14 @@ package template
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/agent-runner/agent-runner/internal/gitsafe"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -185,6 +187,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 	// Capture HEAD before pull to detect whether new commits arrived.
 	headBefore, _ := gitOutput(memoryDir, "rev-parse", "HEAD")
 
+	ensureUnionMerge(memoryDir)
 	if err := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD"); err != nil {
 		_ = gitRunEnv(memoryDir, nil, "rebase", "--abort")
 		return "", fmt.Errorf("pull --rebase failed, rebase aborted: %w", err)
@@ -372,8 +375,10 @@ func pushMemory(memoryDir string, env []string, remote, token string) error {
 	// Remote is ahead — sync then retry. Try rebase first for a clean history;
 	// fall back to a merge (with --allow-unrelated-histories) when the local
 	// and remote histories have diverged completely (e.g. fresh local init vs
-	// existing remote). Always prefer local content on conflicts (-Xours).
-	rebaseErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "-Xtheirs", "origin", "HEAD")
+	// existing remote). Memory files are notes, so a conflict in one keeps
+	// both sides' lines (union merge) instead of dropping either host's.
+	ensureUnionMerge(memoryDir)
+	rebaseErr := gitRunEnv(memoryDir, env, "pull", "--rebase", "origin", "HEAD")
 	if rebaseErr != nil {
 		// [H6] If abort itself fails the repo is stuck in an in-progress rebase;
 		// the merge fallback would immediately fail with "unfinished rebase".
@@ -382,10 +387,12 @@ func pushMemory(memoryDir string, env []string, remote, token string) error {
 			return fmt.Errorf("pull --rebase failed (%w); rebase --abort also failed (%v) — run 'git rebase --abort' in %s manually", rebaseErr, abortErr, memoryDir)
 		}
 		// Rebase aborted cleanly. Fall back to a merge that allows unrelated
-		// histories, keeping local content on conflict.
+		// histories (a remote created with its own first commit).
 		mergeErr := gitRunEnv(memoryDir, env, "pull", "--no-rebase",
-			"--allow-unrelated-histories", "-Xours", "origin", "HEAD")
+			"--allow-unrelated-histories", "origin", "HEAD")
 		if mergeErr != nil {
+			// Never leave a merge in progress: every later commit would fail.
+			_ = gitRunEnv(memoryDir, nil, "merge", "--abort")
 			if isRepoNotFound(mergeErr) && token == "" {
 				return fmt.Errorf("remote repository not found — set MEMORY_GIT_TOKEN to enable auto-create, or create the repo manually: %w", mergeErr)
 			}
@@ -535,15 +542,36 @@ func GitSSHEnv(remote, sshKey string) []string {
 	if strings.HasPrefix(remote, "https://") || strings.HasPrefix(remote, "http://") {
 		return nil
 	}
-	return []string{"GIT_SSH_COMMAND=ssh -i " + sshKey + " -o StrictHostKeyChecking=no"}
+	return []string{"GIT_SSH_COMMAND=ssh -i " + sshKey + " -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"}
+}
+
+// memoryGitTimeout bounds one memory git command. They run under the memory
+// lock, which every session start, merge and /memory command waits for: a
+// stalled push (a network hang, a host that asks for a password) must not
+// hold it forever.
+var memoryGitTimeout = 3 * time.Minute
+
+// memoryGitEnv makes git fail instead of prompting, and ssh give up on a
+// dead connection, so memoryGitTimeout is a last resort.
+var memoryGitEnv = []string{
+	"GIT_TERMINAL_PROMPT=0",
+	"GIT_SSH_COMMAND=ssh -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4",
+}
+
+// memoryGitCommand is a hardened git command for the memory repo, bounded
+// by memoryGitTimeout; env (credentials, a key) overrides memoryGitEnv.
+func memoryGitCommand(dir string, env []string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), memoryGitTimeout)
+	cmd := gitsafe.CommandContext(ctx, args...)
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(), memoryGitEnv...), env...)
+	cmd.WaitDelay = 5 * time.Second
+	return cmd, cancel
 }
 
 func gitRunEnv(dir string, env []string, args ...string) error {
-	cmd := gitsafe.Command(args...)
-	cmd.Dir = dir
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd, cancel := memoryGitCommand(dir, env, args...)
+	defer cancel()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -553,8 +581,8 @@ func gitRunEnv(dir string, env []string, args ...string) error {
 }
 
 func gitOutput(dir string, args ...string) ([]byte, error) {
-	cmd := gitsafe.Command(args...)
-	cmd.Dir = dir
+	cmd, cancel := memoryGitCommand(dir, nil, args...)
+	defer cancel()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -620,4 +648,29 @@ func shortHash(out []byte) string {
 		return "(none)"
 	}
 	return h[:8]
+}
+
+// ensureUnionMerge makes git merge a conflicting memory file (.md) by
+// keeping both sides' lines, through the memory repo's own, uncommitted
+// .git/info/attributes: two hosts that append to the same file keep both.
+func ensureUnionMerge(memoryDir string) {
+	const rule = "*.md merge=union\n"
+	gitDir, err := gitOutput(memoryDir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return
+	}
+	path := filepath.Join(strings.TrimSpace(string(gitDir)), "info", "attributes")
+	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), strings.TrimSpace(rule)) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		slog.Warn("memory: could not set union merge for memory files", "error", err)
+		return
+	}
+	defer f.Close()
+	f.WriteString(rule)
 }

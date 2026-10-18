@@ -18,7 +18,7 @@ var fallbackTimeout = 2 * time.Hour
 
 // deadlineGrace is added on top of a session's MaxTotalSeconds so the poll
 // loop's own timeout fires after the session's internal deadline, not before it.
-var deadlineGrace = 30 * time.Second
+var deadlineGrace = 10 * time.Minute
 
 // Reporter receives callbacks from PollAndReport as a session progresses.
 // Implementations close over their own chat/conversation/user ID and their
@@ -62,6 +62,7 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter, footer fu
 	reportedCurrent := 0    // highest CurrentIteration already reported as started
 
 	var deadline <-chan time.Time
+	extended := false
 
 	for {
 		select {
@@ -72,8 +73,11 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter, footer fu
 				return
 			}
 
-			// Set deadline on first successful lookup.
-			if deadline == nil {
+			// The deadline runs from when the session starts running: a turn
+			// waiting in the queue behind others has not used any of its
+			// time. (The grace covers finalization: review, push, conflict
+			// turns.)
+			if deadline == nil && session.Status != agent.SessionStatusQueued {
 				maxSecs := session.MaxTotalSeconds
 				if maxSecs <= 0 {
 					maxSecs = int(fallbackTimeout.Seconds())
@@ -103,6 +107,18 @@ func PollAndReport(starter AgentStarter, sessionID string, r Reporter, footer fu
 			}
 
 		case <-deadline:
+			// Still running past its limit and grace (a slow push, a stuck
+			// finalization): keep watching a while longer rather than tell
+			// the user it is over while it is not.
+			if !extended {
+				if s, ok := starter.GetAgentSession(sessionID); ok && !isTerminal(s.Status) {
+					extended = true
+					t := time.NewTimer(fallbackTimeout)
+					defer t.Stop()
+					deadline = t.C
+					continue
+				}
+			}
 			r.OnTimeout()
 			return
 		}
@@ -116,4 +132,9 @@ func WithFooter(text, footer string) string {
 		return text
 	}
 	return text + "\n\n" + footer
+}
+
+// isTerminal reports whether a session has ended.
+func isTerminal(s agent.SessionStatus) bool {
+	return s == agent.SessionStatusCompleted || s == agent.SessionStatusFailed || s == agent.SessionStatusStopped
 }

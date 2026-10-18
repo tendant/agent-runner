@@ -244,6 +244,14 @@ func (c *Thread) ActiveSessionID() string {
 	return c.activeSessionID
 }
 
+// QueueInput queues text as a message to pass on after the current run
+// (it is already in the history).
+func (c *Thread) QueueInput(text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pendingInput = append(c.pendingInput, text)
+}
+
 // TakePendingAlert reports whether an alert arrived during execution, and
 // clears that.
 func (c *Thread) TakePendingAlert() bool {

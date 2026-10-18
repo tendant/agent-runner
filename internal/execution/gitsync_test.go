@@ -309,3 +309,38 @@ func TestSyncPushesNewBranchAndParksDetached(t *testing.T) {
 		}
 	}
 }
+
+// A push refused for a reason other than a conflict (here a hook refusing
+// the branch) keeps the commits on a rescue branch: the workspace is
+// deleted after.
+func TestPushRepos_RescuesOnAnyFailure(t *testing.T) {
+	base := t.TempDir()
+	remote := filepath.Join(base, "remote.git")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(base, "init", "-q", "--bare", "-b", "main", remote)
+	repo := filepath.Join(base, "app")
+	run(base, "clone", "-q", remote, repo)
+	run(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	run(repo, "push", "-q", "-u", "origin", "HEAD:main")
+	hook := filepath.Join(remote, "hooks", "pre-receive")
+	os.WriteFile(hook, []byte("#!/bin/sh\nwhile read old new ref; do [ \"$ref\" = refs/heads/main ] && { echo 'main is protected' >&2; exit 1; }; done\nexit 0\n"), 0o755)
+	run(repo, "commit", "-q", "--allow-empty", "-m", "agent's work")
+
+	ops := gitpkg.NewOperations(1, 0)
+	conflicts, warnings := pushRepos(context.Background(), map[string]*gitpkg.Operations{repo: ops}, []string{repo}, "sess-1")
+	if len(conflicts) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "agent-rescue/sess-1") {
+		t.Fatalf("conflicts %v, warnings %q", conflicts, warnings)
+	}
+	out, err := exec.Command("git", "--git-dir", remote, "log", "-1", "--format=%s", "agent-rescue/sess-1").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "agent's work" {
+		t.Fatalf("rescue branch: %q %v", out, err)
+	}
+}
