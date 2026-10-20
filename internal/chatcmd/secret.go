@@ -60,6 +60,9 @@ func (c *Commander) handleSecret(arg string) string {
 		if strings.Contains(value, sealedMask) {
 			return errMaskedValue
 		}
+		if err := agentsecrets.CheckNameFor(name, c.cfg.Agent.CLI); err != nil {
+			return "error: " + err.Error()
+		}
 		if err := store.Set(name, value, desc); err != nil {
 			return "error: " + err.Error() + "\n(/secret help shows the format)"
 		}

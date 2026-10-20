@@ -161,7 +161,7 @@ func testModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	// pi: an OAuth run token, and models.json pointing both providers at
 	// their proxies, keeping the seed's other providers.
 	pi := launch(t, run, got, "pi")
-	if pi["ANTHROPIC_OAUTH_TOKEN"] == "" || pi["OPENAI_API_KEY"] == "" || pi["ANTHROPIC_API_KEY"] != "" {
+	if pi["ANTHROPIC_OAUTH_TOKEN"] == "" || pi[piTokenEnv(ProviderOpenAI)] == "" || pi["ANTHROPIC_API_KEY"] != "" || pi["OPENAI_API_KEY"] != "" {
 		t.Errorf("pi env: %v", pi)
 	}
 	b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json"))
@@ -263,7 +263,7 @@ func testChatGPTChannelIsCodexOnly(t *testing.T) {
 
 	// pi cannot use ChatGPT's backend: no run token, no openai provider.
 	pi := launch(t, run, got, "pi")
-	if pi["OPENAI_API_KEY"] != "" {
+	if pi["OPENAI_API_KEY"] != "" || pi[piTokenEnv(ProviderOpenAI)] != "" {
 		t.Errorf("pi got an OpenAI run token for a ChatGPT channel")
 	}
 	if b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json")); err == nil && strings.Contains(string(b), base) {
@@ -345,9 +345,16 @@ func testDeepSeekChannelForPi(t *testing.T) {
 		t.Fatal(err)
 	}
 	pi := launch(t, run, got, "pi")
-	token := pi["DEEPSEEK_API_KEY"]
-	if token == "" || strings.Contains(token, "real-") {
-		t.Fatalf("pi's DEEPSEEK_API_KEY: %q", token)
+	// The run token is not under DEEPSEEK_API_KEY (that name is the
+	// agent's, for its apps) but under pi's own variable, which the run's
+	// auth.json names, and which pi ranks above the environment.
+	token := pi[piTokenEnv("deepseek")]
+	if token == "" || strings.Contains(token, "real-") || pi["DEEPSEEK_API_KEY"] != "" {
+		t.Fatalf("pi env: token %q, DEEPSEEK_API_KEY %q", token, pi["DEEPSEEK_API_KEY"])
+	}
+	auth, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "auth.json"))
+	if err != nil || !strings.Contains(string(auth), `"$`+piTokenEnv("deepseek")+`"`) {
+		t.Fatalf("pi auth.json: %v\n%s", err, auth)
 	}
 	b, err := os.ReadFile(filepath.Join(pi["PI_CODING_AGENT_DIR"], "models.json"))
 	if err != nil {
@@ -372,7 +379,7 @@ func testDeepSeekChannelForPi(t *testing.T) {
 	// claude and codex get nothing from a DeepSeek-only setup.
 	for _, cli := range []string{"claude", "codex"} {
 		for k, v := range launch(t, run, got, cli) {
-			if strings.Contains(v, "real-") || k == "DEEPSEEK_API_KEY" {
+			if strings.Contains(v, "real-") || k == "DEEPSEEK_API_KEY" || k == piTokenEnv("deepseek") {
 				t.Errorf("%s got %s", cli, k)
 			}
 		}

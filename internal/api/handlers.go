@@ -559,7 +559,7 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 		runCtx = run.Ctx
 	}
 	if list, err := secrets.List(); err == nil {
-		runCtx = executor.WithSessionEnv(runCtx, agentsecrets.EnvOf(list))
+		runCtx = executor.WithSessionEnv(runCtx, agentsecrets.EnvFor(list, h.config.Agent.CLI))
 	}
 	result, executionLog, err := h.getExecutor().ExecuteWithLog(runCtx, workspacePath, jobInstruction)
 	logData.ExecutionLog = executionLog

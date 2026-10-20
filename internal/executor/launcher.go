@@ -40,11 +40,14 @@ type LauncherSetter interface {
 type HostLauncher struct{}
 
 func (HostLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd, func(), error) {
-	cmd := exec.CommandContext(ctx, s.Name, s.Args...)
-	cmd.Dir = s.Dir
 	// The runner's environment, minus its own credentials (bot tokens, API
-	// key, memory token): the agent gets its secrets in ExtraEnv.
-	cmd.Env = append(agentsecrets.HostAgentEnv(os.Environ()), s.ExtraEnv...)
+	// key, memory token) and its model keys under their standard names: an
+	// agent CLI gets those by its own route (hostModelRoute), so the agent's
+	// secrets (ExtraEnv) may use the standard names.
+	args, env := hostModelRoute(s.Name, s.Args, agentsecrets.HostAgentEnv(os.Environ()))
+	cmd := exec.CommandContext(ctx, s.Name, args...)
+	cmd.Dir = s.Dir
+	cmd.Env = append(env, s.ExtraEnv...)
 	return cmd, func() {}, nil
 }
 

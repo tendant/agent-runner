@@ -83,9 +83,25 @@ func TestCheckNameCoversRunnerSettings(t *testing.T) {
 		t.Fatalf("found only %d settings: the scan is broken", len(seen))
 	}
 	for name := range seen {
+		// The model keys are shared on purpose: agent CLIs get agent-runner's
+		// by another route (executor.hostModelRoute, the sandbox's proxy).
+		if AgentModelKeys[name] {
+			continue
+		}
 		if CheckName(name) == nil {
 			t.Errorf("%s is read by agent-runner but allowed as an agent secret", name)
 		}
+	}
+	for name := range AgentModelKeys {
+		if err := CheckName(name); err != nil {
+			t.Errorf("%s should be allowed for the agent: %v", name, err)
+		}
+	}
+	if CheckNameFor(ClaudeReservedKey, "claude") == nil || CheckNameFor(ClaudeReservedKey, "pi") != nil {
+		t.Error("ANTHROPIC_API_KEY must stay agent-runner's only while the agent CLI is claude")
+	}
+	if env := EnvFor([]Secret{{Name: ClaudeReservedKey, Value: "app-key"}, {Name: "DEEPSEEK_API_KEY", Value: "app-ds"}}, "claude"); len(env) != 1 || env[0] != "DEEPSEEK_API_KEY=app-ds" {
+		t.Errorf("claude session env = %v", env)
 	}
 	for _, ok := range []string{"GITEE_TOKEN", "GH_TOKEN", "STRIPE_API_KEY", "AWS_ACCESS_KEY_ID", "DATABASE_URL"} {
 		if err := CheckName(ok); err != nil {

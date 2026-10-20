@@ -546,6 +546,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	if err == nil && model != nil {
 		err = model.writePiModels(r.cfg.PiSeed, home, filepath.Join(".pi", "agent"))
 		if err == nil {
+			err = model.writePiAuth(home, filepath.Join(".pi", "agent"))
+		}
+		if err == nil {
 			err = model.writeCodexConfig(home, ".codex")
 		}
 	}

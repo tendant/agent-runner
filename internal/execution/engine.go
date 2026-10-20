@@ -576,7 +576,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	}
 	// The agent user's secrets: in every CLI's environment, named in the prompt.
 	agentSecrets := h.agentSecrets(sessionID, liveSession)
-	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvOf(agentSecrets))
+	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvFor(agentSecrets, h.config.Agent.CLI))
 	// What the agent says is recorded and forwarded without secret values.
 	redactor := agentsecrets.NewRedactor(agentSecrets)
 	liveSession.SetRedactor(redactor.Redact)

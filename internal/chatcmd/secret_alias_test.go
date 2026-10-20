@@ -43,3 +43,22 @@ func TestSecretMaskedValueRefused(t *testing.T) {
 		t.Fatalf("saved %+v", list)
 	}
 }
+
+// The model key names are free for the agent's own keys (an app's), except
+// ANTHROPIC_API_KEY while the agent CLI is claude.
+func TestSecretModelKeyNames(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "secrets.json")
+	cfg := &config.Config{SecretsFile: file}
+	cfg.Agent.CLI = "pi"
+	c := &Commander{cfg: cfg}
+	if reply, _, _ := c.Handle("/secret set DEEPSEEK_API_KEY sk-app-1234567890 the app's DeepSeek key", nil); !strings.HasPrefix(reply, "ok: DEEPSEEK_API_KEY set") {
+		t.Fatalf("pi: %q", reply)
+	}
+	cfg.Agent.CLI = "claude"
+	if reply, _, _ := c.Handle("/secret set ANTHROPIC_API_KEY sk-ant-app-1234567890", nil); !strings.Contains(reply, "stays agent-runner's while the agent CLI is claude") {
+		t.Fatalf("claude: %q", reply)
+	}
+	if reply, _, _ := c.Handle("/secret set DEEPSEEK_BASE_URL https://evil.example", nil); !strings.Contains(reply, "agent-runner's own") {
+		t.Fatalf("a setting name was allowed: %q", reply)
+	}
+}

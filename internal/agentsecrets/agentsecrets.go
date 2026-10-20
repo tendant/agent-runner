@@ -65,6 +65,37 @@ func (s *Store) Env() ([]Secret, []string, error) {
 	return list, EnvOf(list), nil
 }
 
+// AgentModelKeys are provider key names an agent secret may use although
+// agent-runner has its own key of that name: its agent CLIs get theirs by
+// another route. Except ClaudeReservedKey for claude.
+var AgentModelKeys = map[string]bool{"ANTHROPIC_API_KEY": true, "OPENAI_API_KEY": true, "DEEPSEEK_API_KEY": true}
+
+// ClaudeReservedKey stays agent-runner's while the agent CLI is claude:
+// claude ranks its environment above every other way to give it a key, and
+// the programs it runs get its environment, so an agent secret of this name
+// would become claude's own model key.
+const ClaudeReservedKey = "ANTHROPIC_API_KEY"
+
+// CheckNameFor is CheckName for an agent run by cli.
+func CheckNameFor(name, cli string) error {
+	if cli == "claude" && name == ClaudeReservedKey {
+		return fmt.Errorf("%s stays agent-runner's while the agent CLI is claude (claude would use it as its own model key); give the agent its key under another name, e.g. APP_ANTHROPIC_API_KEY", name)
+	}
+	return CheckName(name)
+}
+
+// EnvFor is EnvOf for an agent run by cli (see ClaudeReservedKey).
+func EnvFor(list []Secret, cli string) []string {
+	env := make([]string, 0, len(list))
+	for _, kv := range EnvOf(list) {
+		if cli == "claude" && strings.HasPrefix(kv, ClaudeReservedKey+"=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
+}
+
 // EnvOf is list as KEY=VALUE, leaving out any name agent-runner reads.
 func EnvOf(list []Secret) []string {
 	env := make([]string, 0, len(list))
@@ -229,12 +260,18 @@ func CheckName(name string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%q: use upper-case letters, digits and _ (e.g. GITEE_TOKEN)", name)
 	}
+	if AgentModelKeys[name] {
+		// agent-runner gives each agent CLI its own model key by another
+		// route (executor.hostModelRoute, the sandbox's proxy), so these
+		// names are free for the agent's own keys (an app's).
+		return nil
+	}
 	if runnerNames[name] {
 		return fmt.Errorf("%s is agent-runner's own setting, not an agent secret", name)
 	}
 	for _, p := range runnerPrefixes {
 		if strings.HasPrefix(name, p) {
-			return fmt.Errorf("%s: names starting with %s are agent-runner's own; pick another (e.g. GITEE_TOKEN)", name, p)
+			return fmt.Errorf("%s: names starting with %s are agent-runner's own (its settings go in with /set); pick another for the agent (e.g. GITEE_TOKEN)", name, p)
 		}
 	}
 	return nil

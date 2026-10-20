@@ -95,10 +95,13 @@ func init() {
 
 // modelRun is a run's started channels: per provider, the proxy.
 type modelRun struct {
-	proxies   map[string]*proxy.Proxy
-	chatgpt   bool              // the OpenAI channel is a ChatGPT login (codex only)
-	sockDir   string            // Linux: the proxies' Unix sockets
-	inSandbox map[string]string // Linux: provider -> forwarder address
+	proxies map[string]*proxy.Proxy
+	chatgpt bool // the OpenAI channel is a ChatGPT login (codex only)
+	// anthropicOAuth: the Anthropic channel is a subscription token, which
+	// pi takes as ANTHROPIC_OAUTH_TOKEN (not an auth.json API key).
+	anthropicOAuth bool
+	sockDir        string            // Linux: the proxies' Unix sockets
+	inSandbox      map[string]string // Linux: provider -> forwarder address
 }
 
 func (m *modelRun) close() {
@@ -162,6 +165,9 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		m.proxies[name] = p
 		if name == ProviderOpenAI && ch.ChatGPT {
 			m.chatgpt = true
+		}
+		if name == ProviderAnthropic && ch.OAuth {
+			m.anthropicOAuth = true
 		}
 	}
 	return m, nil
@@ -245,7 +251,7 @@ func (m *modelRun) cliEnv(channels map[string]*ModelChannel) map[string][]string
 		if channels[ProviderAnthropic].OAuth {
 			env["pi"] = append(env["pi"], "ANTHROPIC_OAUTH_TOKEN="+p.Token())
 		} else {
-			env["pi"] = append(env["pi"], "ANTHROPIC_API_KEY="+p.Token())
+			env["pi"] = append(env["pi"], piTokenEnv(ProviderAnthropic)+"="+p.Token())
 		}
 	}
 	if p := m.proxies[ProviderOpenAI]; p != nil {
@@ -253,12 +259,12 @@ func (m *modelRun) cliEnv(channels map[string]*ModelChannel) map[string][]string
 		// (writeCodexConfig).
 		env["codex"] = []string{codexKeyEnv + "=" + p.Token()}
 		if !m.chatgpt { // pi speaks the public API, not ChatGPT's backend
-			env["pi"] = append(env["pi"], "OPENAI_API_KEY="+p.Token())
+			env["pi"] = append(env["pi"], piTokenEnv(ProviderOpenAI)+"="+p.Token())
 		}
 	}
 	for _, cp := range CompatProviders {
 		if p := m.proxies[cp.Name]; p != nil {
-			env["pi"] = append(env["pi"], cp.KeyEnv+"="+p.Token())
+			env["pi"] = append(env["pi"], piTokenEnv(cp.Name)+"="+p.Token())
 		}
 	}
 	return env
@@ -317,6 +323,33 @@ supports_websockets = false
 `, codexProvider, codexProvider, m.url(ProviderOpenAI)+chatgptBase, codexKeyEnv)
 	}
 	return safefs.WriteIn(root, path, []byte(cfg), 0o600)
+}
+
+// piTokenEnv carries pi's run token for a provider. Not the provider's
+// standard key name (DEEPSEEK_API_KEY): that one is the agent's, for the
+// programs it builds; pi reads this one through the run's auth.json
+// (writePiAuth), which outranks the environment.
+func piTokenEnv(provider string) string {
+	return "AGENT_RUNNER_PI_" + strings.ToUpper(provider) + "_TOKEN"
+}
+
+// writePiAuth writes pi's auth.json for the run: each proxied provider's
+// key is its run token, read from piTokenEnv. pi ranks auth.json above the
+// environment, so the agent's own DEEPSEEK_API_KEY (an app's) never
+// replaces it. The host's auth.json (its logins) is never seeded.
+func (m *modelRun) writePiAuth(home, rel string) error {
+	doc := map[string]any{}
+	for name := range m.proxies {
+		if (name == ProviderOpenAI && m.chatgpt) || (name == ProviderAnthropic && m.anthropicOAuth) {
+			continue
+		}
+		doc[name] = map[string]string{"type": "api_key", "key": "$" + piTokenEnv(name)}
+	}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return safefs.Write(home, filepath.Join(rel, "auth.json"), b, 0o600) // the agent's home: no link followed
 }
 
 // writePiModels writes pi's models.json for the run: the seed's (host or

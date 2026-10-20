@@ -48,7 +48,12 @@ then describe the task in a message
   their names and descriptions, and their values are redacted from chat, logs and memory.
   agent-runner's own keys (`.env`, `/set`) never reach the agent: bot tokens, `API_KEY` and the
   memory token are left out of its environment even without the sandbox (the model provider key
-  its CLI needs is kept). `/set` refuses names that change how processes run (`PATH`, `GIT_*`, `LD_*`, ...). On agent-stream, `/secret set`
+  its CLI needs is kept). `/set` refuses names that change how processes run (`PATH`, `GIT_*`, `LD_*`, ...).
+  The model key names (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) can be agent
+  secrets too, for the apps the agent builds: each agent CLI gets agent-runner's own key by its own
+  route (pi `--api-key` or the sandbox's `auth.json`, codex a `-c` provider, opencode its config),
+  so the two never mix. Except `ANTHROPIC_API_KEY` while the agent CLI is claude, which reads only
+  its environment: give the agent that key under another name. On agent-stream, `/secret set`
   and `/set` are sealed: the server keeps and shows them masked (`/secret set NAME ••••••`), pushes
   nobody, and hands the original once to this bot only; malformed or misspelled forms are sealed
   too.
