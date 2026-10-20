@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"github.com/agent-runner/agent-runner/internal/rescue"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"log/slog"
 	"net"
@@ -230,7 +231,7 @@ func NewServer(cfg *config.Config) *Server {
 		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
 	}
 
-	return &Server{
+	s := &Server{
 		config: cfg,
 		httpServer: &http.Server{
 			Addr:         cfg.API.Bind,
@@ -249,6 +250,45 @@ func NewServer(cfg *config.Config) *Server {
 		journal:       journal,
 		tasks:         tasks,
 	}
+	s.configureRescue(workspaceManager)
+	return s
+}
+
+// configureRescue makes removing a workspace keep its unsaved work first
+// (internal/rescue), and tells the chat the workspace belonged to.
+func (s *Server) configureRescue(w *executor.WorkspaceManager) {
+	w.RescueRoot, w.RescueRetention = s.config.RescueRoot, s.config.RescueRetention
+	w.OnRescue = s.reportRescue
+}
+
+// reportRescue tells the thread a removed workspace belonged to what of its
+// unsaved work was kept, and where.
+func (s *Server) reportRescue(workspace string, rep rescue.Report) {
+	source, key := "", ""
+	if s.tasks != nil {
+		for _, rec := range s.tasks.List() {
+			if rec.Workspace == workspace {
+				source, key = rec.Source, rec.ThreadKey
+				break
+			}
+		}
+	}
+	if key == "" && s.agentManager != nil {
+		for _, sess := range s.agentManager.ListSessions(200) {
+			snap := sess.Snapshot()
+			if snap.WorkspacePath == workspace {
+				source, key = snap.Source, snap.ConvID
+				break
+			}
+		}
+	}
+	hook, ok := s.recoveryHooks()[source]
+	if key == "" || !ok || hook.notify == nil {
+		return // logged by the workspace manager
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	hook.notify(ctx, key, "⚠️ Unsaved work was kept before its workspace was removed ("+rep.Summary()+"). It's on the bot's host in "+rep.Dir+" (README.txt says how to restore it). Register the repo with /repo add, and commit, so it's pushed next time.")
 }
 
 // Start starts the HTTP server with graceful shutdown support
@@ -270,6 +310,7 @@ func (s *Server) Start() error {
 	// Startup cleanup
 	if s.config.StartupCleanupStaleJobs {
 		workspaceManager := executor.NewWorkspaceManager(s.config.TmpRoot, s.config.MaxRuntimeSeconds)
+		s.configureRescue(workspaceManager)
 		if err := workspaceManager.CleanupStaleWorkspaces(); err != nil {
 			slog.Warn("failed to cleanup stale workspaces", "error", err)
 		}

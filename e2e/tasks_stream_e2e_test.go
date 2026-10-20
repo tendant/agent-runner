@@ -266,6 +266,13 @@ func TestE2E_TasksOverAgentStream(t *testing.T) {
 		_, err := os.Stat(ws2)
 		return os.IsNotExist(err)
 	})
+	// Its scratch work (notes.txt, never committed) was kept first, and the
+	// thread was told where.
+	waitBotMessage(t, human, thread2, "Unsaved work was kept", logs)
+	rescued, _ := filepath.Glob(filepath.Join(dataDir, "rescued", "*", "files", "notes.txt"))
+	if len(rescued) == 0 {
+		t.Fatal("the cancelled task's notes.txt was not kept")
+	}
 	// The first thread's finished task is untouched.
 	if _, err := os.Stat(workspace); err != nil {
 		t.Fatalf("cancelling one thread's task removed another's workspace: %v", err)

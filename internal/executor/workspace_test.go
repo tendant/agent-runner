@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"github.com/agent-runner/agent-runner/internal/rescue"
 	"os"
 	"path/filepath"
 	"testing"
@@ -202,5 +203,34 @@ func TestCopyFile_ResolvesSymlinkContent(t *testing.T) {
 	}
 	if string(data) != "real content" {
 		t.Errorf("expected %q, got %q", "real content", string(data))
+	}
+}
+
+// Removing a workspace keeps its unsaved work first and says so; a clean
+// workspace is just removed.
+func TestCleanupWorkspace_RescuesUnsavedWork(t *testing.T) {
+	root := t.TempDir()
+	w := &WorkspaceManager{TmpRoot: root, RescueRoot: filepath.Join(root, "rescued")}
+	var told []string
+	w.OnRescue = func(path string, rep rescue.Report) { told = append(told, rep.Summary()) }
+
+	ws := filepath.Join(root, "session-1")
+	os.MkdirAll(filepath.Join(ws, "workspace", "notes"), 0o755)
+	os.WriteFile(filepath.Join(ws, "workspace", "notes", "plan.md"), []byte("# M1"), 0o644)
+	if err := w.CleanupWorkspace(ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ws); !os.IsNotExist(err) {
+		t.Fatal("the workspace was not removed")
+	}
+	kept, _ := filepath.Glob(filepath.Join(root, "rescued", "session-1-*", "files", "notes", "plan.md"))
+	if len(kept) != 1 || len(told) != 1 {
+		t.Fatalf("kept %v, told %v", kept, told)
+	}
+
+	clean := filepath.Join(root, "session-2")
+	os.MkdirAll(filepath.Join(clean, "workspace"), 0o755)
+	if err := w.CleanupWorkspace(clean); err != nil || len(told) != 1 {
+		t.Fatalf("a clean workspace: err %v, told %v", err, told)
 	}
 }

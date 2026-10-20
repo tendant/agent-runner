@@ -265,6 +265,7 @@ func (e *Engine) startTaskTurn(ts TaskStarter, id, message, request, prefix stri
 			}
 		}
 		rec = task.New(id, request, "")
+		rec.Source = e.Source
 		rec.Workspace = ts.TaskWorkspacePath(rec.ID)
 		rec.Queue = queue
 		turn.Message = message

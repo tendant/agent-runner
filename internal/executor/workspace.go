@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"github.com/agent-runner/agent-runner/internal/rescue"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,12 @@ import (
 type WorkspaceManager struct {
 	TmpRoot           string
 	MaxRuntimeSeconds int
+	// RescueRoot, when set, is where a workspace's unsaved work is kept
+	// before the workspace is removed (internal/rescue); RescueRetention is
+	// how long it is kept. OnRescue is told what was kept.
+	RescueRoot      string
+	RescueRetention time.Duration
+	OnRescue        func(workspacePath string, rep rescue.Report)
 }
 
 // NewWorkspaceManager creates a new workspace manager
@@ -28,10 +35,25 @@ func (w *WorkspaceManager) JobWorkspacePath(jobID string) string {
 	return filepath.Join(w.TmpRoot, "job-"+jobID)
 }
 
-// CleanupWorkspace removes a workspace directory
+// CleanupWorkspace removes a workspace directory, keeping its unsaved work
+// first (commits on no remote, uncommitted files, files outside any repo):
+// a repo nobody registered, a failed push or a forgotten commit would
+// otherwise be lost with it. A failed rescue keeps the workspace.
 func (w *WorkspaceManager) CleanupWorkspace(workspacePath string) error {
 	if workspacePath == "" {
 		return nil
+	}
+	if w.RescueRoot != "" {
+		rep, err := rescue.Save(workspacePath, w.RescueRoot, filepath.Base(workspacePath))
+		if err != nil {
+			return fmt.Errorf("keeping unsaved work before removing %s: %w (the workspace is left in place)", workspacePath, err)
+		}
+		if !rep.Empty() {
+			slog.Warn("workspace had unsaved work: kept before removing it", "workspace", workspacePath, "kept_in", rep.Dir, "what", rep.Summary())
+			if w.OnRescue != nil {
+				w.OnRescue(workspacePath, rep)
+			}
+		}
 	}
 	return os.RemoveAll(workspacePath)
 }
@@ -67,10 +89,13 @@ func (w *WorkspaceManager) CleanupStaleWorkspaces() error {
 		// Check if directory is older than cutoff
 		if info.ModTime().Before(cutoff) {
 			path := filepath.Join(w.TmpRoot, entry.Name())
-			if err := os.RemoveAll(path); err != nil {
+			if err := w.CleanupWorkspace(path); err != nil {
 				slog.Warn("failed to clean up stale workspace", "path", path, "error", err)
 			}
 		}
+	}
+	if w.RescueRoot != "" {
+		rescue.Prune(w.RescueRoot, w.RescueRetention)
 	}
 
 	return nil

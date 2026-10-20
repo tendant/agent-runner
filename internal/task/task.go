@@ -65,6 +65,7 @@ type Turn struct {
 type Record struct {
 	ID           string     `json:"id"`
 	ThreadKey    string     `json:"thread_key"`
+	Source       string     `json:"source,omitempty"` // the chat transport (stream, telegram, wechat)
 	Status       Status     `json:"status"`
 	Goal         string     `json:"goal"`
 	Plan         []PlanStep `json:"plan,omitempty"`
@@ -338,10 +339,12 @@ func (s *Store) Sweep(now time.Time, p SweepPolicy) {
 			switch {
 			case rec.Status.Finished() && idle >= p.Retention:
 				if !rec.WorkspaceRemoved {
+					// Claimed (no turn continues in it), and the record
+					// kept until the workspace is gone: removing it may
+					// tell the thread what unsaved work it kept.
 					release = rec.Workspace
-				}
-				if err := os.Remove(s.path(rec.ThreadKey)); err != nil && !os.IsNotExist(err) {
-					slog.Warn("task store: delete failed", "thread", rec.ThreadKey, "error", err)
+					rec.WorkspaceRemoved = true
+					_ = s.saveLocked(rec)
 				}
 				removed = true
 			case rec.Status.Resumable() && idle >= p.IdleTTL:
@@ -357,6 +360,15 @@ func (s *Store) Sweep(now time.Time, p SweepPolicy) {
 		s.mu.Unlock()
 		if release != "" && p.Finish != nil {
 			p.Finish(release) // claimed: no turn can start in it now
+		}
+		if removed {
+			s.mu.Lock()
+			if cur, ok := s.getLocked(listed.ThreadKey); ok && cur.ID == listed.ID {
+				if err := os.Remove(s.path(listed.ThreadKey)); err != nil && !os.IsNotExist(err) {
+					slog.Warn("task store: delete failed", "thread", listed.ThreadKey, "error", err)
+				}
+			}
+			s.mu.Unlock()
 		}
 		switch {
 		case removed:

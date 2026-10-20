@@ -64,6 +64,10 @@ then describe the task in a message
   incoming webhook (`asctl webhooks create <channel-id> ci`); the bot triages each alert: ignores
   noise, summarizes, or proposes a fix and waits for a yes in the thread. `/alerts set <policy>`
   says what it may fix without asking. Alert text never runs a command.
+- **No lost work:** before a session's or task's workspace is removed, anything not on a remote is
+  kept on the host in `DATA_DIR/rescued/<workspace>/` for 30 days (`AGENT_RESCUE_RETENTION`):
+  unpushed commits as a git bundle, uncommitted files and files outside any repo as they were, with
+  a README on restoring them. The thread is told. Only registered repos (`/repo add`) are pushed.
 - **Setup:** `/set KEY VALUE` configures a running instance (saved to `.env.local`, applied
   immediately); `/config` and `/status` show it.
 

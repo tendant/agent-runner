@@ -34,9 +34,14 @@ type Config struct {
 	StateRoot     string // durable runner state (session journal); survives restarts unlike TmpRoot
 	OutputsRoot   string // persistent storage for _send/ files across sessions
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
-	MemoryDir     string // Convention: ./memory (seeded defaults + daily logs + curated memory)
-	SecretsFile   string // DATA_DIR/secrets.json: the agent user's secrets (/secret), apart from the runner's .env
-	ReposFile     string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
+	// RescueRoot (AGENT_RESCUE_ROOT, DATA_DIR/rescued) keeps a workspace's
+	// unsaved work before the workspace is removed, for RescueRetention
+	// (AGENT_RESCUE_RETENTION, default 30 days).
+	RescueRoot      string
+	RescueRetention time.Duration
+	MemoryDir       string // Convention: ./memory (seeded defaults + daily logs + curated memory)
+	SecretsFile     string // DATA_DIR/secrets.json: the agent user's secrets (/secret), apart from the runner's .env
+	ReposFile       string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
 
 	// Execution limits
 	MaxRuntimeSeconds int
@@ -252,6 +257,8 @@ func defaultConfigForDataDir(data string) *Config {
 		TmpRoot:                  filepath.Join(data, "tmp"),
 		OutputsRoot:              filepath.Join(data, "outputs"),
 		UploadsRoot:              filepath.Join(data, "uploads"),
+		RescueRoot:               filepath.Join(data, "rescued"),
+		RescueRetention:          30 * 24 * time.Hour,
 		MemoryDir:                filepath.Join(data, "memory"),
 		SecretsFile:              filepath.Join(data, "secrets.json"),
 		ReposFile:                filepath.Join(data, "repos.json"),
@@ -376,6 +383,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
 	cfg.UploadsRoot = envOrDefault("UPLOADS_ROOT", cfg.UploadsRoot)
+	cfg.RescueRoot = envOrDefault("AGENT_RESCUE_ROOT", cfg.RescueRoot)
+	cfg.RescueRetention = envDurationOrDefault("AGENT_RESCUE_RETENTION", cfg.RescueRetention)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
 	cfg.MaxRuntimeSeconds = envIntOrDefault("JOB_MAX_RUNTIME", cfg.MaxRuntimeSeconds)
 	cfg.MaxConcurrentJobs = envIntOrDefault("JOB_MAX_CONCURRENT", cfg.MaxConcurrentJobs)
@@ -601,6 +610,8 @@ func (c *Config) copyFrom(n *Config) {
 	c.TmpRoot = n.TmpRoot
 	c.OutputsRoot = n.OutputsRoot
 	c.UploadsRoot = n.UploadsRoot
+	c.RescueRoot = n.RescueRoot
+	c.RescueRetention = n.RescueRetention
 	c.MemoryDir = n.MemoryDir
 	c.SecretsFile = n.SecretsFile
 	c.ReposFile = n.ReposFile

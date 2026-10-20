@@ -192,3 +192,25 @@ func TestContextBlockCarriesEarlierRequests(t *testing.T) {
 		t.Errorf("a long earlier request was not capped (%d runes)", len([]rune(got)))
 	}
 }
+
+// A done task's record outlives its workspace's removal, so the removal can
+// still find whose thread it was (to tell it what unsaved work was kept).
+func TestSweep_RecordKeptUntilWorkspaceGone(t *testing.T) {
+	s := newTestStore(t)
+	s.Save(New("m_1", "build slow-town", "/ws/task-1"))
+	backdate(t, s, "m_1", StatusDone, 48*time.Hour)
+	var sawRecord, removedFlag bool
+	s.Sweep(time.Now(), SweepPolicy{Retention: 24 * time.Hour, IdleTTL: time.Hour, Finish: func(ws string) {
+		for _, r := range s.List() {
+			if r.Workspace == ws {
+				sawRecord, removedFlag = true, r.WorkspaceRemoved
+			}
+		}
+	}})
+	if !sawRecord || !removedFlag {
+		t.Fatalf("during removal: record found %v, claimed %v", sawRecord, removedFlag)
+	}
+	if _, ok := s.Get("m_1"); ok {
+		t.Fatal("the expired record was not deleted after its workspace")
+	}
+}
