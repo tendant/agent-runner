@@ -105,7 +105,7 @@ cp repos.json "$DATA_DIR/repos.json"                                            
   value typed there (it seals the command), but Telegram and WeChat keep it in the chat, and the
   sender's own app may show what was typed until it reloads.
 - Names agent-runner reads itself are skipped even in a hand-written file: agent-runner's own
-  keys stay in `.env` (`SECRETS.md`) and never reach the agent.
+  keys stay in `.env` and never reach the agent.
 - `/repo add` fetches a repo to check its URL, branch and token; a hand-written entry is first
   fetched at the next session, so a mistake shows up there (and in `/repo list`).
 
@@ -181,7 +181,6 @@ curl -X POST localhost:8080/agent/{session_id}/stop
 | [DESIGN.md](DESIGN.md) | Architecture; memory and prompt composition |
 | [MEMORY_DESIGN.md](MEMORY_DESIGN.md), [REPOS_DESIGN.md](REPOS_DESIGN.md), [SECRETS_DESIGN.md](SECRETS_DESIGN.md) | Memory and prompts, repos and their logins, agent secrets |
 | [TASKS_DESIGN.md](TASKS_DESIGN.md) | Multi-turn tasks |
-| [SECRETS.md](SECRETS.md) | This repo's own encrypted `.env` (SOPS) |
 
 ## Development
 

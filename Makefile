@@ -129,10 +129,6 @@ help:
 	@echo ""
 	@echo "  help                Show this help"
 
-# --- SOPS-managed secrets ---------------------------------------------------
-# .env is local and gitignored; .env.sops is the committed, partially
-# encrypted copy. See scripts/ for what each target does.
-
 # --- Sandbox checks (docs/sandbox.md) ------------------------------------------
 
 .PHONY: sandbox-smoke sandbox-agentbox
@@ -142,17 +138,3 @@ sandbox-smoke:  ## conformance + runner probes on this host's sandbox (REAL=1: a
 
 sandbox-agentbox: ## the same on Linux gVisor, in an unprivileged Docker container
 	./scripts/sandbox-agentbox
-
-.PHONY: secrets-decrypt secrets-encrypt secrets-authorize secrets-check
-
-secrets-decrypt:
-	./scripts/secrets-decrypt
-
-secrets-encrypt:
-	./scripts/secrets-encrypt
-
-secrets-authorize:
-	./scripts/secrets-authorize
-
-secrets-check:
-	./scripts/secrets-check
