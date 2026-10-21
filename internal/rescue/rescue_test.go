@@ -188,3 +188,81 @@ func TestPrune(t *testing.T) {
 		t.Error("a recent rescue was removed")
 	}
 }
+
+// Pending finds what Save would keep, but leaves out what git ignores and
+// what is outside any repo, and copies nothing.
+func TestPending(t *testing.T) {
+	base := t.TempDir()
+	remote := filepath.Join(base, "remote.git")
+	git(t, base, "init", "-q", "--bare", "-b", "main", remote)
+	_, ws := session(t)
+	app := filepath.Join(ws, "app")
+	git(t, ws, "clone", "-q", remote, "app")
+	write(t, filepath.Join(app, ".gitignore"), "*.log\n")
+	write(t, filepath.Join(app, "main.go"), "package main\n")
+	git(t, app, "add", "-A")
+	git(t, app, "commit", "-q", "-m", "first")
+	git(t, app, "push", "-q", "origin", "HEAD:main")
+
+	if rep := Pending(ws); len(rep.Repos) != 0 {
+		t.Fatalf("a pushed, clean repo has pending work: %+v", rep.Repos)
+	}
+
+	write(t, filepath.Join(app, "main.go"), "package main // edited\n")
+	write(t, filepath.Join(app, "new.go"), "package main\n")
+	write(t, filepath.Join(app, "debug.log"), "noise\n")
+	write(t, filepath.Join(app, "node_modules", "x", "index.js"), "x\n")
+	write(t, filepath.Join(ws, "notes.txt"), "loose\n")
+	scratch := filepath.Join(ws, "scratch")
+	os.MkdirAll(scratch, 0o755)
+	git(t, scratch, "init", "-q", "-b", "main")
+	write(t, filepath.Join(scratch, "a.txt"), "a\n")
+	git(t, scratch, "add", "-A")
+	git(t, scratch, "commit", "-q", "-m", "local only")
+
+	rep := Pending(ws)
+	if len(rep.Repos) != 2 || len(rep.Loose) != 0 {
+		t.Fatalf("repos %+v, loose %v", rep.Repos, rep.Loose)
+	}
+	got := rep.Repos[0]
+	if got.Path != "app" || !slices.Equal(got.Changed, []string{"main.go", "new.go"}) || got.Commits != 0 {
+		t.Errorf("app = %+v, want main.go and new.go changed (not the ignored log)", got)
+	}
+	if s := rep.Repos[1]; s.Path != "scratch" || s.Commits != 1 || len(s.Changed) != 0 {
+		t.Errorf("scratch = %+v, want 1 commit on no remote", s)
+	}
+	if rep.Dir != "" || rep.Repos[1].Bundle != "" {
+		t.Errorf("Pending kept something: dir %q, bundle %q", rep.Dir, rep.Repos[1].Bundle)
+	}
+}
+
+func TestAdvice(t *testing.T) {
+	rep := Report{Repos: []RepoReport{
+		{Path: "slow-town", Changed: []string{"a"}},
+		{Path: "site", Commits: 2},
+		{Path: "scratch", Commits: 1},
+		{Path: "docs", Changed: []string{"b"}},
+	}}
+	got := rep.Advice(func(name string) (bool, bool) {
+		switch name {
+		case "slow-town", "site":
+			return true, true
+		case "docs":
+			return true, false
+		}
+		return false, false
+	})
+	for _, want := range []string{
+		"scratch is not a registered repo: /repo add it",
+		"docs is registered read-only",
+		"left its changes in slow-town uncommitted",
+		"The push of site failed",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("advice missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "slow-town is not a registered") {
+		t.Errorf("a registered repo told to /repo add:\n%s", got)
+	}
+}

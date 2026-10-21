@@ -264,3 +264,31 @@ func TestDoneNotice_SumsUpPlan(t *testing.T) {
 		t.Errorf("no plan: %q", got)
 	}
 }
+
+// A turn that finished but left its work unsaved is not done: the task
+// pauses (its workspace kept), saying what isn't saved, and "continue"
+// picks it up.
+func TestTask_UnsavedWorkIsNotDone(t *testing.T) {
+	f, ts := newTaskFixture(t)
+	s := planned(completedSession("built"), true, true)
+	s.UnsavedWork = "slow-town: 72 uncommitted file change(s). The agent left its changes in slow-town uncommitted: only committed work is pushed."
+	ts.setSession(s)
+	send(f, "build it")
+
+	rec, _ := f.engine.Tasks.Get("conv-1")
+	if rec.Status != task.StatusPaused || rec.WorkspaceRemoved {
+		t.Fatalf("task = %s (workspace removed %v), want paused with its workspace", rec.Status, rec.WorkspaceRemoved)
+	}
+	n := lastFinal(f)
+	if strings.Contains(n, "Task done") || !strings.Contains(n, "Not done: the work isn't saved yet — slow-town: 72 uncommitted") {
+		t.Fatalf("notice = %q", n)
+	}
+
+	ts.setSession(completedSession("committed"))
+	if !send(f, "continue") {
+		t.Fatal("continue not handled by the task")
+	}
+	if rec, _ := f.engine.Tasks.Get("conv-1"); rec.Status != task.StatusDone {
+		t.Fatalf("after a turn that saved it: %s", rec.Status)
+	}
+}

@@ -85,6 +85,10 @@ func conflictedWorkspace(t *testing.T) (bare, workspace string) {
 }
 
 func runSync(t *testing.T, env *engineTestEnv, workspace string, fn func(string) error) *agent.Session {
+	return runSyncAsk(t, env, workspace, false, fn)
+}
+
+func runSyncAsk(t *testing.T, env *engineTestEnv, workspace string, askCommit bool, fn func(string) error) *agent.Session {
 	t.Helper()
 	env.handlers.executor = funcExecutor{fn: fn}
 	env.handlers.config.Agent.PlannerEnabled = false
@@ -102,7 +106,7 @@ func runSync(t *testing.T, env *engineTestEnv, workspace string, fn func(string)
 	}
 	defer as.Close()
 	env.handlers.syncWorkspaceRepos(context.Background(), session.ID, "test", session, workspace, "edit shared.txt",
-		time.Now().Add(time.Minute), nil, subagent.NewPromptBuilder("preamble"), as)
+		time.Now().Add(time.Minute), nil, subagent.NewPromptBuilder("preamble"), as, askCommit)
 	return session
 }
 
@@ -342,5 +346,85 @@ func TestPushRepos_RescuesOnAnyFailure(t *testing.T) {
 	out, err := exec.Command("git", "--git-dir", remote, "log", "-1", "--format=%s", "agent-rescue/sess-1").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "agent's work" {
 		t.Fatalf("rescue branch: %q %v", out, err)
+	}
+}
+
+// cleanWorkspace builds workspace/site cloned from a bare origin, pushed and
+// clean, with a file the agent then left uncommitted.
+func cleanWorkspace(t *testing.T) (bare, workspace string) {
+	t.Helper()
+	base := t.TempDir()
+	bare = filepath.Join(base, "origin.git")
+	workspace = filepath.Join(base, "workspace")
+	repo := filepath.Join(workspace, "site")
+	os.MkdirAll(workspace, 0o755)
+	git(t, base, "init", "--bare", "-b", "main", bare)
+	git(t, base, "clone", bare, repo)
+	git(t, repo, "config", "user.email", "t@t")
+	git(t, repo, "config", "user.name", "T")
+	os.WriteFile(filepath.Join(repo, "index.html"), []byte("v1\n"), 0o644)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-m", "init")
+	git(t, repo, "push", "-u", "origin", "HEAD")
+	os.WriteFile(filepath.Join(repo, "index.html"), []byte("v2\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "app.js"), []byte("new\n"), 0o644)
+	return bare, workspace
+}
+
+// A finished turn that left its work uncommitted gets one iteration to
+// commit it, and what it commits is pushed.
+func TestSyncWorkspaceRepos_AgentCommitsLeftoverWork(t *testing.T) {
+	env := setupTestEnv(t)
+	bare, workspace := cleanWorkspace(t)
+	repo := filepath.Join(workspace, "site")
+
+	calls := 0
+	session := runSyncAsk(t, env, workspace, true, func(string) error {
+		calls++
+		git(t, repo, "add", "-A")
+		git(t, repo, "commit", "-m", "the work")
+		return nil
+	})
+
+	if calls != 1 {
+		t.Fatalf("expected one commit iteration, got %d", calls)
+	}
+	snap := session.Snapshot()
+	if p := snap.Iterations[0].Prompt; !strings.Contains(p, "not committed") || !strings.Contains(p, "app.js") || !strings.Contains(p, "index.html") {
+		t.Errorf("the commit iteration's prompt should name the files:\n%s", p)
+	}
+	if got := git(t, bare, "show", "main:app.js"); got != "new" {
+		t.Errorf("origin should have the committed work, got %q", got)
+	}
+	env.handlers.recordUnsavedWork(session, workspace)
+	if u := session.Snapshot().UnsavedWork; u != "" {
+		t.Errorf("committed and pushed work reported unsaved: %q", u)
+	}
+}
+
+// The agent is asked once; work it still leaves uncommitted is reported,
+// with what would get it pushed. Without askCommit it is never asked.
+func TestSyncWorkspaceRepos_UncommittedWorkReported(t *testing.T) {
+	env := setupTestEnv(t)
+	_, workspace := cleanWorkspace(t)
+
+	calls := 0
+	session := runSyncAsk(t, env, workspace, false, func(string) error { calls++; return nil })
+	if calls != 0 {
+		t.Fatalf("asked to commit without askCommit: %d iterations", calls)
+	}
+	session = runSyncAsk(t, env, workspace, true, func(string) error { calls++; return nil })
+	if calls != 1 {
+		t.Fatalf("expected one commit iteration, got %d", calls)
+	}
+	env.handlers.recordUnsavedWork(session, workspace)
+	snap := session.Snapshot()
+	for _, want := range []string{"site: 2 uncommitted file change(s)", "left its changes in site uncommitted"} {
+		if !strings.Contains(snap.UnsavedWork, want) {
+			t.Errorf("unsaved work %q missing %q", snap.UnsavedWork, want)
+		}
+	}
+	if len(snap.Warnings) == 0 || !strings.Contains(snap.Warnings[len(snap.Warnings)-1], "work not saved") {
+		t.Errorf("a session that is no task turn should warn: %v", snap.Warnings)
 	}
 }

@@ -113,6 +113,10 @@ type Session struct {
 	TurnQuestion  string   `json:"-"` // question for the user when TurnStatus is "needs_input"
 	TurnSummary   string   `json:"-"` // agent's summary of the turn
 	TurnDecisions []string `json:"-"` // decisions recorded during the turn
+	// UnsavedWork, when set, says what of the work the session ended with
+	// is neither committed nor pushed (and what would get it pushed): a
+	// task turn with any is not done.
+	UnsavedWork string `json:"-"`
 
 	stopRequested bool
 	stopCh        chan struct{} // closed on RequestStop; created lazily by StopChan
@@ -316,6 +320,13 @@ func (s *Session) SetTurnResult(status, question, summary string, decisions []st
 	s.TurnDecisions = append([]string(nil), decisions...)
 }
 
+// SetUnsavedWork records the work the session ended without saving.
+func (s *Session) SetUnsavedWork(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.UnsavedWork = text
+}
+
 // SetTurnApproval marks the turn as waiting for approval of a revised plan.
 func (s *Session) SetTurnApproval(question string) {
 	s.mu.Lock()
@@ -426,6 +437,7 @@ func (s *Session) Snapshot() *Session {
 		TurnQuestion:         s.TurnQuestion,
 		TurnSummary:          s.TurnSummary,
 		TurnDecisions:        append([]string{}, s.TurnDecisions...),
+		UnsavedWork:          s.UnsavedWork,
 	}
 	copy(snap.Iterations, s.Iterations)
 

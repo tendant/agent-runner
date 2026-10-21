@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"github.com/agent-runner/agent-runner/internal/rescue"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
 	"log/slog"
@@ -288,7 +289,29 @@ func (s *Server) reportRescue(workspace string, rep rescue.Report) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	hook.notify(ctx, key, "⚠️ Unsaved work was kept before its workspace was removed ("+rep.Summary()+"). It's on the bot's host in "+rep.Dir+" (README.txt says how to restore it). Register the repo with /repo add, and commit, so it's pushed next time.")
+	msg := "⚠️ Unsaved work was kept before its workspace was removed (" + rep.Summary() + "). It's on the bot's host in " + rep.Dir + " (README.txt says how to restore it)."
+	if advice := rep.Advice(s.repoState()); advice != "" {
+		msg += " " + advice
+	}
+	hook.notify(ctx, key, msg)
+}
+
+// repoState tells rescue.Advice whether a repo is registered and pushable.
+func (s *Server) repoState() func(name string) (registered, push bool) {
+	byName := map[string]bool{}
+	if s.config.ReposFile != "" {
+		list, err := repos.New(s.config.ReposFile).List()
+		if err != nil {
+			slog.Warn("repo registry unreadable", "error", err)
+		}
+		for _, r := range list {
+			byName[r.Name] = r.Push
+		}
+	}
+	return func(name string) (bool, bool) {
+		push, ok := byName[name]
+		return ok, push
+	}
 }
 
 // Start starts the HTTP server with graceful shutdown support

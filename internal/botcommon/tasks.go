@@ -347,6 +347,14 @@ func (e *Engine) finishTaskTurn(id, sessionID string, session *agent.Session, se
 				notice = FormatTurnQuestion(session.TurnQuestion)
 			}
 			return // a question outranks the budget: the user is in the loop
+		case completed && session.UnsavedWork != "":
+			// Done work that isn't saved is not done: a done task's
+			// workspace goes a day later, and the work with it.
+			rec.Status = task.StatusPaused
+			turn.StopReason = "unsaved work"
+			rec.PauseReason = "work not saved"
+			notice = unsavedNotice(rec, session.UnsavedWork)
+			return
 		case completed:
 			rec.Status = task.StatusDone
 			turn.StopReason = "done"
@@ -409,6 +417,10 @@ func planProgress(rec *task.Record) string {
 		return fmt.Sprintf(" (all %d plan steps)", total)
 	}
 	return fmt.Sprintf(" (%d of %d plan steps checked off)", done, total)
+}
+
+func unsavedNotice(rec *task.Record, unsaved string) string {
+	return withChecklist(rec, fmt.Sprintf("⏸ Not done: the work isn't saved yet — %s Reply \"continue\" to have it committed and pushed, or send feedback.", unsaved))
 }
 
 func pausedNotice(rec *task.Record) string {

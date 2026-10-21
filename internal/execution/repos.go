@@ -98,3 +98,16 @@ func (h *Engine) repoOps(base *gitpkg.Operations, workspaceRepos []string) (ops 
 	}
 	return ops, skipped
 }
+
+// repoState tells, for a workspace repo's folder name, whether it is
+// registered and may be pushed.
+func (h *Engine) repoState() func(name string) (registered, push bool) {
+	byName := map[string]repos.Repo{}
+	for _, r := range h.registeredRepos() {
+		byName[r.Name] = r
+	}
+	return func(name string) (bool, bool) {
+		r, ok := byName[name]
+		return ok, ok && r.Push
+	}
+}

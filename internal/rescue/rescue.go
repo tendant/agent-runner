@@ -93,6 +93,41 @@ func (r Report) Summary() string {
 	return s
 }
 
+// Advice says what would get the reported work pushed next time. repo
+// tells, for a repo's folder name, whether it is registered (/repo add)
+// and whether pushing it is allowed.
+func (r Report) Advice(repo func(name string) (registered, push bool)) string {
+	var unregistered, readOnly, uncommitted, unpushed []string
+	for _, rp := range r.Repos {
+		name := filepath.Base(rp.Path)
+		registered, push := repo(name)
+		switch {
+		case !registered:
+			unregistered = append(unregistered, name)
+		case !push:
+			readOnly = append(readOnly, name)
+		case len(rp.Changed)+len(rp.Deleted) > 0:
+			uncommitted = append(uncommitted, name)
+		case rp.Commits > 0:
+			unpushed = append(unpushed, name)
+		}
+	}
+	var out []string
+	if len(unregistered) > 0 {
+		out = append(out, fmt.Sprintf("%s is not a registered repo: /repo add it so its work is pushed.", strings.Join(unregistered, ", ")))
+	}
+	if len(readOnly) > 0 {
+		out = append(out, fmt.Sprintf("%s is registered read-only: nothing in it is pushed.", strings.Join(readOnly, ", ")))
+	}
+	if len(uncommitted) > 0 {
+		out = append(out, fmt.Sprintf("The agent left its changes in %s uncommitted: only committed work is pushed.", strings.Join(uncommitted, ", ")))
+	}
+	if len(unpushed) > 0 {
+		out = append(out, fmt.Sprintf("The push of %s failed: check its login with /repo.", strings.Join(unpushed, ", ")))
+	}
+	return strings.Join(out, " ")
+}
+
 // Save keeps workspace's unsaved work under root/label (made unique), and
 // reports it; nothing is written when there is none. workspace is a session
 // or task directory: its workspace/ subdirectory (the agent's) is scanned.
@@ -161,9 +196,27 @@ func (s *saver) walk(scan string) error {
 	})
 }
 
+// Pending reports the unsaved work in the agent's folder dir (a checkout,
+// not a session directory) that Save would keep, without keeping any: the
+// unpushed commits and uncommitted files of each repo whose .git the runner
+// can read. Files git ignores, files outside any repo and repos it can't
+// read are left out: none of them is the agent's work to commit.
+func Pending(dir string) Report {
+	r := &Report{}
+	s := &saver{r: r, dryRun: true}
+	if fi, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+		s.repo(dir, ".")
+	} else {
+		s.walk(dir)
+	}
+	r.Loose = nil
+	return *r
+}
+
 type saver struct {
-	dest string
-	r    *Report
+	dest   string
+	r      *Report
+	dryRun bool // Pending: count, copy nothing
 }
 
 // keep copies src to dest/rel, within the size limits; false when not kept.
@@ -171,6 +224,9 @@ func (s *saver) keep(src, rel string) bool {
 	fi, err := os.Lstat(src)
 	if err != nil || !fi.Mode().IsRegular() {
 		return false
+	}
+	if s.dryRun {
+		return true
 	}
 	if fi.Size() > maxFileBytes {
 		s.r.Skipped = append(s.r.Skipped, rel)
@@ -207,12 +263,18 @@ func (s *saver) keep(src, rel string) bool {
 func (s *saver) repo(dir, rel string) {
 	rp := RepoReport{Path: rel}
 	safe := gitsafe.CheckRepo(dir) == nil
+	if !safe && s.dryRun {
+		return
+	}
 	tracked := map[string]string{} // path -> blob id at HEAD
 	sha256Repo := false
+	var untracked map[string]bool // Pending: the untracked files git does not ignore
 	if safe {
 		rp.Remote = strings.TrimSpace(s.git(dir, "remote", "get-url", "origin"))
 		rp.Remote = gitsafe.RedactURL(rp.Remote)
-		if n, err := strconv.Atoi(strings.TrimSpace(s.git(dir, "rev-list", "--count", "--branches", "--not", "--remotes"))); err == nil && n > 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(s.git(dir, "rev-list", "--count", "--branches", "--not", "--remotes"))); err == nil && n > 0 && s.dryRun {
+			rp.Commits = n
+		} else if err == nil && n > 0 {
 			rp.Commits = n
 			bundle := filepath.Join(s.dest, "bundles", strings.ReplaceAll(rel, string(filepath.Separator), "__")+".bundle")
 			os.MkdirAll(filepath.Dir(bundle), 0o700)
@@ -235,6 +297,15 @@ func (s *saver) repo(dir, rel string) {
 			}
 			tracked[path] = f[2]
 			sha256Repo = len(f[2]) == 64
+		}
+		if s.dryRun {
+			// Lists names only: no filter or fsmonitor runs.
+			untracked = map[string]bool{}
+			for _, path := range strings.Split(s.git(dir, "ls-files", "--others", "--exclude-standard", "-z"), "\x00") {
+				if path != "" {
+					untracked[path] = true
+				}
+			}
 		}
 	}
 	seen := map[string]bool{}
@@ -259,8 +330,12 @@ func (s *saver) repo(dir, rel string) {
 		path, _ := filepath.Rel(dir, p)
 		path = filepath.ToSlash(path)
 		seen[path] = true
-		if id, ok := tracked[path]; ok && blobID(p, sha256Repo) == id {
+		id, ok := tracked[path]
+		if ok && blobID(p, sha256Repo) == id {
 			return nil // as committed
+		}
+		if !ok && untracked != nil && !untracked[path] {
+			return nil // ignored
 		}
 		if s.keep(p, filepath.Join("repos", rel, path)) {
 			rp.Changed = append(rp.Changed, path)

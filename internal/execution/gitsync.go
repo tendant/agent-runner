@@ -16,6 +16,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/executor"
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/metrics"
+	"github.com/agent-runner/agent-runner/internal/rescue"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	"github.com/agent-runner/agent-runner/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,16 +33,23 @@ const maxConflictResolutions = 2
 // resolve it the way a person would. Work that still can't be merged is
 // pushed to agent-rescue/<session> so deleting the workspace afterwards
 // loses nothing. Non-fatal: every outcome short of "pushed" is a warning.
+//
+// With askCommit (a turn that finished its work), changes the agent left
+// uncommitted get it one more iteration to commit them, then a push: only
+// committed work is pushed, and an agent that ends a task without
+// committing would otherwise leave it to the workspace's rescue.
 func (h *Engine) syncWorkspaceRepos(
 	ctx context.Context, sessionID, source string, liveSession *agent.Session,
 	checkoutPath, message string, deadline time.Time,
 	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, as *agentSession,
+	askCommit bool,
 ) {
 	if len(workspaceRepos(checkoutPath)) == 0 {
 		return
 	}
 	base := gitpkg.NewOperations(h.config.GitPushRetries, h.config.GitPushRetryDelaySeconds)
 
+	resolutions := 0
 	for attempt := 0; ; attempt++ {
 		// Sandboxed, nothing of the agent's may still be running when the
 		// runner runs git on the host: something it left behind could
@@ -70,17 +78,30 @@ func (h *Engine) syncWorkspaceRepos(
 		// with a dead context.
 		gitCtx, cancelGit := keepWorkCtx(ctx)
 		conflicts, warnings := pushRepos(gitCtx, ops, candidates, sessionID)
+		canIterate := as != nil && promptBuilder != nil &&
+			!liveSession.StopRequested() && ctx.Err() == nil && time.Now().Before(deadline)
 		if len(conflicts) == 0 {
 			cancelGit()
+			if askCommit && canIterate {
+				askCommit = false
+				if extra := buildCommitContext(rescue.Pending(checkoutPath)); extra != "" {
+					// This round's warnings come again from the next one.
+					slog.Info("running commit iteration", "session_id", sessionID)
+					liveSession.AppendExecEvent(string(executor.EventWarning), "work left uncommitted; asking the agent to commit it", time.Now())
+					if err := h.syncIteration(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as, extra, "uncommitted_work"); err != nil {
+						liveSession.AddWarning("could not restart the agent to commit its work: " + err.Error())
+						return
+					}
+					continue
+				}
+			}
 			for _, w := range warnings {
 				liveSession.AddWarning(w)
 			}
 			return
 		}
 
-		canResolve := as != nil && promptBuilder != nil && attempt < maxConflictResolutions &&
-			!liveSession.StopRequested() && ctx.Err() == nil && time.Now().Before(deadline)
-		if !canResolve {
+		if !canIterate || resolutions >= maxConflictResolutions {
 			for _, w := range warnings {
 				liveSession.AddWarning(w)
 			}
@@ -91,57 +112,102 @@ func (h *Engine) syncWorkspaceRepos(
 			return
 		}
 		cancelGit()
+		resolutions++
 
 		// Hand the conflict to the agent as a corrective iteration, the same
 		// way reviewer feedback is.
-		conflictContext := buildConflictContext(conflicts)
-		iterNum := liveSession.Snapshot().CurrentIteration + 1
-		var systemPrompt string
-		if h.config.Agent.PlannerEnabled {
-			systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, iterNum, message, conflictContext)
-		} else {
-			systemPrompt = promptBuilder.BuildStatic(message, conflictContext)
-		}
 		slog.Info("running conflict-resolution iteration", "session_id", sessionID,
-			"iteration", iterNum, "repos", len(conflicts), "attempt", attempt+1)
+			"repos", len(conflicts), "attempt", resolutions)
 		liveSession.AppendExecEvent(string(executor.EventWarning),
 			fmt.Sprintf("remote moved; resolving rebase conflicts in %s", conflictSummary(conflicts)), time.Now())
-
-		iterCtx, iterSpan := tracing.Start(ctx, "agent.iteration",
-			attribute.Int("iteration.number", iterNum),
-			attribute.Bool("iteration.retry", true),
-			attribute.String("iteration.reason", "rebase_conflict"),
-		)
-		if as.toolSpans != nil {
-			as.toolSpans.SetParent(iterCtx)
-		}
-		if h.sandboxed() {
-			// Closed above, before the runner's git: start it again.
-			if err := as.start(ctx, checkoutPath); err != nil {
-				iterSpan.End()
-				for _, rc := range conflicts {
-					liveSession.AddWarning(parkConflictedWork(ctx, ops[rc.RepoPath], rc, sessionID))
-				}
-				liveSession.AddWarning("could not restart the agent to resolve conflicts: " + err.Error())
-				return
+		if err := h.syncIteration(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as, buildConflictContext(conflicts), "rebase_conflict"); err != nil {
+			for _, rc := range conflicts {
+				liveSession.AddWarning(parkConflictedWork(ctx, ops[rc.RepoPath], rc, sessionID))
 			}
-			as.forceFull = true
-		}
-		result, _ := h.executePrompt(iterCtx, as.session(), executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
-		result.Prompt = systemPrompt
-		result.Retry = true
-		liveSession.AddIteration(result)
-		iterSpan.SetAttributes(attribute.String("iteration.status", string(result.Status)), attribute.Float64("iteration.cost_usd", result.CostUSD))
-		if result.Error != "" {
-			tracing.Fail(iterSpan, result.Error)
-		}
-		iterSpan.End()
-		metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
-		metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
-		if result.CostUSD > 0 {
-			metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
+			liveSession.AddWarning("could not restart the agent to resolve conflicts: " + err.Error())
+			return
 		}
 	}
+}
+
+// syncIteration runs one corrective iteration for syncWorkspaceRepos with
+// extra as its context, the same way reviewer feedback is. Sandboxed, the
+// agent's session was closed for the runner's git and is started again; an
+// error is that start failing.
+func (h *Engine) syncIteration(
+	ctx context.Context, sessionID, source string, liveSession *agent.Session,
+	checkoutPath, message string, deadline time.Time,
+	plan *subagent.PlanResult, promptBuilder *subagent.PromptBuilder, as *agentSession,
+	extra, reason string,
+) error {
+	iterNum := liveSession.Snapshot().CurrentIteration + 1
+	var systemPrompt string
+	if h.config.Agent.PlannerEnabled {
+		systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, iterNum, message, extra)
+	} else {
+		systemPrompt = promptBuilder.BuildStatic(message, extra)
+	}
+	iterCtx, iterSpan := tracing.Start(ctx, "agent.iteration",
+		attribute.Int("iteration.number", iterNum),
+		attribute.Bool("iteration.retry", true),
+		attribute.String("iteration.reason", reason),
+	)
+	defer iterSpan.End()
+	if as.toolSpans != nil {
+		as.toolSpans.SetParent(iterCtx)
+	}
+	if h.sandboxed() {
+		if err := as.start(ctx, checkoutPath); err != nil {
+			return err
+		}
+		as.forceFull = true
+	}
+	result, _ := h.executePrompt(iterCtx, as.session(), executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}, iterNum, deadline, liveSession)
+	result.Prompt = systemPrompt
+	result.Retry = true
+	liveSession.AddIteration(result)
+	iterSpan.SetAttributes(attribute.String("iteration.status", string(result.Status)), attribute.Float64("iteration.cost_usd", result.CostUSD))
+	if result.Error != "" {
+		tracing.Fail(iterSpan, result.Error)
+	}
+	metrics.IterationsTotal.WithLabelValues(string(result.Status), source).Inc()
+	metrics.IterationDurationSeconds.WithLabelValues(source).Observe(float64(result.DurationSecs))
+	if result.CostUSD > 0 {
+		metrics.CostUSDTotal.WithLabelValues(source).Add(result.CostUSD)
+	}
+	return nil
+}
+
+// maxListedFiles bounds the files a commit request names per repo.
+const maxListedFiles = 20
+
+// buildCommitContext is the prompt section asking the agent to commit what
+// it left uncommitted; "" when nothing is.
+func buildCommitContext(rep rescue.Report) string {
+	var sb strings.Builder
+	for _, rp := range rep.Repos {
+		files := append(append([]string{}, rp.Changed...), rp.Deleted...)
+		if len(files) == 0 {
+			continue
+		}
+		listed := files
+		if len(listed) > maxListedFiles {
+			listed = listed[:maxListedFiles]
+		}
+		fmt.Fprintf(&sb, "**Repo:** `%s` — %d file(s): %s", rp.Path, len(files), strings.Join(listed, ", "))
+		if len(files) > len(listed) {
+			fmt.Fprintf(&sb, ", and %d more", len(files)-len(listed))
+		}
+		sb.WriteString("\n")
+	}
+	if sb.Len() == 0 {
+		return ""
+	}
+	return "## Git: your work is not committed\n\n" +
+		"You finished, but these repos have changes that are not committed. Only committed work is pushed; the rest is lost when the workspace is removed.\n\n" +
+		sb.String() + "\n" +
+		"In each repo: `git add` the files that belong to the work and `git commit` with a message that says what it does. Files that should never be committed (build output, local secrets) go in .gitignore instead. The runner pushes once you are done.\n\n" +
+		"Commit only: do not redo or extend the task.\n"
 }
 
 // pushableRepos is the repos the runner may run git in on the host: all of

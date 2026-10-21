@@ -27,6 +27,7 @@ import (
 	gitpkg "github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/logging"
 	"github.com/agent-runner/agent-runner/internal/metrics"
+	"github.com/agent-runner/agent-runner/internal/rescue"
 	"github.com/agent-runner/agent-runner/internal/safefs"
 	"github.com/agent-runner/agent-runner/internal/subagent"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
@@ -673,7 +674,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		// agent-rescue/<id>) and collect the files, then fail it, so a
 		// watcher reporting the failure has them.
 		as.Close()
-		h.syncWorkspaceRepos(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil)
+		h.syncWorkspaceRepos(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil, false)
 		finCtx, cancel := keepWorkCtx(ctx)
 		defer cancel()
 		h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
@@ -701,8 +702,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	keepCtx, cancelKeep := keepWorkCtx(ctx)
 	defer cancelKeep()
 	syncCtx, syncSpan := tracing.Start(ctx, "agent.git.sync")
-	h.syncWorkspaceRepos(syncCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as)
+	h.syncWorkspaceRepos(syncCtx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, promptBuilder, as, !needsInput && !blockedOrStuck)
 	syncSpan.End()
+	if !needsInput {
+		h.recordUnsavedWork(liveSession, checkoutPath)
+	}
 
 	finCtx, finSpan := tracing.Start(keepCtx, "agent.finalize")
 	h.finalizeAgentOutputs(finCtx, sessionID, liveSession, checkoutPath)
@@ -1735,6 +1739,25 @@ func (h *Engine) recordTurnResult(liveSession *agent.Session, checkoutPath strin
 	}
 	liveSession.SetTurnResult(status, strings.TrimSpace(p.Question), strings.TrimSpace(p.Summary), p.Decisions)
 	return status == subagent.TurnNeedsInput
+}
+
+// recordUnsavedWork notes on the session the work it ends with that is not
+// committed and pushed, and what would get it pushed: a task turn with any
+// is not done (its workspace would go, and the work with it, a day later).
+func (h *Engine) recordUnsavedWork(liveSession *agent.Session, checkoutPath string) {
+	rep := rescue.Pending(checkoutPath)
+	if len(rep.Repos) == 0 {
+		return
+	}
+	text := rep.Summary() + "."
+	if advice := rep.Advice(h.repoState()); advice != "" {
+		text += " " + advice
+	}
+	slog.Warn("session ends with unsaved work", "session_id", liveSession.ID, "unsaved", rep.Summary())
+	liveSession.SetUnsavedWork(text)
+	if liveSession.TaskWorkspace == "" {
+		liveSession.AddWarning("work not saved: " + text)
+	}
 }
 
 // keepWorkCtx is ctx without its cancellation, bounded: for pushing and
