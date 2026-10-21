@@ -283,7 +283,7 @@ func defaultConfigForDataDir(data string) *Config {
 		Agent: AgentConfig{
 			MaxIterations:       20,
 			MaxTotalSeconds:     3600,
-			MaxIterationSeconds: 300,
+			MaxIterationSeconds: 600,
 			Author:              "claude-agent",
 			CommitPrefix:        "[agent]",
 			MaxTurns:            50,

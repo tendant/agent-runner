@@ -329,3 +329,68 @@ func TestTaskTurns_PlanRevision(t *testing.T) {
 		})
 	}
 }
+
+// failingFirstExecutor fails its first call (a timeout, no answer), then
+// runs fn.
+type failingFirstExecutor struct{ scriptedExecutor }
+
+func (f *failingFirstExecutor) run(w string) (*executor.ExecutionResult, error) {
+	f.mu.Lock()
+	f.calls++
+	n := f.calls
+	f.mu.Unlock()
+	if n == 1 {
+		return nil, fmt.Errorf("TIMEOUT: execution exceeded timeout")
+	}
+	f.fn(w, n)
+	return &executor.ExecutionResult{Output: "here is the answer"}, nil
+}
+func (f *failingFirstExecutor) Execute(_ context.Context, w, _ string) (*executor.ExecutionResult, error) {
+	return f.run(w)
+}
+func (f *failingFirstExecutor) ExecuteWithSystemPrompt(_ context.Context, w, _, _ string) (*executor.ExecutionResult, error) {
+	return f.run(w)
+}
+func (f *failingFirstExecutor) ExecuteWithLog(_ context.Context, w, _ string) (*executor.ExecutionResult, string, error) {
+	r, err := f.run(w)
+	return r, "", err
+}
+func (f *failingFirstExecutor) ExecuteWithLogAndSystemPrompt(_ context.Context, w, _, _ string) (*executor.ExecutionResult, string, error) {
+	r, err := f.run(w)
+	return r, "", err
+}
+
+// A later turn on a plan whose steps are all done already: a failed first
+// iteration (a timeout, no answer) must not end the turn as "all plan
+// steps completed"; the turn ends when the agent reports it done.
+func TestTaskTurn_FinishedPlanNotDoneByFailedIteration(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.config.Agent.PlannerEnabled = true
+	env.handlers.config.Agent.ReviewerEnabled = false
+	taskDir := env.handlers.TaskWorkspacePath("m_9")
+	checkout := filepath.Join(taskDir, "workspace")
+	os.MkdirAll(checkout, 0o755)
+	subagent.SavePlan(taskDir, &subagent.PlanResult{Steps: []subagent.PlanStep{{ID: "1", Description: "build", Done: true}, {ID: "2", Description: "test", Done: true}}})
+	writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{"completed_steps": []string{"1", "2"}, "status": "done"})
+
+	exec := &failingFirstExecutor{scriptedExecutor{fn: func(checkout string, call int) {
+		writeJSON(t, filepath.Join(checkout, "_progress.json"), map[string]any{
+			"completed_steps": []string{"1", "2"}, "status": "done", "summary": "answered the follow-up",
+		})
+	}}}
+	env.handlers.executor = exec
+	s, err := env.handlers.agentManager.CreateSession("## Task ... User's feedback on the task (address it): why is QA still on 30 days?", nil, "test", "m_9", 5, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.TaskWorkspace = taskDir
+	env.handlers.ExecuteAgent(s)
+
+	snap := s.Snapshot()
+	if len(snap.Iterations) < 2 {
+		t.Fatalf("the turn ended after its failed first iteration (%d iterations, status %s): a finished plan made it look done", len(snap.Iterations), snap.Status)
+	}
+	if snap.TurnStatus != subagent.TurnDone || snap.Iterations[len(snap.Iterations)-1].Output == "" {
+		t.Fatalf("turn status %q, last output %q", snap.TurnStatus, snap.Iterations[len(snap.Iterations)-1].Output)
+	}
+}

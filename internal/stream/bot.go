@@ -1399,8 +1399,8 @@ func formatFinalResult(session *agent.Session) string {
 	var sb strings.Builder
 
 	// Include the last iteration's output so the user sees Claude's response
-	if len(session.Iterations) > 0 {
-		lastOutput := session.Iterations[len(session.Iterations)-1].Output
+	{
+		lastOutput := botcommon.LastOutput(session)
 		if lastOutput != "" {
 			if len(lastOutput) > maxLastOutputChars {
 				lastOutput = lastOutput[:maxLastOutputChars] + "\n... (truncated)"

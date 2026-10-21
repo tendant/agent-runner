@@ -59,6 +59,9 @@ func FormatStatusLine(session *agent.Session) string {
 	switch session.Status {
 	case agent.SessionStatusCompleted:
 		fmt.Fprintf(&sb, "Session completed — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
+		if n := len(session.Iterations); n > 0 && session.Iterations[n-1].Error != "" {
+			fmt.Fprintf(&sb, " (the last step failed: %s)", session.Iterations[n-1].Error)
+		}
 	case agent.SessionStatusStopped:
 		fmt.Fprintf(&sb, "Session stopped — %d iterations in %ds", len(session.Iterations), session.ElapsedSeconds)
 		if session.Error != "" {
@@ -118,4 +121,16 @@ func FormatIterationCore(iter agent.IterationResult, markdownCommit bool) string
 		fmt.Fprintf(&sb, "\n\n%s", output)
 	}
 	return sb.String()
+}
+
+// LastOutput is the agent's latest answer: the last iteration's output, or,
+// when that one ended without any (a timeout, a crash), the most recent
+// earlier one.
+func LastOutput(session *agent.Session) string {
+	for i := len(session.Iterations) - 1; i >= 0; i-- {
+		if out := strings.TrimSpace(session.Iterations[i].Output); out != "" {
+			return session.Iterations[i].Output
+		}
+	}
+	return ""
 }

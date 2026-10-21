@@ -867,6 +867,11 @@ func (h *Engine) runIterationLoop(
 	iterationsRun := 0
 	lastProgressCount := -1 // -1 = no progress file seen yet
 	stuckCount := 0
+	// The plan can only show this turn done if it had steps left when the
+	// turn began: a later turn on a finished plan (feedback a revision
+	// added nothing for) would otherwise end as "all plan steps completed"
+	// after its first iteration, whatever that iteration did.
+	planOpenAtStart := plan != nil && len(plan.RemainingSteps()) > 0
 	for i := 1; i <= maxIter; i++ {
 		// Check stop signal or context cancellation (server shutdown)
 		if liveSession.StopRequested() {
@@ -1039,7 +1044,9 @@ func (h *Engine) runIterationLoop(
 			liveSession.SetCompletedSteps(progress.CompletedSteps)
 			if plan != nil {
 				plan.MarkDone(progress.CompletedSteps)
-				if len(plan.RemainingSteps()) == 0 {
+				// Never on a failed iteration (a timeout, a crash): its work
+				// was not finished, whatever the progress file says.
+				if len(plan.RemainingSteps()) == 0 && planOpenAtStart && result.Status != agent.IterationStatusError {
 					stopReason = "all plan steps completed"
 					completed = true
 					slog.Info("all plan steps completed", "session_id", sessionID, "iteration", i)
