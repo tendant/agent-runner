@@ -388,7 +388,7 @@ func ContextBlock(rec *Record, reply string, feedback bool) string {
 	var sb strings.Builder
 	sb.WriteString("## Task\n\n")
 	sb.WriteString("You are continuing a task you started in an earlier turn. Your workspace is as you left it.\n\n")
-	fmt.Fprintf(&sb, "Goal: %s\n", strings.TrimSpace(rec.Goal))
+	fmt.Fprintf(&sb, "Goal: %s\n", capRequest(strings.TrimSpace(rec.Goal), maxGoal))
 	if len(rec.Plan) > 0 {
 		sb.WriteString("Plan:\n")
 		for _, st := range rec.Plan {
@@ -444,12 +444,20 @@ const maxTurnRequest = 1000
 // user attached ([Image: /path], [File 'name': /path]).
 var attachmentRef = regexp.MustCompile(`\[(?:Image: [^\]]+|File '[^']*': [^\]]+)\]`)
 
+// maxGoal caps the goal the context block repeats every turn: a request
+// with a large file pasted in would otherwise fill each prompt.
+const maxGoal = 4000
+
 // turnRequest renders an earlier turn's message for the context block: on
 // one line, capped, with every attachment reference kept.
 func turnRequest(req string) string {
-	req = strings.Join(strings.Fields(req), " ")
-	if r := []rune(req); len(r) > maxTurnRequest {
-		short := string(r[:maxTurnRequest]) + " …"
+	return capRequest(strings.Join(strings.Fields(req), " "), maxTurnRequest)
+}
+
+// capRequest cuts req to max runes, keeping every attachment reference.
+func capRequest(req string, max int) string {
+	if r := []rune(req); len(r) > max {
+		short := string(r[:max]) + " …"
 		for _, ref := range attachmentRef.FindAllString(req, -1) {
 			if !strings.Contains(short, ref) {
 				short += " " + ref

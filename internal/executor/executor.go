@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -145,6 +147,26 @@ func claudeResumeMissing(result *ExecutionResult, err error) bool {
 	return result != nil && strings.Contains(result.RawOutput, marker)
 }
 
+// maxPromptArg is the longest prompt passed as a command-line argument: below
+// Linux's 128 KiB limit on one argument, with room to spare.
+const maxPromptArg = 100 << 10
+
+// writePromptFile writes text to a private file in dir ("" for the system
+// temp dir; a sandbox's scratch dir, which its CLI can read) and returns its
+// path.
+func writePromptFile(dir, text string) (string, error) {
+	f, err := os.CreateTemp(dir, "system-prompt-*.md") // 0600
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		os.Remove(f.Name()) //nolint:errcheck
+		return "", err
+	}
+	return f.Name(), f.Close()
+}
+
 func (e *ClaudeExecutor) run(ctx context.Context, workspacePath, systemPrompt, instruction string, extraArgs []string, onEvent func(EventKind, string)) (*ExecutionResult, error) {
 	// --verbose is required by the CLI for stream-json in --print mode.
 	args := []string{"--print", "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"}
@@ -155,16 +177,36 @@ func (e *ClaudeExecutor) run(ctx context.Context, workspacePath, systemPrompt, i
 	if e.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(e.MaxTurns))
 	}
+	// A prompt too long for one argument (Linux caps each at 128 KiB: "argument
+	// list too long") goes another way: the system prompt as a file, the
+	// instruction on stdin, which --print reads when no prompt is given.
+	var stdin io.Reader
 	if systemPrompt != "" {
-		args = append(args, "--system-prompt", systemPrompt)
+		if len(systemPrompt) > maxPromptArg {
+			path, err := writePromptFile(scratchDir(ctx, e.Launcher), systemPrompt)
+			if err != nil {
+				return nil, fmt.Errorf("CLAUDE_ERROR: system prompt file: %w", err)
+			}
+			defer os.Remove(path)
+			args = append(args, "--system-prompt-file", path)
+		} else {
+			args = append(args, "--system-prompt", systemPrompt)
+		}
 	}
-	args = append(args, instruction)
+	if len(instruction) > maxPromptArg {
+		stdin = strings.NewReader(instruction)
+	} else {
+		args = append(args, instruction)
+	}
 
 	cmd, release, err := resolveLauncher(ctx, e.Launcher).Command(ctx, LaunchSpec{Name: "claude", Args: args, Dir: workspacePath, ExtraEnv: e.ExtraEnv})
 	if err != nil {
 		return nil, fmt.Errorf("CLAUDE_ERROR: launch: %w", err)
 	}
 	defer release()
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	// Put the process in its own group so SIGKILL reaches all children.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

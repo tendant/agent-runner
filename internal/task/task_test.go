@@ -214,3 +214,19 @@ func TestSweep_RecordKeptUntilWorkspaceGone(t *testing.T) {
 		t.Fatal("the expired record was not deleted after its workspace")
 	}
 }
+
+// A goal with a large file pasted in is capped in every turn's context,
+// its attachment references kept.
+func TestContextBlockCapsTheGoal(t *testing.T) {
+	goal := "Please create a new website TaxFi2\n--- File: page.html ---\n" + strings.Repeat("<div>x</div>", 80000) +
+		"\n--- End: page.html ---\n[File 'logo.png': /data/uploads/2026-10-21/1-logo.png]"
+	got := ContextBlock(New("m_1", goal, ""), "continue", false)
+	if len(got) > 6000 {
+		t.Errorf("context block is %d bytes", len(got))
+	}
+	for _, want := range []string{"Goal: Please create a new website TaxFi2", "[File 'logo.png': /data/uploads/2026-10-21/1-logo.png]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

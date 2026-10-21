@@ -159,7 +159,7 @@ func (b *Bot) threadHistory(ctx context.Context, key string) ([]botcommon.Histor
 			continue
 		}
 		self := m.UserID == b.botUserID && m.SenderKind == "bot"
-		// Chat commands (/secret set, /set KEY VALUE, ...) are agent-runner's,
+		// Chat commands (/env secret, /config set KEY VALUE, ...) are agent-runner's,
 		// never the agent's: they can carry a secret's value, and agent-runner's
 		// own keys must not reach the agent. The reply right after goes too.
 		if m.SenderKind == "human" && strings.HasPrefix(strings.TrimSpace(m.Content), "/") {
@@ -1018,8 +1018,11 @@ func threadKey(channelID string, msg messagePayload) string {
 	return channelID
 }
 
+// maxInlineText is the largest text file put into the message itself.
+const maxInlineText = 16 << 10
+
 // resolveFiles downloads files and returns their content formatted for the message.
-// Text files are inlined; binary files are saved to a temp directory and referenced by path.
+// Small text files are inlined; others are saved to the uploads directory and referenced by path.
 // Uses presigned URLs if available, otherwise falls back to authenticated download.
 func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string, fileURLs map[string]string) string {
 	var parts []string
@@ -1042,9 +1045,12 @@ func (b *Bot) resolveFiles(ctx context.Context, fileIDs []string, fileURLs map[s
 			continue
 		}
 
-		if isTextContent(file.ContentType) {
+		if isTextContent(file.ContentType) && len(file.Data) <= maxInlineText {
 			parts = append(parts, fmt.Sprintf("--- File: %s ---\n%s\n--- End: %s ---", file.Filename, string(file.Data), file.Filename))
 		} else {
+			// A large text file (a 900 KB page) is read from disk like any
+			// other: inlined, it would swell every prompt the message is in,
+			// past what a command line can carry.
 			// Save binary file to temp dir so the agent can access it
 			path, err := b.saveFile(file)
 			if err != nil {
@@ -1529,7 +1535,7 @@ func adminSet(ids []string) map[string]bool {
 	return m
 }
 
-// isAdmin reports whether a person may run chat commands: /set, /secret,
+// isAdmin reports whether a person may run chat commands: /config, /env,
 // /repo and the rest change what the agent runs with, so on agent-stream,
 // where anyone in a channel can address the bot, only its owner and
 // STREAM_ADMIN_USERS can.
