@@ -13,7 +13,7 @@ import (
 const repoUsage = "usage: /repo add <url> [name=NAME] [secret=SECRET] [branch=BRANCH] [push=false] · /repo list · /repo set <name> key=value ... · /repo remove <name>"
 
 // handleRepo manages the repo registry (internal/repos, REPOS_DESIGN.md):
-// the repos every session works on, with the /secret each logs in with.
+// the repos every session works on, with the /env secret each logs in with.
 func (c *Commander) handleRepo(arg string) string {
 	fields := strings.Fields(arg)
 	if len(fields) == 0 {

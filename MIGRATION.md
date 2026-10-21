@@ -153,3 +153,23 @@ sessions still queued are re-enqueued automatically. No configuration needed.
    the CLI installed and ready.
 4. Run a small real session and check `memory/` afterwards for the daily log
    entry (and `lessons.md` if curation is enabled).
+
+## `/set` and `/secret` are now `/config` and `/env`
+
+Chat commands are named after who a value is for:
+
+| Before | Now |
+|---|---|
+| `/set KEY VALUE` (agent-runner) | `/config set KEY VALUE`, and `/config unset KEY` |
+| `/secret set NAME VALUE [description]` | `/env secret NAME VALUE [description]` |
+| `/secret list` | `/env` (plain settings with values, secrets by name) |
+| `/secret remove NAME` | `/env unset NAME` |
+| (none) | `/env set NAME VALUE [description]`: a plain setting for the agent, in `DATA_DIR/env.json` |
+
+- `/config set` accepts only settings agent-runner reads; anything else is refused with a pointer
+  to `/env`. A setting saved earlier with `/set` under another name stays in `.env.local` unread:
+  `/config unset NAME` removes it.
+- `DATA_DIR/secrets.json` is unchanged: its entries are the agent's secrets.
+- The old commands answer with what replaced them and save nothing; agent-stream still seals them,
+  since they are typed with a value.
+

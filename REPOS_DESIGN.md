@@ -10,7 +10,7 @@ Status: implemented (`internal/repos`, `/repo`, `/repos`; SSH keys as multi-line
 | Belongs to | Examples | Set in |
 |---|---|---|
 | agent-runner | model keys, bot tokens, sandbox, limits, the memory repo (`MEMORY_GIT_*`) | `.env` |
-| the agent's users | which repos to work on, the credentials for them, other task credentials | chat (`/repo`, `/secret`) or the API |
+| the agent's users | which repos to work on, the credentials for them, other task credentials | chat (`/repo`, `/env`) or the API |
 
 Today project repos are agent-runner config:
 - one host and organization for every repo (`GIT_HOST`, `GIT_ORG`);
@@ -28,7 +28,7 @@ Changing anything means editing `.env` and restarting.
 |---|---|
 | `name` | short name, unique; the folder in every workspace (`oam-server`) |
 | `url` | clone URL, as the user gave it, without a password: `https://user@gitee.com/org/oam-server.git`, `https://github.com/org/x.git`, `git@host:org/x.git` |
-| `secret` | the `/secret` holding its password or token; empty for a public repo |
+| `secret` | the `/env secret` holding its password or token; empty for a public repo |
 | `branch` | the branch sessions start on; default: the remote's default branch |
 | `push` | `true` (default): agent-runner pushes the session's commits. `false`: read-only, never pushed |
 
@@ -45,7 +45,7 @@ not in the next session.
 
 ## 3. Credentials
 
-* **Source:** the named `/secret`. It is the user's, like any agent secret: it is also in the
+* **Source:** the named `/env secret`. It is the user's, like any agent secret: it is also in the
   agent's environment and named in its prompt. There is one place for user credentials, and no
   separate repo-token store.
 * **Login name:** from the URL (`https://lei@…`). Without one, `oauth2`, which GitLab, Gitea and
@@ -89,7 +89,7 @@ parks unmergeable work on `agent-rescue/<session>`. The differences:
 - it skips `push=false` repos.
 
 An authentication failure becomes a session warning naming the repo and its secret
-(`oam-server: push refused, check /secret GITEE_TOKEN`).
+(`oam-server: push refused, check /env secret GITEE_TOKEN`).
 
 The agent may also push itself, mid-session, a repo agent-runner would push (`push=true`) that
 logs in with a secret: when its commits need to be on the remote before the session ends, to

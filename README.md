@@ -8,7 +8,7 @@ chat interfaces (Telegram, Agent Stream, WeChat), scheduled tasks and a REST API
 ## Prerequisites
 
 - Go 1.25+
-- Git (repo credentials are given in chat with `/secret`, not on the host)
+- Git (repo credentials are given in chat with `/env secret`, not on the host)
 - One agent CLI on `$PATH`: `pi` (default), `claude`, `codex` or `opencode`. `POST /bootstrap`
   (or `/bootstrap` in chat) installs a missing one. On a headless Linux server, opencode also needs
   `xvfb` (see [docs/agents.md](docs/agents.md#opencode-on-linux-ubuntudebian)).
@@ -37,26 +37,51 @@ channel can talk to the agent, but only the bot's owner and `STREAM_ADMIN_USERS`
 only the owner can add the bot to a channel), `/help` shows how to start:
 
 ```
-/secret set GITEE_TOKEN <token> Gitee API and git      a credential for the agent's tasks
+/env secret GITEE_TOKEN <token> Gitee API and git      a credential for the agent's tasks
 /repo add https://<user>@gitee.com/org/repo.git secret=GITEE_TOKEN
 then describe the task in a message
 ```
 
+### agent-runner's settings, and the agent's environment
+
+Two commands, by who a value is for: **agent-runner itself** (`/config`), or **the code the agent
+runs** (`/env`).
+
+| | `/config set KEY VALUE` | `/env set NAME VALUE [description]` | `/env secret NAME VALUE [description]` |
+|---|---|---|---|
+| For | agent-runner: its model and key, its CLI, limits, the sandbox | the agent's tasks: a plain setting | the agent's tasks: a credential |
+| Example | `/config set DEEPSEEK_API_KEY sk-...` · `/config set AGENT_CLI claude` | `/env set APP_ENV staging deploy target` | `/env secret STRIPE_API_KEY sk_test_... Stripe` |
+| Saved in | `DATA_DIR/.env.local` (above `.env`, below the OS environment) | `DATA_DIR/env.json` | `DATA_DIR/secrets.json` |
+| Applies | at once; the reply says when one waits for a restart | from the next session | from the next session |
+| The agent | never gets it (except the model key its CLI needs, by its own route) | gets `$NAME`; its prompt shows `NAME=value` | gets `$NAME`; its prompt shows the name and description only |
+| Shown | `/config` (keys masked) | `/env`, the prompt, logs | never: hidden in chat, logs and memory |
+| Remove | `/config unset KEY` (`.env` or the default applies again) | `/env unset NAME` | `/env unset NAME` |
+
+- **`/config set` takes only settings agent-runner reads** ([.env.example](.env.example) lists them):
+  anything else would be saved and never read, so it is refused with a pointer to `/env`. It also
+  refuses names that change how processes run (`PATH`, `GIT_*`, `LD_*`, ...). A few settings are
+  read only at start (the chat connection, the listen address, the sandbox, the worker pool): those
+  are saved and apply after a restart, and the reply says so.
+- **`/env` is everything the agent's tasks get**, in one list. `/env set` refuses a value shaped like
+  a credential (`ghp_…`, `sk-…`, a private key, a URL with a password) and points to `/env secret`, so
+  a token is never shown by mistake. A name is either plain or secret: setting it as the other kind
+  moves it. Names agent-runner reads (`AGENT_*`, `STREAM_*`, ...) are refused, with where they go.
+- **Model keys for the apps the agent builds:** `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` and
+  `ANTHROPIC_API_KEY` can be in `/env` too, apart from agent-runner's own in `/config`: each agent
+  CLI gets agent-runner's key by its own route (pi `--api-key` or the sandbox's `auth.json`, codex a
+  `-c` provider, opencode its config), so the two never mix. Except `ANTHROPIC_API_KEY` while the
+  agent CLI is claude, which reads only its environment: give the agent that key under another name.
+- agent-runner's own keys never reach the agent: bot tokens, `API_KEY` and the memory token are left
+  out of its environment even without the sandbox (the model provider key its CLI needs is kept).
+- **Sealed on agent-stream:** `/env secret` and `/config set` (and the old `/secret` and `/set`,
+  typed from habit, and misspelled forms) are kept and shown masked (`/env secret NAME ••••••`), push
+  nobody, and reach this bot once; a plain `/env set` stays readable unless its value looks like a
+  credential.
+
+### More in chat
+
 - **Repos** (`/repo`, `/help repo`): every session gets every registered repo, logging in with its
-  `/secret`; the agent commits, agent-runner pushes ([REPOS_DESIGN.md](REPOS_DESIGN.md)).
-- **Secrets** (`/secret`, `/help secret`): the agent gets them as environment variables, sees only
-  their names and descriptions, and their values are redacted from chat, logs and memory.
-  agent-runner's own keys (`.env`, `/set`) never reach the agent: bot tokens, `API_KEY` and the
-  memory token are left out of its environment even without the sandbox (the model provider key
-  its CLI needs is kept). `/set` refuses names that change how processes run (`PATH`, `GIT_*`, `LD_*`, ...).
-  The model key names (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) can be agent
-  secrets too, for the apps the agent builds: each agent CLI gets agent-runner's own key by its own
-  route (pi `--api-key` or the sandbox's `auth.json`, codex a `-c` provider, opencode its config),
-  so the two never mix. Except `ANTHROPIC_API_KEY` while the agent CLI is claude, which reads only
-  its environment: give the agent that key under another name. On agent-stream, `/secret set`
-  and `/set` are sealed: the server keeps and shows them masked (`/secret set NAME ••••••`), pushes
-  nobody, and hands the original once to this bot only; malformed or misspelled forms are sealed
-  too.
+  `/env secret`; the agent commits, agent-runner pushes ([REPOS_DESIGN.md](REPOS_DESIGN.md)).
 - **Memory and instructions** (`/help memory`): `/memory log` lists what each session saved,
   `/memory undo <session-id>` takes it back; `/prompt show|check|preview` shows `agent.md`,
   `prompt.md` and the prompt a session gets ([MEMORY_DESIGN.md](MEMORY_DESIGN.md)).
@@ -68,14 +93,22 @@ then describe the task in a message
   kept on the host in `DATA_DIR/rescued/<workspace>/` for 30 days (`AGENT_RESCUE_RETENTION`):
   unpushed commits as a git bundle, uncommitted files and files outside any repo as they were, with
   a README on restoring them. The thread is told. Only registered repos (`/repo add`) are pushed.
-- **Setup:** `/set KEY VALUE` configures a running instance (saved to `.env.local`, applied
-  immediately); `/config` and `/status` show it.
+- **Status:** `/config` shows the settings and readiness, `/status` what is running.
 
-### Secrets and repos as files
+### The agent's environment and repos as files
 
-`/secret` and `/repo add` write two files in `DATA_DIR`, which you can also write yourself, keep in
-git (encrypted) and deploy, so a bot's setup is repeatable. Both are read when used: changes apply
-at the next session, without a restart.
+`/env` and `/repo add` write three files in `DATA_DIR`, which you can also write yourself, keep in
+git and deploy, so a bot's setup is repeatable. All are read when used: changes apply at the next
+session, without a restart.
+
+`env.json`, the agent's plain settings (no secrets in it: commit it as is):
+
+```json
+{
+  "APP_ENV": { "value": "staging", "description": "where the app deploys" },
+  "API_BASE_URL": { "value": "https://api.staging.example.com" }
+}
+```
 
 `secrets.json`, the agent's secrets (multi-line values such as SSH keys are ordinary strings):
 
@@ -96,20 +129,21 @@ at the next session, without a restart.
 ]
 ```
 
-Encrypt only the values with [sops](https://github.com/getsops/sops), so a diff still shows which
-secret changed and what it is for, and decrypt on the bot's host when deploying:
+Encrypt only the secrets' values with [sops](https://github.com/getsops/sops), so a diff still shows
+which secret changed and what it is for, and decrypt on the bot's host when deploying:
 
 ```sh
 sops --encrypt --age <recipient> --encrypted-regex '^value$' secrets.json > agent-secrets.sops.json   # commit this
 sops --decrypt agent-secrets.sops.json > "$DATA_DIR/secrets.json" && chmod 600 "$DATA_DIR/secrets.json"
-cp repos.json "$DATA_DIR/repos.json"                                                                    # no secrets in it
+cp env.json repos.json "$DATA_DIR/"                                                                     # no secrets in them
 ```
 
-- Prefer this to `/secret set` in chat for anything long-lived. agent-stream never stores a
-  value typed there (it seals the command), but Telegram and WeChat keep it in the chat, and the
-  sender's own app may show what was typed until it reloads.
-- Names agent-runner reads itself are skipped even in a hand-written file: agent-runner's own
-  keys stay in `.env` and never reach the agent.
+- Prefer this to `/env secret` in chat for anything long-lived. agent-stream never stores a value
+  typed there (it seals the command), but Telegram and WeChat keep it in the chat, and the sender's
+  own app may show what was typed until it reloads.
+- A name in both `env.json` and `secrets.json` is a secret. Names agent-runner reads itself are
+  skipped even in a hand-written file: agent-runner's own keys stay in `.env` and never reach the
+  agent.
 - `/repo add` fetches a repo to check its URL, branch and token; a hand-written entry is first
   fetched at the next session, so a mistake shows up there (and in `/repo list`).
 
@@ -156,7 +190,7 @@ Upgrading from v0.0.x: see [MIGRATION.md](MIGRATION.md). The ones most people se
 | `AGENT_MODEL` / `AGENT_FAST_MODEL` | pi's choice (opencode: `deepseek/deepseek-v4-pro` / `-flash`) | Work model as `provider/model`, and a cheap one for planning and curation |
 | `DATA_DIR` | the current directory | All mutable state |
 | `API_BIND` / `API_KEY` | `127.0.0.1:8080` / none | API address and key (browser requests from other sites are refused either way) |
-| `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | | Credentials for the memory repo (project repos use `/repo` and `/secret`) |
+| `MEMORY_GIT_TOKEN` / `MEMORY_GIT_SSH_KEY` | | Credentials for the memory repo (project repos use `/repo` and `/env secret`) |
 | `AGENT_PLANNER_ENABLED` / `AGENT_REVIEWER_ENABLED` | `true` / `false` | Planner and reviewer sub-agents |
 | `AGENT_MAX_CONCURRENT` | `1` | Sessions running at once |
 | `AGENT_SANDBOX` | `off` | Run agents in a sandbox: `permissive` or `strict` (see [docs/sandbox.md](docs/sandbox.md)) |

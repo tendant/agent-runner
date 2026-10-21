@@ -182,7 +182,7 @@ func (b *Bot) Stop() {
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Security: only the configured chat controls this agent. Without
 	// TELEGRAM_CHAT_ID nobody does: anyone who found the bot could run
-	// agents and use /set, /secret and /repo. The operator learns the id
+	// agents and use /config, /env and /repo. The operator learns the id
 	// to set from the log.
 	if b.chatID == 0 {
 		slog.Warn("telegram: ignoring message: TELEGRAM_CHAT_ID is not set; to let this chat control the agent, set TELEGRAM_CHAT_ID="+strconv.FormatInt(msg.Chat.ID, 10), "chat_id", msg.Chat.ID)

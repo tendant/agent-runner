@@ -271,7 +271,7 @@ func (h *Handlers) UpdateExecutor() {
 // applyIsolation spawns executors inside agent-home/ (config-dir
 // redirection) when AGENT_ISOLATED is set; otherwise the legacy
 // inherit-everything behavior applies. Provisioning runs here — not only at
-// startup — so `/set AGENT_ISOLATED true` takes effect without a restart.
+// startup — so `/config set AGENT_ISOLATED true` takes effect without a restart.
 // targets is any mix of executors and backends; each one supporting an
 // environment overlay gets the agent-home redirections.
 func applyIsolation(isolated bool, targets ...any) {
@@ -312,7 +312,7 @@ func applyIsolation(isolated bool, targets ...any) {
 // RefreshRuntime rebuilds everything derived from config: the executor and
 // the fast-LLM clients (planner, curator, and the analyzer's inner client —
 // bots share the analyzer pointer, so they pick the new client up too).
-// Called at startup and after /set changes configuration.
+// Called at startup and after /config set changes configuration.
 func (h *Handlers) RefreshRuntime() {
 	h.UpdateExecutor()
 	exec := h.getExecutor()
@@ -558,8 +558,8 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 		defer run.Finish()
 		runCtx = run.Ctx
 	}
-	if list, err := secrets.List(); err == nil {
-		runCtx = executor.WithSessionEnv(runCtx, agentsecrets.EnvFor(list, h.config.Agent.CLI))
+	if plain, list, err := agentsecrets.Load(h.config.SecretsFile, h.config.EnvFile); err == nil {
+		runCtx = executor.WithSessionEnv(runCtx, agentsecrets.EnvFor(append(plain, list...), h.config.Agent.CLI))
 	}
 	result, executionLog, err := h.getExecutor().ExecuteWithLog(runCtx, workspacePath, jobInstruction)
 	logData.ExecutionLog = executionLog

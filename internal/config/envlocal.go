@@ -53,3 +53,36 @@ func setEnvLocalFile(path, key, value string) error {
 	}
 	return os.WriteFile(path, []byte(content), 0600)
 }
+
+// UnsetEnvLocal removes key from the data-dir .env.local, reporting whether
+// it was there.
+func UnsetEnvLocal(key string) (bool, error) {
+	return unsetEnvLocalFile(envLocalPath, key)
+}
+
+func unsetEnvLocalFile(path, key string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var kept []string
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, key+"=") || line == key {
+			found = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !found {
+		return false, nil
+	}
+	content := strings.Join(kept, "\n")
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return true, os.WriteFile(path, []byte(content), 0600)
+}

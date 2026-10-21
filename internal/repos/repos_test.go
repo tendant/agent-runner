@@ -92,7 +92,7 @@ func TestAuthHelper(t *testing.T) {
 	if !strings.Contains(string(out), "username=lei") || !strings.Contains(string(out), "password=tok-123") {
 		t.Errorf("credential fill:\n%s", out)
 	}
-	if _, err := (Repo{Name: "x", URL: rp.URL, Secret: "MISSING_TOKEN"}).Auth(secrets); err == nil || !strings.Contains(err.Error(), "/secret set MISSING_TOKEN") {
+	if _, err := (Repo{Name: "x", URL: rp.URL, Secret: "MISSING_TOKEN"}).Auth(secrets); err == nil || !strings.Contains(err.Error(), "/env secret MISSING_TOKEN") {
 		t.Errorf("missing secret: %v", err)
 	}
 	if a, err := (Repo{Name: "x", URL: rp.URL}).Auth(secrets); err != nil || len(a.Args) != 0 {

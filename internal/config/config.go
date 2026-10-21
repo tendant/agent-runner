@@ -40,7 +40,8 @@ type Config struct {
 	RescueRoot      string
 	RescueRetention time.Duration
 	MemoryDir       string // Convention: ./memory (seeded defaults + daily logs + curated memory)
-	SecretsFile     string // DATA_DIR/secrets.json: the agent user's secrets (/secret), apart from the runner's .env
+	SecretsFile     string // DATA_DIR/secrets.json: the agent's secrets (/env secret), apart from the runner's .env
+	EnvFile         string // DATA_DIR/env.json: the agent's plain settings (/env set)
 	ReposFile       string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
 
 	// Execution limits
@@ -163,7 +164,7 @@ type StreamConfig struct {
 	StateDir          string        // STREAM_STATE_DIR — directory for the per-conversation event-seq cursor; defaults to TmpRoot
 	MaxCatchUpBacklog int           // STREAM_MAX_CATCHUP_BACKLOG — cap on messages reacted to after a reconnect gap; older ones in the burst are skipped, not replayed (default: 100)
 	// AdminUsers (STREAM_ADMIN_USERS) are the agent-stream user IDs that may
-	// run chat commands (/set, /secret, /repo, ...), besides the bot's owner.
+	// run chat commands (/config, /env, /repo, ...), besides the bot's owner.
 	AdminUsers []string
 }
 
@@ -261,6 +262,7 @@ func defaultConfigForDataDir(data string) *Config {
 		RescueRetention:          30 * 24 * time.Hour,
 		MemoryDir:                filepath.Join(data, "memory"),
 		SecretsFile:              filepath.Join(data, "secrets.json"),
+		EnvFile:                  filepath.Join(data, "env.json"),
 		ReposFile:                filepath.Join(data, "repos.json"),
 		MaxRuntimeSeconds:        300,
 		MaxConcurrentJobs:        5,
@@ -324,7 +326,7 @@ func defaultConfigForDataDir(data string) *Config {
 // files. Priority order (highest to lowest):
 //
 //  1. OS environment      — always wins
-//  2. DATA_DIR/.env.local — written by /set; survives image updates
+//  2. DATA_DIR/.env.local — written by /config set; survives image updates
 //  3. .env.<instance>     — instance-specific overrides (when INSTANCE is set)
 //  4. .env                — base config; committed as a template
 //
@@ -585,7 +587,7 @@ func (c *Config) Validate() error {
 }
 
 // ReloadFromEnv re-resolves the full configuration from the environment and
-// env files, updating c in place. /set writes os.Setenv + .env.local first
+// env files, updating c in place. /config set writes os.Setenv + .env.local first
 // and then calls this, so every consumer sharing this pointer — handlers,
 // commander, bots, executor wiring — sees the change without a restart, with
 // all parsing (provider/model splits, legacy modes, aliases) applied by the
@@ -614,6 +616,7 @@ func (c *Config) copyFrom(n *Config) {
 	c.RescueRetention = n.RescueRetention
 	c.MemoryDir = n.MemoryDir
 	c.SecretsFile = n.SecretsFile
+	c.EnvFile = n.EnvFile
 	c.ReposFile = n.ReposFile
 	c.MaxRuntimeSeconds = n.MaxRuntimeSeconds
 	c.MaxConcurrentJobs = n.MaxConcurrentJobs
@@ -782,6 +785,6 @@ func envSliceOrDefault(key string, fallback []string) []string {
 }
 
 // RemovedSettings are settings agent-runner no longer reads: repos and their
-// credentials come from /repo and /secret (REPOS_DESIGN.md). Startup names
+// credentials come from /repo and /env secret (REPOS_DESIGN.md). Startup names
 // any still set.
 var RemovedSettings = []string{"GIT_HOST", "GIT_ORG", "GIT_TOKEN", "GIT_SSH_KEY", "AGENT_SHARED_REPOS", "ALLOWED_PROJECTS"}

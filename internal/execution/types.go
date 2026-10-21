@@ -61,14 +61,14 @@ type ScheduleInfo struct {
 const scheduleFileName = "_schedule.json"
 
 // Deps provides the mutable runtime dependencies the engine reads at call
-// time — they are rebuilt by the api layer on /set (RefreshRuntime) or set
+// time — they are rebuilt by the api layer on /config set (RefreshRuntime) or set
 // after bot initialization, so the engine must not capture them at
 // construction.
 type Deps interface {
 	Executor() executor.Executor
 	// Backend is the session-based execution surface for the iteration
 	// loop. The backend is captured once per run at session start, so a
-	// /set AGENT_CLI change applies to the next run, not a running one.
+	// /config set AGENT_CLI change applies to the next run, not a running one.
 	Backend() executor.Backend
 	PlannerClient() llm.Client
 	CuratorClient() llm.Client

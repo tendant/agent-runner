@@ -36,8 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `telegram/` | Telegram bot |
 | `template/` | Memory system: prompt composition, retrieval, budget, daily logs, git sync |
 | `wechat/` | WeChat bot (iLink API) |
-| `repos/` | Repo registry (`/repo`, `/repos`): bare fetch-only cache, checkouts, per-repo logins from a `/secret` (REPOS_DESIGN.md) |
-| `agentsecrets/` | The agent user's secrets (`/secret`, `DATA_DIR/secrets.json`), apart from agent-runner's own |
+| `repos/` | Repo registry (`/repo`, `/repos`): bare fetch-only cache, checkouts, per-repo logins from an `/env secret` (REPOS_DESIGN.md) |
+| `agentsecrets/` | The agent's environment (`/env`): plain settings (`DATA_DIR/env.json`) and secrets (`DATA_DIR/secrets.json`), apart from agent-runner's own (`/config`) |
 | `gitsafe/` | Hardened git commands for host-side git in agent-writable repos; restoring a saved `.git/config` |
 | `sandbox/` | Sandbox policy, runtime (agentbox: gVisor/Seatbelt), model proxy, egress gateway |
 
@@ -46,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **In-memory (lost on restart):** one-shot jobs.
 - **Task records (`AGENT_TASKS_ENABLED`, on by default):** `STATE_ROOT/tasks` (internal/task), with each task's persistent workspace at `TMP_ROOT/task-*`; see TASKS_DESIGN.md.
 - **Journaled (recovered on restart):** queued/running agent sessions — `STATE_ROOT/sessions` (internal/sessionjournal). On startup, interrupted sessions are failed with a targeted chat notice; never-started queued sessions are re-enqueued with their watcher re-attached (internal/api/recovery.go).
-- **Survives restart:** scheduled tasks (`SCHEDULER_DATABASE_URL` DB), conversations (`tmp/conversations`, executing state auto-reset on load), the memory dir (git-synced), `.env.local` (written by `/set`), audit logs (`logs/`), outputs/uploads, bot event cursors (`tmp/`).
+- **Survives restart:** scheduled tasks (`SCHEDULER_DATABASE_URL` DB), conversations (`tmp/conversations`, executing state auto-reset on load), the memory dir (git-synced), `.env.local` (written by `/config set`), audit logs (`logs/`), outputs/uploads, bot event cursors (`tmp/`).
 - All mutable state roots under `DATA_DIR`.
 
 ### Key Patterns
@@ -92,6 +92,6 @@ go test -race ./...
 - Always run with `-race`; CI also gates on `gofmt -l` and `go vet`
 
 ### Configuration
-All via environment variables — `.env.example` is the authoritative reference. Chat commands (`/set`, `/config`, `/status`, `/bootstrap`) configure a running instance without SSH.
+All via environment variables — `.env.example` is the authoritative reference. Chat commands (`/config`, `/config set`, `/status`, `/bootstrap`) configure a running instance without SSH; `/env` is the agent's own environment. `/config set` accepts only names in `config.Settings` (kept in step with config.go and .env.example by a test).
 
 See DESIGN.md for the full architecture document.

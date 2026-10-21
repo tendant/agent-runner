@@ -81,12 +81,12 @@ var errorGuidanceTable = []errorGuidance{
 	{
 		match: []string{"invalid api key", "invalid_api_key", "incorrect api key", "api key not valid"},
 		title: "the configured API key is invalid",
-		hint:  "check it with /status, then fix with /set <PROVIDER>_API_KEY <key>",
+		hint:  "check it with /status, then fix with /config set <PROVIDER>_API_KEY <key>",
 	},
 	{
 		match: []string{"api key is missing", "api key not found", "no api key", "missing api key"},
 		title: "no API key is configured",
-		hint:  "set one with /set <PROVIDER>_API_KEY <key>",
+		hint:  "set one with /config set <PROVIDER>_API_KEY <key>",
 	},
 	{
 		match: []string{"check version and auth"},
@@ -575,9 +575,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if sandboxAborted {
 		return
 	}
-	// The agent user's secrets: in every CLI's environment, named in the prompt.
-	agentSecrets := h.agentSecrets(sessionID, liveSession)
-	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvFor(agentSecrets, h.config.Agent.CLI))
+	// The agent's environment (/env): in every CLI's environment, listed in
+	// the prompt (secrets by name only).
+	agentPlain, agentSecrets := h.agentEnv(sessionID, liveSession)
+	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), agentSecrets...), h.config.Agent.CLI))
 	// What the agent says is recorded and forwarded without secret values.
 	redactor := agentsecrets.NewRedactor(agentSecrets)
 	liveSession.SetRedactor(redactor.Redact)
@@ -612,7 +613,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Repos: h.registeredRepos()})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos()})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
@@ -638,7 +639,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// Start the run-scoped executor session. Persistent backends (pi) spawn
 	// one live process here that serves every iteration; one-shot backends
 	// keep spawning one CLI process per prompt. The backend is captured once
-	// per run — a /set AGENT_CLI change applies to the next run.
+	// per run — a /config set AGENT_CLI change applies to the next run.
 	as := &agentSession{backend: h.deps.Backend(), onEvent: func(ev executor.Event) {
 		liveSession.AppendExecEvent(string(ev.Kind), ev.Text, ev.At)
 		recordToolMetric(ev)

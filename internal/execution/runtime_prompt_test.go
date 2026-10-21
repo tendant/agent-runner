@@ -170,3 +170,41 @@ func TestSelfPushCommand(t *testing.T) {
 		t.Errorf("a read-only or secretless repo got a push command:\n%s", note)
 	}
 }
+
+// A plain setting (/env set) is in the prompt with its value and is not
+// redacted from what the agent says; a secret beside it is named only.
+func TestSessionPromptShowsPlainSettings(t *testing.T) {
+	env := setupTestEnv(t)
+	h := env.handlers
+	h.config.Agent.CLI = "pi"
+	h.config.Agent.PlannerEnabled = false
+	dir := t.TempDir()
+	h.config.SecretsFile = filepath.Join(dir, "secrets.json")
+	h.config.EnvFile = filepath.Join(dir, "env.json")
+	agentsecrets.New(h.config.EnvFile).Set("APP_ENV", "staging", "where the app deploys")
+	agentsecrets.New(h.config.SecretsFile).Set("STRIPE_API_KEY", "sk_test_value_1", "Stripe test key")
+	var prompt string
+	h.executor = promptExecutor{fn: func(p string) {
+		if prompt == "" {
+			prompt = p
+		}
+	}}
+	session, _ := h.agentManager.CreateSession("check", nil, "test", "", 1, 30)
+	h.ExecuteAgent(session)
+	for _, want := range []string{"`APP_ENV=staging`: where the app deploys", "`$STRIPE_API_KEY`: Stripe test key"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "sk_test_value_1") {
+		t.Error("a secret's value must never be in the prompt")
+	}
+
+	h.executor = echoExecutor{text: "deploying to staging with sk_test_value_1"}
+	session, _ = h.agentManager.CreateSession("go", nil, "test", "", 1, 30)
+	h.ExecuteAgent(session)
+	out := session.Snapshot().Iterations[0].Output
+	if !strings.Contains(out, "deploying to staging") || strings.Contains(out, "sk_test_value_1") {
+		t.Errorf("output %q: the plain value stays, the secret is redacted", out)
+	}
+}

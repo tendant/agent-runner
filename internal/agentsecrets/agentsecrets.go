@@ -1,11 +1,13 @@
-// Package agentsecrets keeps the secrets agent users give their agents
-// (a Gitee token, a Stripe key), apart from agent-runner's own (.env:
-// model keys, bot tokens, the memory repo's token). They live in DATA_DIR/secrets.json,
-// are set with /secret, and reach every agent session as environment
+// Package agentsecrets keeps the agent's environment: what agent users give
+// their agents for their tasks, apart from agent-runner's own settings
+// (.env, /config set). Two kinds, set with /env: secrets (a Gitee token, a
+// Stripe key) in DATA_DIR/secrets.json, and plain settings (APP_ENV=staging)
+// in DATA_DIR/env.json. Both reach every agent session as environment
 // variables, sandboxed or not: they are for the agent, so the sandbox does
-// not hide them. Agents are told each one's name and description, never
-// its value. A name agent-runner reads itself is refused, so the two kinds
-// cannot mix.
+// not hide them. Agents are told a secret's name and description, never its
+// value, and its value is redacted from what they say; a plain setting is
+// shown with its value. A name agent-runner reads itself is refused, so the
+// agent's and agent-runner's cannot mix.
 package agentsecrets
 
 import (
@@ -182,7 +184,7 @@ func (s *Store) File(name string) (string, error) {
 		tmp.Close()
 		return path, os.Rename(tmp.Name(), path)
 	}
-	return "", fmt.Errorf("secret %s is not set (/secret set %s ...)", name, name)
+	return "", fmt.Errorf("secret %s is not set (/env secret %s ...)", name, name)
 }
 
 // FilesDir is where File puts secrets as files, for a secrets file at path.
@@ -267,12 +269,66 @@ func CheckName(name string) error {
 		return nil
 	}
 	if runnerNames[name] {
-		return fmt.Errorf("%s is agent-runner's own setting, not an agent secret", name)
+		return fmt.Errorf("%s is agent-runner's own setting: /config set %s <value>", name, name)
 	}
 	for _, p := range runnerPrefixes {
 		if strings.HasPrefix(name, p) {
-			return fmt.Errorf("%s: names starting with %s are agent-runner's own (its settings go in with /set); pick another for the agent (e.g. GITEE_TOKEN)", name, p)
+			return fmt.Errorf("%s: names starting with %s are agent-runner's own (its settings go in with /config set); pick another for the agent (e.g. GITEE_TOKEN)", name, p)
 		}
 	}
 	return nil
+}
+
+// Load reads the agent's environment: its plain settings (envPath, env.json)
+// and its secrets (secretsPath, secrets.json). A name in both is a secret:
+// a hand-edited file must not show a credential as plain.
+func Load(secretsPath, envPath string) (plain, secrets []Secret, err error) {
+	if secrets, err = New(secretsPath).List(); err != nil {
+		return nil, nil, err
+	}
+	if envPath == "" {
+		return nil, secrets, nil
+	}
+	all, err := New(envPath).List()
+	if err != nil {
+		return nil, nil, err
+	}
+	secret := map[string]bool{}
+	for _, s := range secrets {
+		secret[s.Name] = true
+	}
+	for _, v := range all {
+		if !secret[v.Name] {
+			plain = append(plain, v)
+		}
+	}
+	return plain, secrets, nil
+}
+
+// credentialPatterns match values that are credentials by their shape:
+// tokens with a vendor prefix, keys, JWTs.
+var credentialPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----`),
+	regexp.MustCompile(`^(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}$`),
+	regexp.MustCompile(`^github_pat_[A-Za-z0-9_]{20,}$`),
+	regexp.MustCompile(`^glpat-[A-Za-z0-9_-]{16,}$`),
+	regexp.MustCompile(`^sk-[A-Za-z0-9_-]{16,}$`),
+	regexp.MustCompile(`^(sk|rk|pk)_(live|test)_[A-Za-z0-9]{16,}$`),
+	regexp.MustCompile(`^xox[abprs]-[A-Za-z0-9-]{10,}$`),
+	regexp.MustCompile(`^(AKIA|ASIA)[0-9A-Z]{16}$`),
+	regexp.MustCompile(`^AIza[0-9A-Za-z_-]{30,}$`),
+	regexp.MustCompile(`^eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$`),
+	regexp.MustCompile(`^[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@`), // a URL with a password
+}
+
+// LooksLikeCredential reports a value shaped like a credential, which
+// /env set (a plain setting, shown everywhere) refuses for /env secret.
+func LooksLikeCredential(value string) bool {
+	v := strings.TrimSpace(value)
+	for _, p := range credentialPatterns {
+		if p.MatchString(v) {
+			return true
+		}
+	}
+	return false
 }

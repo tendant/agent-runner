@@ -32,7 +32,8 @@ const (
 	cmdSetPrompt = "/set-prompt"
 	cmdMemory    = "/memory"
 	cmdPrompt    = "/prompt"
-	cmdSecret    = "/secret"
+	cmdEnv       = "/env"
+	cmdConfig    = "/config"
 	cmdRepo      = "/repo"
 	cmdAlerts    = "/alerts"
 )
@@ -98,12 +99,6 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		}
 	}
 
-	// "/secrets" is a common slip for "/secret".
-	if w, rest, _ := strings.Cut(text, " "); strings.EqualFold(w, "/secrets") {
-		text = strings.TrimSpace(cmdSecret + " " + rest)
-		lower = strings.ToLower(text)
-	}
-
 	r := func(s string) (string, string, bool) { return s, "", true }
 
 	// "Update prompt:" / "update prompt " — write prompt and optionally start session.
@@ -122,22 +117,22 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(helpText)
 	case strings.HasPrefix(lower, "/help "):
 		switch strings.TrimSpace(lower[len("/help "):]) {
-		case "secret", "secrets":
-			return r(secretHelp)
+		case "env", "secret", "secrets":
+			return r(envHelp)
+		case "config":
+			return r(configHelp)
 		case "repo", "repos":
 			return r(repoHelp)
 		case "memory", "prompt":
 			return r(memoryHelp)
 		}
-		return r("no help on that; try /help, /help secret, /help repo or /help memory")
-	case lower == "/config":
-		return r(c.handleConfig())
+		return r("no help on that; try /help, /help config, /help env, /help repo or /help memory")
+	case lower == cmdConfig || strings.HasPrefix(lower, cmdConfig+" "):
+		return r(c.handleConfigCommand(strings.TrimSpace(text[len(cmdConfig):])))
 	case lower == "/status":
 		return r(c.handleStatus())
 	case lower == "/sessions":
 		return r(c.handleSessions())
-	case strings.HasPrefix(lower, "/set ") || lower == "/set":
-		return r(c.handleSet(strings.TrimSpace(text[4:]))) // strip "/set"
 	case lower == "/bootstrap" || strings.HasPrefix(lower, "/bootstrap "):
 		force := strings.Contains(lower, "force")
 		return r(c.handleBootstrap(force))
@@ -162,8 +157,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleAuth(arg, send))
 	case lower == cmdAlerts || strings.HasPrefix(lower, cmdAlerts+" "):
 		return r(c.handleAlerts(strings.TrimSpace(text[len(cmdAlerts):])))
-	case lower == cmdSecret || strings.HasPrefix(lower, cmdSecret+" "):
-		return r(c.handleSecret(strings.TrimSpace(text[len(cmdSecret):])))
+	case lower == cmdEnv || strings.HasPrefix(lower, cmdEnv+" ") || strings.HasPrefix(lower, cmdEnv+"\n"):
+		return r(c.handleEnv(strings.TrimSpace(text[len(cmdEnv):])))
 	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
 		return r(c.handlePrompt(strings.TrimSpace(text[len(cmdPrompt):])))
 	case lower == cmdMemory || strings.HasPrefix(lower, cmdMemory+" "):
@@ -189,13 +184,28 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 	// If the first word is a known command, the user typed it with wrong
 	// arguments — return the specific usage hint rather than "Unknown command".
 	cmdWord := strings.Fields(lower + " ")[0]
+	// The commands /config and /env replaced: say which, and do nothing
+	// (never echo the rest, which may hold a value).
+	if moved, ok := movedCommands[cmdWord]; ok {
+		return "error: " + moved + " Nothing was saved.", "", true
+	}
 	if usage, ok := knownCommands[cmdWord]; ok {
 		return "error: " + usage, "", true
 	}
-	// A near miss (/secert, /scret) is answered with the command meant, and
+	// A near miss (/cofnig, /secert) is answered with the command meant, and
 	// nothing is done: never echo the rest, which may hold a value.
 	if strings.HasPrefix(cmdWord, "/") {
-		if near := nearestCommand(cmdWord, knownCommands); near != "" {
+		candidates := make(map[string]string, len(knownCommands)+len(movedCommands))
+		for k, v := range knownCommands {
+			candidates[k] = v
+		}
+		for k, v := range movedCommands {
+			candidates[k] = v
+		}
+		if near := nearestCommand(cmdWord, candidates); near != "" {
+			if moved, ok := movedCommands[near]; ok {
+				return "error: unknown command. " + moved + " Nothing was saved or run.", "", true
+			}
 			return "error: unknown command. Did you mean " + near + "? Nothing was saved or run.", "", true
 		}
 	}
@@ -222,10 +232,10 @@ func (c *Commander) ValidateAuth(cli string) (string, error) {
 		cli = c.cfg.Agent.CLI
 	}
 	if cli == "" || cli == "pi" {
-		return "", fmt.Errorf("pi authenticates via provider API keys (or models.json) — use /set <PROVIDER>_API_KEY <key> instead")
+		return "", fmt.Errorf("pi authenticates via provider API keys (or models.json) — use /config set <PROVIDER>_API_KEY <key> instead")
 	}
 	if cli == "opencode" {
-		return "", fmt.Errorf("opencode authenticates via API keys — use /set <PROVIDER>_API_KEY <key> instead")
+		return "", fmt.Errorf("opencode authenticates via API keys — use /config set <PROVIDER>_API_KEY <key> instead")
 	}
 	if cli != "claude" && cli != "codex" {
 		return "", fmt.Errorf("/auth only supports 'claude' and 'codex' (got %q)", cli)
@@ -535,7 +545,7 @@ func (c *Commander) handleConfig() string {
 		}
 		fmt.Fprintf(&b, "**isolated:** true (%s)\n", state)
 	} else {
-		b.WriteString("**isolated:** false (executors inherit host CLI configs — /set AGENT_ISOLATED true)\n")
+		b.WriteString("**isolated:** false (executors inherit host CLI configs — /config set AGENT_ISOLATED true)\n")
 	}
 	if mcpCfg, err := mcpsetup.Load(mcpsetup.DefaultPath); err != nil {
 		fmt.Fprintf(&b, "**mcp:** mcp.json invalid: %v\n", err)
@@ -601,15 +611,38 @@ func (c *Commander) handleConfig() string {
 }
 
 // handleSet parses "KEY VALUE" or "KEY=VALUE" and persists it.
-func (c *Commander) handleSet(args string) string {
+// handleConfigCommand is /config: agent-runner's own settings. Bare, it
+// shows them; set and unset change one.
+func (c *Commander) handleConfigCommand(arg string) string {
+	sub, rest, _ := strings.Cut(arg, " ")
+	switch strings.ToLower(sub) {
+	case "":
+		return c.handleConfig()
+	case "help":
+		return configHelp
+	case "set":
+		return c.handleConfigSet(strings.TrimSpace(rest))
+	case "unset":
+		return c.handleConfigUnset(strings.TrimSpace(rest))
+	}
+	return "error: " + configUsage
+}
+
+// handleConfigSet is /config set KEY VALUE: one of agent-runner's settings,
+// applied at once (or at the next start, for one read only then) and saved
+// to .env.local.
+func (c *Commander) handleConfigSet(args string) string {
 	key, val, ok := parseSetArgs(args)
 	if !ok {
-		return "error: usage: /set KEY VALUE  or  /set KEY=VALUE"
+		return "error: usage: /config set KEY VALUE  or  /config set KEY=VALUE"
 	}
 	if strings.Contains(val, sealedMask) {
 		return errMaskedValue
 	}
 	if err := checkSettingName(key); err != nil {
+		return "error: " + err.Error()
+	}
+	if err := config.CheckSetting(key); err != nil {
 		return "error: " + err.Error()
 	}
 	if strings.ContainsAny(val, "\r\n\x00") {
@@ -620,7 +653,7 @@ func (c *Commander) handleSet(args string) string {
 	// Apply to the process env first — OS env wins the config merge, so the
 	// reload below picks the new value up.
 	if err := os.Setenv(key, val); err != nil {
-		slog.Warn("set: failed to apply env var to process", "key", key, "error", err)
+		slog.Warn("config set: failed to apply env var to process", "key", key, "error", err)
 	}
 
 	// Reload the shared config in place — every consumer sees the change with
@@ -637,10 +670,42 @@ func (c *Commander) handleSet(args string) string {
 		return fmt.Sprintf("error: %v", err)
 	}
 
+	shown := key + "=" + val
 	if isSensitiveKey(key) {
-		return "ok " + key
+		shown = key + " (hidden)"
 	}
-	return fmt.Sprintf("ok %s=%s", key, val)
+	if config.NeedsRestart(key) {
+		return "agent-runner: " + shown + " saved; it is read when agent-runner starts, so it applies after a restart."
+	}
+	return "agent-runner: " + shown + ", applied now."
+}
+
+// handleConfigUnset is /config unset KEY: drops a setting from .env.local,
+// so .env (or the default) applies again. Any name there may go: a setting
+// saved by mistake is how it is cleaned up.
+func (c *Commander) handleConfigUnset(key string) string {
+	if key == "" || strings.ContainsAny(key, " =") {
+		return "error: usage: /config unset KEY"
+	}
+	if err := checkSettingName(key); err != nil {
+		return "error: " + err.Error()
+	}
+	found, err := config.UnsetEnvLocal(key)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	if !found {
+		return key + " is not set from chat (only .env.local is changed here; .env is the file on the host)"
+	}
+	os.Unsetenv(key) //nolint:errcheck
+	if err := c.cfg.ReloadFromEnv(); err != nil {
+		return fmt.Sprintf("removed %s, but config reload failed: %v — restart to apply", key, err)
+	}
+	c.rt.RefreshRuntime()
+	if config.NeedsRestart(key) {
+		return "agent-runner: " + key + " removed; .env or the default applies after a restart."
+	}
+	return "agent-runner: " + key + " removed; .env or the default applies now."
 }
 
 // handleInstallCLI installs the given agent CLI (or the configured default) via npm.
@@ -775,7 +840,7 @@ func (c *Commander) handleBootstrap(force bool) string {
 			"# with only the MCP servers declared in mcp.json.\n" +
 			"AGENT_ISOLATED=true\n"
 		if err := os.WriteFile(".env", []byte(envTemplate), 0644); err == nil {
-			b.WriteString("created .env (AGENT_ISOLATED=true — /set AGENT_ISOLATED false to disable)\n")
+			b.WriteString("created .env (AGENT_ISOLATED=true — /config set AGENT_ISOLATED false to disable)\n")
 		}
 	}
 
@@ -1080,10 +1145,12 @@ func fileState(path string) string {
 const helpText = `**Agent Runner** — send a message to give the agent a task; commands start with /.
 
 **Getting started**
-1. A credential the agent needs: /secret set GITEE\_TOKEN \<token\> Gitee API
-2. A repo for every session: /repo add https://\<user\>@gitee.com/org/repo.git secret=GITEE\_TOKEN
-3. Then just describe the task in a message. The agent commits; agent-runner pushes.
-More: **/help secret** · **/help repo** · **/help memory**
+1. agent-runner's model: /config set DEEPSEEK\_API\_KEY \<key\> (or /config set AGENT\_CLI claude, then /auth claude)
+2. A credential the agent needs: /env secret GITEE\_TOKEN \<token\> Gitee API
+3. A repo for every session: /repo add https://\<user\>@gitee.com/org/repo.git secret=GITEE\_TOKEN
+4. Then just describe the task in a message. The agent commits; agent-runner pushes.
+Is it for agent-runner, or for the code the agent runs? agent-runner: **/config** · the agent: **/env**
+More: **/help config** · **/help env** · **/help repo** · **/help memory**
 
 **Sessions**
 **/status** — what is running and queued, and any problems
@@ -1091,9 +1158,9 @@ More: **/help secret** · **/help repo** · **/help memory**
 **/stop** _[session-id]_ — stop a session (the current one without an id)
 **/logs** _[n | id-prefix]_ — the last n session logs (default 3), or one session's
 
-**Repos and secrets**
+**The agent's environment and repos**
 **/repo add** _\<url\> [secret=NAME] [branch=B] [push=false]_ — a repo every session gets · **/repo list** · **/repo set** _\<name\> key=value_ · **/repo remove** _\<name\>_
-**/secret set** _NAME VALUE [description]_ — a credential for the agent's tasks · **/secret list** · **/secret remove** _NAME_
+**/env** — what the agent's tasks get · **/env set** _NAME VALUE [description]_ — a plain setting · **/env secret** _NAME VALUE [description]_ — a credential, hidden · **/env unset** _NAME_
 
 **Memory and instructions**
 **/memory log** — recent memory changes and the session behind each · **/memory undo** _\<session-id\>_ — take one session's notes back
@@ -1103,8 +1170,7 @@ More: **/help secret** · **/help repo** · **/help memory**
 **/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
 
 **Setup** (agent-runner itself)
-**/config** — settings and readiness
-**/set** _KEY VALUE_ — an agent-runner setting, saved to .env.local (e.g. /set AGENT\_CLI claude · /set ANTHROPIC\_API\_KEY \<key\>); credentials for the agent's tasks go in /secret instead
+**/config** — settings and readiness · **/config set** _KEY VALUE_ — one of agent-runner's settings (e.g. /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\>) · **/config unset** _KEY_
 **/install-cli** _[claude|codex|opencode|pi] [force]_ · **/install-mcp** _[name]_ · **/auth** _[claude|codex]_ · **/auth cancel**
 **/bootstrap** _[force]_ — create the default agent.md and prompt.md (force overwrites)`
 
@@ -1117,7 +1183,7 @@ agent-runner pushes its commits when the session ends.
   /repo add https://lei@gitee.com/org/oam-server.git secret=GITEE_TOKEN
   /repo add https://github.com/org/docs.git push=false
   /repo add git@gitee.com:org/oam-ops.git secret=GITEE_SSH_KEY
-- secret=NAME — the /secret it logs in with (a token for https://, a private key for git@ / ssh://);
+- secret=NAME — the /env secret it logs in with (a token for https://, a private key for git@ / ssh://);
   none for a public https:// repo
 - the user name goes in the URL when the host needs it (Gitee: https://<user>@gitee.com/...);
   otherwise oauth2 is used
@@ -1130,7 +1196,7 @@ Adding fetches the repo right away, so a wrong URL, branch or token shows up in 
 **Change one:** /repo set oam-server branch=develop · /repo set oam-server secret=NEW_TOKEN
 **See them:** /repo list · **Remove one:** /repo remove oam-server
 
-Never put a password or token in the URL: give it with /secret.`
+Never put a password or token in the URL: give it with /env secret.`
 
 // memoryHelp is /help memory.
 const memoryHelp = `**Memory** is what the agent keeps between sessions: Markdown files (preferences, decisions,
@@ -1140,7 +1206,7 @@ saves is merged back when it ends, as its own commit when memory is a git repo.
 **Recent changes:** /memory log — each with the session that made it
 **Take one back:** /memory undo <session-id>
 **Where it is:** /memory status
-**Sync with a git remote:** /memory git <remote-url> once (then /set MEMORY_GIT_TOKEN <token>, or
+**Sync with a git remote:** /memory git <remote-url> once (then /config set MEMORY_GIT_TOKEN <token>, or
 /memory keygen for an SSH deploy key); /memory pull and /memory push by hand, pushes also happen
 after every session
 
@@ -1205,7 +1271,7 @@ var settingName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // hijackNames and hijackPrefixes are environment variables that change how
 // processes run (which binaries, libraries, interpreters, git and ssh
-// commands, proxies): /set refuses them, since agent-runner and every agent
+// commands, proxies): /config set refuses them, since agent-runner and every agent
 // it starts would run whatever they name.
 var hijackNames = map[string]bool{
 	"PATH": true, "HOME": true, "USER": true, "SHELL": true, "TMPDIR": true, "IFS": true,
@@ -1233,16 +1299,40 @@ func checkSettingName(name string) error {
 	return nil
 }
 
+// configUsage is /config's usage.
+const configUsage = "usage: /config  ·  /config set KEY VALUE  ·  /config unset KEY  ·  /config help"
+
+// configHelp is /config help (and /help config).
+const configHelp = `**/config** is agent-runner itself: how it runs agents (its model and key, its CLI, limits,
+the sandbox), saved to .env.local on its host. The agent never gets these; what the agent's tasks
+need is /env.
+
+**See them:** /config — settings and readiness
+**Change one:** /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\> ·
+/config set AGENT\_MAX\_ITERATION\_SECONDS 900
+**Drop one:** /config unset AGENT\_MAX\_ITERATION\_SECONDS (.env or the default applies again)
+
+Only settings agent-runner reads are taken (.env.example lists them): anything else would be
+saved and never read, and is refused with a pointer to /env. Most apply at once; the reply says
+when one (the chat connection, the listen address, the sandbox, ...) waits for a restart.`
+
+// movedCommands are commands /config and /env replaced, with what to use.
+var movedCommands = map[string]string{
+	"/set":     "/set is now /config set KEY VALUE (agent-runner's settings); the agent's environment is /env set or /env secret.",
+	"/unset":   "for agent-runner's settings: /config unset KEY; for the agent's environment: /env unset NAME.",
+	"/secret":  "/secret is now /env secret NAME VALUE [description] (/env lists the agent's environment).",
+	"/secrets": "/secret is now /env secret NAME VALUE [description] (/env lists the agent's environment).",
+}
+
 // knownCommands maps each recognised slash-command name to its usage string.
 // Any input whose first word appears here but doesn't match a full case
 // returns the specific usage hint instead of falling through to the
 // gateway's generic "Unknown command" response.
 var knownCommands = map[string]string{
-	"/help":          "usage: /help [secret|repo|memory]",
-	"/config":        "usage: /config",
+	"/help":          "usage: /help [config|env|repo|memory]",
+	cmdConfig:        configUsage,
 	"/status":        "usage: /status",
 	"/sessions":      "usage: /sessions",
-	"/set":           "usage: /set KEY VALUE  or  /set KEY=VALUE",
 	"/bootstrap":     "usage: /bootstrap [force]",
 	"/install-cli":   "usage: /install-cli [claude|codex|opencode|pi] [force]",
 	"/install-mcp":   "usage: /install-mcp [server-name] — registers servers declared in mcp.json",
@@ -1250,7 +1340,7 @@ var knownCommands = map[string]string{
 	cmdSetPrompt:     "usage: " + cmdSetPrompt + " <content>",
 	"/auth":          "usage: /auth [claude|codex] — only available via chat",
 	cmdMemory:        "usage: " + cmdMemory + " [status|log|undo <session-id>|git <url>|pull|push]",
-	cmdSecret:        "usage: " + cmdSecret + " [list|set NAME VALUE [description]|remove NAME]",
+	cmdEnv:           "usage: " + cmdEnv + " [set NAME VALUE [description] | secret NAME VALUE [description] | unset NAME | help]",
 	cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 	cmdRepo:          repoUsage,
 	cmdAlerts:        "usage: " + cmdAlerts + " [set <policy>|clear]",
@@ -1259,14 +1349,19 @@ var knownCommands = map[string]string{
 	"/update-prompt": "usage: /update-prompt <content>",
 }
 
-// KnownCommand reports whether word ("/secret") names a chat command.
+// KnownCommand reports whether word ("/env") names a chat command.
 func KnownCommand(word string) bool {
 	w := strings.ToLower(word)
 	if _, ok := knownCommands[w]; ok {
 		return true
 	}
+	if _, ok := movedCommands[w]; ok {
+		// Still a command: answered with what replaced it, never sent to
+		// the agent (its value would reach the model).
+		return true
+	}
 	switch w {
-	case "/cancel", "/wechat-login", "/secrets", "/help":
+	case "/cancel", "/wechat-login", "/help":
 		return true
 	}
 	return false

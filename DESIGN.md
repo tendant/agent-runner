@@ -132,7 +132,7 @@ session-{id}/
     └── TODO.md             # Progress tracker, injected into prompts
 ```
 
-- **Repos** come from the registry (`DATA_DIR/repos.json`, `/repo`, `/repos`; REPOS_DESIGN.md): a bare clone per repo in `repo-cache/<name>.git` (`REPO_CACHE_ROOT`), fetched with the repo's own login (a `/secret`), cloned into each workspace's `workspace/` directory, never written back
+- **Repos** come from the registry (`DATA_DIR/repos.json`, `/repo`, `/repos`; REPOS_DESIGN.md): a bare clone per repo in `repo-cache/<name>.git` (`REPO_CACHE_ROOT`), fetched with the repo's own login (an `/env secret`), cloned into each workspace's `workspace/` directory, never written back
 - Agent opens its eyes in `workspace/` — no `cd` needed; `_send/` and `_progress.json` are relative to CWD
 - `state/` is the runner's bookkeeping, invisible to the agent
 
@@ -316,7 +316,7 @@ Called by the running agent, not by operators — see "Locking" above.
 All configuration via environment variables. See `.env.example` for the full list.
 
 Key groups:
-- **Git**: `GIT_PUSH_RETRIES`, `MEMORY_GIT_*` (project repos are `/repo` and `/secret`, not `.env`)
+- **Git**: `GIT_PUSH_RETRIES`, `MEMORY_GIT_*` (project repos are `/repo` and `/env secret`, not `.env`)
 - **Agent**: `AGENT_SYSTEM_PROMPT`, `AGENT_PROMPT_FILE` (seeded into template system at startup), `AGENT_MAX_CONCURRENT`, iteration/time limits, planner/reviewer toggles
 - **API**: `API_BIND`, `API_KEY`
 - **Stream bot**: `STREAM_SERVER_URL`, `STREAM_BOT_TOKEN`, `STREAM_CHANNEL_IDS`

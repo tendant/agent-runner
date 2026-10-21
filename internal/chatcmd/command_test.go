@@ -73,7 +73,7 @@ func TestCommander_Help(t *testing.T) {
 	if !handled {
 		t.Fatal("expected /help to be handled")
 	}
-	if !strings.Contains(reply, "/config") || !strings.Contains(reply, "/set") {
+	if !strings.Contains(reply, "/config set") || !strings.Contains(reply, "/env secret") {
 		t.Errorf("help text missing expected commands, got: %s", reply)
 	}
 }
@@ -171,167 +171,147 @@ func TestCommander_Config_ReadyFalseWhenNoAPIKey(t *testing.T) {
 	}
 }
 
-// --- /set ---
+// --- /config set ---
 
-func TestCommander_Set_InvalidFormat(t *testing.T) {
+func TestCommander_ConfigSet_InvalidFormat(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.cfg, env.rt)
-
-	// "/set KEY" with no value — handled but returns usage error
-	reply, _, handled := c.Handle("/set ONLYKEY", nil)
-	if !handled {
-		t.Fatal("expected /set ONLYKEY to be handled")
+	reply, _, handled := c.Handle("/config set ONLYKEY", nil)
+	if !handled || !strings.HasPrefix(reply, "error:") {
+		t.Errorf("expected a usage error, got %v %q", handled, reply)
 	}
-	if !strings.HasPrefix(reply, "error:") {
-		t.Errorf("expected error reply for /set with no value, got: %s", reply)
+	if reply, _, _ := c.Handle("/config bogus", nil); !strings.Contains(reply, "/config set KEY VALUE") {
+		t.Errorf("unknown /config subcommand: %q", reply)
 	}
 }
 
 func TestCommander_KnownCommand_WrongFormat_ShowsUsageNotUnknown(t *testing.T) {
 	env := setupTestEnv(t)
 	c := NewCommander(env.cfg, env.rt)
-
-	cases := []struct {
-		input string
-	}{
-		{"/set"},           // bare — was the original bug
-		{"/update-prompt"}, // bare — pre-switch check requires args
-	}
-	for _, tc := range cases {
-		reply, _, handled := c.Handle(tc.input, nil)
+	for _, input := range []string{"/config set", "/update-prompt"} {
+		reply, _, handled := c.Handle(input, nil)
 		if !handled {
-			t.Errorf("%q: expected to be handled by the commander, not fall through", tc.input)
+			t.Errorf("%q: expected to be handled by the commander, not fall through", input)
 			continue
 		}
-		if !strings.HasPrefix(reply, "error:") {
-			t.Errorf("%q: expected error/usage reply, got: %s", tc.input, reply)
-		}
-		if strings.Contains(reply, "Unknown command") {
-			t.Errorf("%q: must not say 'Unknown command' for a known command with wrong format, got: %s", tc.input, reply)
+		if !strings.HasPrefix(reply, "error:") || strings.Contains(reply, "Unknown command") {
+			t.Errorf("%q: expected a usage reply, got: %s", input, reply)
 		}
 	}
 }
 
-func TestCommander_Set_ReloadsFullConfig(t *testing.T) {
+// A name agent-runner does not read would be saved and never read: refused,
+// with where it belongs.
+func TestCommander_ConfigSet_RefusesWhatItDoesNotRead(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	c := NewCommander(env.cfg, env.rt)
+	for _, key := range []string{"APP_ENV", "STRIPE_API_KEY", "MY_VAR"} {
+		reply, _, _ := c.Handle("/config set "+key+" x", nil)
+		if !strings.Contains(reply, "isn't an agent-runner setting") || !strings.Contains(reply, "/env set "+key) {
+			t.Errorf("%s: %q", key, reply)
+		}
+	}
+	if reply, _, _ := c.Handle("/config set AGENT_SHARED_REPOS x", nil); !strings.Contains(reply, "no longer read") {
+		t.Errorf("removed setting: %q", reply)
+	}
+	if reply, _, _ := c.Handle("/config set PATH /tmp/evil", nil); !strings.Contains(reply, "changes how processes run") {
+		t.Errorf("hijack: %q", reply)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("DATA_DIR"), ".env.local")); err == nil {
+		t.Error("a refused setting was saved")
+	}
+}
 
-	// AGENT_MEMORY_CHAR_CAP was never one of the special-cased keys — before
-	// the reload-on-set change it went stale until restart.
+func TestCommander_ConfigSet_ReloadsFullConfig(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.cfg, env.rt)
 	t.Setenv("AGENT_MEMORY_CHAR_CAP", "")
-	reply, _, _ := c.Handle("/set AGENT_MEMORY_CHAR_CAP 5000", nil)
-	if !strings.HasPrefix(reply, "ok") {
-		t.Fatalf("expected ok reply, got: %s", reply)
+	reply, _, _ := c.Handle("/config set AGENT_MEMORY_CHAR_CAP 5000", nil)
+	if reply != "agent-runner: AGENT_MEMORY_CHAR_CAP=5000, applied now." {
+		t.Fatalf("reply: %s", reply)
 	}
 	if got := env.cfg.Agent.MemoryCharCap; got != 5000 {
-		t.Errorf("expected live config MemoryCharCap 5000 after /set, got %d", got)
+		t.Errorf("expected live config MemoryCharCap 5000, got %d", got)
 	}
 }
 
-func TestCommander_Set_AppliesProviderModelSplit(t *testing.T) {
+func TestCommander_ConfigSet_AppliesProviderModelSplit(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	c := NewCommander(env.cfg, env.rt)
-
-	// The reload path applies the same provider/model parsing as startup —
-	// the old special-case assignment stored the raw combined string.
 	t.Setenv("AGENT_MODEL", "")
-	reply, _, _ := c.Handle("/set AGENT_MODEL anthropic/claude-opus-4-7", nil)
-	if !strings.HasPrefix(reply, "ok") {
-		t.Fatalf("expected ok reply, got: %s", reply)
-	}
+	c.Handle("/config set AGENT_MODEL anthropic/claude-opus-4-7", nil)
 	if p, m := env.cfg.Agent.Provider, env.cfg.Agent.Model; p != "anthropic" || m != "claude-opus-4-7" {
 		t.Errorf("expected split anthropic / claude-opus-4-7, got %s / %s", p, m)
 	}
 }
 
-func TestCommander_Set_SpaceSyntax(t *testing.T) {
+func TestCommander_ConfigSet_Syntax(t *testing.T) {
 	defer withTempCWD(t)()
 	env := setupTestEnv(t)
 	c := NewCommander(env.cfg, env.rt)
-
-	reply, _, _ := c.Handle("/set AGENT_CLI claude", nil)
-	if reply != "ok AGENT_CLI=claude" {
-		t.Errorf("expected 'ok AGENT_CLI=claude', got: %s", reply)
+	if reply, _, _ := c.Handle("/config set AGENT_CLI claude", nil); reply != "agent-runner: AGENT_CLI=claude, applied now." || env.cfg.Agent.CLI != "claude" {
+		t.Errorf("space syntax: %s (CLI %s)", reply, env.cfg.Agent.CLI)
 	}
-}
-
-func TestCommander_Set_EqualsSyntax(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	reply, _, _ := c.Handle("/set AGENT_CLI=codex", nil)
-	if reply != "ok AGENT_CLI=codex" {
-		t.Errorf("expected 'ok AGENT_CLI=codex', got: %s", reply)
+	if reply, _, _ := c.Handle("/config set AGENT_CLI=codex", nil); reply != "agent-runner: AGENT_CLI=codex, applied now." {
+		t.Errorf("equals syntax: %s", reply)
 	}
-}
-
-func TestCommander_Set_SensitiveKeyHidesValue(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	for _, key := range []string{"DEEPSEEK_API_KEY", "TELEGRAM_BOT_TOKEN", "MY_SECRET", "DB_PASSWORD"} {
-		reply, _, _ := c.Handle("/set "+key+" super-secret-value", nil)
-		if reply != "ok "+key {
-			t.Errorf("sensitive key %s: expected 'ok %s', got: %s", key, key, reply)
-		}
-		if strings.Contains(reply, "super-secret-value") {
-			t.Errorf("sensitive key %s: value must not appear in reply", key)
-		}
-	}
-}
-
-func TestCommander_Set_WritesEnvLocal(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	t.Setenv("MY_VAR", "")
-	c.Handle("/set MY_VAR hello", nil)
-
-	// /set persists to DATA_DIR/.env.local (pinned by setupTestEnv).
-	data, err := os.ReadFile(filepath.Join(os.Getenv("DATA_DIR"), ".env.local"))
-	if err != nil {
-		t.Fatalf("expected .env.local to be created: %v", err)
-	}
-	if !strings.Contains(string(data), "MY_VAR=hello") {
-		t.Errorf("expected MY_VAR=hello in .env.local, got:\n%s", string(data))
-	}
-}
-
-func TestCommander_Set_LiveConfigUpdate_AgentCLI(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	c.Handle("/set AGENT_CLI claude", nil)
-	if env.cfg.Agent.CLI != "claude" {
-		t.Errorf("expected Agent.CLI=claude, got: %s", env.cfg.Agent.CLI)
-	}
-}
-
-func TestCommander_Set_LiveConfigUpdate_AgentModel(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	c.Handle("/set AGENT_MODEL my-model", nil)
-	if env.cfg.Agent.Model != "my-model" {
-		t.Errorf("expected Agent.Model=my-model, got: %s", env.cfg.Agent.Model)
-	}
-}
-
-func TestCommander_Set_LiveConfigUpdate_AgentMaxTurns(t *testing.T) {
-	defer withTempCWD(t)()
-	env := setupTestEnv(t)
-	c := NewCommander(env.cfg, env.rt)
-
-	c.Handle("/set AGENT_MAX_TURNS 99", nil)
+	c.Handle("/config set AGENT_MAX_TURNS 99", nil)
 	if env.cfg.Agent.MaxTurns != 99 {
 		t.Errorf("expected Agent.MaxTurns=99, got: %d", env.cfg.Agent.MaxTurns)
+	}
+}
+
+func TestCommander_ConfigSet_SensitiveKeyHidesValue(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.cfg, env.rt)
+	for _, key := range []string{"DEEPSEEK_API_KEY", "MEMORY_GIT_TOKEN", "TELEGRAM_BOT_TOKEN"} {
+		reply, _, _ := c.Handle("/config set "+key+" super-secret-value", nil)
+		if !strings.HasPrefix(reply, "agent-runner: "+key+" (hidden)") || strings.Contains(reply, "super-secret-value") {
+			t.Errorf("%s: %s", key, reply)
+		}
+	}
+}
+
+// A setting read only at start is saved and says it waits for a restart.
+func TestCommander_ConfigSet_SaysWhenARestartIsNeeded(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.cfg, env.rt)
+	reply, _, _ := c.Handle("/config set STREAM_POLL_INTERVAL 5s", nil)
+	if !strings.Contains(reply, "applies after a restart") {
+		t.Errorf("reply: %s", reply)
+	}
+}
+
+func TestCommander_ConfigSetAndUnset_EnvLocal(t *testing.T) {
+	defer withTempCWD(t)()
+	env := setupTestEnv(t)
+	c := NewCommander(env.cfg, env.rt)
+	t.Setenv("AGENT_AUTHOR", "")
+	c.Handle("/config set AGENT_AUTHOR hello", nil)
+	path := filepath.Join(os.Getenv("DATA_DIR"), ".env.local")
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "AGENT_AUTHOR=hello") {
+		t.Fatalf("expected AGENT_AUTHOR=hello in .env.local, got %q (%v)", data, err)
+	}
+	if env.cfg.Agent.Author != "hello" {
+		t.Fatalf("author %q", env.cfg.Agent.Author)
+	}
+	if reply, _, _ := c.Handle("/config unset AGENT_AUTHOR", nil); !strings.Contains(reply, "AGENT_AUTHOR removed") {
+		t.Errorf("unset: %s", reply)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), "AGENT_AUTHOR") {
+		t.Errorf(".env.local still has it: %q", data)
+	}
+	if env.cfg.Agent.Author == "hello" {
+		t.Error("unset did not apply")
+	}
+	if reply, _, _ := c.Handle("/config unset AGENT_AUTHOR", nil); !strings.Contains(reply, "is not set from chat") {
+		t.Errorf("unset twice: %s", reply)
 	}
 }
 

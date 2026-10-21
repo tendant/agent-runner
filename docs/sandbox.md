@@ -47,7 +47,7 @@ Other settings:
 * `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
 * `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain
   settings; model credentials are never passed while the model proxy is on. Credentials an
-  agent needs for its tasks go in with `/secret` instead (see [Secrets](#secrets)).
+  agent needs for its tasks go in with `/env` instead (see [Secrets](#secrets)).
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
@@ -110,14 +110,14 @@ outside its sandbox.
 ## Git
 
 Repos come from the registry (`/repo`, REPOS_DESIGN.md), each logging in with the user's
-`/secret` it names. The runner fetches them into its cache and checks them out into the
+`/env secret` it names. The runner fetches them into its cache and checks them out into the
 workspace before a session; the agent works and commits inside; after the session the runner
 pushes every registered repo the agent committed to (`syncWorkspaceRepos`), except read-only ones
 (`push=false`). When another session moved the branch it rebases the commits itself, and
 only when that rebase conflicts does it hand the agent an iteration to resolve the markers (it
 pushes afterwards); work that still cannot be merged goes to `agent-rescue/<session>`. Every
 session is told this in its prompt, so it commits and does not push (the token is in its
-environment, as a `/secret`, but the runner is the one place pushes happen). The runner's own
+environment, as an `/env secret`, but the runner is the one place pushes happen). The runner's own
 git commands ignore the hooks and config an agent could plant (`internal/gitsafe`), and never
 use a `.git/config` the agent wrote: each repo's config is saved after the runner sets the
 workspace up, out of the sandbox's view, and put back before every host-side git step (push,
@@ -166,19 +166,19 @@ session's audit log. Unsandboxed sessions work the same way, on a copy next to t
 
 Two kinds, kept apart:
 
-* **agent-runner's own** (`.env`, `/set`): model keys, `MEMORY_GIT_TOKEN`, bot tokens,
+* **agent-runner's own** (`.env`, `/config set`): model keys, `MEMORY_GIT_TOKEN`, bot tokens,
   `API_KEY`. Never in the sandbox: the model proxy uses the model keys for the agent. (Repos
-  log in with the `/secret` each names, not with these.)
-* **The agent user's** (`/secret set NAME VALUE [description]`, kept in `DATA_DIR/secrets.json`,
+  log in with the `/env secret` each names, not with these.)
+* **The agent user's** (`/env secret NAME VALUE [description]`, kept in `DATA_DIR/secrets.json`; plain settings, `/env set`, in `DATA_DIR/env.json`,
   0600): what agents need for their tasks, such as `GITEE_TOKEN`. In every session's environment,
   sandboxed or not, and named with their descriptions (never values) in the prompt. They are not
   hidden from the agent: give each the least access its task needs.
 
-`/secret` refuses any name agent-runner reads itself (its settings, `GIT_*`, `AGENT_*`, model
+`/env` refuses any name agent-runner reads itself (its settings, `GIT_*`, `AGENT_*`, model
 provider variables, `PATH`, proxies, ...), so one kind cannot become the other; use the names
 tools expect (`GITEE_TOKEN`, `GH_TOKEN`, `STRIPE_API_KEY`). The file is denied to the sandbox like
-`.env`; `/secret list` shows names and descriptions only. A value may span lines (an SSH private
-key: `/secret set NAME [description]`, the key on the lines after); a repo with an `ssh://` or
+`.env`; `/env` shows secrets by name and description only. A value may span lines (an SSH private
+key: `/env secret NAME [description]`, the key on the lines after); a repo with an `ssh://` or
 `git@host:` URL logs in with it, written to a 0600 file next to `secrets.json` (also hidden from
 the sandbox) and given to ssh with none of the host's keys, agent or ssh config.
 
@@ -272,7 +272,7 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
 `SandboxSpec` (version 1; unknown fields or versions fail closed). Layers
 `system -> bot -> agent -> workspace -> run` may only tighten: unset inherits, widening is an
 error naming the layer, deny lists and requirements only grow. There is no secrets field: the
-agent user's secrets are `/secret`'s ([Secrets](#secrets)). Filesystem uses logical roots `/workspace`, `/home/agent`, `/tmp`.
+agent user's secrets are `/env secret`'s ([Secrets](#secrets)). Filesystem uses logical roots `/workspace`, `/home/agent`, `/tmp`.
 Egress modes: `none`, `restricted` (hosts, single-label `*.wildcards`, CIDRs, `@sets`), `outbound`
 (which becomes `restricted` to any public host).
 

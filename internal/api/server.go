@@ -85,7 +85,7 @@ func NewServer(cfg *config.Config) *Server {
 	upgradeDefaultPrompts(handlers)
 	for _, k := range config.RemovedSettings {
 		if os.Getenv(k) != "" {
-			slog.Warn("setting no longer read: repos and their credentials come from /repo and /secret (REPOS_DESIGN.md)", "setting", k)
+			slog.Warn("setting no longer read: repos and their credentials come from /repo and /env secret (REPOS_DESIGN.md)", "setting", k)
 		}
 	}
 
@@ -148,7 +148,7 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Conversation analyzer — its inner LLM client (and the planner/curator
 	// clients) are built by RefreshRuntime below, which is also re-run after
-	// /set so runtime config changes apply without a restart.
+	// /config set so runtime config changes apply without a restart.
 	threadManager := thread.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	threadManager.SetRetention(cfg.Agent.ThreadRetention)
 	analyzer := thread.NewAnalyzer(nil)

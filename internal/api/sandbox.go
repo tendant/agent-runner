@@ -87,6 +87,11 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		// name; the file holding them all is not the agent's to read.
 		paths = append(paths, cfg.SecretsFile, agentsecrets.FilesDir(cfg.SecretsFile))
 	}
+	if cfg.EnvFile != "" {
+		// Likewise the agent's plain settings: its environment has them;
+		// the file is agent-runner's.
+		paths = append(paths, cfg.EnvFile)
+	}
 	if cfg.MemoryDir != "" {
 		// The memory files are readable; their git internals are not (a
 		// remote URL in .git/config can carry the push credential).
@@ -101,7 +106,7 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		if dir == "" {
 			continue
 		}
-		// Listed even before they exist (/set creates .env.local later): each
+		// Listed even before they exist (/config set creates .env.local later): each
 		// run checks the list again.
 		paths = append(paths, filepath.Join(dir, ".env"), filepath.Join(dir, ".env.local"))
 		ents, err := os.ReadDir(dir)

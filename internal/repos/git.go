@@ -126,10 +126,10 @@ func (rp Repo) explain(what string, err error) error {
 	msg := err.Error()
 	if rp.Secret != "" && (strings.Contains(msg, "Authentication failed") || strings.Contains(msg, "could not read Username") ||
 		strings.Contains(msg, "403") || strings.Contains(msg, "401")) {
-		return fmt.Errorf("%s: %s refused: check /secret %s and the user name in the URL (%s)", rp.Name, what, rp.Secret, rp.User())
+		return fmt.Errorf("%s: %s refused: check /env secret %s and the user name in the URL (%s)", rp.Name, what, rp.Secret, rp.User())
 	}
 	if rp.Secret == "" && strings.Contains(msg, "could not read Username") {
-		return fmt.Errorf("%s: %s needs a login: add a token with /secret set NAME ... and secret=NAME", rp.Name, what)
+		return fmt.Errorf("%s: %s needs a login: add a token with /env secret NAME ... and secret=NAME", rp.Name, what)
 	}
 	return fmt.Errorf("%s: %s: %w", rp.Name, what, err)
 }

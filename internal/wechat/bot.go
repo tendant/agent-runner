@@ -676,7 +676,7 @@ func formatFinalResult(session *agent.Session) string {
 // allowedSender reports whether userID may control the agent: one of
 // WECHAT_ALLOWED_USERS, or, with none set, the first user to message the
 // bot (saved, so it stays theirs across restarts). Anyone else who finds
-// the bot could otherwise run agents and use /set, /secret and /repo.
+// the bot could otherwise run agents and use /config, /env and /repo.
 func (b *Bot) allowedSender(userID string) bool {
 	if userID == "" {
 		return false

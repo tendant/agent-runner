@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Model keys without the sandbox. agent-runner's model keys (/set
+// Model keys without the sandbox. agent-runner's model keys (/config set
 // DEEPSEEK_API_KEY ...) would otherwise reach an agent CLI under the
 // standard names, which the CLI and every program it runs for the agent
 // share: an agent secret of the same name (an app's own DeepSeek key) would

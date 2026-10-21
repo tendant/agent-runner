@@ -91,7 +91,7 @@ func TestE2E_AlertsOverAgentStream(t *testing.T) {
 	}
 
 	// 3. Alert text never runs a chat command.
-	cmdThread, _ := postWebhook(t, human.base, wh.Token, map[string]any{"message": "/set AGENT_CLI codex"})
+	cmdThread, _ := postWebhook(t, human.base, wh.Token, map[string]any{"message": "/config set AGENT_CLI codex"})
 	waitBotMessage(t, human, cmdThread, "I propose", logs)
 	if env, _ := os.ReadFile(filepath.Join(dataDir, ".env.local")); strings.Contains(string(env), "AGENT_CLI") {
 		t.Fatalf("a webhook message changed a setting: %s", env)
@@ -186,8 +186,9 @@ func TestE2E_AlertsRealClaude(t *testing.T) {
 	}
 }
 
-// A /secret set typed in chat is saved, and its value is nowhere else: not
-// in the thread as agent-stream lists it, nor in either server's log.
+// An /env secret typed in chat is saved, and its value is nowhere else: not
+// in the thread as agent-stream lists it, nor in either server's log. A
+// plain /env set stays readable.
 func TestE2E_SealedSecretOverAgentStream(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is needed for the fake claude CLI")
@@ -199,8 +200,8 @@ func TestE2E_SealedSecretOverAgentStream(t *testing.T) {
 	}
 	st := startTaskStack(t, mockBin)
 	const value = "tok-e2e-1234567890"
-	thread := st.newThread("/secret set GITEE_TOKEN " + value + " Gitee API")
-	waitBotMessage(t, st.human, thread, "ok: GITEE_TOKEN set", st.logs)
+	thread := st.newThread("/env secret GITEE_TOKEN " + value + " Gitee API")
+	waitBotMessage(t, st.human, thread, "agent's secret: GITEE_TOKEN", st.logs)
 
 	saved, _ := os.ReadFile(filepath.Join(st.dataDir, "secrets.json"))
 	if !strings.Contains(string(saved), value) {
@@ -213,8 +214,18 @@ func TestE2E_SealedSecretOverAgentStream(t *testing.T) {
 			t.Fatalf("agent-stream lists the value in the thread: %q", m.Content)
 		}
 	}
-	if msgs[0].Content != "/secret set GITEE_TOKEN ••••••" {
+	if msgs[0].Content != "/env secret GITEE_TOKEN ••••••" {
 		t.Errorf("thread root = %q", msgs[0].Content)
+	}
+
+	plainThread := st.newThread("/env set APP_ENV staging where it deploys")
+	waitBotMessage(t, st.human, plainThread, "agent's environment: APP_ENV=staging", st.logs)
+	if env, _ := os.ReadFile(filepath.Join(st.dataDir, "env.json")); !strings.Contains(string(env), `"staging"`) {
+		t.Errorf("the plain setting was not saved: %s", env)
+	}
+	st.human.do("GET", "/v2/threads/"+plainThread+"/messages", nil, &msgs)
+	if msgs[0].Content != "/env set APP_ENV staging where it deploys" {
+		t.Errorf("a plain setting was sealed: %q", msgs[0].Content)
 	}
 	runnerLog, _ := os.ReadFile(filepath.Join(st.base, "agent-runner.log"))
 	streamLog, _ := os.ReadFile(filepath.Join(st.base, "agent-stream.log"))

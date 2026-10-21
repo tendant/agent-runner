@@ -22,7 +22,8 @@ type runtimeFacts struct {
 	Sandboxed  bool
 	MemoryDir  string                // as the agent sees it
 	MemoryCopy bool                  // MemoryDir is a staged copy, merged back at the end
-	Secrets    []agentsecrets.Secret // the agent user's secrets: names and descriptions are shown
+	Secrets    []agentsecrets.Secret // the agent's secrets: names and descriptions are shown
+	Env        []agentsecrets.Secret // the agent's plain settings: shown with their values
 	Repos      []repos.Repo          // the registered repos in the workspace
 }
 
@@ -93,16 +94,27 @@ func runtimeInstructions(f runtimeFacts) string {
 		}
 	}
 
-	b.WriteString("\n### Credentials\n\n")
-	b.WriteString("Credentials for your tasks are environment variables: use them from there, never search files\n" +
-		"for keys, and do not write them into files, commits or memory. agent-runner's own credentials\n" +
-		"(model keys) are never yours to use: it calls the model for you. If a task needs a credential you\n" +
-		"do not have, ask the user to add it in chat with `/secret set NAME VALUE description` (e.g.\n" +
-		"`/secret set GITEE_TOKEN <token> Gitee API`; `/secret help` shows the format) and to start a new\n" +
-		"session; never ask them to paste it into a message, which reaches your model and the logs.")
-	b.WriteString("\n")
+	b.WriteString("\n### Your environment\n\n")
+	b.WriteString("What your tasks need is in your environment, set by the people you work for with `/env` in chat:\n" +
+		"use it from there, never search files for keys, and do not write credentials into files, commits\n" +
+		"or memory. agent-runner's own settings and keys (`/config`) are never yours to use: it calls the\n" +
+		"model for you. If a task needs something you do not have, ask the user to add it in chat:\n" +
+		"`/env secret NAME VALUE description` for a credential (e.g. `/env secret GITEE_TOKEN <token> Gitee API`),\n" +
+		"`/env set NAME VALUE description` for a plain setting (`/env help` shows the format), and to start\n" +
+		"a new session; never ask them to paste a credential into a message, which reaches your model and\n" +
+		"the logs.\n")
+	if len(f.Env) > 0 {
+		b.WriteString("\nSettings:\n\n")
+		for _, v := range f.Env {
+			line := "- `" + v.Name + "=" + v.Value + "`"
+			if v.Description != "" {
+				line += ": " + v.Description
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 	if len(f.Secrets) > 0 {
-		b.WriteString("\nSet for you (`/secret` in chat adds more):\n\n")
+		b.WriteString("\nSecrets (their values are hidden from what you write):\n\n")
 		for _, s := range f.Secrets {
 			line := "- `$" + s.Name + "`"
 			if s.Description != "" {
@@ -126,8 +138,8 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	secrets, _ := agentsecrets.New(h.config.SecretsFile).List()
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets, Repos: h.registeredRepos()}), nil
+	plain, secrets, _ := agentsecrets.Load(h.config.SecretsFile, h.config.EnvFile)
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets, Env: plain, Repos: h.registeredRepos()}), nil
 }
 
 // threadKey names the thread a session belongs to, for its daily-log entry
@@ -147,19 +159,20 @@ func threadKey(s *agent.Session) string {
 	return ""
 }
 
-// agentSecrets lists the agent user's secrets for the session's prompt. A
-// broken secrets file is reported, not fatal: the session runs without them.
-func (h *Engine) agentSecrets(sessionID string, live *agent.Session) []agentsecrets.Secret {
+// agentEnv loads the agent's environment for a session: its plain settings
+// and its secrets. A broken file is reported, not fatal: the session runs
+// without them.
+func (h *Engine) agentEnv(sessionID string, live *agent.Session) (plain, secrets []agentsecrets.Secret) {
 	if h.config.SecretsFile == "" {
-		return nil
+		return nil, nil
 	}
-	list, err := agentsecrets.New(h.config.SecretsFile).List()
+	plain, secrets, err := agentsecrets.Load(h.config.SecretsFile, h.config.EnvFile)
 	if err != nil {
-		slog.Warn("agent secrets unreadable; the session runs without them", "session_id", sessionID, "error", err)
-		live.AddWarning("agent secrets not loaded: " + err.Error())
-		return nil
+		slog.Warn("agent environment unreadable; the session runs without it", "session_id", sessionID, "error", err)
+		live.AddWarning("agent environment (/env) not loaded: " + err.Error())
+		return nil, nil
 	}
-	return list
+	return plain, secrets
 }
 
 // selfPushCommand is the command the agent pushes repo r with: the login is

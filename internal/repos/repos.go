@@ -25,7 +25,7 @@ import (
 type Repo struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`              // as given, never with a password
-	Secret string `json:"secret,omitempty"` // the /secret with its token; "" for a public repo
+	Secret string `json:"secret,omitempty"` // the /env secret with its login; "" for a public repo
 	Branch string `json:"branch,omitempty"` // "" = the remote's default branch
 	Push   bool   `json:"push"`
 }
@@ -166,7 +166,7 @@ func (rp Repo) Check() error {
 			return fmt.Errorf("secret: %w", err)
 		}
 	} else if rp.IsSSH() {
-		return errors.New("an ssh URL needs a key: secret=NAME, a /secret holding the private key (a public repo: use its https:// URL)")
+		return errors.New("an ssh URL needs a key: secret=NAME, an /env secret holding the private key (a public repo: use its https:// URL)")
 	}
 	return CheckURL(rp.URL)
 }
@@ -189,7 +189,7 @@ func CheckURL(raw string) error {
 		return fmt.Errorf("%s:// URLs are not supported; use https:// or ssh://", u.Scheme)
 	}
 	if _, ok := u.User.Password(); ok {
-		return errors.New("the URL has a password in it: give the token as a /secret instead (secret=NAME)")
+		return errors.New("the URL has a password in it: give the token as an /env secret instead (secret=NAME)")
 	}
 	return nil
 }
@@ -222,7 +222,7 @@ func (rp Repo) User() string {
 }
 
 // Env variables carrying the login to the credential helper below: names a
-// /secret cannot take (AGENT_ is agent-runner's).
+// /env secret cannot take (AGENT_ is agent-runner's).
 const (
 	userEnv     = "AGENT_RUNNER_GIT_USER"
 	passwordEnv = "AGENT_RUNNER_GIT_PASSWORD"
@@ -253,7 +253,7 @@ func (rp Repo) Auth(secrets *agentsecrets.Store) (gitpkg.Auth, error) {
 
 func lookup(secrets *agentsecrets.Store, name string) (string, error) {
 	if secrets == nil {
-		return "", fmt.Errorf("secret %s is not set (/secret set %s ...)", name, name)
+		return "", fmt.Errorf("secret %s is not set (/env secret %s ...)", name, name)
 	}
 	list, err := secrets.List()
 	if err != nil {
@@ -264,7 +264,7 @@ func lookup(secrets *agentsecrets.Store, name string) (string, error) {
 			return s.Value, nil
 		}
 	}
-	return "", fmt.Errorf("secret %s is not set (/secret set %s ...)", name, name)
+	return "", fmt.Errorf("secret %s is not set (/env secret %s ...)", name, name)
 }
 
 // sshProgram is the ssh agent-runner's git commands run (tests replace it).

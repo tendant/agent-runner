@@ -1,6 +1,6 @@
 # Agent Access to Sensitive/External Data — Design Analysis
 
-Status: **option (A) implemented** (`internal/agentsecrets`, `/secret`, docs/sandbox.md "Secrets"). The operator decided agent users' secrets need not be hidden from their agents, only kept apart from agent-runner's own; the sandbox now keeps the runner's secrets out and egress is gated, so (B) is not planned. The `API_KEY` echo bug below is fixed. The analysis below is kept as written.
+Status: **option (A) implemented** (`internal/agentsecrets`, docs/sandbox.md "Secrets"; the chat command, first `/secret`, is now `/env secret`, beside `/env set` for the agent's plain settings, and agent-runner's own `/set` is `/config set`: README "agent-runner's settings, and the agent's environment"). The operator decided agent users' secrets need not be hidden from their agents, only kept apart from agent-runner's own; the sandbox now keeps the runner's secrets out and egress is gated, so (B) is not planned. The `API_KEY` echo bug below is fixed. The analysis below is kept as written.
 
 ## Motivation
 
