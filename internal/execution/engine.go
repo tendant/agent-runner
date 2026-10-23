@@ -1000,6 +1000,11 @@ func (h *Engine) runIterationLoop(
 
 		liveSession.AddIteration(result)
 
+		// Record agent response to conversation history (if non-empty)
+		if result.Output != "" {
+			liveSession.AddMessage("assistant", result.Output)
+		}
+
 		if result.Status == agent.IterationStatusError && isPermanentError(result.Error) {
 			slog.Error("aborting: permanent error", "session_id", sessionID, "iteration", i, "error", result.Error)
 			return promptBuilder, result.Error, completed, blockedOrStuck, true

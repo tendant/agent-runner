@@ -684,3 +684,34 @@ func TestHandleStartAgent_IncludesMessageInHistory(t *testing.T) {
 		t.Errorf("expected content='test task', got %v", firstMsg["content"])
 	}
 }
+
+func TestSession_AddMessage_RecordsConversation(t *testing.T) {
+	env := setupTestEnv(t)
+
+	session, _ := env.handlers.agentManager.CreateSession(
+		"initial message", []string{}, "", "", 5, 300,
+	)
+
+	session.AddMessage("user", "Hello")
+	session.AddMessage("assistant", "Hi there!")
+	session.AddMessage("user", "How are you?")
+
+	if len(session.Messages) != 3 {
+		t.Errorf("expected 3 messages, got %d", len(session.Messages))
+	}
+
+	if session.Messages[0].Role != "user" || session.Messages[0].Content != "Hello" {
+		t.Errorf("first message mismatch")
+	}
+	if session.Messages[1].Role != "assistant" || session.Messages[1].Content != "Hi there!" {
+		t.Errorf("second message mismatch")
+	}
+	if session.Messages[2].Role != "user" || session.Messages[2].Content != "How are you?" {
+		t.Errorf("third message mismatch")
+	}
+
+	// Check that time is recorded
+	if session.Messages[0].Time.IsZero() {
+		t.Errorf("expected timestamp to be set")
+	}
+}
