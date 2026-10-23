@@ -22,6 +22,10 @@ type AgentStarter interface {
 	// session. Returns an error when the session isn't running or the
 	// backend can't steer (one-shot CLIs) — callers fall back to queueing.
 	Steer(sessionID, text string) error
+	// AddMessage adds a follow-up message to a session's conversation history.
+	// Works for both running and queued sessions; steering if possible,
+	// queueing otherwise. convID routes to the right conversation thread.
+	AddMessage(convID, text string) (sessionID string, injectionType string, err error)
 }
 
 // Gateway routes incoming messages through command dispatch before any

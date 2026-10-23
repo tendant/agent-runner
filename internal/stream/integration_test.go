@@ -44,6 +44,10 @@ func (m *mockStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 
 func (m *mockStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
+func (m *mockStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
+}
+
 func TestIntegration_BotConnects(t *testing.T) {
 	serverURL, token, channelID := integrationEnv(t)
 

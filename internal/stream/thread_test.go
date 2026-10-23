@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,6 +38,10 @@ func (s *threadStarter) Steer(sessionID, text string) error {
 	defer s.mu.Unlock()
 	s.steers = append(s.steers, sessionID+":"+text)
 	return nil
+}
+
+func (s *threadStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
 }
 
 func messageEvent(t *testing.T, seq int64, messageID, threadID, content string) Event {

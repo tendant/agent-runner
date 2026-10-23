@@ -151,6 +151,10 @@ func (m *mockStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 
 func (m *mockStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
+func (m *mockStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
+}
+
 func TestHandleMessage_UnauthorizedChat(t *testing.T) {
 	bot := &Bot{
 		chatID: 12345,

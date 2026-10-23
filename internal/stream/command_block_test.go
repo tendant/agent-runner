@@ -30,6 +30,10 @@ func (s *trackingStarter) GetAgentSession(id string) (*agent.Session, bool) {
 
 func (s *trackingStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
+func (s *trackingStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
+}
+
 // fakeGateway handles "/set X Y", blocks other slash commands, and passes
 // regular messages through — matching the behaviour of api.MessageGateway.
 type fakeGateway struct{}

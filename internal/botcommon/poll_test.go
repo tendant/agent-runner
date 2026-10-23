@@ -54,6 +54,10 @@ func (f *fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 
 func (f *fakeStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
+func (f *fakeStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
+}
+
 // recordingReporter implements Reporter and records every callback it
 // receives, guarded by a mutex since PollAndReport runs on its own goroutine
 // in these tests.

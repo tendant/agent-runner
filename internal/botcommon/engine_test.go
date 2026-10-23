@@ -85,6 +85,10 @@ func (f *engineStarter) Steer(sessionID, text string) error {
 	return f.steerErr
 }
 
+func (f *engineStarter) AddMessage(string, string) (string, string, error) {
+	return "", "", errors.New("not implemented")
+}
+
 func (f *engineStarter) counts() (int, []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

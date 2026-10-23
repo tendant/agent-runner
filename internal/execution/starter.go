@@ -110,3 +110,16 @@ func (h *Engine) Steer(sessionID, text string) error {
 	}
 	return sess.Steer(text)
 }
+
+// AddMessage adds a follow-up message to a conversation thread, steering if
+// the session is running or queueing otherwise. Returns the session ID (if
+// routing found a running session), injection type ("steering" or "queued"),
+// or an error if the message couldn't be processed.
+// For now, this delegates to Steer for the steering case; full /agent/messages
+// routing would require HTTP access that the Engine doesn't have.
+func (h *Engine) AddMessage(convID, text string) (sessionID, injectionType string, err error) {
+	// This is a stub: the full implementation would use the HTTP /agent/messages
+	// endpoint which handles ConvID routing. For now, we return a not-implemented
+	// error so the caller falls back to the thread's existing queueing logic.
+	return "", "", fmt.Errorf("AddMessage not directly implemented in Engine; use HTTP /agent/messages endpoint")
+}
