@@ -582,3 +582,105 @@ func TestApiKeyMiddleware_HealthBypass(t *testing.T) {
 		t.Errorf("expected 200 for /health without API key, got %d", w.Code)
 	}
 }
+
+func TestHandleAddMessage_NoRunningSession(t *testing.T) {
+	env := setupTestEnv(t)
+
+	data, _ := json.Marshal(map[string]string{"message": "test message"})
+	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Conv-ID", "conv-123")
+
+	w := httptest.NewRecorder()
+	env.handlers.HandleAddMessage(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected 202, got %d", w.Code)
+	}
+
+	resp := parseJSON(w)
+	if resp["injection"] != "queued" {
+		t.Errorf("expected injection=queued, got %v", resp["injection"])
+	}
+	if resp["status"] != "queued" {
+		t.Errorf("expected status=queued, got %v", resp["status"])
+	}
+	if resp["session_id"] == "" {
+		t.Errorf("expected session_id to be set")
+	}
+}
+
+func TestHandleAddMessage_MissingMessage(t *testing.T) {
+	env := setupTestEnv(t)
+
+	data, _ := json.Marshal(map[string]string{})
+	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	env.handlers.HandleAddMessage(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleAddMessage_InvalidJSON(t *testing.T) {
+	env := setupTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	env.handlers.HandleAddMessage(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleStartAgent_IncludesMessageInHistory(t *testing.T) {
+	env := setupTestEnv(t)
+
+	data, _ := json.Marshal(map[string]string{"message": "test task"})
+	req := httptest.NewRequest(http.MethodPost, "/agent", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	env.handlers.HandleStartAgent(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected 202, got %d", w.Code)
+	}
+
+	resp := parseJSON(w)
+	sessionID := resp["session_id"].(string)
+
+	// Poll the session to get its details
+	req = httptest.NewRequest(http.MethodGet, "/agent/"+sessionID, nil)
+	w = httptest.NewRecorder()
+	env.handlers.HandleGetAgent(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	sessionResp := parseJSON(w)
+	messages, ok := sessionResp["messages"].([]interface{})
+	if !ok {
+		t.Errorf("messages field not found in response")
+		return
+	}
+	if len(messages) == 0 {
+		t.Errorf("expected at least one message in history")
+		return
+	}
+
+	firstMsg := messages[0].(map[string]interface{})
+	if firstMsg["role"] != "user" {
+		t.Errorf("expected role=user, got %v", firstMsg["role"])
+	}
+	if firstMsg["content"] != "test task" {
+		t.Errorf("expected content='test task', got %v", firstMsg["content"])
+	}
+}

@@ -106,6 +106,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/bootstrap", handlers.HandleBootstrap)
 	mux.HandleFunc("/agent", handlers.HandleStartAgent)
+	mux.HandleFunc("/agent/messages", handlers.HandleAddMessage)
 	mux.HandleFunc("/agent/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/stop"):

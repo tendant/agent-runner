@@ -115,6 +115,9 @@ func (h *Handlers) HandleStartAgent(w http.ResponseWriter, r *http.Request) {
 	session.Source = "api"
 	session.CallbackURL = req.CallbackURL
 
+	// Add initial message to conversation history
+	session.AddMessage("user", req.Message)
+
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning
 	// instead of letting the caller wait for an opaque failure deep in the run.
@@ -427,6 +430,103 @@ func (h *Handlers) HandleStreamAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// HandleAddMessage handles POST /agent/messages — add message to running session
+// or queue as new task if no running session in the same thread
+func (h *Handlers) HandleAddMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Message) == "" {
+		h.writeError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+
+	// Extract thread context from request (ConvID)
+	convID := r.Header.Get("X-Conv-ID")
+	if convID == "" {
+		// Fallback: try to extract from request context or query param
+		convID = r.URL.Query().Get("conv_id")
+	}
+
+	// Find running session in this thread
+	runningSession := h.agentManager.FindRunningSessionByConvID(convID)
+
+	if runningSession != nil {
+		// Add to conversation history
+		runningSession.AddMessage("user", req.Message)
+
+		// Session is running — try to steer if backend supports it
+		if err := h.execEngine.Steer(runningSession.ID, req.Message); err == nil {
+			h.writeJSON(w, http.StatusOK, map[string]any{
+				"session_id": runningSession.ID,
+				"injection":  "steering",
+				"status":     "running",
+			})
+			return
+		}
+		// Backend doesn't support steering — queue for next iteration
+		runningSession.AppendPendingMessage(req.Message)
+		h.writeJSON(w, http.StatusOK, map[string]any{
+			"session_id": runningSession.ID,
+			"injection":  "queued",
+			"status":     "running",
+		})
+		return
+	}
+
+	// No running session — queue as new task
+	paths := h.config.Agent.Paths
+	author := h.config.Agent.Author
+	commitPrefix := h.config.Agent.CommitPrefix
+	maxIter := h.config.Agent.MaxIterations
+	maxSeconds := h.config.Agent.MaxTotalSeconds
+
+	session, err := h.agentManager.CreateSession(
+		req.Message, paths,
+		author, commitPrefix, maxIter, maxSeconds,
+	)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	session.Source = "api"
+	session.ConvID = convID
+
+	// Add initial message to conversation history
+	session.AddMessage("user", req.Message)
+
+	warnings := clisetup.BootstrapWarnings(clisetup.ResolveCLI(h.config.Agent.CLI), h.config.Agent.Provider)
+	for _, w := range warnings {
+		session.AddWarning(w)
+	}
+
+	sessionID := session.ID
+	preview := req.Message
+	preview = textutil.Truncate(preview, 80)
+	slog.Info("agent session queued", "session_id", sessionID, "message_len", len(req.Message), "message", preview)
+
+	if err := h.agentManager.Enqueue(session, h.execEngine.ExecuteAgent); err != nil {
+		h.execEngine.FailSession(sessionID, "agent queue is full")
+		h.writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "agent queue is full"})
+		return
+	}
+
+	resp := map[string]any{
+		"session_id": sessionID,
+		"injection":  "queued",
+		"status":     "queued",
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	h.writeJSON(w, http.StatusAccepted, resp)
 }
 
 // HandleListSessions handles GET /sessions — list recent sessions newest-first.

@@ -928,6 +928,19 @@ func (h *Engine) runIterationLoop(
 			errorContext = buildErrorContext(iterNum, errMsg, partialOut)
 		}
 
+		// Get any pending messages queued via /agent/messages endpoint
+		pendingMsgs := liveSession.GetAndClearPendingMessages()
+		var userMessage string
+		if len(pendingMsgs) > 0 {
+			userMessage = message
+			if userMessage != "" {
+				userMessage += "\n\n"
+			}
+			userMessage += "Additional context:\n" + strings.Join(pendingMsgs, "\n")
+		} else {
+			userMessage = message
+		}
+
 		// Build the prompt. On a persistent session after the first
 		// iteration the process retains the conversation, so send only an
 		// incremental continuation; otherwise (one-shot backends, first
@@ -935,15 +948,19 @@ func (h *Engine) runIterationLoop(
 		var req executor.PromptRequest
 		var systemPrompt string
 		if as.persistent() && i > 1 && !as.forceFull {
-			req.Message = promptBuilder.BuildIncremental(checkoutPath, plan, i, errorContext)
-			systemPrompt = req.Message // recorded as the iteration's prompt in the audit log
+			incrementalMsg := promptBuilder.BuildIncremental(checkoutPath, plan, i, errorContext)
+			if len(pendingMsgs) > 0 {
+				incrementalMsg += "\n\nAdditional context:\n" + strings.Join(pendingMsgs, "\n")
+			}
+			req.Message = incrementalMsg
+			systemPrompt = incrementalMsg // recorded as the iteration's prompt in the audit log
 		} else {
 			if h.config.Agent.PlannerEnabled {
-				systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, i, message, errorContext)
+				systemPrompt = promptBuilder.Build(ctx, checkoutPath, plan, i, userMessage, errorContext)
 			} else {
-				systemPrompt = promptBuilder.BuildStatic(message, errorContext)
+				systemPrompt = promptBuilder.BuildStatic(userMessage, errorContext)
 			}
-			req = executor.PromptRequest{SystemPrompt: systemPrompt, Message: message}
+			req = executor.PromptRequest{SystemPrompt: systemPrompt, Message: userMessage}
 			as.forceFull = false
 		}
 		slog.Info("starting iteration", "session_id", sessionID, "iteration", i, "reason", iterReason, "prompt_chars", len(systemPrompt), "message_chars", len(message))

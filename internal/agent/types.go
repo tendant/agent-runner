@@ -44,6 +44,13 @@ const maxExecEvents = 1000
 // ring reaches SSE subscribers, pollers get the recent tail.
 const maxResponseEvents = 50
 
+// Message represents a single message in the conversation history
+type Message struct {
+	Role    string    `json:"role"`    // "user" or "assistant"
+	Content string    `json:"content"`
+	Time    time.Time `json:"time"`
+}
+
 // OutputFile represents a file the agent wants to send back to the user.
 type OutputFile struct {
 	Name        string `json:"name"`
@@ -74,6 +81,8 @@ type Session struct {
 	Source               string            `json:"source,omitempty"` // originating channel: api, telegram, wechat, stream, runner
 	ConvID               string            `json:"-"`                // originating conversation key for chat sessions; "" otherwise. Never exposed over HTTP.
 	Message              string            `json:"message"`
+	Messages             []Message         `json:"-"`                // conversation history (user/assistant messages)
+	PendingMsgs          []string          `json:"-"`                // messages queued for next iteration
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
 	CommitMessagePrefix  string            `json:"commit_message_prefix"`
@@ -301,6 +310,36 @@ func (s *Session) AddWarning(msg string) {
 	s.mu.Unlock()
 }
 
+// AppendPendingMessage queues a message for the next iteration
+func (s *Session) AppendPendingMessage(msg string) {
+	s.mu.Lock()
+	s.PendingMsgs = append(s.PendingMsgs, msg)
+	s.mu.Unlock()
+	s.notifyUpdate()
+}
+
+// GetAndClearPendingMessages returns and clears pending messages for injection
+func (s *Session) GetAndClearPendingMessages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msgs := make([]string, len(s.PendingMsgs))
+	copy(msgs, s.PendingMsgs)
+	s.PendingMsgs = nil
+	return msgs
+}
+
+// AddMessage appends a message to the conversation history
+func (s *Session) AddMessage(role, content string) {
+	s.mu.Lock()
+	s.Messages = append(s.Messages, Message{
+		Role:    role,
+		Content: content,
+		Time:    time.Now(),
+	})
+	s.mu.Unlock()
+	s.notifyUpdate()
+}
+
 // TaskTurn describes one turn of a multi-turn task to start.
 type TaskTurn struct {
 	Message  string // the turn's prompt (context block + reply on later turns)
@@ -407,6 +446,8 @@ func (s *Session) Snapshot() *Session {
 		Source:               s.Source,
 		ConvID:               s.ConvID,
 		Message:              s.Message,
+		Messages:             make([]Message, len(s.Messages)),
+		PendingMsgs:          append([]string{}, s.PendingMsgs...),
 		Paths:                append([]string{}, s.Paths...),
 		Author:               s.Author,
 		CommitMessagePrefix:  s.CommitMessagePrefix,
@@ -439,6 +480,7 @@ func (s *Session) Snapshot() *Session {
 		TurnDecisions:        append([]string{}, s.TurnDecisions...),
 		UnsavedWork:          s.UnsavedWork,
 	}
+	copy(snap.Messages, s.Messages)
 	copy(snap.Iterations, s.Iterations)
 
 	if len(s.OutputFiles) > 0 {
@@ -509,6 +551,9 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if s.ReviewJSON != nil {
 		resp["review"] = s.ReviewJSON
+	}
+	if len(s.Messages) > 0 {
+		resp["messages"] = s.Messages
 	}
 
 	return resp
