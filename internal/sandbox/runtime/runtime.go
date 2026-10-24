@@ -86,8 +86,8 @@ type Config struct {
 
 // DefaultSystemSpec is the policy used when no PolicyFile is configured: the
 // workspace, sandbox home and tmp are writable; everything else on the host is
-// not; SSH material is denied; outbound network without listeners (the egress
-// gateway is not enforceable on every backend yet).
+// not. Host SSH keys (~/.ssh) are denied for security. Agents can use SSH
+// outbound (port 22) with keys provided via /env or stored in /workspace/.ssh.
 func DefaultSystemSpec() sandbox.SandboxSpec {
 	return sandbox.SandboxSpec{
 		Version: sandbox.SpecVersion,
@@ -97,11 +97,7 @@ func DefaultSystemSpec() sandbox.SandboxSpec {
 				{Path: sandbox.RootHome, Access: sandbox.ReadWrite},
 				{Path: sandbox.RootTmp, Access: sandbox.ReadWrite},
 			},
-			// No deny list by default: the sandbox home is a private runner-managed
-			// directory (no real credentials), and nothing of the host user's home
-			// is readable but the agent CLIs' installs. A deny inside a
-			// writable grant cannot be enforced for writes, so it would make
-			// fs.deny a gap under strict.
+			Deny: []string{sandbox.RootHome + "/.ssh"},
 		},
 		Network: sandbox.NetworkPolicy{Egress: sandbox.EgressOutbound},
 	}
