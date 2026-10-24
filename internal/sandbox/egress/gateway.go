@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -105,6 +106,7 @@ func (g *Gateway) dial(ctx context.Context, hostport string) (net.Conn, error) {
 	}
 	var port int
 	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil || !g.portOK(port) {
+		slog.Info("egress port check failed", "hostport", hostport, "host", host, "port", port, "allowed_ports", g.cfg.Ports, "parse_err", err)
 		g.event("denied", host)
 		return nil, errDenied
 	}
@@ -132,12 +134,15 @@ func (g *Gateway) dial(ctx context.Context, hostport string) (net.Conn, error) {
 		if sensitive(a) && !g.m.MatchIP(a) {
 			// A granted NAME resolving to an internal address (rebinding,
 			// metadata) needs an explicit CIDR grant for that address.
+			slog.Info("egress deny sensitive IP", "host", host, "port", port, "ip", a.String())
 			g.event("denied", host)
 			last = errDenied
 			continue
 		}
+		slog.Info("egress allow attempt", "host", host, "port", port, "ip", a.String())
 		c, err := g.cfg.Dial(ctx, "tcp", net.JoinHostPort(a.String(), portStr))
 		if err == nil {
+			slog.Info("egress allow success", "host", host, "port", port, "ip", a.String())
 			g.event("allowed", host)
 			return c, nil
 		}
