@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -300,14 +301,17 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		}
 		switch {
 		case b.transparent(c):
+			slog.Info("sandbox egress network mode", "mode", "transparent (gateway network)", "gateway", gcfg.UnixSocket)
 			s.Network = ab.NetworkPolicy{Mode: ab.NetworkGateway, Gateway: gcfg.UnixSocket}
 		case c.ModelSocket:
+			slog.Info("sandbox egress network mode", "mode", "model socket", "gateway", gcfg.UnixSocket)
 			s.ModelSockets = append(s.ModelSockets, gcfg.UnixSocket)
 			routes[egressAddr] = "/run/agentbox/egress.sock"
 			proxyAddr = egressAddr
 		default: // HostPorts
 			_, port, _ := net.SplitHostPort(gw.Addr())
 			p, _ := strconv.Atoi(port)
+			slog.Info("sandbox egress network mode", "mode", "host ports (HTTPS_PROXY)", "gateway", proxyAddr, "port", p)
 			s.HostPorts = append(s.HostPorts, p)
 			proxyAddr = gw.Addr()
 		}
