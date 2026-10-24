@@ -54,7 +54,9 @@ type Config struct {
 	// supports it), "transparent" (every TCP connection reaches the gateway;
 	// required) or "proxy" (only what honours HTTPS_PROXY).
 	EgressMode string
-	PolicyFile string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
+	// EgressPorts: allowed destination ports for restricted egress (nil = default: 443,80 for strict; 443,80,22 for permissive)
+	EgressPorts []int
+	PolicyFile  string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	Memory     string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	PIDs       string // optional process/thread cap for every run; overrides the policy's pids
 	// ScopedReads limits every run's host reads to its roots, the system
@@ -224,6 +226,14 @@ func New(cfg Config) (*Runtime, error) {
 	}
 	if cfg.Mode != sandbox.ModeStrict && cfg.Mode != sandbox.ModePermissive {
 		return nil, fmt.Errorf("sandbox: bad mode %q (want off|permissive|strict)", cfg.Mode)
+	}
+	// Set default egress ports: permissive allows port 22 (SSH), strict doesn't.
+	if len(cfg.EgressPorts) == 0 {
+		if cfg.Mode == sandbox.ModePermissive {
+			cfg.EgressPorts = []int{443, 80, 22} // Allow SSH in permissive mode
+		} else {
+			cfg.EgressPorts = []int{443, 80} // Strict: HTTPS/HTTP only
+		}
 	}
 	if cfg.StateDir == "" {
 		return nil, errors.New("sandbox: state dir required")
@@ -476,7 +486,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		}
 		return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
 			HostPorts: modelPorts, OnEgress: egress.record, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
-			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode})
+			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode, EgressPorts: r.cfg.EgressPorts})
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).

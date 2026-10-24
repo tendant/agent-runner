@@ -69,6 +69,8 @@ type Config struct {
 	// (default: transparent where the host supports it, else proxy),
 	// "transparent" (required), or "proxy".
 	EgressMode string
+	// EgressPorts are allowed destination ports for restricted egress (nil = default: 443,80)
+	EgressPorts []int
 	// Backend overrides the agentbox backend (tests).
 	Backend ab.Backend
 }
@@ -276,7 +278,7 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	var gw *egress.Gateway
 	var gwDir, proxyAddr string
 	if spec.Network.Egress == sandbox.EgressRestricted {
-		gcfg := egress.Config{Allow: spec.Network.EgressAllow}
+		gcfg := egress.Config{Allow: spec.Network.EgressAllow, Ports: b.cfg.EgressPorts}
 		if on := b.cfg.OnEgress; on != nil {
 			gcfg.OnEvent = func(kind, host string) { on(kind == "allowed", host) }
 		}

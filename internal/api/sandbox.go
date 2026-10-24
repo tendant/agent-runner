@@ -46,6 +46,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		ScopedReads: scoped,
 		EgressAllow: cfg.Agent.SandboxEgressAllow,
 		EgressMode:  cfg.Agent.SandboxEgressMode,
+		EgressPorts: cfg.Agent.SandboxEgressPorts,
 		// Prompts point agents at memory, and uploads reach them by path.
 		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
 		EvidenceFile: cfg.Agent.SandboxEvidence,
