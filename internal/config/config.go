@@ -292,6 +292,7 @@ func defaultConfigForDataDir(data string) *Config {
 			MaxTurns:            50,
 			CLI:                 "pi",
 			PlannerEnabled:      true,
+			SandboxMode:         "permissive", // default: allow SSH and flexible network access
 			SandboxModelProxy:   true,
 			MaxQueueSize:        10,
 			MaxConcurrent:       1,

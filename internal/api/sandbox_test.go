@@ -14,13 +14,14 @@ import (
 
 func TestSandboxRuntimeConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
-	if newSandboxRuntime(cfg) != nil {
-		t.Error("default must be off")
+	cfg.StateRoot = t.TempDir()
+	// Default is now permissive (enables SSH, flexible network)
+	if rt := newSandboxRuntime(cfg); rt == nil || rt.Mode() != sandbox.ModePermissive {
+		t.Error("default must be permissive")
 	}
 	cfg.Agent.SandboxMode = "strict"
-	cfg.StateRoot = t.TempDir()
 	if rt := newSandboxRuntime(cfg); rt == nil || rt.Mode() != sandbox.ModeStrict {
-		t.Error("strict")
+		t.Error("strict mode should work")
 	}
 	cfg.Agent.SandboxMode = "yolo"
 	rt := newSandboxRuntime(cfg)

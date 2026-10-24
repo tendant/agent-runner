@@ -50,6 +50,14 @@ func main() {
 		// model (not "model") whenever it wasn't set.
 		slog.Info("agent configured", "cli", cfg.Agent.CLI, "model", cfg.Agent.Model, "fast_model", cfg.Agent.FastModel)
 	}
+
+	// Warn about strict sandbox mode limitations
+	if cfg.Agent.SandboxMode == "strict" {
+		slog.Warn("sandbox in strict mode",
+			"limitation", "port 22 (SSH) is blocked; agents cannot SSH to servers",
+			"suggestion", "use AGENT_SANDBOX=permissive for SSH access, or AGENT_SANDBOX=off to disable sandbox")
+	}
+
 	for _, w := range clisetup.BootstrapWarnings(cfg.Agent.CLI, cfg.Agent.Provider) {
 		slog.Warn("startup warning", "msg", w)
 	}
