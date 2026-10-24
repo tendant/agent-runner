@@ -280,6 +280,7 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	var gwDir, proxyAddr string
 	if spec.Network.Egress == sandbox.EgressRestricted {
 		gcfg := egress.Config{Allow: spec.Network.EgressAllow, Ports: b.cfg.EgressPorts}
+		slog.Info("adapter egress config", "egress_ports", b.cfg.EgressPorts, "is_nil", b.cfg.EgressPorts == nil)
 		if on := b.cfg.OnEgress; on != nil {
 			gcfg.OnEvent = func(kind, host string) { on(kind == "allowed", host) }
 		}
