@@ -87,6 +87,28 @@ type Config struct {
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
 
+// strictModeApprovedHosts are the default allowed egress hosts in strict mode.
+// Permissive mode allows "*" (any public host).
+var strictModeApprovedHosts = []string{
+	// Model APIs
+	"api.anthropic.com",
+	"api.openai.com",
+	"api.deepseek.com",
+	// Package managers
+	"registry.npmjs.org",
+	"*.npmjs.org",
+	"pypi.org",
+	"*.pypi.org",
+	"files.pythonhosted.org",
+	// Code hosting
+	"github.com",
+	"api.github.com",
+	"raw.githubusercontent.com",
+	"gitlab.com",
+	// DNS/CDN
+	"*.cloudflare.com",
+}
+
 // DefaultSystemSpec is the policy used when no PolicyFile is configured: the
 // workspace, sandbox home and tmp are writable; everything else on the host is
 // not. Host SSH keys (~/.ssh) are denied for security. Agents can use SSH
@@ -299,8 +321,14 @@ func New(cfg Config) (*Runtime, error) {
 		r.system.Network.Egress = sandbox.EgressRestricted
 		r.system.Network.EgressAllow = cfg.EgressAllow
 		if len(r.system.Network.EgressAllow) == 0 {
-			r.system.Network.EgressAllow = []string{"*"}
+			// Mode-specific defaults: strict limits to approved hosts, permissive allows all
+			if r.cfg.Mode == sandbox.ModeStrict {
+				r.system.Network.EgressAllow = strictModeApprovedHosts
+			} else {
+				r.system.Network.EgressAllow = []string{"*"}
+			}
 		}
+		slog.Info("sandbox egress allow", "mode", r.cfg.Mode, "hosts", r.system.Network.EgressAllow)
 		if _, err := sandbox.NewHostMatcher(r.system.Network.EgressAllow, nil); err != nil {
 			return nil, fmt.Errorf("sandbox egress allow: %w", err)
 		}
