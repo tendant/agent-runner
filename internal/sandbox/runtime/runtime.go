@@ -250,15 +250,7 @@ func New(cfg Config) (*Runtime, error) {
 	if cfg.Mode != sandbox.ModeStrict && cfg.Mode != sandbox.ModePermissive {
 		return nil, fmt.Errorf("sandbox: bad mode %q (want off|permissive|strict)", cfg.Mode)
 	}
-	// Set default egress ports: permissive allows port 22 (SSH), strict doesn't.
-	if len(cfg.EgressPorts) == 0 {
-		if cfg.Mode == sandbox.ModePermissive {
-			cfg.EgressPorts = []int{443, 80, 22} // Allow SSH in permissive mode
-		} else {
-			cfg.EgressPorts = []int{443, 80} // Strict: HTTPS/HTTP only
-		}
-	}
-	slog.Info("sandbox egress ports", "mode", cfg.Mode, "ports", cfg.EgressPorts)
+	slog.Info("sandbox egress ports", "mode", r.cfg.Mode, "ports", r.cfg.EgressPorts)
 	if cfg.StateDir == "" {
 		return nil, errors.New("sandbox: state dir required")
 	}

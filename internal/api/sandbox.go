@@ -36,6 +36,15 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	host, _ := os.Hostname()
+	// Apply mode-specific egress port defaults if not explicitly configured
+	egressPorts := cfg.Agent.SandboxEgressPorts
+	if len(egressPorts) == 0 {
+		if mode == sandbox.ModePermissive {
+			egressPorts = []int{443, 80, 22} // Allow SSH in permissive mode
+		} else {
+			egressPorts = []int{443, 80} // Strict: HTTPS/HTTP only
+		}
+	}
 	rt, err := sandboxrt.New(sandboxrt.Config{
 		Mode:        mode,
 		StateDir:    filepath.Join(cfg.StateRoot, "sandbox"),
@@ -46,7 +55,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		ScopedReads: scoped,
 		EgressAllow: cfg.Agent.SandboxEgressAllow,
 		EgressMode:  cfg.Agent.SandboxEgressMode,
-		EgressPorts: cfg.Agent.SandboxEgressPorts,
+		EgressPorts: egressPorts,
 		// Prompts point agents at memory, and uploads reach them by path.
 		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
 		EvidenceFile: cfg.Agent.SandboxEvidence,
