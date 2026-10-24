@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -235,6 +236,7 @@ func New(cfg Config) (*Runtime, error) {
 			cfg.EgressPorts = []int{443, 80} // Strict: HTTPS/HTTP only
 		}
 	}
+	slog.Info("sandbox egress ports", "mode", cfg.Mode, "ports", cfg.EgressPorts)
 	if cfg.StateDir == "" {
 		return nil, errors.New("sandbox: state dir required")
 	}
