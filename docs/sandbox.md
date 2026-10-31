@@ -51,15 +51,18 @@ Other settings:
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
-* `AGENT_SANDBOX_AUDIT_FILE`: a JSON Lines file (agentbox's `audit` schema) recording every
-  sandbox run for AgentGate: its policy snapshot (the resolved spec and what the backend
+* `AGENT_SANDBOX_AUDIT_DIR`: a directory recording every sandbox run for AgentGate (agentbox's
+  `audit` schema, JSON Lines): its policy snapshot (the resolved spec and what the backend
   enforces), lifecycle, and every egress and model-channel decision. Names and ids only, never
-  credentials or payloads. Unset: no record. A file that cannot be opened rejects every run.
-  One agent-runner per file; it is read-denied to runs.
-* `AGENT_SANDBOX_AUDIT_MAX`: the audit file's size cap (`10m` when unset, `0` for none). Past
-  it, events are not written; each run that loses one gets a single `events_dropped` marker,
-  so AgentGate reports it incomplete rather than still open. Rotate or archive the file
-  before it fills.
+  credentials or payloads. Unset: no record. A directory that cannot be opened rejects every
+  run. One agent-runner per directory; it is read-denied to runs.
+  The record is kept as numbered segments (`00000000`, `00000001`, ...), as Prometheus keeps
+  its write-ahead log: appended to the newest, never renamed or rewritten.
+* `AGENT_SANDBOX_AUDIT_SEGMENT`: one segment's size (`10m` when unset); a full segment is
+  closed and the next started.
+* `AGENT_SANDBOX_AUDIT_KEEP`: how many segments are kept, the newest (`10` when unset, `0` for
+  all): about 100 MiB by default. AgentGate must read a segment before it is deleted; one it
+  missed shows there as a gap in the record.
 * `AGENT_SANDBOX_LEDGER_URL`: ledger-gate's base URL. Model channels whose upstream has the same
   scheme and host (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, ...) tag every request with
   `Agentbox-Run-Id: <run id>`, so ledger-gate can link its cost records to runs. The proxy always

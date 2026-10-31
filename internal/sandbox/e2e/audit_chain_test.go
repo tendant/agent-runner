@@ -8,7 +8,8 @@
 //
 //	E2E_LEDGER_URL   ledger-gate base URL
 //	E2E_BROKER_KEY   a ledger-gate key marked asserts_run
-//	E2E_AUDIT_FILE   where to write the audit record
+//	E2E_AUDIT_DIR    where to write the audit record (small segments, so
+//	                 the record spans several)
 //	E2E_RUN_ID       the run's id (default e2e-run-a)
 //	E2E_FORGED_RUN   a run id the agent tries to charge its calls to
 package e2e
@@ -52,8 +53,8 @@ exit 0 # refused connections are the expected outcome, not the agent failing
 `
 
 func TestAuditChain(t *testing.T) {
-	ledger, key, auditFile := os.Getenv("E2E_LEDGER_URL"), os.Getenv("E2E_BROKER_KEY"), os.Getenv("E2E_AUDIT_FILE")
-	if ledger == "" || key == "" || auditFile == "" {
+	ledger, key, auditDir := os.Getenv("E2E_LEDGER_URL"), os.Getenv("E2E_BROKER_KEY"), os.Getenv("E2E_AUDIT_DIR")
+	if ledger == "" || key == "" || auditDir == "" {
 		t.Skip("run through agent-gate's e2e/local.sh")
 	}
 	// The agent script is launched by its host path: Seatbelt runs on the
@@ -63,7 +64,7 @@ func TestAuditChain(t *testing.T) {
 	}
 	runID := envOr("E2E_RUN_ID", "e2e-run-a")
 	forged := envOr("E2E_FORGED_RUN", "e2e-run-forged")
-	rec, err := audit.OpenFileRecorder(auditFile, "e2e-host", audit.FileOptions{Sync: true})
+	rec, err := audit.OpenDirRecorder(auditDir, "e2e-host", audit.DirOptions{Sync: true, SegmentBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}

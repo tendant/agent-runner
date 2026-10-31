@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 )
 
 func TestLedgerChannels(t *testing.T) {
@@ -29,15 +30,22 @@ func TestLedgerChannels(t *testing.T) {
 	}
 }
 
-func TestAuditMax(t *testing.T) {
-	for in, want := range map[string]int64{"": 10 << 20, "0": 0, " 0 ": 0, "512m": 512 << 20, "2g": 2 << 30, "4096": 4096} {
-		if got, err := auditMax(in); err != nil || got != want {
-			t.Errorf("auditMax(%q) = %d, %v; want %d", in, got, err, want)
+func TestAuditOptions(t *testing.T) {
+	for _, c := range []struct {
+		segment, keep string
+		want          audit.DirOptions
+	}{
+		{"", "", audit.DirOptions{SegmentBytes: 10 << 20, Keep: 10}},
+		{"512m", "0", audit.DirOptions{SegmentBytes: 512 << 20, Keep: 0}},
+		{" 4096 ", " 3 ", audit.DirOptions{SegmentBytes: 4096, Keep: 3}},
+	} {
+		if got, err := auditOptions(c.segment, c.keep); err != nil || got != c.want {
+			t.Errorf("auditOptions(%q, %q) = %+v, %v; want %+v", c.segment, c.keep, got, err, c.want)
 		}
 	}
-	for _, bad := range []string{"x", "-1", "1.5g"} {
-		if _, err := auditMax(bad); err == nil {
-			t.Errorf("auditMax(%q) accepted", bad)
+	for _, bad := range [][2]string{{"0", ""}, {"x", ""}, {"1.5g", ""}, {"", "-1"}, {"", "x"}} {
+		if _, err := auditOptions(bad[0], bad[1]); err == nil {
+			t.Errorf("auditOptions(%q, %q) accepted", bad[0], bad[1])
 		}
 	}
 }

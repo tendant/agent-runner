@@ -112,8 +112,9 @@ type AgentConfig struct {
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
-	SandboxAuditFile    string   // AGENT_SANDBOX_AUDIT_FILE — JSONL security record of every sandbox run (for AgentGate); unset: none
-	SandboxAuditMax     string   // AGENT_SANDBOX_AUDIT_MAX — size cap of the audit file ("10m", the default; "0": none)
+	SandboxAuditDir     string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for AgentGate), as JSONL segments; unset: none
+	SandboxAuditSegment string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
+	SandboxAuditKeep    string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
 	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
@@ -421,8 +422,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
-	cfg.Agent.SandboxAuditFile = envOrDefault("AGENT_SANDBOX_AUDIT_FILE", cfg.Agent.SandboxAuditFile)
-	cfg.Agent.SandboxAuditMax = envOrDefault("AGENT_SANDBOX_AUDIT_MAX", cfg.Agent.SandboxAuditMax)
+	cfg.Agent.SandboxAuditDir = envOrDefault("AGENT_SANDBOX_AUDIT_DIR", cfg.Agent.SandboxAuditDir)
+	cfg.Agent.SandboxAuditSegment = envOrDefault("AGENT_SANDBOX_AUDIT_SEGMENT", cfg.Agent.SandboxAuditSegment)
+	cfg.Agent.SandboxAuditKeep = envOrDefault("AGENT_SANDBOX_AUDIT_KEEP", cfg.Agent.SandboxAuditKeep)
 	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)

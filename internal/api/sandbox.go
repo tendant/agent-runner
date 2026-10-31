@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/agenthome"
@@ -37,17 +38,18 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	host, _ := os.Hostname()
-	// The audit record: one writer per file, named by this host. A record
-	// that cannot be opened rejects every run, like any other misconfiguration.
+	// The audit record: one writer per directory, named by this host. A
+	// record that cannot be opened rejects every run, like any other
+	// misconfiguration.
 	var rec *audit.Recorder
-	if f := cfg.Agent.SandboxAuditFile; f != "" {
-		max, err := auditMax(cfg.Agent.SandboxAuditMax)
+	if dir := cfg.Agent.SandboxAuditDir; dir != "" {
+		opts, err := auditOptions(cfg.Agent.SandboxAuditSegment, cfg.Agent.SandboxAuditKeep)
 		if err == nil {
-			rec, err = audit.OpenFileRecorder(f, "agent-runner:"+host, audit.FileOptions{MaxBytes: max})
+			rec, err = audit.OpenDirRecorder(dir, "agent-runner:"+host, opts)
 		}
 		if err != nil {
 			slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
-			return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_AUDIT_FILE: %w", err))
+			return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_AUDIT_DIR: %w", err))
 		}
 	}
 	// Apply mode-specific egress port defaults if not explicitly configured
@@ -115,9 +117,9 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		// name; the file holding them all is not the agent's to read.
 		paths = append(paths, cfg.SecretsFile, agentsecrets.FilesDir(cfg.SecretsFile))
 	}
-	if cfg.Agent.SandboxAuditFile != "" {
+	if cfg.Agent.SandboxAuditDir != "" {
 		// The record of what runs did is not theirs to read.
-		paths = append(paths, cfg.Agent.SandboxAuditFile)
+		paths = append(paths, cfg.Agent.SandboxAuditDir)
 	}
 	if cfg.EnvFile != "" {
 		// Likewise the agent's plain settings: its environment has them;
@@ -371,18 +373,24 @@ func sandboxSeedDir(cfg *config.Config, host, isolated string) string {
 	return filepath.Join(home, host)
 }
 
-// auditMax is the audit file's size cap: AGENT_SANDBOX_AUDIT_MAX, 10 MiB when
-// unset, none when "0". Past it, runs lose events, each marked on record.
-func auditMax(s string) (int64, error) {
-	switch strings.TrimSpace(s) {
-	case "":
-		return 10 << 20, nil
-	case "0":
-		return 0, nil
+// auditOptions are the audit record's segments: AGENT_SANDBOX_AUDIT_SEGMENT
+// in size (10 MiB when unset), the newest AGENT_SANDBOX_AUDIT_KEEP kept (10
+// when unset, all when "0").
+func auditOptions(segment, keep string) (audit.DirOptions, error) {
+	opts := audit.DirOptions{SegmentBytes: 10 << 20, Keep: 10}
+	if s := strings.TrimSpace(segment); s != "" {
+		n, err := sandboxrt.ParseBytes(s)
+		if err != nil {
+			return opts, fmt.Errorf("AGENT_SANDBOX_AUDIT_SEGMENT: %w", err)
+		}
+		opts.SegmentBytes = n
 	}
-	n, err := sandboxrt.ParseBytes(s)
-	if err != nil {
-		return 0, fmt.Errorf("AGENT_SANDBOX_AUDIT_MAX: %w", err)
+	if s := strings.TrimSpace(keep); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			return opts, fmt.Errorf("AGENT_SANDBOX_AUDIT_KEEP %q: not a count", keep)
+		}
+		opts.Keep = n
 	}
-	return n, nil
+	return opts, nil
 }
