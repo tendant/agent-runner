@@ -30,7 +30,7 @@ func TestLedgerChannels(t *testing.T) {
 }
 
 func TestAuditMax(t *testing.T) {
-	for in, want := range map[string]int64{"": 1 << 30, "0": 0, " 0 ": 0, "512m": 512 << 20, "2g": 2 << 30, "4096": 4096} {
+	for in, want := range map[string]int64{"": 10 << 20, "0": 0, " 0 ": 0, "512m": 512 << 20, "2g": 2 << 30, "4096": 4096} {
 		if got, err := auditMax(in); err != nil || got != want {
 			t.Errorf("auditMax(%q) = %d, %v; want %d", in, got, err, want)
 		}

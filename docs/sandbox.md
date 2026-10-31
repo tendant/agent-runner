@@ -56,7 +56,7 @@ Other settings:
   enforces), lifecycle, and every egress and model-channel decision. Names and ids only, never
   credentials or payloads. Unset: no record. A file that cannot be opened rejects every run.
   One agent-runner per file; it is read-denied to runs.
-* `AGENT_SANDBOX_AUDIT_MAX`: the audit file's size cap (`1g` when unset, `0` for none). Past
+* `AGENT_SANDBOX_AUDIT_MAX`: the audit file's size cap (`10m` when unset, `0` for none). Past
   it, events are not written; each run that loses one gets a single `events_dropped` marker,
   so AgentGate reports it incomplete rather than still open. Rotate or archive the file
   before it fills.

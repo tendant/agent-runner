@@ -371,12 +371,12 @@ func sandboxSeedDir(cfg *config.Config, host, isolated string) string {
 	return filepath.Join(home, host)
 }
 
-// auditMax is the audit file's size cap: AGENT_SANDBOX_AUDIT_MAX, 1 GiB when
+// auditMax is the audit file's size cap: AGENT_SANDBOX_AUDIT_MAX, 10 MiB when
 // unset, none when "0". Past it, runs lose events, each marked on record.
 func auditMax(s string) (int64, error) {
 	switch strings.TrimSpace(s) {
 	case "":
-		return 1 << 30, nil
+		return 10 << 20, nil
 	case "0":
 		return 0, nil
 	}

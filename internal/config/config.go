@@ -113,7 +113,7 @@ type AgentConfig struct {
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxAuditFile    string   // AGENT_SANDBOX_AUDIT_FILE — JSONL security record of every sandbox run (for AgentGate); unset: none
-	SandboxAuditMax     string   // AGENT_SANDBOX_AUDIT_MAX — size cap of the audit file ("1g", the default; "0": none)
+	SandboxAuditMax     string   // AGENT_SANDBOX_AUDIT_MAX — size cap of the audit file ("10m", the default; "0": none)
 	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
