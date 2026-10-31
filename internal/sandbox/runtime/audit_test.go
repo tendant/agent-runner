@@ -1,0 +1,261 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/agent-runner/agent-runner/internal/sandbox"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
+)
+
+// auditRT is newRT with an audit record at path; read returns what it holds.
+func auditRT(t *testing.T, mode sandbox.Mode, gaps []sandbox.Gap, cfg Config) (rt *Runtime, read func() []audit.Event, path string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), "audit.jsonl")
+	rec, err := audit.OpenFileRecorder(path, "test-host", audit.FileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { rec.Close() })
+	got := &sandbox.ProcSpec{}
+	cfg.Mode, cfg.StateDir, cfg.Instance, cfg.LeaseTTL, cfg.Audit = mode, t.TempDir(), "test", time.Second, rec
+	cfg.NewBackend = func(map[string]string) sandbox.Backend { return fakeBackend{gaps, got} }
+	rt, err = New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read = func() []audit.Event {
+		f, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		var out []audit.Event
+		d := audit.NewDecoder(f, 0)
+		for {
+			e, err := d.Next()
+			if errors.Is(err, io.EOF) {
+				return out
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, e)
+		}
+	}
+	return rt, read, path
+}
+
+func types(evs []audit.Event) []string {
+	var out []string
+	for _, e := range evs {
+		out = append(out, e.Type)
+	}
+	return out
+}
+
+func TestAuditRecordsARun(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, []sandbox.Gap{{Capability: sandbox.CapResourceMemory, Reason: "no cgroup"}}, Config{})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.egress.record(true, "api.github.com")
+	run.egress.record(true, "api.github.com") // every decision, not just the first per host
+	run.egress.record(false, "169.254.169.254")
+	run.Finish()
+
+	evs := read()
+	want := []string{audit.TypePolicySnapshot, audit.TypeSandboxCreated, audit.TypeNetworkAllowed, audit.TypeNetworkAllowed,
+		audit.TypeNetworkBlocked, audit.TypeSandboxClosed}
+	if got := types(evs); len(got) != len(want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+	policy := evs[0].PolicyID
+	for i, e := range evs {
+		if e.Type != want[i] || e.RunID != "r1" || e.PolicyID != policy || e.SourceSequence != uint64(i+1) {
+			t.Errorf("event %d: %+v", i, e)
+		}
+	}
+
+	// The snapshot is the resolved policy and the backend's answer, and its
+	// digest is recomputable from the record.
+	if d, _ := audit.PolicyDigest(evs[0].Detail); d != policy {
+		t.Errorf("policy id %s, digest of the snapshot %s", policy, d)
+	}
+	var snap struct {
+		Backend, Mode string
+		Spec          sandbox.SandboxSpec
+		Check         sandbox.CheckResult
+	}
+	json.Unmarshal(evs[0].Detail, &snap)
+	if snap.Backend != "fake" || snap.Mode != "permissive" || snap.Spec.Network.Egress != sandbox.EgressRestricted ||
+		len(snap.Check.Gaps) != 1 || snap.Check.Gaps[0].Capability != sandbox.CapResourceMemory {
+		t.Errorf("snapshot %+v", snap)
+	}
+	var blocked audit.NetworkDetail
+	json.Unmarshal(evs[4].Detail, &blocked)
+	if blocked.Destination != "169.254.169.254" {
+		t.Errorf("blocked detail %s", evs[4].Detail)
+	}
+	var created audit.LifecycleDetail
+	json.Unmarshal(evs[1].Detail, &created)
+	if created.Backend != "fake" || created.ThreadID != "t1" || created.Reason != "unenforced: resource.memory" {
+		t.Errorf("created detail %s", evs[1].Detail)
+	}
+	if len(rt.auditRuns) != 0 {
+		t.Errorf("finished run still followed: %v", rt.auditRuns)
+	}
+}
+
+// A strict run refused for its gaps is on record with the policy it was
+// refused under.
+func TestAuditRecordsARejection(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModeStrict, []sandbox.Gap{{Capability: sandbox.CapResourceMemory}}, Config{})
+	if _, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()}); err == nil {
+		t.Fatal("strict run with gaps started")
+	}
+	evs := read()
+	if len(evs) != 2 || evs[0].Type != audit.TypePolicySnapshot || evs[1].Type != audit.TypeSandboxRejected ||
+		evs[1].PolicyID == "" || evs[1].PolicyID != evs[0].PolicyID {
+		t.Fatalf("events %+v", evs)
+	}
+	if len(rt.auditRuns) != 0 {
+		t.Errorf("refused run still followed: %v", rt.auditRuns)
+	}
+
+	// A policy that fails to resolve is refused before any check: no
+	// snapshot, but still on record.
+	wide := sandbox.SandboxSpec{Version: 1, Filesystem: sandbox.FilesystemPolicy{Grants: []sandbox.PathGrant{{Path: "/etc", Access: sandbox.ReadWrite}}}}
+	if _, err := rt.Begin(context.Background(), BeginReq{RunID: "r2", Workspace: t.TempDir(), Layers: []sandbox.Layer{{Name: sandbox.LayerRun, Spec: wide}}}); err == nil {
+		t.Fatal("widening policy started")
+	}
+	evs = read()
+	if last := evs[len(evs)-1]; last.Type != audit.TypeSandboxRejected || last.RunID != "r2" || last.PolicyID != "" {
+		t.Errorf("unresolvable policy: %+v", last)
+	}
+}
+
+// A lost thread lease names no run; the record charges it to the thread's
+// started runs.
+func TestAuditEnforcementLostOnThread(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Finish()
+	rt.emit(Event{Kind: "sandbox.enforcement_lost", ThreadID: "t1", Detail: "thread lease lost"})
+	rt.emit(Event{Kind: "sandbox.enforcement_lost", ThreadID: "other", Detail: "thread lease lost"})
+	evs := read()
+	last := evs[len(evs)-1]
+	if last.Type != audit.TypeEnforcementLost || last.RunID != "r1" || last.PolicyID != evs[0].PolicyID || len(evs) != 3 {
+		t.Errorf("events %v, last %+v", types(evs), last)
+	}
+}
+
+// Every model-channel request is on record, forwarded or refused, with the
+// provider and never the credential.
+func TestAuditRecordsModelRequests(t *testing.T) {
+	anthropic, _ := upstream(t, "Authorization")
+	rt, read, path := auditRT(t, sandbox.ModePermissive, nil, Config{Models: map[string]*ModelChannel{
+		ProviderAnthropic: {Upstream: anthropic, AuthHeader: "x-api-key", AuthValue: "real-key", Paths: AnthropicPaths},
+	}})
+	got := &sandbox.ProcSpec{}
+	rt.cfg.NewBackend = func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := launch(t, run, got, "claude")
+	base := fromHost(run, env["ANTHROPIC_BASE_URL"])
+	if code := post(t, base+"/v1/messages", env["ANTHROPIC_API_KEY"]+env["ANTHROPIC_AUTH_TOKEN"]); code != 200 {
+		t.Fatalf("forwarded request: %d", code)
+	}
+	post(t, base+"/v1/messages", "forged")
+	run.Finish()
+
+	var model []audit.Event
+	for _, e := range read() {
+		if e.Type == audit.TypeModelForwarded || e.Type == audit.TypeModelDenied {
+			model = append(model, e)
+		}
+	}
+	if len(model) != 2 || model[0].Type != audit.TypeModelForwarded || model[1].Type != audit.TypeModelDenied {
+		t.Fatalf("model events %v", types(model))
+	}
+	for _, e := range model {
+		var d audit.ModelDetail
+		json.Unmarshal(e.Detail, &d)
+		if d.Provider != ProviderAnthropic || e.PolicyID == "" {
+			t.Errorf("model event %+v", e)
+		}
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "real-key") || strings.Contains(string(raw), "forged") {
+		t.Error("a credential reached the audit record")
+	}
+}
+
+// A ledger-gate channel's requests carry the run's id, whatever the sandbox
+// sent; a direct provider channel's never get one from the proxy.
+func TestLedgerChannelCarriesRunID(t *testing.T) {
+	ledger, ledgerGot := upstream(t, RunHeader)
+	direct, directGot := upstream(t, RunHeader)
+	t.Setenv("OPENAI_API_KEY", "")
+	got := &sandbox.ProcSpec{}
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", LeaseTTL: time.Second,
+		Models: map[string]*ModelChannel{
+			ProviderAnthropic: {Upstream: ledger, AuthHeader: "x-api-key", AuthValue: "ledger-key", Paths: AnthropicPaths, Ledger: true},
+			ProviderOpenAI:    {Upstream: direct, AuthHeader: "Authorization", AuthValue: "Bearer real-key", Paths: OpenAIPaths},
+		},
+		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{nil, got} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Finish()
+
+	anthropic := run.model.proxies[ProviderAnthropic]
+	req, _ := http.NewRequest("POST", anthropic.BaseURL()+"/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("x-api-key", anthropic.Token())
+	req.Header.Set(RunHeader, "someone-elses-run")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("ledger channel: %v %v", err, resp)
+	}
+	resp.Body.Close()
+	if *ledgerGot != "r1" {
+		t.Errorf("ledger got %s %q, want r1", RunHeader, *ledgerGot)
+	}
+
+	openai := run.model.proxies[ProviderOpenAI]
+	if code := post(t, openai.BaseURL()+"/v1/chat/completions", openai.Token()); code != 200 {
+		t.Fatalf("direct channel: %d", code)
+	}
+	if *directGot != "" {
+		t.Errorf("a direct provider got %s %q", RunHeader, *directGot)
+	}
+	// Not even the sandbox's own: a channel not marked as a ledger (a
+	// misconfigured AGENT_SANDBOX_LEDGER_URL) must not pass a forgery on.
+	req, _ = http.NewRequest("POST", openai.BaseURL()+"/v1/chat/completions", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer "+openai.Token())
+	req.Header.Set(RunHeader, "someone-elses-run")
+	if resp, err = http.DefaultClient.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if *directGot != "" {
+		t.Errorf("a sandbox-sent %s reached an unmarked channel: %q", RunHeader, *directGot)
+	}
+}

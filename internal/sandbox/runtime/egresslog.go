@@ -27,6 +27,8 @@ type egressLog struct {
 	hosts   map[string]*EgressHost
 	dropped int // hosts past maxEgressHosts, not tallied
 	emit    func(kind, host string)
+	// each, if set, receives every decision, tallied or not (the audit record).
+	each func(allowed bool, host string)
 }
 
 func newEgressLog(emit func(kind, host string)) *egressLog {
@@ -35,6 +37,9 @@ func newEgressLog(emit func(kind, host string)) *egressLog {
 
 func (l *egressLog) record(allowed bool, host string) {
 	host = cleanHost(host)
+	if l.each != nil {
+		l.each(allowed, host)
+	}
 	l.mu.Lock()
 	h, ok := l.hosts[host]
 	if !ok {

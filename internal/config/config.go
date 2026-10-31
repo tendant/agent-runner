@@ -112,6 +112,8 @@ type AgentConfig struct {
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
+	SandboxAuditFile    string   // AGENT_SANDBOX_AUDIT_FILE — JSONL security record of every sandbox run (for AgentGate); unset: none
+	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
 	SandboxReadAllow    []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
@@ -418,6 +420,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
+	cfg.Agent.SandboxAuditFile = envOrDefault("AGENT_SANDBOX_AUDIT_FILE", cfg.Agent.SandboxAuditFile)
+	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)

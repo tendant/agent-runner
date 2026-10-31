@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
+
+	"github.com/tendant/agentbox/pkg/agentbox/capability"
 )
 
 // Mode is how strictly gaps are treated.
@@ -35,21 +36,7 @@ func (e *GapError) Error() string {
 
 // Evaluate computes requested-policy minus backend-enforcement.
 func Evaluate(backend string, spec SandboxSpec, enforced []CapabilityID, caveats []string) CheckResult {
-	have := map[CapabilityID]bool{}
-	for _, c := range enforced {
-		have[c] = true
-	}
-	res := CheckResult{Backend: backend, Caveats: caveats}
-	for c := range have {
-		res.Enforced = append(res.Enforced, c)
-	}
-	sort.Slice(res.Enforced, func(i, j int) bool { return res.Enforced[i] < res.Enforced[j] })
-	for _, c := range Required(spec) {
-		if !have[c] {
-			res.Gaps = append(res.Gaps, Gap{Capability: c, Reason: "not enforced by backend"})
-		}
-	}
-	return res
+	return capability.Evaluate(backend, Required(spec), enforced, caveats)
 }
 
 // Admit applies the mode to a check result. A nil error means the run may start

@@ -36,12 +36,12 @@ import (
 	"time"
 
 	ab "github.com/tendant/agentbox/pkg/agentbox"
+	"github.com/tendant/agentbox/pkg/agentbox/egress"
 	abgvisor "github.com/tendant/agentbox/pkg/agentbox/gvisor"
 	abseatbelt "github.com/tendant/agentbox/pkg/agentbox/seatbelt"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
-	"github.com/agent-runner/agent-runner/internal/sandbox/egress"
 )
 
 // Config configures the adapter for one run.

@@ -51,6 +51,15 @@ Other settings:
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
+* `AGENT_SANDBOX_AUDIT_FILE`: a JSON Lines file (agentbox's `audit` schema) recording every
+  sandbox run for AgentGate: its policy snapshot (the resolved spec and what the backend
+  enforces), lifecycle, and every egress and model-channel decision. Names and ids only, never
+  credentials or payloads. Unset: no record. A file that cannot be opened rejects every run.
+  One agent-runner per file; it is read-denied to runs.
+* `AGENT_SANDBOX_LEDGER_URL`: ledger-gate's base URL. Model channels whose upstream has the same
+  scheme and host (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, ...) tag every request with
+  `Agentbox-Run-Id: <run id>`, so ledger-gate can link its cost records to runs. The proxy always
+  drops an `Agentbox-Run-Id` the sandbox sends; other channels never carry one.
 * `AGENT_SANDBOX_BACKEND`: unset or `agentbox`. The isobox values (`gvisor`, `seatbelt`) are
   refused: isobox was removed. `AGENT_SANDBOX_READ` accepts only `scoped`, the default.
 

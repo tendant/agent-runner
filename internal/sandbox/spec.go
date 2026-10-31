@@ -166,7 +166,7 @@ func (s SandboxSpec) Validate() error {
 		return fmt.Errorf("sandbox spec: egress_allow requires restricted egress, got %q", n.Egress)
 	}
 	for _, e := range n.EgressAllow {
-		if _, err := parseHostPattern(e); err != nil {
+		if err := validHostPattern(e); err != nil {
 			return fmt.Errorf("sandbox spec: egress_allow: %w", err)
 		}
 	}

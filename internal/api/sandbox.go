@@ -17,6 +17,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/codexlogin"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 )
 
 // newSandboxRuntime builds the sandbox runtime from config. An invalid
@@ -36,6 +37,15 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	host, _ := os.Hostname()
+	// The audit record: one writer per file, named by this host. A record
+	// that cannot be opened rejects every run, like any other misconfiguration.
+	var rec *audit.Recorder
+	if f := cfg.Agent.SandboxAuditFile; f != "" {
+		if rec, err = audit.OpenFileRecorder(f, "agent-runner:"+host, audit.FileOptions{}); err != nil {
+			slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
+			return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_AUDIT_FILE: %w", err))
+		}
+	}
 	// Apply mode-specific egress port defaults if not explicitly configured
 	egressPorts := cfg.Agent.SandboxEgressPorts
 	if len(egressPorts) == 0 {
@@ -62,15 +72,19 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EnvAllow:     cfg.Agent.SandboxEnvAllow,
 		PrivatePaths: sandboxPrivatePaths(cfg),
 		Claude:       sandboxClaudeSeed(cfg),
-		Models:       sandboxModelChannels(cfg),
+		Models:       ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL),
 		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
 		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
+		Audit:        rec,
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
 		},
 	})
 	if err != nil {
+		if rec != nil {
+			rec.Close()
+		}
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
 	}
@@ -96,6 +110,10 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		// Agent secrets reach the sandbox as environment variables, by
 		// name; the file holding them all is not the agent's to read.
 		paths = append(paths, cfg.SecretsFile, agentsecrets.FilesDir(cfg.SecretsFile))
+	}
+	if cfg.Agent.SandboxAuditFile != "" {
+		// The record of what runs did is not theirs to read.
+		paths = append(paths, cfg.Agent.SandboxAuditFile)
 	}
 	if cfg.EnvFile != "" {
 		// Likewise the agent's plain settings: its environment has them;
@@ -279,6 +297,30 @@ func sandboxModelChannels(cfg *config.Config) map[string]*sandboxrt.ModelChannel
 		}
 	}
 	return withCompatChannels(out)
+}
+
+// ledgerChannels marks the channels whose upstream is ledger-gate (same
+// scheme and host as ledgerURL): their requests carry the run's id. Others
+// go straight to a provider, which never sees it.
+func ledgerChannels(chs map[string]*sandboxrt.ModelChannel, ledgerURL string) map[string]*sandboxrt.ModelChannel {
+	if ledgerURL == "" {
+		return chs
+	}
+	l, err := url.Parse(ledgerURL)
+	if err != nil || l.Scheme == "" || l.Host == "" {
+		slog.Warn("sandbox: bad AGENT_SANDBOX_LEDGER_URL; model calls are not linked to runs", "value", ledgerURL)
+		return chs
+	}
+	linked := false
+	for _, ch := range chs {
+		if strings.EqualFold(ch.Upstream.Scheme, l.Scheme) && strings.EqualFold(ch.Upstream.Host, l.Host) {
+			ch.Ledger, linked = true, true
+		}
+	}
+	if !linked {
+		slog.Warn("sandbox: no model channel goes to AGENT_SANDBOX_LEDGER_URL; model calls are not linked to runs", "ledger", ledgerURL)
+	}
+	return chs
 }
 
 // withCompatChannels adds a channel for each OpenAI-compatible provider

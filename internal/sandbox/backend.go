@@ -34,20 +34,6 @@ type PreparedSandbox interface {
 	Destroy(ctx context.Context) error
 }
 
-// Gap is a required capability the backend cannot enforce.
-type Gap struct {
-	Capability CapabilityID `json:"capability"`
-	Reason     string       `json:"reason,omitempty"`
-}
-
-// CheckResult is the structured outcome of Backend.Check.
-type CheckResult struct {
-	Backend  string         `json:"backend"`
-	Enforced []CapabilityID `json:"enforced"`
-	Gaps     []Gap          `json:"gaps,omitempty"`
-	Caveats  []string       `json:"caveats,omitempty"`
-}
-
 // Commander is implemented by sandboxes that can hand back an unstarted
 // *exec.Cmd, for callers needing their own pipes (e.g. persistent stdio agents).
 // The returned command is still fully confined; there is no host fallback.

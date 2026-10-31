@@ -55,3 +55,5 @@ require (
 	modernc.org/sqlite v1.46.1 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
+
+replace github.com/tendant/agentbox => ../agent-audit/agentbox

@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
-	"github.com/agent-runner/agent-runner/internal/sandbox/proxy"
+	"github.com/tendant/agentbox/pkg/agentbox/broker"
 )
 
 // Providers with a model channel.
@@ -63,7 +63,16 @@ type ModelChannel struct {
 	// ChatGPT marks an OpenAI channel holding a codex ChatGPT login: its
 	// upstream is ChatGPT's codex backend, which only codex speaks.
 	ChatGPT bool
+	// Ledger marks an upstream that is ledger-gate: the proxy tags every
+	// request with the run's id (RunHeader), which ledger-gate records
+	// for the audit and never passes on to the provider.
+	Ledger bool
 }
+
+// RunHeader carries a run's id to a ledger-gate upstream. The proxy
+// sets it, replacing any the sandbox sent; ledger-gate trusts it only from
+// keys marked to assert it.
+const RunHeader = "Agentbox-Run-Id"
 
 // Request paths per provider: the claude CLI checks /api/hello and posts
 // messages (count_tokens is under it); codex and pi use the Responses and
@@ -95,7 +104,7 @@ func init() {
 
 // modelRun is a run's started channels: per provider, the proxy.
 type modelRun struct {
-	proxies map[string]*proxy.Proxy
+	proxies map[string]*broker.Proxy
 	chatgpt bool // the OpenAI channel is a ChatGPT login (codex only)
 	// anthropicOAuth: the Anthropic channel is a subscription token, which
 	// pi takes as ANTHROPIC_OAUTH_TOKEN (not an auth.json API key).
@@ -121,7 +130,7 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 	if len(r.cfg.Models) == 0 {
 		return nil, nil
 	}
-	m := &modelRun{proxies: map[string]*proxy.Proxy{}}
+	m := &modelRun{proxies: map[string]*broker.Proxy{}}
 	if modelSockets {
 		// A short private directory: Unix socket paths are limited to ~108
 		// bytes, which a run's state directory can come close to.
@@ -142,18 +151,26 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 			sock = filepath.Join(m.sockDir, name+".sock")
 			m.inSandbox[name] = agentboxAddr[name]
 		}
-		p, err := proxy.Start(proxy.Config{
+		// Only the proxy says which run a request is: the sandbox's own
+		// RunHeader is always dropped, and only a ledger gets one.
+		headers := http.Header{RunHeader: nil}
+		if ch.Ledger {
+			headers[RunHeader] = []string{runID}
+		}
+		p, err := broker.Start(broker.Config{
 			UnixSocket:    sock,
 			Upstream:      ch.Upstream,
 			ListenHost:    modelListenHost(),
 			AuthHeader:    ch.AuthHeader,
 			AuthValue:     ch.AuthValue,
 			Credential:    ch.Credential,
+			Headers:       headers,
 			PathPrefixes:  ch.Paths,
 			MaxRequestB:   64 << 20, // a long conversation's request is several MB
 			RatePerMinute: 600,
 			OnEvent: func(kind string) {
-				if kind != "forwarded" { // per request: too chatty
+				r.auditModel(runID, name, kind)
+				if kind != "forwarded" { // per request: too chatty for the log
 					r.emit(Event{Kind: "sandbox.model_" + kind, RunID: runID, ThreadID: threadID, Detail: name})
 				}
 			},

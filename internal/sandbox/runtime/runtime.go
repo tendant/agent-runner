@@ -29,6 +29,7 @@ import (
 	abadapter "github.com/agent-runner/agent-runner/internal/sandbox/agentbox"
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 )
 
 // Event is a focused observability record. It never carries environment
@@ -83,6 +84,8 @@ type Config struct {
 	LeaseTTL time.Duration
 	MaxQueue int
 	OnEvent  func(Event)
+	// Audit, when set, receives every run's security record (see audit.go).
+	Audit *audit.Recorder
 	// NewBackend overrides backend construction (tests, other backends).
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
@@ -238,11 +241,14 @@ type Runtime struct {
 	system   sandbox.SandboxSpec
 	evidence *conformance.Report
 	initErr  error
+
+	auditMu   sync.Mutex
+	auditRuns map[string]*auditRun // by RunID, from policy snapshot to finish
 }
 
 // New validates configuration. Mode off returns a passthrough runtime.
 func New(cfg Config) (*Runtime, error) {
-	r := &Runtime{cfg: cfg}
+	r := &Runtime{cfg: cfg, auditRuns: map[string]*auditRun{}}
 	if cfg.Mode == sandbox.ModeOff || cfg.Mode == "" {
 		r.cfg.Mode = sandbox.ModeOff
 		return r, nil
@@ -361,6 +367,7 @@ func Failed(err error) *Runtime {
 func (r *Runtime) Mode() sandbox.Mode { return r.cfg.Mode }
 
 func (r *Runtime) emit(e Event) {
+	r.auditLifecycle(e)
 	if r.cfg.OnEvent != nil {
 		r.cfg.OnEvent(e)
 	}
@@ -502,6 +509,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	egress := newEgressLog(func(kind, host string) {
 		r.emit(Event{Kind: kind, RunID: req.RunID, ThreadID: req.ThreadID, Detail: host})
 	})
+	egress.each = func(allowed bool, host string) { r.auditEgress(req.RunID, allowed, host) }
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)
@@ -517,6 +525,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "check failed: " + err.Error()})
 		return nil, &RejectedError{err}
 	}
+	r.auditPolicy(req, spec, res)
 	if err := sandbox.Admit(r.cfg.Mode, res); err != nil {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Backend: res.Backend, Detail: err.Error()})
 		return nil, &RejectedError{err}
