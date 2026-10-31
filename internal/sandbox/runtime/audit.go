@@ -8,7 +8,7 @@ import (
 )
 
 // The audit record (Config.Audit) is the runs' security evidence, for
-// AgentGate: each run's policy snapshot, its lifecycle, and every egress and
+// agent-gate: each run's policy snapshot, its lifecycle, and every egress and
 // model-channel decision. The slog events stay as they are; the record is
 // the complete one, keyed by the run's RunID.
 

@@ -7,7 +7,7 @@ import (
 )
 
 // The capability vocabulary lives in agentbox's capability package, shared
-// with AgentGate; these aliases keep the sandbox package's names.
+// with agent-gate; these aliases keep the sandbox package's names.
 type (
 	CapabilityID  = capability.ID
 	CapabilityDef = capability.Def

@@ -51,7 +51,7 @@ Other settings:
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
-* `AGENT_SANDBOX_AUDIT_DIR`: a directory recording every sandbox run for AgentGate (agentbox's
+* `AGENT_SANDBOX_AUDIT_DIR`: a directory recording every sandbox run for agent-gate (agentbox's
   `audit` schema, JSON Lines): its policy snapshot (the resolved spec and what the backend
   enforces), lifecycle, and every egress and model-channel decision. Names and ids only, never
   credentials or payloads. Unset: no record. A directory that cannot be opened rejects every
@@ -61,7 +61,7 @@ Other settings:
 * `AGENT_SANDBOX_AUDIT_SEGMENT`: one segment's size (`10m` when unset); a full segment is
   closed and the next started.
 * `AGENT_SANDBOX_AUDIT_KEEP`: how many segments are kept, the newest (`10` when unset, `0` for
-  all): about 100 MiB by default. AgentGate must read a segment before it is deleted; one it
+  all): about 100 MiB by default. agent-gate must read a segment before it is deleted; one it
   missed shows there as a gap in the record.
 * `AGENT_SANDBOX_LEDGER_URL`: ledger-gate's base URL. Model channels whose upstream has the same
   scheme and host (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, ...) tag every request with

@@ -3,7 +3,7 @@
 // The audit chain, end to end: a real sandbox (agentbox's real backend on
 // this host) runs an agent that calls its model through the broker to a real
 // ledger-gate and makes network connections, while the runtime writes the
-// audit record AgentGate ingests. Driven by agent-gate's e2e/local.sh, which
+// audit record agent-gate ingests. Driven by agent-gate's e2e/local.sh, which
 // starts ledger-gate and checks the result:
 //
 //	E2E_LEDGER_URL   ledger-gate base URL

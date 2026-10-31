@@ -112,7 +112,7 @@ type AgentConfig struct {
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
-	SandboxAuditDir     string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for AgentGate), as JSONL segments; unset: none
+	SandboxAuditDir     string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
 	SandboxAuditSegment string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
 	SandboxAuditKeep    string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
 	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
