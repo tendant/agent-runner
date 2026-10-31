@@ -17,6 +17,7 @@ outputs/
 uploads/
 .claude/
 internal/api/memory/
+internal/api/state/
 
 # IDE and editor files
 .idea/

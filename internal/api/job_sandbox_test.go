@@ -88,6 +88,7 @@ func TestJobRunsSandboxed(t *testing.T) {
 	cfg.TmpRoot = filepath.Join(dir, "tmp")
 	cfg.ReposFile = filepath.Join(dir, "repos.json")
 	cfg.SecretsFile = filepath.Join(dir, "secrets.json")
+	cfg.StateRoot = filepath.Join(dir, "state")
 	cfg.GitPushRetries, cfg.GitPushRetryDelaySeconds = 1, 0
 	repos.New(cfg.ReposFile).Put(repos.Repo{Name: "site", URL: bare, Push: true})
 

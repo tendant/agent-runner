@@ -46,7 +46,7 @@ const maxResponseEvents = 50
 
 // Message represents a single message in the conversation history
 type Message struct {
-	Role    string    `json:"role"`    // "user" or "assistant"
+	Role    string    `json:"role"` // "user" or "assistant"
 	Content string    `json:"content"`
 	Time    time.Time `json:"time"`
 }
@@ -81,8 +81,8 @@ type Session struct {
 	Source               string            `json:"source,omitempty"` // originating channel: api, telegram, wechat, stream, runner
 	ConvID               string            `json:"-"`                // originating conversation key for chat sessions; "" otherwise. Never exposed over HTTP.
 	Message              string            `json:"message"`
-	Messages             []Message         `json:"-"`                // conversation history (user/assistant messages)
-	PendingMsgs          []string          `json:"-"`                // messages queued for next iteration
+	Messages             []Message         `json:"-"` // conversation history (user/assistant messages)
+	PendingMsgs          []string          `json:"-"` // messages queued for next iteration
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
 	CommitMessagePrefix  string            `json:"commit_message_prefix"`

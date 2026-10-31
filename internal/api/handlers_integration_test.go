@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
@@ -49,6 +50,14 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() { os.RemoveAll(logsDir) })
 
+	// The sandbox's leases and homes (also written after a test returns),
+	// out of the source tree.
+	stateDir, err := os.MkdirTemp("", "agent-runner-test-state-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(stateDir) })
+
 	os.MkdirAll(repoCacheDir, 0755)
 
 	// Pin DATA_DIR so any config.ReloadFromEnv triggered by /set during tests
@@ -64,6 +73,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	cfg.MemoryDir = "memory"
 	cfg.OutputsRoot = filepath.Join(dir, "outputs")
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")
+	cfg.StateRoot = stateDir
 	cfg.ReposFile = filepath.Join(dir, "repos.json")
 	cfg.SecretsFile = filepath.Join(dir, "secrets.json")
 
@@ -275,6 +285,7 @@ func TestHandleRun_AtCapacity(t *testing.T) {
 	cfg.TmpRoot = tmpDir
 	cfg.MaxConcurrentJobs = 1
 	cfg.ReposFile = filepath.Join(dir, "repos.json")
+	cfg.StateRoot = filepath.Join(dir, "state")
 
 	jobManager := jobs.NewManager(cfg.JobRetentionSeconds, cfg.MaxConcurrentJobs)
 	t.Cleanup(jobManager.Stop)
@@ -641,6 +652,14 @@ func TestHandleAddMessage_InvalidJSON(t *testing.T) {
 
 func TestHandleStartAgent_IncludesMessageInHistory(t *testing.T) {
 	env := setupTestEnv(t)
+	// The start preflight wants the agent CLI on PATH: a stub, so the test
+	// neither depends on what this machine has installed nor runs it.
+	bin := t.TempDir()
+	stub := filepath.Join(bin, clisetup.ResolveCLI(env.handlers.config.Agent.CLI))
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	data, _ := json.Marshal(map[string]string{"message": "test task"})
 	req := httptest.NewRequest(http.MethodPost, "/agent", bytes.NewReader(data))

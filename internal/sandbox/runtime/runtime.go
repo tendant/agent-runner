@@ -59,8 +59,8 @@ type Config struct {
 	// EgressPorts: allowed destination ports for restricted egress (nil = default: 443,80 for strict; 443,80,22 for permissive)
 	EgressPorts []int
 	PolicyFile  string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
-	Memory     string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
-	PIDs       string // optional process/thread cap for every run; overrides the policy's pids
+	Memory      string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
+	PIDs        string // optional process/thread cap for every run; overrides the policy's pids
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
 	ScopedReads  bool
