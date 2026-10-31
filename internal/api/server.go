@@ -38,6 +38,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/wechat"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 )
 
 // Server represents the HTTP API server
@@ -125,6 +126,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/lock", handlers.HandleLock)
 	mux.HandleFunc("/lock/", handlers.HandleUnlock)
 	mux.HandleFunc("/locks", handlers.HandleListLocks)
+	mountAudit(mux, cfg.Agent.SandboxAuditDir)
 
 	// Apply middleware
 	var handler http.Handler = mux
@@ -564,6 +566,11 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
+		// agent-gate pulls the audit record every few seconds: only its
+		// failures are worth a line.
+		if strings.HasPrefix(r.URL.Path, "/audit/") && wrapped.statusCode < 400 {
+			return
+		}
 		slog.Info("http request",
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -571,6 +578,15 @@ func loggingMiddleware(next http.Handler) http.Handler {
 			"duration", time.Since(start),
 		)
 	})
+}
+
+// mountAudit serves the sandbox audit record dir, read-only, at /audit/
+// for agent-gate to pull (GET /audit/segments, /audit/segments/{name}):
+// behind API_KEY like every route but /health and /metrics.
+func mountAudit(mux *http.ServeMux, dir string) {
+	if dir != "" {
+		mux.Handle("/audit/", http.StripPrefix("/audit", audit.DirHandler(dir)))
+	}
 }
 
 // apiKeyMiddleware validates the X-API-Key header

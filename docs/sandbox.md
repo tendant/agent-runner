@@ -57,7 +57,10 @@ Other settings:
   credentials or payloads. Unset: no record. A directory that cannot be opened rejects every
   run. One agent-runner per directory; it is read-denied to runs.
   The record is kept as numbered segments (`00000000`, `00000001`, ...), as Prometheus keeps
-  its write-ahead log: appended to the newest, never renamed or rewritten.
+  its write-ahead log: appended to the newest, never renamed or rewritten. agent-gate pulls it
+  from the API, read-only and behind `API_KEY`: `GET /audit/segments` lists the segments,
+  `GET /audit/segments/{name}` serves one (Range requests resume from an offset). Without
+  `API_KEY` the API, and so the record, is reachable on loopback only.
 * `AGENT_SANDBOX_AUDIT_SEGMENT`: one segment's size (`10m` when unset); a full segment is
   closed and the next started.
 * `AGENT_SANDBOX_AUDIT_KEEP`: how many segments are kept, the newest (`10` when unset, `0` for

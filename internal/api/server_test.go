@@ -3,11 +3,13 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 )
 
 // TestRecoverMiddleware_CatchesPanic verifies a panicking handler is turned
@@ -107,5 +109,48 @@ func TestSameOriginMiddleware(t *testing.T) {
 		if w.Code != c.want {
 			t.Errorf("%s from %q: %d, want %d", c.method, c.origin, w.Code, c.want)
 		}
+	}
+}
+
+// The audit record is served read-only at /audit/, behind the API key.
+func TestAuditRoute(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "audit")
+	rec, err := audit.OpenDirRecorder(dir, "host", audit.DirOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Record(audit.Event{RunID: "r1", Type: audit.TypeSandboxCreated}, nil)
+	rec.Close()
+	mux := http.NewServeMux()
+	mountAudit(mux, dir)
+	srv := httptest.NewServer(apiKeyMiddleware("k", loggingMiddleware(mux)))
+	defer srv.Close()
+	get := func(path, key string) int {
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		if key != "" {
+			req.Header.Set("X-API-Key", key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get("/audit/segments", ""); code != http.StatusUnauthorized {
+		t.Errorf("without the key: %d", code)
+	}
+	if code := get("/audit/segments", "k"); code != http.StatusOK {
+		t.Errorf("list: %d", code)
+	}
+	if code := get("/audit/segments/"+audit.SegmentName(0), "k"); code != http.StatusOK {
+		t.Errorf("segment: %d", code)
+	}
+	empty := http.NewServeMux()
+	mountAudit(empty, "")
+	rec404 := httptest.NewRecorder()
+	empty.ServeHTTP(rec404, httptest.NewRequest("GET", "/audit/segments", nil))
+	if rec404.Code != http.StatusNotFound {
+		t.Error("no audit dir, yet /audit/ is served")
 	}
 }
