@@ -113,6 +113,7 @@ type AgentConfig struct {
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	SandboxAuditFile    string   // AGENT_SANDBOX_AUDIT_FILE — JSONL security record of every sandbox run (for AgentGate); unset: none
+	SandboxAuditMax     string   // AGENT_SANDBOX_AUDIT_MAX — size cap of the audit file ("1g", the default; "0": none)
 	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
@@ -421,6 +422,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
 	cfg.Agent.SandboxAuditFile = envOrDefault("AGENT_SANDBOX_AUDIT_FILE", cfg.Agent.SandboxAuditFile)
+	cfg.Agent.SandboxAuditMax = envOrDefault("AGENT_SANDBOX_AUDIT_MAX", cfg.Agent.SandboxAuditMax)
 	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)

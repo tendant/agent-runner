@@ -41,7 +41,11 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	// that cannot be opened rejects every run, like any other misconfiguration.
 	var rec *audit.Recorder
 	if f := cfg.Agent.SandboxAuditFile; f != "" {
-		if rec, err = audit.OpenFileRecorder(f, "agent-runner:"+host, audit.FileOptions{}); err != nil {
+		max, err := auditMax(cfg.Agent.SandboxAuditMax)
+		if err == nil {
+			rec, err = audit.OpenFileRecorder(f, "agent-runner:"+host, audit.FileOptions{MaxBytes: max})
+		}
+		if err != nil {
 			slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 			return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_AUDIT_FILE: %w", err))
 		}
@@ -365,4 +369,20 @@ func sandboxSeedDir(cfg *config.Config, host, isolated string) string {
 		return ""
 	}
 	return filepath.Join(home, host)
+}
+
+// auditMax is the audit file's size cap: AGENT_SANDBOX_AUDIT_MAX, 1 GiB when
+// unset, none when "0". Past it, runs lose events, each marked on record.
+func auditMax(s string) (int64, error) {
+	switch strings.TrimSpace(s) {
+	case "":
+		return 1 << 30, nil
+	case "0":
+		return 0, nil
+	}
+	n, err := sandboxrt.ParseBytes(s)
+	if err != nil {
+		return 0, fmt.Errorf("AGENT_SANDBOX_AUDIT_MAX: %w", err)
+	}
+	return n, nil
 }
