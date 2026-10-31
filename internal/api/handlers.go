@@ -634,7 +634,7 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 	}
 	runCtx := ctx
 	if h.sandbox != nil && h.sandbox.Mode() != sandbox.ModeOff {
-		run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: "job-" + jobID, RunID: "job-" + jobID, Workspace: workspacePath, MaxSecond: h.config.MaxRuntimeSeconds})
+		run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: "job-" + jobID, RunID: "job-" + jobID, Project: jobProject, Workspace: workspacePath, MaxSecond: h.config.MaxRuntimeSeconds})
 		if err != nil {
 			h.failJob(jobID, logData, "sandbox: "+err.Error(), "SANDBOX_REJECTED")
 			return

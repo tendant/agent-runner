@@ -112,6 +112,7 @@ type AgentConfig struct {
 	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
 	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
+	Name                string   // AGENT_NAME — this agent's name, on every sandboxed run's audit record (default: INSTANCE)
 	SandboxAuditDir     string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
 	SandboxAuditSegment string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
 	SandboxAuditKeep    string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
@@ -422,6 +423,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
+	cfg.Agent.Name = envOrDefault("AGENT_NAME", envOrDefault("INSTANCE", cfg.Agent.Name))
 	cfg.Agent.SandboxAuditDir = envOrDefault("AGENT_SANDBOX_AUDIT_DIR", cfg.Agent.SandboxAuditDir)
 	cfg.Agent.SandboxAuditSegment = envOrDefault("AGENT_SANDBOX_AUDIT_SEGMENT", cfg.Agent.SandboxAuditSegment)
 	cfg.Agent.SandboxAuditKeep = envOrDefault("AGENT_SANDBOX_AUDIT_KEEP", cfg.Agent.SandboxAuditKeep)

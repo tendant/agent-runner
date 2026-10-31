@@ -15,6 +15,7 @@ import (
 // auditRun is a run the record is following.
 type auditRun struct {
 	thread  string
+	project string
 	policy  string // the snapshot digest its events carry
 	started bool
 }
@@ -35,7 +36,7 @@ func (r *Runtime) auditPolicy(req BeginReq, spec sandbox.SandboxSpec, res sandbo
 		slog.Error("sandbox audit: policy snapshot not recorded", "run", req.RunID, "error", err)
 	}
 	r.auditMu.Lock()
-	r.auditRuns[req.RunID] = &auditRun{thread: req.ThreadID, policy: id}
+	r.auditRuns[req.RunID] = &auditRun{thread: req.ThreadID, project: req.Project, policy: id}
 	r.auditMu.Unlock()
 }
 
@@ -88,9 +89,18 @@ func (r *Runtime) auditLifecycle(e Event) {
 	if a := r.auditRuns[e.RunID]; a != nil && typ == audit.TypeSandboxCreated {
 		a.started = true
 	}
+	// Whose run it is, where the record starts: created, or refused.
+	var project string
+	if a := r.auditRuns[e.RunID]; a != nil {
+		project = a.project
+	}
 	r.auditMu.Unlock()
 	for _, id := range runs {
-		r.audit(id, typ, audit.LifecycleDetail{Backend: e.Backend, ThreadID: e.ThreadID, Reason: e.Detail})
+		d := audit.LifecycleDetail{Backend: e.Backend, ThreadID: e.ThreadID, Reason: e.Detail}
+		if typ == audit.TypeSandboxCreated || typ == audit.TypeSandboxRejected {
+			d.Agent, d.Project = r.cfg.Agent, project
+		}
+		r.audit(id, typ, d)
 	}
 	r.auditMu.Lock()
 	// A run's record ends when it finishes, or is refused before starting

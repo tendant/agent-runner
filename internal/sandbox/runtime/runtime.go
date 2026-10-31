@@ -86,6 +86,8 @@ type Config struct {
 	OnEvent  func(Event)
 	// Audit, when set, receives every run's security record (see audit.go).
 	Audit *audit.Recorder
+	// Agent names the agent whose runs these are, in the audit record.
+	Agent string
 	// NewBackend overrides backend construction (tests, other backends).
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
@@ -377,6 +379,7 @@ func (r *Runtime) emit(e Event) {
 type BeginReq struct {
 	ThreadID  string
 	RunID     string
+	Project   string          // the project the run works on, if one (the audit record says so)
 	Workspace string          // host path of the agent's working directory
 	Layers    []sandbox.Layer // bot/agent/workspace/run layers after the system layer
 	MaxSecond int             // hard wall-clock for the whole run (0 = none)

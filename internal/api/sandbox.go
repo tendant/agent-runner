@@ -82,6 +82,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
 		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
 		Audit:        rec,
+		Agent:        cfg.Agent.Name,
 		OnEvent: func(e sandboxrt.Event) {
 			// Names and ids only; never environment values or secrets.
 			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)

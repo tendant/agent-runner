@@ -80,6 +80,7 @@ func TestAuditChain(t *testing.T) {
 			sandboxrt.ProviderAnthropic: {Upstream: upstream, AuthHeader: "x-api-key", AuthValue: key, Paths: sandboxrt.AnthropicPaths, Ledger: true},
 		},
 		Audit:   rec,
+		Agent:   "e2e-agent",
 		OnEvent: func(e sandboxrt.Event) { t.Logf("event %s %s %s", e.Kind, e.Backend, e.Detail) },
 	})
 	if err != nil {
@@ -90,7 +91,7 @@ func TestAuditChain(t *testing.T) {
 	if err := os.WriteFile(agent, []byte(agentScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run, err := rt.Begin(context.Background(), sandboxrt.BeginReq{RunID: runID, ThreadID: "e2e-thread", Workspace: ws, MaxSecond: 300})
+	run, err := rt.Begin(context.Background(), sandboxrt.BeginReq{RunID: runID, ThreadID: "e2e-thread", Project: "e2e-project", Workspace: ws, MaxSecond: 300})
 	if err != nil {
 		t.Fatal(err)
 	}

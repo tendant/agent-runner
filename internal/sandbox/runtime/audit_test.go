@@ -63,8 +63,8 @@ func types(evs []audit.Event) []string {
 }
 
 func TestAuditRecordsARun(t *testing.T) {
-	rt, read, _ := auditRT(t, sandbox.ModePermissive, []sandbox.Gap{{Capability: sandbox.CapResourceMemory, Reason: "no cgroup"}}, Config{})
-	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, []sandbox.Gap{{Capability: sandbox.CapResourceMemory, Reason: "no cgroup"}}, Config{Agent: "travel"})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Project: "web-app", Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +108,14 @@ func TestAuditRecordsARun(t *testing.T) {
 	}
 	var created audit.LifecycleDetail
 	json.Unmarshal(evs[1].Detail, &created)
-	if created.Backend != "fake" || created.ThreadID != "t1" || created.Reason != "unenforced: resource.memory" {
+	if created.Backend != "fake" || created.ThreadID != "t1" || created.Reason != "unenforced: resource.memory" ||
+		created.Agent != "travel" || created.Project != "web-app" {
 		t.Errorf("created detail %s", evs[1].Detail)
+	}
+	var closed audit.LifecycleDetail
+	json.Unmarshal(evs[len(evs)-1].Detail, &closed)
+	if closed.Agent != "" || closed.Project != "" {
+		t.Errorf("whose run it is belongs on the start, not every lifecycle event: %s", evs[len(evs)-1].Detail)
 	}
 	if len(rt.auditRuns) != 0 {
 		t.Errorf("finished run still followed: %v", rt.auditRuns)
