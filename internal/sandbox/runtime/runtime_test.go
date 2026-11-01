@@ -331,4 +331,8 @@ func TestEgressMapping(t *testing.T) {
 	if _, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", EgressAllow: []string{"*.*.com"}}); err == nil {
 		t.Error("a bad egress pattern must fail closed")
 	}
+	_, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", EgressAllow: []string{"@github", "@nope"}})
+	if err == nil || !strings.Contains(err.Error(), "@nope") || !strings.Contains(err.Error(), "@github") {
+		t.Errorf("an unknown set must fail closed, naming the known ones: %v", err)
+	}
 }

@@ -103,9 +103,12 @@ type PathGrant struct {
 type NetworkPolicy struct {
 	Egress      EgressMode `json:"egress,omitempty"`
 	EgressAllow []string   `json:"egress_allow,omitempty"` // hosts, *.wildcards, CIDRs/IPs, @sets
-	DNS         DNSMode    `json:"dns,omitempty"`
-	Listen      *bool      `json:"listen,omitempty"` // nil = inherit; root default false
-	Expose      []int      `json:"expose,omitempty"`
+	// EgressSets are the definitions of the @sets EgressAllow names, set on
+	// a run's resolved spec (UsedSets): what each meant for that run.
+	EgressSets map[string][]string `json:"egress_sets,omitempty"`
+	DNS        DNSMode             `json:"dns,omitempty"`
+	Listen     *bool               `json:"listen,omitempty"` // nil = inherit; root default false
+	Expose     []int               `json:"expose,omitempty"`
 }
 
 // ResourcePolicy caps resources; zero means unset (inherit / unlimited at root).

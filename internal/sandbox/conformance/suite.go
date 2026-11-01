@@ -364,6 +364,20 @@ if os.fork()==0:
 			}
 			return nil
 		}},
+		// A host granted only through an @set reaches the gateway with the
+		// set's definition, as a run's resolved spec carries it.
+		{"net.restricted_set", func(t *x) error {
+			if err := needInternet(); err != nil {
+				return err
+			}
+			s := restricted(t, "@probe")
+			s.Network.EgressSets = map[string][]string{"@probe": {"example.com"}}
+			out, _ := t.exec(s, `curl -sS -m 15 -o /dev/null -w 'HTTP%{http_code}' https://example.com/ 2>&1`)
+			if !strings.Contains(out, "HTTP200") {
+				return fmt.Errorf("a host granted by a set is unreachable: %s", tail(out, 200))
+			}
+			return nil
+		}},
 		{"net.restricted_deny", func(t *x) error {
 			if err := needInternet(); err != nil {
 				return err

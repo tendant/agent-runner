@@ -329,8 +329,8 @@ func New(cfg Config) (*Runtime, error) {
 			}
 		}
 		slog.Info("sandbox egress allow", "mode", r.cfg.Mode, "hosts", r.system.Network.EgressAllow)
-		if _, err := sandbox.NewHostMatcher(r.system.Network.EgressAllow, nil); err != nil {
-			return nil, fmt.Errorf("sandbox egress allow: %w", err)
+		if _, err := sandbox.NewHostMatcher(r.system.Network.EgressAllow, sandbox.EgressSets); err != nil {
+			return nil, fmt.Errorf("sandbox egress allow: %w (sets: %s)", err, sandbox.SetNames())
 		}
 	}
 	switch cfg.EgressMode {
@@ -461,6 +461,8 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: err.Error()})
 		return nil, &RejectedError{err}
 	}
+	// What the allowlist's @sets mean, for the gateway and the record alike.
+	spec.Network.EgressSets = sandbox.UsedSets(spec.Network.EgressAllow)
 
 	base := filepath.Join(r.cfg.StateDir, "runs", safe(req.RunID))
 	roots := map[string]string{

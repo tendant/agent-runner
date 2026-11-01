@@ -111,9 +111,16 @@ gateway (`internal/sandbox/egress`), both in the runner.
 
 **Egress.** Policy `outbound` becomes `restricted` egress through the gateway. The gateway
 resolves names itself and allows ports 443 and 80. By default it allows **any public host**;
-`AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...` narrows that to listed hosts. Private,
-loopback, link-local and metadata addresses are refused either way, also when a name resolves to
-one. git over SSH (port 22) is refused: use HTTPS remotes. How connections reach the gateway,
+`AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...` narrows that to listed hosts. A
+`*.example.com` wildcard grants one label under the domain (`a.example.com`, not `example.com`
+itself nor `a.b.example.com`). Named sets keep a list short: `@github`, `@npm`, `@pypi`, `@go`,
+`@gitlab`, `@cloudflare`, `@anthropic`, `@openai`, `@deepseek` stand for their services' hosts
+(`internal/sandbox/egresssets.go`, the one place to change them), e.g.
+`AGENT_SANDBOX_EGRESS_ALLOW=@github,@npm,*.variablename.com`. An unknown set is refused at startup.
+Each run's policy snapshot records what the sets it used meant (`egress_sets`), so the audit
+record says which hosts were granted. agent-gate's outbound hosts page lists what each agent
+actually reached, to start a list from. Private, loopback, link-local and metadata addresses are
+refused either way, also when a name resolves to one. git over SSH (port 22) is refused: use HTTPS remotes. How connections reach the gateway,
 `AGENT_SANDBOX_EGRESS_MODE`:
 
 * **`transparent`** (Linux; what `auto`, the default, picks where the host supports it):

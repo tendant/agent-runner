@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -377,5 +378,24 @@ func TestLedgerMeteredCallCarriesItsID(t *testing.T) {
 	}
 	if byProvider[ProviderOpenAI].Metering != audit.MeteringNone {
 		t.Errorf("declared metering not on the call: %+v", byProvider[ProviderOpenAI])
+	}
+}
+
+// A run's policy snapshot records what the @sets of its allowlist meant.
+func TestAuditSnapshotDefinesEgressSets(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{EgressAllow: []string{"@github", "api.example.com"}})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Finish()
+	var snap struct {
+		Spec sandbox.SandboxSpec
+	}
+	json.Unmarshal(read()[0].Detail, &snap)
+	n := snap.Spec.Network
+	if !slices.Equal(n.EgressAllow, []string{"@github", "api.example.com"}) || len(n.EgressSets) != 1 ||
+		!slices.Equal(n.EgressSets["@github"], sandbox.EgressSets["@github"]) {
+		t.Errorf("snapshot network %+v", n)
 	}
 }
