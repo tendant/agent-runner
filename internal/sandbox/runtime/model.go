@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
+	"github.com/tendant/agentbox/pkg/agentbox/audit"
 	"github.com/tendant/agentbox/pkg/agentbox/broker"
 )
 
@@ -64,15 +65,56 @@ type ModelChannel struct {
 	// upstream is ChatGPT's codex backend, which only codex speaks.
 	ChatGPT bool
 	// Ledger marks an upstream that is ledger-gate: the proxy tags every
-	// request with the run's id (RunHeader), which ledger-gate records
-	// for the audit and never passes on to the provider.
+	// request with the run's id (RunHeader) and its own request id
+	// (RequestHeader), which ledger-gate records for the audit and never
+	// passes on to the provider.
 	Ledger bool
+	// Metering is how the channel's calls are metered, declared in each
+	// run's policy snapshot (audit.MeteringLedger, MeteringBroker,
+	// MeteringNone). Empty: see MeteringMode.
+	Metering string
+}
+
+// MeteringMode is the channel's metering: Metering when set, else ledger
+// for a ledger-gate upstream and broker for any other, since the proxy reads
+// every response it forwards.
+func (ch *ModelChannel) MeteringMode() string {
+	switch {
+	case ch.Metering != "":
+		return ch.Metering
+	case ch.Ledger:
+		return audit.MeteringLedger
+	}
+	return audit.MeteringBroker
+}
+
+// billing is how the channel is paid for: a subscription login (Claude's
+// setup-token, a ChatGPT login) is flat-rate, a key per token.
+func (ch *ModelChannel) billing() string {
+	if ch.OAuth || ch.ChatGPT {
+		return audit.BillingSubscription
+	}
+	return audit.BillingAPI
+}
+
+// usageFormat is how provider name's responses report usage: Anthropic's
+// Messages API, or OpenAI's (the OpenAI-compatible providers too).
+func usageFormat(name string) broker.UsageFormat {
+	if name == ProviderAnthropic {
+		return broker.UsageAnthropic
+	}
+	return broker.UsageOpenAI
 }
 
 // RunHeader carries a run's id to a ledger-gate upstream. The proxy
 // sets it, replacing any the sandbox sent; ledger-gate trusts it only from
 // keys marked to assert it.
 const RunHeader = "Agentbox-Run-Id"
+
+// RequestHeader carries the proxy's id for one call to a ledger-gate
+// upstream, as RunHeader does the run's: the id on the call's
+// model_forwarded event, so the two can be matched.
+const RequestHeader = "Agentbox-Request-Id"
 
 // Request paths per provider: the claude CLI checks /api/hello and posts
 // messages (count_tokens is under it); codex and pi use the Responses and
@@ -154,27 +196,49 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		// Only the proxy says which run a request is: the sandbox's own
 		// RunHeader is always dropped, and only a ledger gets one.
 		headers := http.Header{RunHeader: nil}
+		var requestHeader string
 		if ch.Ledger {
+			// The broker sets the call's id, replacing any the sandbox sent.
 			headers[RunHeader] = []string{runID}
+			requestHeader = RequestHeader
+		} else {
+			headers[RequestHeader] = nil
 		}
-		p, err := broker.Start(broker.Config{
-			UnixSocket:    sock,
-			Upstream:      ch.Upstream,
-			ListenHost:    modelListenHost(),
-			AuthHeader:    ch.AuthHeader,
-			AuthValue:     ch.AuthValue,
-			Credential:    ch.Credential,
-			Headers:       headers,
-			PathPrefixes:  ch.Paths,
-			MaxRequestB:   64 << 20, // a long conversation's request is several MB
-			RatePerMinute: 600,
+		metering, billing := ch.MeteringMode(), ch.billing()
+		cfg := broker.Config{
+			UnixSocket:      sock,
+			Upstream:        ch.Upstream,
+			ListenHost:      modelListenHost(),
+			AuthHeader:      ch.AuthHeader,
+			AuthValue:       ch.AuthValue,
+			Credential:      ch.Credential,
+			Headers:         headers,
+			PathPrefixes:    ch.Paths,
+			MaxRequestB:     64 << 20, // a long conversation's request is several MB
+			RatePerMinute:   600,
+			RequestIDHeader: requestHeader,
 			OnEvent: func(kind string) {
 				r.auditModel(runID, name, kind)
 				if kind != "forwarded" { // per request: too chatty for the log
 					r.emit(Event{Kind: "sandbox.model_" + kind, RunID: runID, ThreadID: threadID, Detail: name})
 				}
 			},
-		})
+			OnForward: func(id string) {
+				r.audit(runID, audit.TypeModelForwarded, audit.ModelDetail{Provider: name, Reason: "forwarded", Metering: metering, RequestID: id})
+			},
+		}
+		// The use of a broker-metered call is on record only because the
+		// proxy reads it from the response.
+		if metering == audit.MeteringBroker {
+			cfg.UsageFormat = usageFormat(name)
+			cfg.OnUsage = func(id string, u broker.Usage) {
+				r.audit(runID, audit.TypeModelUsage, audit.UsageDetail{RequestID: id, Provider: name, Model: u.Model,
+					InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
+					CacheReadTokens: u.CacheReadTokens, CacheWriteTokens: u.CacheWriteTokens,
+					Billing: billing, Truncated: u.Truncated})
+			}
+		}
+		p, err := broker.Start(cfg)
 		if err != nil {
 			m.close()
 			return nil, err

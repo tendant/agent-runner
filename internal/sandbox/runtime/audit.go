@@ -28,6 +28,14 @@ func (r *Runtime) auditPolicy(req BeginReq, spec sandbox.SandboxSpec, res sandbo
 		return
 	}
 	snap, err := audit.NewPolicySnapshot(res.Backend, string(r.cfg.Mode), sandbox.RegistryVersion, spec, res)
+	if len(r.cfg.Models) > 0 {
+		// How each provider's calls will be metered, declared before the
+		// run: agent-gate judges every model_forwarded against it.
+		snap.Metering = map[string]string{}
+		for name, ch := range r.cfg.Models {
+			snap.Metering[name] = ch.MeteringMode()
+		}
+	}
 	var id string
 	if err == nil {
 		id, err = r.cfg.Audit.RecordPolicy(req.RunID, snap)
@@ -120,13 +128,14 @@ func (r *Runtime) auditEgress(runID string, allowed bool, host string) {
 	r.audit(runID, typ, audit.NetworkDetail{Destination: host})
 }
 
-// auditModel records one decision of a run's model channel (broker kinds:
-// forwarded, denied, limit, credential_error).
+// auditModel records one decision of a run's model channel that refused a
+// request (broker kinds: denied, limit, credential_error). A forwarded one
+// is recorded by the channel's OnForward, with its metering and request id.
 func (r *Runtime) auditModel(runID, provider, kind string) {
 	typ := audit.TypeModelDenied
 	switch kind {
 	case "forwarded":
-		typ = audit.TypeModelForwarded
+		return
 	case "limit":
 		typ = audit.TypeModelLimitHit
 	}

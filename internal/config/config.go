@@ -118,6 +118,7 @@ type AgentConfig struct {
 	SandboxAuditSegment string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
 	SandboxAuditKeep    string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
 	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
+	SandboxMetering     []string // AGENT_SANDBOX_METERING — provider=ledger|broker|none, how a channel's calls are metered on the audit record (default: ledger for a ledger-gate upstream, else broker)
 	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
 	SandboxReadAllow    []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
@@ -433,6 +434,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxAuditSegment = envOrDefault("AGENT_SANDBOX_AUDIT_SEGMENT", cfg.Agent.SandboxAuditSegment)
 	cfg.Agent.SandboxAuditKeep = envOrDefault("AGENT_SANDBOX_AUDIT_KEEP", cfg.Agent.SandboxAuditKeep)
 	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)
+	cfg.Agent.SandboxMetering = envSliceOrDefault("AGENT_SANDBOX_METERING", cfg.Agent.SandboxMetering)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)

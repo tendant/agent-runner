@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +265,117 @@ func TestLedgerChannelCarriesRunID(t *testing.T) {
 	resp.Body.Close()
 	if *directGot != "" {
 		t.Errorf("a sandbox-sent %s reached an unmarked channel: %q", RunHeader, *directGot)
+	}
+}
+
+// usageUpstream answers like Anthropic's Messages API, with usage, and keeps
+// the request id header each call carried.
+func usageUpstream(t *testing.T) (*url.URL, *[]string) {
+	t.Helper()
+	var ids []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ids = append(ids, r.Header.Get(RequestHeader))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"claude-x","usage":{"input_tokens":12,"output_tokens":34,"cache_read_input_tokens":500}}`))
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	return u, &ids
+}
+
+func modelEvents(evs []audit.Event) (snap audit.PolicySnapshot, fwd []audit.ModelDetail, use []audit.UsageDetail) {
+	for _, e := range evs {
+		switch e.Type {
+		case audit.TypePolicySnapshot:
+			json.Unmarshal(e.Detail, &snap)
+		case audit.TypeModelForwarded:
+			var d audit.ModelDetail
+			json.Unmarshal(e.Detail, &d)
+			fwd = append(fwd, d)
+		case audit.TypeModelUsage:
+			var d audit.UsageDetail
+			json.Unmarshal(e.Detail, &d)
+			use = append(use, d)
+		}
+	}
+	return snap, fwd, use
+}
+
+// A call no ledger sees is metered by the broker: the snapshot declares it,
+// model_forwarded names the call, and its usage follows under the same id,
+// billed as the channel is paid (a subscription token here).
+func TestBrokerMeteredCallRecordsItsUsage(t *testing.T) {
+	up, ids := usageUpstream(t)
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Models: map[string]*ModelChannel{
+		ProviderAnthropic: {Upstream: up, AuthHeader: "Authorization", AuthValue: "Bearer sub-token", Paths: AnthropicPaths, OAuth: true},
+	}})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := run.model.proxies[ProviderAnthropic]
+	if code := post(t, p.BaseURL()+"/v1/messages", p.Token()); code != 200 {
+		t.Fatalf("forwarded request: %d", code)
+	}
+	run.Finish()
+
+	snap, fwd, use := modelEvents(read())
+	if snap.Metering[ProviderAnthropic] != audit.MeteringBroker {
+		t.Errorf("snapshot metering %v", snap.Metering)
+	}
+	if len(fwd) != 1 || fwd[0].Metering != audit.MeteringBroker || !strings.HasPrefix(fwd[0].RequestID, "req_") {
+		t.Fatalf("model_forwarded %+v", fwd)
+	}
+	want := audit.UsageDetail{RequestID: fwd[0].RequestID, Provider: ProviderAnthropic, Model: "claude-x",
+		InputTokens: 12, OutputTokens: 34, CacheReadTokens: 500, Billing: audit.BillingSubscription}
+	if len(use) != 1 || use[0] != want {
+		t.Errorf("model_usage %+v, want %+v", use, want)
+	}
+	if (*ids)[0] != "" {
+		t.Errorf("a provider got the broker's request id %q", (*ids)[0])
+	}
+}
+
+// A ledger channel's call is metered by ledger-gate: it gets the call's id
+// next to the run's, and the record expects the ledger row, not a usage
+// event. AGENT_SANDBOX_METERING can declare another mode.
+func TestLedgerMeteredCallCarriesItsID(t *testing.T) {
+	up, ids := usageUpstream(t)
+	direct, _ := usageUpstream(t)
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Models: map[string]*ModelChannel{
+		ProviderAnthropic: {Upstream: up, AuthHeader: "x-api-key", AuthValue: "ledger-key", Paths: AnthropicPaths, Ledger: true},
+		ProviderOpenAI:    {Upstream: direct, AuthHeader: "Authorization", AuthValue: "Bearer k", Paths: OpenAIPaths, Metering: audit.MeteringNone},
+	}})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := run.model.proxies[ProviderAnthropic]
+	req, _ := http.NewRequest("POST", p.BaseURL()+"/v1/messages", strings.NewReader("{}"))
+	req.Header.Set("x-api-key", p.Token())
+	req.Header.Set(RequestHeader, "req_forged")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	o := run.model.proxies[ProviderOpenAI]
+	post(t, o.BaseURL()+"/v1/chat/completions", o.Token())
+	run.Finish()
+
+	snap, fwd, use := modelEvents(read())
+	if snap.Metering[ProviderAnthropic] != audit.MeteringLedger || snap.Metering[ProviderOpenAI] != audit.MeteringNone {
+		t.Errorf("snapshot metering %v", snap.Metering)
+	}
+	if len(fwd) != 2 || len(use) != 0 {
+		t.Fatalf("forwarded %+v, usage %+v: neither ledger nor none calls get usage events", fwd, use)
+	}
+	byProvider := map[string]audit.ModelDetail{fwd[0].Provider: fwd[0], fwd[1].Provider: fwd[1]}
+	if a := byProvider[ProviderAnthropic]; a.Metering != audit.MeteringLedger || (*ids)[0] != a.RequestID {
+		t.Errorf("ledger got request id %q for call %+v", (*ids)[0], a)
+	}
+	if byProvider[ProviderOpenAI].Metering != audit.MeteringNone {
+		t.Errorf("declared metering not on the call: %+v", byProvider[ProviderOpenAI])
 	}
 }

@@ -78,7 +78,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EnvAllow:     cfg.Agent.SandboxEnvAllow,
 		PrivatePaths: sandboxPrivatePaths(cfg),
 		Claude:       sandboxClaudeSeed(cfg),
-		Models:       ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL),
+		Models:       meteredChannels(ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL), cfg.Agent.SandboxMetering),
 		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
 		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
 		Audit:        rec,
@@ -327,6 +327,30 @@ func ledgerChannels(chs map[string]*sandboxrt.ModelChannel, ledgerURL string) ma
 	}
 	if !linked {
 		slog.Warn("sandbox: no model channel goes to AGENT_SANDBOX_LEDGER_URL; model calls are not linked to runs", "ledger", ledgerURL)
+	}
+	return chs
+}
+
+// meteredChannels sets the metering each AGENT_SANDBOX_METERING entry
+// (provider=ledger|broker|none) declares; the others keep the default
+// (sandboxrt.ModelChannel.MeteringMode). Each run's policy snapshot carries
+// the result, and agent-gate expects the evidence it names: a ledger row, or
+// a usage event, or none.
+func meteredChannels(chs map[string]*sandboxrt.ModelChannel, entries []string) map[string]*sandboxrt.ModelChannel {
+	for _, e := range entries {
+		name, mode, _ := strings.Cut(strings.TrimSpace(e), "=")
+		ch := chs[name]
+		switch {
+		case !audit.ValidMetering(mode):
+			slog.Warn("sandbox: AGENT_SANDBOX_METERING entry ignored: the mode is ledger, broker or none", "entry", e)
+		case ch == nil:
+			slog.Warn("sandbox: AGENT_SANDBOX_METERING names a provider with no model channel", "entry", e)
+		default:
+			if mode == audit.MeteringLedger && !ch.Ledger {
+				slog.Warn("sandbox: AGENT_SANDBOX_METERING declares ledger metering for a channel that does not go to AGENT_SANDBOX_LEDGER_URL: agent-gate will find its calls missing from the ledger", "provider", name)
+			}
+			ch.Metering = mode
+		}
 	}
 	return chs
 }

@@ -30,6 +30,29 @@ func TestLedgerChannels(t *testing.T) {
 	}
 }
 
+// AGENT_SANDBOX_METERING overrides a channel's default metering; an entry
+// with a bad mode or for a provider without a channel changes nothing.
+func TestMeteredChannels(t *testing.T) {
+	chs := map[string]*sandboxrt.ModelChannel{
+		"anthropic": {},
+		"deepseek":  {},
+		"openai":    {Ledger: true},
+	}
+	meteredChannels(chs, []string{"deepseek=none", " anthropic=proxied", "gemini=none", "openai"})
+	if got := chs["deepseek"].MeteringMode(); got != audit.MeteringNone {
+		t.Errorf("deepseek: %s, want none as declared", got)
+	}
+	if got := chs["anthropic"].MeteringMode(); got != audit.MeteringBroker {
+		t.Errorf("anthropic: %s, want the default broker (bad mode ignored)", got)
+	}
+	if got := chs["openai"].MeteringMode(); got != audit.MeteringLedger {
+		t.Errorf("openai: %s, want the default ledger (an entry without a mode is ignored)", got)
+	}
+	if _, ok := chs["gemini"]; ok {
+		t.Error("an entry for a provider without a channel added one")
+	}
+}
+
 func TestAuditOptions(t *testing.T) {
 	for _, c := range []struct {
 		segment, keep string

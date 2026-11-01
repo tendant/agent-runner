@@ -72,8 +72,18 @@ Other settings:
   missed shows there as a gap in the record.
 * `AGENT_SANDBOX_LEDGER_URL`: ledger-gate's base URL. Model channels whose upstream has the same
   scheme and host (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, ...) tag every request with
-  `Agentbox-Run-Id: <run id>`, so ledger-gate can link its cost records to runs. The proxy always
-  drops an `Agentbox-Run-Id` the sandbox sends; other channels never carry one.
+  `Agentbox-Run-Id: <run id>`, so ledger-gate can link its cost records to runs, and
+  `Agentbox-Request-Id: <the call's id>`, the id on the call's `model_forwarded` event. The proxy
+  always drops either header the sandbox sends; other channels never carry them.
+* `AGENT_SANDBOX_METERING`: how each model channel's calls are metered on the record
+  (`provider=ledger|broker|none`, comma-separated). By default a channel to
+  `AGENT_SANDBOX_LEDGER_URL` is `ledger` (ledger-gate's row is the evidence) and every other is
+  `broker`: the proxy reads each response's token usage as it passes and records a `model_usage`
+  event under the call's id, billed `subscription` for a Claude setup-token or ChatGPT login and
+  `api` otherwise. `none` records the call only. Each run's policy snapshot declares the modes, and
+  agent-gate expects the evidence each names (agent-gate's `metering-design.md`). A Chat
+  Completions stream reports usage only when its client asks for it; without it the usage is
+  recorded as truncated.
 * `AGENT_SANDBOX_BACKEND`: unset or `agentbox`. The isobox values (`gvisor`, `seatbelt`) are
   refused: isobox was removed. `AGENT_SANDBOX_READ` accepts only `scoped`, the default.
 
