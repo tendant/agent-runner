@@ -51,12 +51,23 @@ type Thread struct {
 	activeSessionID string
 	// runNote is put at the top of the next run's prompt, once (see
 	// SetRunNote); not persisted.
-	runNote   string
+	runNote string
+	// Scope is the chat the thread belongs to, for the record of its
+	// messages (see Recorder): an agent-stream channel; "" = the thread is
+	// its own chat (Telegram, WeChat).
+	Scope string `json:"scope,omitempty"`
+	// record keeps each message beyond the thread (Manager.SetRecorder).
+	record    Recorder
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 const maxMessages = 20
+
+// Recorder keeps a thread's messages, as they were said, beyond the
+// thread's own history, which is compacted and forgotten when idle
+// (internal/chatlog). key is the thread's ChatID.
+type Recorder func(scope, key string, m Message)
 
 // Summarizer can condense thread history into a short summary.
 type Summarizer interface {
@@ -91,7 +102,15 @@ func (c *Thread) LastUserMessageIsAlert() bool {
 
 func (c *Thread) addMessage(m Message) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	record, scope, key := c.record, c.Scope, c.ChatID
+	c.appendMessage(m)
+	c.mu.Unlock()
+	if record != nil {
+		record(scope, key, m)
+	}
+}
+
+func (c *Thread) appendMessage(m Message) {
 	role, content := m.Role, m.Content
 	c.Messages = append(c.Messages, m)
 	if len(c.Messages) > maxMessages {
@@ -144,6 +163,13 @@ func (c *Thread) CompactWithSummary(summary string, keepRecent int) {
 	recent := make([]Message, keepRecent)
 	copy(recent, c.Messages[len(c.Messages)-keepRecent:])
 	c.Messages = append([]Message{summaryMsg}, recent...)
+}
+
+// SetScope sets the chat the thread belongs to (see Thread.Scope).
+func (c *Thread) SetScope(scope string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Scope = scope
 }
 
 // SetState changes the thread state.
@@ -290,33 +316,6 @@ func (c *Thread) PendingMessages() []string {
 	return append([]string(nil), c.pendingInput...)
 }
 
-// GetFormattedHistory returns the full thread history formatted for
-// inclusion in a prompt. Returns empty string if there are fewer than 2 messages
-// (i.e., only the current message exists, so no prior context).
-func (c *Thread) GetFormattedHistory() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Only the current message — no history to include
-	if len(c.Messages) <= 1 {
-		return ""
-	}
-
-	var sb strings.Builder
-	// Include all messages except the last one (which is the current request)
-	for _, msg := range c.Messages[:len(c.Messages)-1] {
-		switch msg.Role {
-		case "user":
-			sb.WriteString("User: ")
-		case "assistant":
-			sb.WriteString("Assistant: ")
-		}
-		sb.WriteString(msg.Content)
-		sb.WriteString("\n\n")
-	}
-	return strings.TrimSpace(sb.String())
-}
-
 // DefaultRetention is how long an idle thread's history is kept (in memory
 // and on disk, across restarts): the context a chat's next message gets.
 const DefaultRetention = 7 * 24 * time.Hour
@@ -332,6 +331,7 @@ type Manager struct {
 	dir     string        // persistence directory; "" = disabled
 	// retention is how long an idle thread is kept (DefaultRetention).
 	retention time.Duration
+	record    Recorder // given to every thread (SetRecorder)
 }
 
 // NewManager creates a new thread manager. dir is the directory used to
@@ -360,6 +360,19 @@ func (m *Manager) SetRetention(d time.Duration) {
 	m.mu.Lock()
 	m.retention = d
 	m.mu.Unlock()
+}
+
+// SetRecorder has every thread's messages kept by record from now on
+// (nil: not kept).
+func (m *Manager) SetRecorder(record Recorder) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.record = record
+	for _, conv := range m.threads {
+		conv.mu.Lock()
+		conv.record = record
+		conv.mu.Unlock()
+	}
 }
 
 // convFilePath returns the JSON file path for a thread.
@@ -552,6 +565,7 @@ func (m *Manager) GetOrCreate(chatID string) *Thread {
 		ChatID:    chatID,
 		State:     StateGathering,
 		Messages:  []Message{},
+		record:    m.record,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}

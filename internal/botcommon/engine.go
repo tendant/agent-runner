@@ -99,11 +99,11 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 		}
 	}
 	message := currentMsg
-	history := conv.GetFormattedHistory()
 	prior, fromServer := e.threadHistory(ctx, id)
-	if fromServer {
-		history = FormatHistory(prior, maxHistoryChars)
+	if !fromServer {
+		prior = recordHistory(conv)
 	}
+	history := FormatHistory(prior, maxHistoryChars)
 	if history != "" {
 		message = fmt.Sprintf("## Conversation History\n\n%s\n\n## Current Request\n\n%s", history, currentMsg)
 	}
@@ -111,10 +111,8 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 	// thread's latest messages: some never reached the agent (a plan
 	// revision awaiting approval, replies the bot gave without it).
 	prefix := ""
-	if fromServer {
-		if recent := FormatHistory(prior, maxRecentChars); recent != "" {
-			prefix = "## Recent Thread Messages\n\n" + recent + "\n\n"
-		}
+	if fromServer && history != "" {
+		prefix = "## Recent Thread Messages\n\n" + history + "\n\n"
 	}
 	if note := conv.TakeRunNote(); note != "" {
 		message = note + "\n\n" + message

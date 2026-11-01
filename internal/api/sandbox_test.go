@@ -40,7 +40,7 @@ func TestSandboxPrivatePaths(t *testing.T) {
 		got[p] = true
 	}
 	for _, want := range []string{
-		cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot,
+		cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot, cfg.ChatsRoot,
 		filepath.Join(cfg.ProjectDir, ".env"), filepath.Join(cfg.ProjectDir, ".env.prod"),
 		filepath.Join(cfg.DataDir, ".env.local"), // listed before /set creates it
 		filepath.Join(cfg.MemoryDir, ".git"),     // a remote URL there can carry the push token

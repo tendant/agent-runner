@@ -247,7 +247,7 @@ var runnerPrefixes = []string{
 // process (proxies, HOME, ...).
 var runnerNames = map[string]bool{
 	"API_KEY": true, "API_BIND": true, "API_ALLOW_NO_KEY": true, "DATA_DIR": true, "INSTANCE": true, "LOGS_ROOT": true,
-	"STATE_ROOT": true, "TMP_ROOT": true, "OUTPUTS_ROOT": true, "UPLOADS_ROOT": true,
+	"STATE_ROOT": true, "TMP_ROOT": true, "OUTPUTS_ROOT": true, "UPLOADS_ROOT": true, "CHATS_ROOT": true,
 	"REPO_CACHE_ROOT": true, "ANALYZER_TIMEOUT_SECONDS": true,
 	"CLEANUP_STALE_JOBS": true, "LOG_RETENTION_DAYS": true, "TRACING_ENABLED": true,
 	"WELCOME_ENABLED": true, "IS_SANDBOX": true,

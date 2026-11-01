@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `agent/` | Session types, state management, bounded dispatch queue + worker pool, thread-safe snapshots |
 | `api/` | HTTP server, routing, handlers, runtime wiring |
 | `botcommon/` | Shared bot engine (conversation flow) and helpers (formatting, confirmation parsing, poll-and-report) |
+| `chatlog/` | Chat record: every thread's messages kept per chat/day under `CHATS_ROOT` (90 days), copied into a run's `_chats/` to look back on |
 | `chatcmd/` | Chat command layer: /help, /set, /memory, /repo, ... dispatch and the message gateway |
 | `clisetup/` | Agent-CLI lifecycle: install/version checks, credential warnings, default prompt files, auth flows |
 | `config/` | Configuration loading from env files + environment (see Load priority below) |
@@ -46,6 +47,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **In-memory (lost on restart):** one-shot jobs.
 - **Task records (`AGENT_TASKS_ENABLED`, on by default):** `STATE_ROOT/tasks` (internal/task), with each task's persistent workspace at `TMP_ROOT/task-*`; see TASKS_DESIGN.md.
 - **Journaled (recovered on restart):** queued/running agent sessions — `STATE_ROOT/sessions` (internal/sessionjournal). On startup, interrupted sessions are failed with a targeted chat notice; never-started queued sessions are re-enqueued with their watcher re-attached (internal/api/recovery.go).
+- **Chat record (`CHATS_ROOT`, DATA_DIR/chats):** every message a thread records, verbatim, one file per thread per day, kept `AGENT_CHAT_RETENTION` (90 days). A chat session's run gets its own chat's threads (an agent-stream channel, or the Telegram/WeChat chat) in `_chats/`; chat commands never reach a thread, so never the record.
 - **Survives restart:** scheduled tasks (`SCHEDULER_DATABASE_URL` DB), conversations (`tmp/conversations`, executing state auto-reset on load), the memory dir (git-synced), `.env.local` (written by `/config set`), audit logs (`logs/`), outputs/uploads, bot event cursors (`tmp/`).
 - All mutable state roots under `DATA_DIR`.
 

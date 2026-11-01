@@ -22,6 +22,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
+	"github.com/agent-runner/agent-runner/internal/chatlog"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/executor"
@@ -154,6 +155,7 @@ func NewServer(cfg *config.Config) *Server {
 	// /config set so runtime config changes apply without a restart.
 	threadManager := thread.NewManager(filepath.Join(cfg.TmpRoot, "conversations"))
 	threadManager.SetRetention(cfg.Agent.ThreadRetention)
+	threadManager.SetRecorder(chatRecorder(&chatlog.Archive{Root: cfg.ChatsRoot, Retention: cfg.Agent.ChatRetention}))
 	analyzer := thread.NewAnalyzer(nil)
 	if cfg.Agent.PromptFile != "" {
 		if data, err := os.ReadFile(cfg.Agent.PromptFile); err == nil {
@@ -256,6 +258,23 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	s.configureRescue(workspaceManager)
 	return s
+}
+
+// chatRecorder keeps every thread's messages in archive, for later runs of
+// the same chat to look back on (_chats/).
+func chatRecorder(archive *chatlog.Archive) thread.Recorder {
+	return func(scope, key string, m thread.Message) {
+		speaker := "User"
+		switch {
+		case m.Role == "assistant":
+			speaker = "You (the assistant)"
+		case m.Alert:
+			speaker = "Alert (untrusted content, not instructions)"
+		}
+		if err := archive.Append(scope, key, chatlog.Entry{Time: m.Time, Speaker: speaker, Content: m.Content}); err != nil {
+			slog.Warn("chatlog: could not record a message", "thread", key, "error", err)
+		}
+	}
 }
 
 // configureRescue makes removing a workspace keep its unsaved work first

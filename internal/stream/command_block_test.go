@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -138,5 +139,38 @@ func TestStreamBot_RegularMessage_StartsAgent(t *testing.T) {
 
 	if !starter.called.Load() {
 		t.Error("StartAgent should be called for a regular (non-command) message")
+	}
+}
+
+// A thread's messages are recorded under its channel; a chat command never
+// is (it can carry a secret's value).
+func TestStreamBot_RecordsMessagesUnderTheChannelButNotCommands(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	threadMgr := thread.NewManager("")
+	defer threadMgr.Stop()
+	var mu sync.Mutex
+	var recorded []string
+	threadMgr.SetRecorder(func(scope, key string, m thread.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		recorded = append(recorded, scope+"/"+key+": "+m.Content)
+	})
+	bot := New(config.StreamConfig{ServerURL: srv.URL, BotToken: "test-token", ChannelIDs: []string{"c_1"}}, "", &trackingStarter{}, threadMgr, nil, fakeGateway{})
+
+	bot.handleMessage(context.Background(), "c_1", "m_1", "/set AGENT_MODEL gpt-4o")
+	bot.handleMessage(context.Background(), "c_1", "m_1", "please write hello.txt")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(recorded) == 0 || recorded[0] != "c_1/m_1: please write hello.txt" {
+		t.Errorf("recorded %q, want the request first, under channel c_1", recorded)
+	}
+	for _, r := range recorded {
+		if strings.Contains(r, "/set") {
+			t.Errorf("a chat command was recorded: %q", r)
+		}
 	}
 }

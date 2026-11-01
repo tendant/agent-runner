@@ -71,6 +71,7 @@ func setupTestEnv(t *testing.T) *engineTestEnv {
 	cfg.SecretsFile = filepath.Join(dir, "secrets.json")
 	cfg.OutputsRoot = filepath.Join(dir, "outputs")
 	cfg.UploadsRoot = filepath.Join(dir, "uploads")
+	cfg.ChatsRoot = filepath.Join(dir, "chats")
 	os.MkdirAll(cfg.RepoCacheRoot, 0755)
 
 	mgr := agent.NewManager(3600, 10, 1)

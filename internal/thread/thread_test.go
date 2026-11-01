@@ -239,3 +239,38 @@ func TestThread_AlertDuringRunIsNotPendingInput(t *testing.T) {
 		t.Fatal("the alert was not flagged once for triage")
 	}
 }
+
+// Every message a thread records reaches the recorder with the thread's
+// chat, including threads loaded from disk before the recorder was set.
+func TestRecorderGetsEveryMessageWithItsChat(t *testing.T) {
+	dir := t.TempDir()
+	m1 := NewManager(dir)
+	old := m1.GetOrCreate("thread-1")
+	old.SetScope("channel-a")
+	old.AddMessage("user", "before the restart")
+	m1.saveAll()
+	m1.Stop()
+
+	type rec struct{ scope, key, role, content string }
+	var got []rec
+	m2 := NewManager(dir)
+	defer m2.Stop()
+	m2.SetRecorder(func(scope, key string, m Message) {
+		got = append(got, rec{scope, key, m.Role, m.Content})
+	})
+	m2.GetOrCreate("thread-1").AddMessage("assistant", "after it")
+	m2.GetOrCreate("12345").AddAlertMessage("CI failed")
+
+	want := []rec{
+		{"channel-a", "thread-1", "assistant", "after it"},
+		{"", "12345", "user", "CI failed"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("record %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}

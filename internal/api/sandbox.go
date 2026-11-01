@@ -111,8 +111,9 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 // readable: prompts point the agent at memory, and uploaded files reach it by
 // path.
 func sandboxPrivatePaths(cfg *config.Config) []string {
-	// (RescueRoot: other sessions' kept work.)
-	paths := []string{cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot, cfg.RescueRoot}
+	// (RescueRoot: other sessions' kept work. ChatsRoot: every chat's
+	// record; a run gets its own chat's as a copy in _chats/.)
+	paths := []string{cfg.StateRoot, cfg.TmpRoot, cfg.LogsRoot, cfg.OutputsRoot, cfg.RepoCacheRoot, cfg.RescueRoot, cfg.ChatsRoot}
 	if cfg.SecretsFile != "" {
 		// Agent secrets reach the sandbox as environment variables, by
 		// name; the file holding them all is not the agent's to read.

@@ -564,6 +564,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if aborted {
 		return
 	}
+	chatThread := h.stageChats(sessionID, liveSession, checkoutPath)
 	if h.sandboxed() {
 		// Before the agent can touch them: the configs host-side git will use.
 		if err := saveGitConfigs(checkoutPath); err != nil {
@@ -613,7 +614,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos()})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 

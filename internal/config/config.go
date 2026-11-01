@@ -34,6 +34,7 @@ type Config struct {
 	StateRoot     string // durable runner state (session journal); survives restarts unlike TmpRoot
 	OutputsRoot   string // persistent storage for _send/ files across sessions
 	UploadsRoot   string // persistent storage for files uploaded by users via bots
+	ChatsRoot     string // CHATS_ROOT (DATA_DIR/chats): every chat's messages, for runs to look back on (internal/chatlog)
 	// RescueRoot (AGENT_RESCUE_ROOT, DATA_DIR/rescued) keeps a workspace's
 	// unsaved work before the workspace is removed, for RescueRetention
 	// (AGENT_RESCUE_RETENTION, default 30 days).
@@ -141,6 +142,7 @@ type AgentConfig struct {
 	TaskMaxCostUSD    float64       // AGENT_TASK_MAX_COST_USD — spend before a task pauses (default 0 = no limit)
 	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude/codex conversations across task turns
 	ThreadRetention   time.Duration // AGENT_THREAD_RETENTION: how long an idle chat thread's history is kept (default 7 days)
+	ChatRetention     time.Duration // AGENT_CHAT_RETENTION: how long each day of a chat's messages is kept under ChatsRoot (default 90 days)
 	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays        int           // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart bool          // Pull memory from git before each session
@@ -264,6 +266,7 @@ func defaultConfigForDataDir(data string) *Config {
 		TmpRoot:                  filepath.Join(data, "tmp"),
 		OutputsRoot:              filepath.Join(data, "outputs"),
 		UploadsRoot:              filepath.Join(data, "uploads"),
+		ChatsRoot:                filepath.Join(data, "chats"),
 		RescueRoot:               filepath.Join(data, "rescued"),
 		RescueRetention:          30 * 24 * time.Hour,
 		MemoryDir:                filepath.Join(data, "memory"),
@@ -304,6 +307,7 @@ func defaultConfigForDataDir(data string) *Config {
 			TasksEnabled:        true,
 			TaskRetention:       24 * time.Hour,
 			TaskIdleTTL:         7 * 24 * time.Hour,
+			ChatRetention:       90 * 24 * time.Hour,
 			TaskResumeBackend:   true,
 			TaskMaxTurns:        10,
 			TaskMaxSeconds:      4 * time.Hour,
@@ -392,6 +396,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
 	cfg.UploadsRoot = envOrDefault("UPLOADS_ROOT", cfg.UploadsRoot)
+	cfg.ChatsRoot = envOrDefault("CHATS_ROOT", cfg.ChatsRoot)
 	cfg.RescueRoot = envOrDefault("AGENT_RESCUE_ROOT", cfg.RescueRoot)
 	cfg.RescueRetention = envDurationOrDefault("AGENT_RESCUE_RETENTION", cfg.RescueRetention)
 	cfg.MemoryDir = envOrDefault("MEMORY_DIR", cfg.MemoryDir)
@@ -512,6 +517,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TaskMaxCostUSD = envFloatOrDefault("AGENT_TASK_MAX_COST_USD", cfg.Agent.TaskMaxCostUSD)
 	cfg.Agent.TaskResumeBackend = envBoolOrDefault("AGENT_TASK_RESUME_BACKEND", cfg.Agent.TaskResumeBackend)
 	cfg.Agent.ThreadRetention = envDurationOrDefault("AGENT_THREAD_RETENTION", cfg.Agent.ThreadRetention)
+	cfg.Agent.ChatRetention = envDurationOrDefault("AGENT_CHAT_RETENTION", cfg.Agent.ChatRetention)
 	cfg.Agent.MemoryDays = envIntOrDefault("AGENT_MEMORY_DAYS", cfg.Agent.MemoryDays)
 	cfg.Agent.MemoryPullOnStart = envBoolOrDefault("AGENT_MEMORY_PULL_ON_START", cfg.Agent.MemoryPullOnStart)
 	cfg.Agent.MemoryCharCap = envIntOrDefault("AGENT_MEMORY_CHAR_CAP", cfg.Agent.MemoryCharCap)
@@ -631,6 +637,7 @@ func (c *Config) copyFrom(n *Config) {
 	c.TmpRoot = n.TmpRoot
 	c.OutputsRoot = n.OutputsRoot
 	c.UploadsRoot = n.UploadsRoot
+	c.ChatsRoot = n.ChatsRoot
 	c.RescueRoot = n.RescueRoot
 	c.RescueRetention = n.RescueRetention
 	c.MemoryDir = n.MemoryDir

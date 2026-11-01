@@ -925,10 +925,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 
 	switch msg.SenderKind {
 	case senderWebhook:
-		b.handleAlert(ctx, key, msg.WebhookName, text)
+		b.handleAlert(ctx, channelID, key, msg.WebhookName, text)
 		return
 	case "bot", "system":
-		b.handleBotMessage(ctx, key, text)
+		b.handleBotMessage(ctx, channelID, key, text)
 		return
 	}
 	if cmd := stripLeadingMention(text); chatcmd.IsCommand(cmd) {
@@ -944,12 +944,13 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 // handleBotMessage handles a message from another bot (one consulting this
 // one by mentioning it). A bot is not a person: it never runs a chat
 // command and never answers a confirmation or a task's question for one.
-func (b *Bot) handleBotMessage(ctx context.Context, key, text string) {
+func (b *Bot) handleBotMessage(ctx context.Context, channelID, key, text string) {
 	if chatcmd.IsCommand(stripLeadingMention(text)) {
 		slog.Info("stream bot: ignored a command from another bot", "thread", key)
 		return
 	}
 	conv := b.threadManager.GetOrCreate(key)
+	conv.SetScope(channelID)
 	conv.AddMessage("user", "[From another bot]\n\n"+text)
 	if conv.GetState() == thread.StateExecuting {
 		b.engine.HandleExecuting(ctx, key, conv, text)
@@ -969,7 +970,7 @@ const senderWebhook = "webhook"
 // untrusted: it never reaches chat commands or answers a pending
 // confirmation, and the analyzer triages it against the operator's alert
 // policy (ALERTS.md) instead of treating it as a person's request.
-func (b *Bot) handleAlert(ctx context.Context, key, webhookName, text string) {
+func (b *Bot) handleAlert(ctx context.Context, channelID, key, webhookName, text string) {
 	if webhookName == "" {
 		webhookName = "webhook"
 	}
@@ -977,6 +978,7 @@ func (b *Bot) handleAlert(ctx context.Context, key, webhookName, text string) {
 	slog.Info("stream bot: alert received", "thread", key, "webhook", webhookName)
 
 	conv := b.threadManager.GetOrCreate(key)
+	conv.SetScope(channelID)
 	conv.AddAlertMessage(text)
 	if conv.GetState() == thread.StateExecuting {
 		// Not passed to the running agent: triaged when the run ends.
@@ -1182,6 +1184,8 @@ func (b *Bot) handleMessage(ctx context.Context, channelID, key, text string) {
 	}
 
 	conv := b.threadManager.GetOrCreate(key)
+	// The channel is the chat a run may look back on (internal/chatlog).
+	conv.SetScope(channelID)
 	conv.AddMessage("user", text)
 
 	state := conv.GetState()

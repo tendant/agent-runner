@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/chatlog"
 	"github.com/agent-runner/agent-runner/internal/repos"
 )
 
@@ -25,6 +27,7 @@ type runtimeFacts struct {
 	Secrets    []agentsecrets.Secret // the agent's secrets: names and descriptions are shown
 	Env        []agentsecrets.Secret // the agent's plain settings: shown with their values
 	Repos      []repos.Repo          // the registered repos in the workspace
+	ChatThread string                // the session's thread in _chats/ ("": no chat record)
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -124,6 +127,16 @@ func runtimeInstructions(f runtimeFacts) string {
 		}
 	}
 
+	if f.ChatThread != "" {
+		b.WriteString("\n### Earlier chats\n\n")
+		b.WriteString("`" + chatlog.DirName + "/` in your working directory holds what was said in this chat over the last\n" +
+			"few months, word for word: a folder per conversation thread, a file per day\n" +
+			"(`" + chatlog.DirName + "/<thread>/YYYY-MM-DD.md`). This conversation is `" + chatlog.DirName + "/" + f.ChatThread + "/`.\n" +
+			"The prompt carries only its latest messages: when the user refers to something said earlier, or\n" +
+			"asks about a past conversation, search there (e.g. `grep -ri`) before saying you don't know.\n" +
+			"It is a copy made for this session: changing it changes nothing.\n")
+	}
+
 	b.WriteString("\n### Files for the user\n\n")
 	b.WriteString("To send the user files, put them in `_send/` in your working directory: they are delivered when\n" +
 		"the session ends.\n")
@@ -185,4 +198,23 @@ func selfPushCommand(r repos.Repo) string {
 		return `k=$(mktemp) && printf '%s\n' "$` + r.Secret + `" > "$k" && chmod 600 "$k" && GIT_SSH_COMMAND="ssh -i $k -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" git -C ` + r.Name + ` push origin HEAD; rm -f "$k"`
 	}
 	return `git -C ` + r.Name + ` -c credential.helper= -c credential.helper='!f() { echo username=` + r.User() + `; echo "password=$` + r.Secret + `"; }; f' push origin HEAD`
+}
+
+// stageChats puts a copy of the session's chat record (internal/chatlog)
+// in _chats/ of its working directory, replacing an earlier turn's, and
+// returns the session's own thread folder there; "" when the session has no
+// chat or nothing was recorded.
+func (h *Engine) stageChats(sessionID string, s *agent.Session, checkoutPath string) string {
+	dst := filepath.Join(checkoutPath, chatlog.DirName)
+	if s.ConvID == "" || h.config.ChatsRoot == "" {
+		_ = os.RemoveAll(dst)
+		return ""
+	}
+	thread, err := chatlog.CopyChat(h.config.ChatsRoot, s.ConvID, dst)
+	if err != nil {
+		slog.Warn("could not copy the chat record into the workspace", "session_id", sessionID, "error", err)
+		s.AddWarning("earlier chats unavailable: " + err.Error())
+		return ""
+	}
+	return thread
 }

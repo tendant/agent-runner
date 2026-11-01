@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
+	"github.com/agent-runner/agent-runner/internal/chatlog"
 	"github.com/agent-runner/agent-runner/internal/repos"
 )
 
@@ -207,4 +208,75 @@ func TestSessionPromptShowsPlainSettings(t *testing.T) {
 	if !strings.Contains(out, "deploying to staging") || strings.Contains(out, "sk_test_value_1") {
 		t.Errorf("output %q: the plain value stays, the secret is redacted", out)
 	}
+}
+
+// A chat session's run gets its chat's earlier threads in _chats/, and
+// the prompt says where; another chat's threads stay out.
+func TestSessionGetsItsChatsRecord(t *testing.T) {
+	env := setupTestEnv(t)
+	h := env.handlers
+	h.config.Agent.CLI = "pi"
+	h.config.Agent.PlannerEnabled = false
+	archive := &chatlog.Archive{Root: h.config.ChatsRoot}
+	for _, e := range []struct{ chat, thread, text string }{
+		{"chan-a", "old-thread", "we picked Postgres 17 for the blog"},
+		{"chan-a", "new-thread", "what database did we pick?"},
+		{"chan-b", "other", "another channel's chat"},
+	} {
+		if err := archive.Append(e.chat, e.thread, chatlog.Entry{Speaker: "User", Content: e.text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var prompt string
+	var copied []string
+	session, _ := h.agentManager.CreateSession("what database did we pick?", nil, "stream", "", 1, 30)
+	session.ConvID = "new-thread"
+	h.executor = chatsExecutor{fn: func(workspace, p string) {
+		if prompt == "" {
+			prompt = p
+			entries, _ := os.ReadDir(filepath.Join(workspace, chatlog.DirName))
+			for _, e := range entries {
+				copied = append(copied, e.Name())
+			}
+		}
+	}}
+	h.ExecuteAgent(session)
+	if strings.Join(copied, ",") != "new-thread,old-thread" {
+		t.Errorf("_chats/ = %v, want the chat's two threads only", copied)
+	}
+	if !strings.Contains(prompt, "This conversation is `_chats/new-thread/`") {
+		t.Errorf("prompt does not point at the chat record:\n%s", prompt)
+	}
+	// The record is in the workspace, for the agent to search; the prompt
+	// only says where it is.
+	if strings.Contains(prompt, "Postgres 17") {
+		t.Errorf("an earlier chat's text was put in the prompt:\n%s", prompt)
+	}
+}
+
+// A session that is not from a chat gets no record and no mention of one.
+func TestSessionWithoutChatHasNoChatsRecord(t *testing.T) {
+	if strings.Contains(runtimeInstructions(runtimeFacts{}), "_chats/") {
+		t.Error("prompt mentions _chats/ without a chat record")
+	}
+}
+
+type chatsExecutor struct {
+	fn func(workspace, prompt string)
+}
+
+func (c chatsExecutor) Execute(_ context.Context, w, in string) (*executor.ExecutionResult, error) {
+	c.fn(w, in)
+	return &executor.ExecutionResult{Output: "done"}, nil
+}
+func (c chatsExecutor) ExecuteWithSystemPrompt(ctx context.Context, w, sys, in string) (*executor.ExecutionResult, error) {
+	return c.Execute(ctx, w, sys+"\n"+in)
+}
+func (c chatsExecutor) ExecuteWithLog(ctx context.Context, w, in string) (*executor.ExecutionResult, string, error) {
+	r, err := c.Execute(ctx, w, in)
+	return r, "", err
+}
+func (c chatsExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, w, sys, in string) (*executor.ExecutionResult, string, error) {
+	r, err := c.Execute(ctx, w, sys+"\n"+in)
+	return r, "", err
 }

@@ -2,6 +2,7 @@ package botcommon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func TestFormatHistory_KeepsNewest(t *testing.T) {
 		{Speaker: "User a", Content: "newest"},
 	}
 	got := FormatHistory(msgs, 60)
-	if !strings.HasPrefix(got, "[1 earlier messages omitted]") || !strings.HasSuffix(got, "User a: newest") || !strings.Contains(got, "middle") {
+	if !strings.HasPrefix(got, "[1 earlier messages omitted: the whole conversation is in _chats/]") || !strings.HasSuffix(got, "User a: newest") || !strings.Contains(got, "middle") {
 		t.Fatalf("got %q", got)
 	}
 	if FormatHistory(nil, 100) != "" {
@@ -91,6 +92,30 @@ func TestRunTurn_FallsBackToOwnHistory(t *testing.T) {
 	_, msgs := ts.counts()
 	if len(msgs) != 1 || !strings.Contains(msgs[0], "User: first") {
 		t.Fatalf("fallback history missing: %q", msgs)
+	}
+}
+
+// The bot's own record is held to the same bound as a server's history:
+// the newest messages, the rest left to _chats/.
+func TestRunTurn_OwnHistoryIsBounded(t *testing.T) {
+	f, ts := newTaskFixture(t)
+	for i := 0; i < 8; i++ {
+		f.conv.AddMessage("user", fmt.Sprintf("question %d %s", i, strings.Repeat("x", 1500)))
+		f.conv.AddMessage("assistant", fmt.Sprintf("answer %d", i))
+	}
+	f.conv.AddMessage("user", "and now?")
+	f.engine.HandleConfirmation(context.Background(), "conv-1", f.conv)
+	f.engine.WG.Wait()
+	_, msgs := ts.counts()
+	if len(msgs) != 1 {
+		t.Fatalf("started %d turns", len(msgs))
+	}
+	p := msgs[0]
+	if !strings.Contains(p, "earlier messages omitted: the whole conversation is in _chats/") || !strings.Contains(p, "You (the assistant): answer 7") {
+		t.Errorf("history not cut to the newest messages:\n%s", p)
+	}
+	if strings.Contains(p, "question 0") || len(p) > maxHistoryChars+500 {
+		t.Errorf("history over the bound (%d chars)", len(p))
 	}
 }
 
