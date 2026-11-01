@@ -38,14 +38,14 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		return sandboxrt.Failed(err)
 	}
 	host, _ := os.Hostname()
-	// The audit record: one writer per directory, named by this host. A
-	// record that cannot be opened rejects every run, like any other
-	// misconfiguration.
+	// The audit record: one writer per directory, named by this host and
+	// agent. A record that cannot be opened rejects every run, like any
+	// other misconfiguration.
 	var rec *audit.Recorder
 	if dir := cfg.Agent.SandboxAuditDir; dir != "" {
 		opts, err := auditOptions(cfg.Agent.SandboxAuditSegment, cfg.Agent.SandboxAuditKeep)
 		if err == nil {
-			rec, err = audit.OpenDirRecorder(dir, "agent-runner:"+host, opts)
+			rec, err = audit.OpenDirRecorder(dir, auditSource(host, cfg.Agent.Name), opts)
 		}
 		if err != nil {
 			slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
@@ -395,4 +395,16 @@ func auditOptions(segment, keep string) (audit.DirOptions, error) {
 		opts.Keep = n
 	}
 	return opts, nil
+}
+
+// auditSource names this runner's audit record. Each source numbers its
+// events from 1, so the name must be one writer's alone: agents sharing a
+// host would otherwise claim each other's sequence numbers, and agent-gate
+// flags every run of theirs (sequence_conflict). The agent's name tells them
+// apart; a runner without one is the host's only writer, as before.
+func auditSource(host, agent string) string {
+	if agent == "" {
+		return "agent-runner:" + host
+	}
+	return "agent-runner:" + host + ":" + agent
 }

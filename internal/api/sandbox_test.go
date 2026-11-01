@@ -30,6 +30,18 @@ func TestSandboxRuntimeConfig(t *testing.T) {
 	}
 }
 
+// Agents on one host write separate records, each numbered from 1: their
+// sources must differ, or agent-gate sees two events per sequence number.
+func TestAuditSourceNamesTheAgent(t *testing.T) {
+	a, b := auditSource("ubuntu-max", "agent-blog"), auditSource("ubuntu-max", "agent-mail")
+	if a == b || a != "agent-runner:ubuntu-max:agent-blog" {
+		t.Errorf("sources %q and %q: want one per agent", a, b)
+	}
+	if got := auditSource("mini", ""); got != "agent-runner:mini" {
+		t.Errorf("unnamed runner: %q, want the host's name as before", got)
+	}
+}
+
 func TestSandboxPrivatePaths(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ProjectDir, cfg.DataDir = t.TempDir(), t.TempDir()
