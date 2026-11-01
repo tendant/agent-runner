@@ -190,6 +190,7 @@ func TestAuditRecordsModelRequests(t *testing.T) {
 		t.Fatalf("forwarded request: %d", code)
 	}
 	post(t, base+"/v1/messages", "forged")
+	post(t, base+"/api/oauth/profile?token=secret", env["ANTHROPIC_API_KEY"]+env["ANTHROPIC_AUTH_TOKEN"])
 	run.Finish()
 
 	var model []audit.Event
@@ -198,8 +199,16 @@ func TestAuditRecordsModelRequests(t *testing.T) {
 			model = append(model, e)
 		}
 	}
-	if len(model) != 2 || model[0].Type != audit.TypeModelForwarded || model[1].Type != audit.TypeModelDenied {
+	if len(model) != 3 || model[0].Type != audit.TypeModelForwarded || model[1].Type != audit.TypeModelDenied || model[2].Type != audit.TypeModelDenied {
 		t.Fatalf("model events %v", types(model))
+	}
+	// A refusal says why, and the path it asked for (never its query).
+	for i, want := range map[int][2]string{1: {"token", "/v1/messages"}, 2: {"path", "/api/oauth/profile"}} {
+		var d audit.ModelDetail
+		json.Unmarshal(model[i].Detail, &d)
+		if d.Reason != want[0] || d.Path != want[1] {
+			t.Errorf("refusal %d: reason %q path %q, want %v", i, d.Reason, d.Path, want)
+		}
 	}
 	for _, e := range model {
 		var d audit.ModelDetail
@@ -208,7 +217,7 @@ func TestAuditRecordsModelRequests(t *testing.T) {
 			t.Errorf("model event %+v", e)
 		}
 	}
-	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "real-key") || strings.Contains(string(raw), "forged") {
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "real-key") || strings.Contains(string(raw), "forged") || strings.Contains(string(raw), "secret") {
 		t.Error("a credential reached the audit record")
 	}
 }

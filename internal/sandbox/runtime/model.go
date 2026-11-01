@@ -217,11 +217,12 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 			MaxRequestB:     64 << 20, // a long conversation's request is several MB
 			RatePerMinute:   600,
 			RequestIDHeader: requestHeader,
-			OnEvent: func(kind string) {
-				r.auditModel(runID, name, kind)
-				if kind != "forwarded" { // per request: too chatty for the log
-					r.emit(Event{Kind: "sandbox.model_" + kind, RunID: runID, ThreadID: threadID, Detail: name})
-				}
+			// Each refusal, with why and the path asked for (forwarded
+			// calls are OnForward's). No MaxTotalB is set, so every refusal
+			// comes through here.
+			OnRefuse: func(kind, reason, path string) {
+				r.auditModel(runID, name, kind, reason, path)
+				r.emit(Event{Kind: "sandbox.model_" + kind, RunID: runID, ThreadID: threadID, Detail: name + " " + reason + " " + path})
 			},
 			OnForward: func(id string) {
 				r.audit(runID, audit.TypeModelForwarded, audit.ModelDetail{Provider: name, Reason: "forwarded", Metering: metering, RequestID: id})

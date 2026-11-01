@@ -134,16 +134,14 @@ func (r *Runtime) auditEgress(runID, kind, host string) {
 	r.audit(runID, typ, d)
 }
 
-// auditModel records one decision of a run's model channel that refused a
-// request (broker kinds: denied, limit, credential_error). A forwarded one
-// is recorded by the channel's OnForward, with its metering and request id.
-func (r *Runtime) auditModel(runID, provider, kind string) {
+// auditModel records a request a run's model channel refused (broker kinds:
+// denied, limit, credential_error), with why (broker.Refuse* values) and the
+// path it asked for. A forwarded one is recorded by the channel's OnForward,
+// with its metering and request id.
+func (r *Runtime) auditModel(runID, provider, kind, reason, path string) {
 	typ := audit.TypeModelDenied
-	switch kind {
-	case "forwarded":
-		return
-	case "limit":
+	if kind == "limit" {
 		typ = audit.TypeModelLimitHit
 	}
-	r.audit(runID, typ, audit.ModelDetail{Provider: provider, Reason: kind})
+	r.audit(runID, typ, audit.ModelDetail{Provider: provider, Reason: reason, Path: path})
 }

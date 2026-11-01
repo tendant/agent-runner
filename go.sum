@@ -61,6 +61,8 @@ github.com/tendant/agentbox v0.0.11 h1:JtNWQZ7nIPpShwHYwoInKoF+Q/hxnI+k28DH+Spkx
 github.com/tendant/agentbox v0.0.11/go.mod h1:2TVPrDGS+xICVdnspFebS73vwr4cSxaqst5uNXecsOA=
 github.com/tendant/agentbox v0.0.12 h1:rVX2doBU5T7jsNzg+3hGJwy9wUYnpddeTR7ISqALeZg=
 github.com/tendant/agentbox v0.0.12/go.mod h1:2TVPrDGS+xICVdnspFebS73vwr4cSxaqst5uNXecsOA=
+github.com/tendant/agentbox v0.0.13 h1:ntimPSpcdMSAx+fBw0DrI4hiM8DENxJVcLPLGoEzOTE=
+github.com/tendant/agentbox v0.0.13/go.mod h1:2TVPrDGS+xICVdnspFebS73vwr4cSxaqst5uNXecsOA=
 github.com/tendant/simple-workflow v0.0.6 h1:aY5CaQPF/HiXzjCaS1ROMQSEJJ8KrlN5hfdqHboW8Os=
 github.com/tendant/simple-workflow v0.0.6/go.mod h1:/QcGO4ZYGlJ323ZwY3aty/AN//70Ze2OVKR1MThQUAo=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
