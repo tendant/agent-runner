@@ -86,6 +86,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EnvAllow:     cfg.Agent.SandboxEnvAllow,
 		PrivatePaths: sandboxPrivatePaths(cfg),
 		Claude:       sandboxClaudeSeed(cfg),
+		ModelBudget:  sandboxrt.BudgetMicros(cfg.Agent.SandboxModelBudget),
 		Models:       meteredChannels(ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL), cfg.Agent.SandboxMetering),
 		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
 		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),

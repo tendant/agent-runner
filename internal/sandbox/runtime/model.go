@@ -15,10 +15,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/tendant/agentbox/pkg/agentbox/audit"
 	"github.com/tendant/agentbox/pkg/agentbox/broker"
+	"github.com/tendant/agentbox/pkg/agentbox/pricing"
 )
 
 // Providers with a model channel.
@@ -173,6 +175,10 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		return nil, nil
 	}
 	m := &modelRun{proxies: map[string]*broker.Proxy{}}
+	var spend *modelSpend
+	if r.cfg.ModelBudget > 0 {
+		spend = &modelSpend{budget: r.cfg.ModelBudget}
+	}
 	if modelSockets {
 		// A short private directory: Unix socket paths are limited to ~108
 		// bytes, which a run's state directory can come close to.
@@ -232,7 +238,11 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		// proxy reads it from the response.
 		if metering == audit.MeteringBroker {
 			cfg.UsageFormat = usageFormat(name)
+			if spend != nil {
+				cfg.Exhausted = spend.exhausted
+			}
 			cfg.OnUsage = func(id string, u broker.Usage) {
+				spend.charge(name, u)
 				r.audit(runID, audit.TypeModelUsage, audit.UsageDetail{RequestID: id, Provider: name, Model: u.Model,
 					InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
 					CacheReadTokens: u.CacheReadTokens, CacheWriteTokens: u.CacheWriteTokens,
@@ -254,6 +264,42 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 	}
 	return m, nil
 }
+
+// modelSpend is one run's use of its broker-metered channels against
+// Config.ModelBudget, in USD millionths at list price: what the run's calls
+// would cost billed per token, subscription channels included, so the
+// budget caps a runaway run whatever pays for it.
+type modelSpend struct {
+	budget int64
+	spent  atomic.Int64
+}
+
+// BudgetMicros converts a budget in USD to millionths (0 for none).
+func BudgetMicros(usd float64) int64 {
+	if usd <= 0 {
+		return 0
+	}
+	return int64(usd * 1e6)
+}
+
+// charge adds one call's use. A model the price table does not name (or a
+// response that never said which) is charged at its provider's highest
+// rates, so it cannot slip past the budget.
+func (s *modelSpend) charge(provider string, u broker.Usage) {
+	if s == nil {
+		return
+	}
+	t := pricing.Default()
+	p, ok := t.Lookup(provider, u.Model)
+	if !ok {
+		p, _ = t.Ceiling(provider)
+	}
+	s.spent.Add(p.Micros(pricing.Tokens{Input: u.InputTokens, Output: u.OutputTokens,
+		CacheRead: u.CacheReadTokens, CacheWrite: u.CacheWriteTokens}))
+}
+
+// exhausted: the run has used its budget; the proxies refuse what follows.
+func (s *modelSpend) exhausted() bool { return s.spent.Load() >= s.budget }
 
 // modelSockets: the proxies are reached over Unix sockets and a forwarder
 // (Linux: gVisor has its own network stack), else at their loopback ports

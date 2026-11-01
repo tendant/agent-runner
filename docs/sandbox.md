@@ -82,8 +82,16 @@ Other settings:
   event under the call's id, billed `subscription` for a Claude setup-token or ChatGPT login and
   `api` otherwise. `none` records the call only. Each run's policy snapshot declares the modes, and
   agent-gate expects the evidence each names (agent-gate's `metering-design.md`). A Chat
-  Completions stream reports usage only when its client asks for it; without it the usage is
-  recorded as truncated.
+  Completions stream reports usage only when asked to, so the proxy sets
+  `stream_options.include_usage` on each streamed request; the stream then ends with a usage
+  chunk that has no choices.
+* `AGENT_SANDBOX_MODEL_BUDGET_USD`: per run, what broker-metered calls may use, priced at list
+  price by agentbox's price table (`pkg/agentbox/pricing`), subscription channels included, as a
+  cap on runaway runs rather than a bill. A model the table lacks is charged at its provider's
+  highest rates. Once the run has used it, the proxy refuses further calls (`model_limit_hit`,
+  reason `usage`); calls already sent complete, so a run can end somewhat over. The policy
+  snapshot records the budget and the table version. Ledger-metered calls are left to
+  ledger-gate's budgets.
 * `AGENT_SANDBOX_BACKEND`: unset or `agentbox`. The isobox values (`gvisor`, `seatbelt`) are
   refused: isobox was removed. `AGENT_SANDBOX_READ` accepts only `scoped`, the default.
 

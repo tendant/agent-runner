@@ -17,6 +17,8 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/tendant/agentbox/pkg/agentbox/audit"
+	"github.com/tendant/agentbox/pkg/agentbox/broker"
+	"github.com/tendant/agentbox/pkg/agentbox/pricing"
 )
 
 // auditRT is newRT with an audit record at path; read returns what it holds.
@@ -344,6 +346,63 @@ func TestBrokerMeteredCallRecordsItsUsage(t *testing.T) {
 	if (*ids)[0] != "" {
 		t.Errorf("a provider got the broker's request id %q", (*ids)[0])
 	}
+}
+
+// With a model budget, a run's broker-metered calls are charged at list
+// price, a model the table lacks at its provider's highest rates. Once spent,
+// the proxy refuses the next call, on record with why; the snapshot names
+// the budget and the prices.
+func TestModelBudgetRefusesOnceSpent(t *testing.T) {
+	up, _ := usageUpstream(t)
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{ModelBudget: 2000, Models: map[string]*ModelChannel{
+		ProviderAnthropic: {Upstream: up, AuthHeader: "Authorization", AuthValue: "Bearer sub-token", Paths: AnthropicPaths, OAuth: true},
+	}})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := run.model.proxies[ProviderAnthropic]
+	if code := post(t, p.BaseURL()+"/v1/messages", p.Token()); code != 200 {
+		t.Fatalf("first call: %d", code)
+	}
+	// claude-x is unpriced: 12 input, 34 output and 500 cache-read tokens at
+	// Anthropic's ceiling come to over 2000 millionths. Its usage is read as
+	// the proxy finishes the response, which can trail the client a little.
+	code := 0
+	for i := 0; i < 100 && code != 429; i++ {
+		if code = post(t, p.BaseURL()+"/v1/messages", p.Token()); code != 429 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	run.Finish()
+	if code != 429 {
+		t.Fatalf("over budget: %d", code)
+	}
+	evs := read()
+	snap, _, _ := modelEvents(evs)
+	if snap.ModelBudget == nil || snap.ModelBudget.USDMicros != 2000 || snap.ModelBudget.Prices != pricing.Default().Version {
+		t.Errorf("snapshot budget %+v", snap.ModelBudget)
+	}
+	var hit []audit.ModelDetail
+	for _, e := range evs {
+		if e.Type == audit.TypeModelLimitHit {
+			var d audit.ModelDetail
+			json.Unmarshal(e.Detail, &d)
+			hit = append(hit, d)
+		}
+	}
+	if len(hit) != 1 || hit[0].Reason != broker.RefuseUsage || hit[0].Path != "/v1/messages" {
+		t.Errorf("model_limit_hit %+v", hit)
+	}
+}
+
+// No budget: none in the snapshot, nothing refused.
+func TestNoModelBudget(t *testing.T) {
+	if BudgetMicros(0) != 0 || BudgetMicros(-1) != 0 || BudgetMicros(2.5) != 2_500_000 {
+		t.Error("BudgetMicros")
+	}
+	var s *modelSpend
+	s.charge(ProviderAnthropic, broker.Usage{OutputTokens: 1}) // a run without a budget charges nothing
 }
 
 // A ledger channel's call is metered by ledger-gate: it gets the call's id

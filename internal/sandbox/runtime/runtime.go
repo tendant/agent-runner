@@ -79,6 +79,9 @@ type Config struct {
 	// by provider (ProviderAnthropic, ProviderOpenAI), each through a per-run
 	// proxy (see ModelChannel).
 	Models map[string]*ModelChannel
+	// ModelBudget caps each run's broker-metered model calls, in USD
+	// millionths at list price (0: none); see modelSpend.
+	ModelBudget int64
 	// CodexSeed and PiSeed are the config dirs a sandboxed codex or pi's
 	// allowlisted config is copied from (~/.codex, ~/.pi/agent, or agent-home).
 	CodexSeed string

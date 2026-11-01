@@ -5,6 +5,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/tendant/agentbox/pkg/agentbox/audit"
+	"github.com/tendant/agentbox/pkg/agentbox/pricing"
 )
 
 // The audit record (Config.Audit) is the runs' security evidence, for
@@ -34,6 +35,9 @@ func (r *Runtime) auditPolicy(req BeginReq, spec sandbox.SandboxSpec, res sandbo
 		snap.Metering = map[string]string{}
 		for name, ch := range r.cfg.Models {
 			snap.Metering[name] = ch.MeteringMode()
+			if r.cfg.ModelBudget > 0 && ch.MeteringMode() == audit.MeteringBroker {
+				snap.ModelBudget = &audit.ModelBudget{USDMicros: r.cfg.ModelBudget, Prices: pricing.Default().Version}
+			}
 		}
 	}
 	var id string
