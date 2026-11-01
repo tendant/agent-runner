@@ -378,6 +378,29 @@ if os.fork()==0:
 			}
 			return nil
 		}},
+		// Reporting on an allowlist reaches a public host it does not grant,
+		// and still refuses the metadata address.
+		{"net.restricted_report", func(t *x) error {
+			if err := needInternet(); err != nil {
+				return err
+			}
+			s := restricted(t, "example.com")
+			s.Network.EgressReportOnly = true
+			out, _ := t.exec(s, `
+				curl -sS -m 15 -o /dev/null -w 'HTTP%{http_code}\n' https://www.iana.org/ 2>&1
+				code=$(curl -s -m 5 -o "${TMPDIR:-/tmp}/meta" -w '%{http_code}' http://169.254.169.254/ 2>/dev/null)
+				[ "$code" != 000 ] && ! grep -q 'egress Forbidden' "${TMPDIR:-/tmp}/meta" 2>/dev/null && echo METADATA_REACHED
+				echo DONE`)
+			switch {
+			case strings.Contains(out, "METADATA_REACHED"):
+				return errors.New("metadata egress was allowed while reporting")
+			case !strings.Contains(out, "DONE"):
+				return fmt.Errorf("probe did not run: %s", tail(out, 200))
+			case !strings.Contains(out, "HTTP200"):
+				return fmt.Errorf("a host outside a reported allowlist was not reached: %s", tail(out, 200))
+			}
+			return nil
+		}},
 		{"net.restricted_deny", func(t *x) error {
 			if err := needInternet(); err != nil {
 				return err

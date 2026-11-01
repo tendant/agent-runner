@@ -8,12 +8,22 @@ import (
 )
 
 // EgressHost is one destination a run's egress gateway decided on, with how
-// many times it allowed and refused it.
+// many times it allowed and refused it. Outside counts the allowed
+// connections its allowlist does not grant, let through because the
+// allowlist was only reported on (AGENT_SANDBOX_EGRESS_ENFORCE=report).
 type EgressHost struct {
 	Host    string
 	Allowed int
+	Outside int
 	Denied  int
 }
+
+// Gateway decision kinds (agentbox egress events).
+const (
+	egressAllowed = "allowed"
+	egressDenied  = "denied"
+	egressOutside = "outside" // allowed, not granted: report only
+)
 
 // maxEgressHosts bounds a run's log: the sandbox picks the names.
 const maxEgressHosts = 500
@@ -28,17 +38,18 @@ type egressLog struct {
 	dropped int // hosts past maxEgressHosts, not tallied
 	emit    func(kind, host string)
 	// each, if set, receives every decision, tallied or not (the audit record).
-	each func(allowed bool, host string)
+	each func(kind, host string)
 }
 
 func newEgressLog(emit func(kind, host string)) *egressLog {
 	return &egressLog{hosts: map[string]*EgressHost{}, emit: emit}
 }
 
-func (l *egressLog) record(allowed bool, host string) {
+// record tallies one decision: egressAllowed, egressOutside or egressDenied.
+func (l *egressLog) record(kind, host string) {
 	host = cleanHost(host)
 	if l.each != nil {
-		l.each(allowed, host)
+		l.each(kind, host)
 	}
 	l.mu.Lock()
 	h, ok := l.hosts[host]
@@ -52,20 +63,22 @@ func (l *egressLog) record(allowed bool, host string) {
 		l.hosts[host] = h
 	}
 	var first bool
-	if allowed {
+	switch kind {
+	case egressAllowed:
 		first = h.Allowed == 0
 		h.Allowed++
-	} else {
+	case egressOutside:
+		first = h.Outside == 0
+		h.Allowed++
+		h.Outside++
+	default:
+		kind = egressDenied
 		first = h.Denied == 0
 		h.Denied++
 	}
 	l.mu.Unlock()
 	if first && l.emit != nil {
-		kind := "sandbox.egress_denied"
-		if allowed {
-			kind = "sandbox.egress_allowed"
-		}
-		l.emit(kind, host)
+		l.emit("sandbox.egress_"+kind, host)
 	}
 }
 

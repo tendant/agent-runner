@@ -93,46 +93,47 @@ type Config struct {
 
 // AgentConfig contains agent mode settings
 type AgentConfig struct {
-	MaxIterations       int
-	MaxTotalSeconds     int
-	MaxIterationSeconds int
-	SystemPrompt        string   // Path to base agent prompt (agent.md) — always loaded
-	PromptFile          string   // Path to workflow prompt template (prompt.md) — optional overlay
-	Paths               []string // Comma-separated allowed paths
-	Author              string
-	CommitPrefix        string
-	Provider            string   // provider for the work model (AGENT_PROVIDER, or first segment of AGENT_MODEL)
-	Model               string   // AGENT_MODEL — the model doing real work at the agent CLI
-	FastProvider        string   // provider for the fast tier (AGENT_FAST_PROVIDER, or first segment of AGENT_FAST_MODEL)
-	FastModel           string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
-	MaxTurns            int      // Optional: --max-turns flag for agentic turns per CLI invocation
-	CLI                 string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
-	SandboxMode         string   // AGENT_SANDBOX — off (default) | permissive | strict
-	SandboxBackend      string   // AGENT_SANDBOX_BACKEND — "" or agentbox (the only one: gVisor on Linux, Seatbelt on macOS)
-	SandboxPolicyFile   string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
-	SandboxMemory       string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
-	SandboxPIDs         string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
-	SandboxEvidence     string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
-	Name                string   // AGENT_NAME — this agent's name, on every sandboxed run's audit record (default: INSTANCE)
-	SandboxAuditDir     string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
-	SandboxAuditSegment string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
-	SandboxAuditKeep    string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
-	SandboxLedgerURL    string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
-	SandboxMetering     []string // AGENT_SANDBOX_METERING — provider=ledger|broker|none, how a channel's calls are metered on the audit record (default: ledger for a ledger-gate upstream, else broker)
-	SandboxEnvAllow     []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
-	SandboxRead         string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
-	SandboxReadAllow    []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
-	SandboxEgressAllow  []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
-	SandboxEgressMode   string   // AGENT_SANDBOX_EGRESS_MODE — agentbox: auto (default) | transparent | proxy
-	SandboxEgressPorts  []int    // AGENT_SANDBOX_EGRESS_PORTS — allowed destination ports (default: 443,80 for strict; 443,80,22 for permissive)
-	SandboxModelProxy   bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
-	SandboxCodexLogin   string   // AGENT_SANDBOX_CODEX_LOGIN — a codex ChatGPT login (auth.json) for sandboxed codex, through the proxy; unset: codex's own when AGENT_CLI=codex without OPENAI_API_KEY; "off": none
-	Isolated            bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
-	SkillsDir           string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
-	PlannerEnabled      bool     // Enable planner sub-agent before iteration loop
-	ReviewerEnabled     bool     // Enable reviewer sub-agent after iteration loop (phase 2)
-	MaxQueueSize        int      // Maximum number of queued agent sessions
-	MaxConcurrent       int      // AGENT_MAX_CONCURRENT — agent sessions allowed to run at once (1 = serial, the default)
+	MaxIterations        int
+	MaxTotalSeconds      int
+	MaxIterationSeconds  int
+	SystemPrompt         string   // Path to base agent prompt (agent.md) — always loaded
+	PromptFile           string   // Path to workflow prompt template (prompt.md) — optional overlay
+	Paths                []string // Comma-separated allowed paths
+	Author               string
+	CommitPrefix         string
+	Provider             string   // provider for the work model (AGENT_PROVIDER, or first segment of AGENT_MODEL)
+	Model                string   // AGENT_MODEL — the model doing real work at the agent CLI
+	FastProvider         string   // provider for the fast tier (AGENT_FAST_PROVIDER, or first segment of AGENT_FAST_MODEL)
+	FastModel            string   // AGENT_FAST_MODEL — optional cheap tier feeding the fast-LLM slot; defaults to Model
+	MaxTurns             int      // Optional: --max-turns flag for agentic turns per CLI invocation
+	CLI                  string   // CLI backend: "pi" (default), "claude", "codex", or "opencode"
+	SandboxMode          string   // AGENT_SANDBOX — off (default) | permissive | strict
+	SandboxBackend       string   // AGENT_SANDBOX_BACKEND — "" or agentbox (the only one: gVisor on Linux, Seatbelt on macOS)
+	SandboxPolicyFile    string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
+	SandboxMemory        string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
+	SandboxPIDs          string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
+	SandboxEvidence      string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
+	Name                 string   // AGENT_NAME — this agent's name, on every sandboxed run's audit record (default: INSTANCE)
+	SandboxAuditDir      string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
+	SandboxAuditSegment  string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
+	SandboxAuditKeep     string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
+	SandboxLedgerURL     string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
+	SandboxMetering      []string // AGENT_SANDBOX_METERING — provider=ledger|broker|none, how a channel's calls are metered on the audit record (default: ledger for a ledger-gate upstream, else broker)
+	SandboxEnvAllow      []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
+	SandboxRead          string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
+	SandboxReadAllow     []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
+	SandboxEgressAllow   []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
+	SandboxEgressEnforce string   // AGENT_SANDBOX_EGRESS_ENFORCE — enforce (default): refuse hosts the allowlist does not grant | report: reach them and record them as outside it
+	SandboxEgressMode    string   // AGENT_SANDBOX_EGRESS_MODE — agentbox: auto (default) | transparent | proxy
+	SandboxEgressPorts   []int    // AGENT_SANDBOX_EGRESS_PORTS — allowed destination ports (default: 443,80 for strict; 443,80,22 for permissive)
+	SandboxModelProxy    bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
+	SandboxCodexLogin    string   // AGENT_SANDBOX_CODEX_LOGIN — a codex ChatGPT login (auth.json) for sandboxed codex, through the proxy; unset: codex's own when AGENT_CLI=codex without OPENAI_API_KEY; "off": none
+	Isolated             bool     // AGENT_ISOLATED — spawn executors inside agent-home/ (own MCP/skills/credentials)
+	SkillsDir            string   // AGENT_SKILLS_DIR — directory of skills pre-populated in every workspace
+	PlannerEnabled       bool     // Enable planner sub-agent before iteration loop
+	ReviewerEnabled      bool     // Enable reviewer sub-agent after iteration loop (phase 2)
+	MaxQueueSize         int      // Maximum number of queued agent sessions
+	MaxConcurrent        int      // AGENT_MAX_CONCURRENT — agent sessions allowed to run at once (1 = serial, the default)
 
 	// Multi-turn tasks (TASKS_DESIGN.md). Off by default: each chat message
 	// then starts an independent run, as before.
@@ -439,6 +440,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)
 	cfg.Agent.SandboxEgressAllow = envSliceOrDefault("AGENT_SANDBOX_EGRESS_ALLOW", cfg.Agent.SandboxEgressAllow)
+	cfg.Agent.SandboxEgressEnforce = strings.ToLower(strings.TrimSpace(envOrDefault("AGENT_SANDBOX_EGRESS_ENFORCE", cfg.Agent.SandboxEgressEnforce)))
 	cfg.Agent.SandboxEgressMode = envOrDefault("AGENT_SANDBOX_EGRESS_MODE", cfg.Agent.SandboxEgressMode)
 	if ports := os.Getenv("AGENT_SANDBOX_EGRESS_PORTS"); ports != "" {
 		for _, p := range strings.Split(ports, ",") {

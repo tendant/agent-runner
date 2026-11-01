@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -80,6 +81,7 @@ type PromptSectionLog struct {
 type EgressLog struct {
 	Host    string
 	Allowed int
+	Outside int // of Allowed, not granted by the allowlist (report only)
 	Denied  int
 }
 
@@ -308,9 +310,19 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 	if len(data.Egress) > 0 {
 		sb.WriteString("## Network\n\n")
 		sb.WriteString("Connections through the sandbox's egress gateway, by host (refused first).\n\n")
-		sb.WriteString("| Host | Allowed | Refused |\n|---|---:|---:|\n")
+		outside := slices.ContainsFunc(data.Egress, func(e EgressLog) bool { return e.Outside > 0 })
+		if !outside {
+			sb.WriteString("| Host | Allowed | Refused |\n|---|---:|---:|\n")
+		} else {
+			// The allowlist is only reported on: what it would refuse.
+			sb.WriteString("| Host | Allowed | Outside the allowlist | Refused |\n|---|---:|---:|---:|\n")
+		}
 		for _, e := range data.Egress {
-			sb.WriteString(fmt.Sprintf("| `%s` | %d | %d |\n", e.Host, e.Allowed, e.Denied))
+			if outside {
+				sb.WriteString(fmt.Sprintf("| `%s` | %d | %d | %d |\n", e.Host, e.Allowed, e.Outside, e.Denied))
+			} else {
+				sb.WriteString(fmt.Sprintf("| `%s` | %d | %d |\n", e.Host, e.Allowed, e.Denied))
+			}
 		}
 		sb.WriteString("\n")
 	}

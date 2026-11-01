@@ -289,3 +289,15 @@ func TestAgentLogNetworkSection(t *testing.T) {
 		t.Error("no egress, no Network section")
 	}
 }
+
+// With an allowlist only reported on, the table says what it would refuse.
+func TestAgentLogNetworkOutside(t *testing.T) {
+	l := &RunLogger{LogsRoot: t.TempDir()}
+	md := l.generateAgentMarkdown(&AgentLogData{SessionID: "s", Egress: []EgressLog{
+		{Host: "evil.example", Allowed: 2, Outside: 2}, {Host: "github.com", Allowed: 3}}}, "2026-11-01_00-00-00")
+	for _, want := range []string{"| Outside the allowlist |", "| `evil.example` | 2 | 2 | 0 |", "| `github.com` | 3 | 0 | 0 |"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("missing %q in:\n%s", want, md)
+		}
+	}
+}

@@ -306,12 +306,9 @@ func TestOnEgress(t *testing.T) {
 	s := spec()
 	s.Resources = sandbox.ResourcePolicy{}
 	s.Network.Egress, s.Network.EgressAllow = sandbox.EgressRestricted, []string{"*"}
-	type decision struct {
-		allowed bool
-		host    string
-	}
+	type decision struct{ kind, host string }
 	got := make(chan decision, 4)
-	ps, err := New(Config{Roots: roots(t), Backend: f, OnEgress: func(a bool, h string) { got <- decision{a, h} }}).Prepare(context.Background(), s)
+	ps, err := New(Config{Roots: roots(t), Backend: f, OnEgress: func(k, h string) { got <- decision{k, h} }}).Prepare(context.Background(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +322,7 @@ func TestOnEgress(t *testing.T) {
 	resp.Body.Close()
 	select {
 	case d := <-got:
-		if d.allowed || d.host != "169.254.169.254" {
+		if d.kind != "denied" || d.host != "169.254.169.254" {
 			t.Errorf("decision %+v", d)
 		}
 	case <-time.After(5 * time.Second):

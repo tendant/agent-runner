@@ -106,9 +106,13 @@ type NetworkPolicy struct {
 	// EgressSets are the definitions of the @sets EgressAllow names, set on
 	// a run's resolved spec (UsedSets): what each meant for that run.
 	EgressSets map[string][]string `json:"egress_sets,omitempty"`
-	DNS        DNSMode             `json:"dns,omitempty"`
-	Listen     *bool               `json:"listen,omitempty"` // nil = inherit; root default false
-	Expose     []int               `json:"expose,omitempty"`
+	// EgressReportOnly: a host EgressAllow does not grant is reached anyway
+	// and recorded as outside it, not refused (AGENT_SANDBOX_EGRESS_ENFORCE=
+	// report), set on a run's resolved spec.
+	EgressReportOnly bool    `json:"egress_report_only,omitempty"`
+	DNS              DNSMode `json:"dns,omitempty"`
+	Listen           *bool   `json:"listen,omitempty"` // nil = inherit; root default false
+	Expose           []int   `json:"expose,omitempty"`
 }
 
 // ResourcePolicy caps resources; zero means unset (inherit / unlimited at root).

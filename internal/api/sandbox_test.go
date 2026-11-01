@@ -42,6 +42,22 @@ func TestAuditSourceNamesTheAgent(t *testing.T) {
 	}
 }
 
+// AGENT_SANDBOX_EGRESS_ENFORCE=report reaches the runtime; a value it does
+// not know rejects every run rather than enforcing or reporting by guess.
+func TestSandboxEgressEnforceSetting(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.StateRoot = t.TempDir()
+	cfg.Agent.SandboxEgressEnforce = "report"
+	if rt := newSandboxRuntime(cfg); rt == nil || rt.Mode() != sandbox.ModePermissive {
+		t.Fatal("report must start the sandbox")
+	}
+	// A rejecting runtime (sandboxrt.Failed) is strict, whatever was asked.
+	cfg.Agent.SandboxEgressEnforce = "reprot"
+	if rt := newSandboxRuntime(cfg); rt == nil || rt.Mode() != sandbox.ModeStrict {
+		t.Error("an unknown value must reject runs")
+	}
+}
+
 func TestSandboxPrivatePaths(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ProjectDir, cfg.DataDir = t.TempDir(), t.TempDir()

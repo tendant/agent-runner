@@ -71,9 +71,9 @@ func TestAuditRecordsARun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run.egress.record(true, "api.github.com")
-	run.egress.record(true, "api.github.com") // every decision, not just the first per host
-	run.egress.record(false, "169.254.169.254")
+	run.egress.record(egressAllowed, "api.github.com")
+	run.egress.record(egressAllowed, "api.github.com") // every decision, not just the first per host
+	run.egress.record(egressDenied, "169.254.169.254")
 	run.Finish()
 
 	evs := read()
@@ -397,5 +397,44 @@ func TestAuditSnapshotDefinesEgressSets(t *testing.T) {
 	if !slices.Equal(n.EgressAllow, []string{"@github", "api.example.com"}) || len(n.EgressSets) != 1 ||
 		!slices.Equal(n.EgressSets["@github"], sandbox.EgressSets["@github"]) {
 		t.Errorf("snapshot network %+v", n)
+	}
+}
+
+// A reported allowlist is on the snapshot, and a connection outside it is
+// on record as allowed, with the reason that says what enforcing would do.
+func TestAuditEgressReportOnly(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{EgressAllow: []string{"@github"}, EgressReport: true})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.egress.record(egressAllowed, "api.github.com")
+	run.egress.record(egressOutside, "evil.example")
+	run.Finish()
+	evs := read()
+	var snap struct{ Spec sandbox.SandboxSpec }
+	json.Unmarshal(evs[0].Detail, &snap)
+	if !snap.Spec.Network.EgressReportOnly {
+		t.Errorf("snapshot network %+v: report only not recorded", snap.Spec.Network)
+	}
+	var reasons []string
+	for _, e := range evs {
+		if e.Type == audit.TypeNetworkAllowed {
+			var d audit.NetworkDetail
+			json.Unmarshal(e.Detail, &d)
+			reasons = append(reasons, d.Destination+":"+d.Reason)
+		}
+	}
+	if !slices.Equal(reasons, []string{"api.github.com:", "evil.example:" + audit.ReasonOutsideAllowlist}) {
+		t.Errorf("allowed connections %v", reasons)
+	}
+	// Enforcing (the default) says nothing of reporting.
+	rt2, read2, _ := auditRT(t, sandbox.ModePermissive, nil, Config{EgressAllow: []string{"@github"}})
+	run2, _ := rt2.Begin(context.Background(), BeginReq{RunID: "r2", ThreadID: "t2", Workspace: t.TempDir()})
+	run2.Finish()
+	var snap2 struct{ Spec sandbox.SandboxSpec }
+	json.Unmarshal(read2()[0].Detail, &snap2)
+	if snap2.Spec.Network.EgressReportOnly {
+		t.Error("an enforced allowlist recorded as report only")
 	}
 }

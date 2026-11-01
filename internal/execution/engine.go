@@ -399,7 +399,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		logData.MemorySaved, logData.MemorySkipped = memResult.Saved, memResult.Skipped
 		if sandboxEgress != nil {
 			for _, e := range sandboxEgress() {
-				logData.Egress = append(logData.Egress, logging.EgressLog{Host: e.Host, Allowed: e.Allowed, Denied: e.Denied})
+				logData.Egress = append(logData.Egress, logging.EgressLog{Host: e.Host, Allowed: e.Allowed, Outside: e.Outside, Denied: e.Denied})
 			}
 		}
 		if snap.PlanJSON != nil {

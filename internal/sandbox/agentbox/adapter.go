@@ -58,9 +58,11 @@ type Config struct {
 	// HostPorts are model proxies' ports on the host's loopback (backends
 	// with HostPorts: Seatbelt).
 	HostPorts []int
-	// OnEgress receives each decision of the run's egress gateway: the host
-	// asked for, and whether it was allowed. Never payloads.
-	OnEgress func(allowed bool, host string)
+	// OnEgress receives each decision of the run's egress gateway: its kind
+	// ("allowed", "denied", or "outside": allowed though the allowlist does
+	// not grant it, as it is only reported on) and the host asked for.
+	// Never payloads.
+	OnEgress func(kind, host string)
 	// Evidence is the conformance report for this backend on this host;
 	// when set, only capabilities it proves are claimed.
 	Evidence *conformance.Report
@@ -279,10 +281,11 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	var gw *egress.Gateway
 	var gwDir, proxyAddr string
 	if spec.Network.Egress == sandbox.EgressRestricted {
-		gcfg := egress.Config{Allow: spec.Network.EgressAllow, Sets: spec.Network.EgressSets, Ports: b.cfg.EgressPorts}
+		gcfg := egress.Config{Allow: spec.Network.EgressAllow, Sets: spec.Network.EgressSets, Ports: b.cfg.EgressPorts,
+			ReportOnly: spec.Network.EgressReportOnly}
 		slog.Info("adapter egress config", "egress_ports", b.cfg.EgressPorts, "is_nil", b.cfg.EgressPorts == nil)
 		if on := b.cfg.OnEgress; on != nil {
-			gcfg.OnEvent = func(kind, host string) { on(kind == "allowed", host) }
+			gcfg.OnEvent = on
 		}
 		if c.Gateway || c.ModelSocket {
 			base := os.Getenv("XDG_RUNTIME_DIR")

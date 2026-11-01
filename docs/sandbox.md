@@ -119,7 +119,12 @@ itself nor `a.b.example.com`). Named sets keep a list short: `@github`, `@npm`, 
 `AGENT_SANDBOX_EGRESS_ALLOW=@github,@npm,*.variablename.com`. An unknown set is refused at startup.
 Each run's policy snapshot records what the sets it used meant (`egress_sets`), so the audit
 record says which hosts were granted. agent-gate's outbound hosts page lists what each agent
-actually reached, to start a list from. Private, loopback, link-local and metadata addresses are
+actually reached, to start a list from. `AGENT_SANDBOX_EGRESS_ENFORCE=report` tries a list before
+enforcing it: a host the list does not grant is reached anyway and recorded as outside it
+(`network_allowed`, reason `outside_allowlist`; the session log's Network table gains an
+"Outside the allowlist" column), so what enforcing would refuse is on record without breaking
+runs. Ports and internal addresses are refused all the same. `enforce`, the default, refuses
+them; any other value rejects every run. Private, loopback, link-local and metadata addresses are
 refused either way, also when a name resolves to one. git over SSH (port 22) is refused: use HTTPS remotes. How connections reach the gateway,
 `AGENT_SANDBOX_EGRESS_MODE`:
 

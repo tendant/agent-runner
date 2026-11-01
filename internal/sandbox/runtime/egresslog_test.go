@@ -10,12 +10,12 @@ func TestEgressLog(t *testing.T) {
 	var events []string
 	l := newEgressLog(func(kind, host string) { events = append(events, kind+" "+host) })
 	for range 3 {
-		l.record(true, "github.com")
+		l.record(egressAllowed, "github.com")
 	}
-	l.record(false, "169.254.169.254")
-	l.record(false, "169.254.169.254")
-	l.record(true, "api.example.com")
-	l.record(false, "evil|`host` \n")
+	l.record(egressDenied, "169.254.169.254")
+	l.record(egressDenied, "169.254.169.254")
+	l.record(egressAllowed, "api.example.com")
+	l.record(egressDenied, "evil|`host` \n")
 
 	// One event per host and decision, not per connection.
 	want := []string{"sandbox.egress_allowed github.com", "sandbox.egress_denied 169.254.169.254",
@@ -33,7 +33,7 @@ func TestEgressLog(t *testing.T) {
 	// Bounded: the sandbox picks the names.
 	b := newEgressLog(nil)
 	for i := range maxEgressHosts + 7 {
-		b.record(true, fmt.Sprintf("h%d.test", i))
+		b.record(egressAllowed, fmt.Sprintf("h%d.test", i))
 	}
 	s := b.summary()
 	last := s[len(s)-1]
@@ -42,5 +42,22 @@ func TestEgressLog(t *testing.T) {
 	}
 	if (*egressLog)(nil).summary() != nil {
 		t.Error("nil log")
+	}
+}
+
+// A host reached outside a reported allowlist is allowed, counted as
+// outside it, and announced once as such.
+func TestEgressLogOutside(t *testing.T) {
+	var events []string
+	l := newEgressLog(func(kind, host string) { events = append(events, kind+" "+host) })
+	l.record(egressOutside, "evil.example")
+	l.record(egressOutside, "evil.example")
+	l.record(egressAllowed, "github.com")
+	if strings.Join(events, ";") != "sandbox.egress_outside evil.example;sandbox.egress_allowed github.com" {
+		t.Errorf("events %q", events)
+	}
+	got := l.summary()
+	if len(got) != 2 || got[0].Host != "evil.example" || got[0].Allowed != 2 || got[0].Outside != 2 || got[1].Outside != 0 {
+		t.Errorf("summary %+v", got)
 	}
 }

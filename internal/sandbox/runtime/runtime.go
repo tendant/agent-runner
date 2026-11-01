@@ -52,6 +52,10 @@ type Config struct {
 	// through the run's gateway to these hosts (default "*": any public
 	// host; private and metadata addresses never).
 	EgressAllow []string
+	// EgressReport: a host EgressAllow does not grant is reached anyway and
+	// recorded as outside it (AGENT_SANDBOX_EGRESS_ENFORCE=report), to try an
+	// allowlist before enforcing it. Internal addresses stay refused.
+	EgressReport bool
 	// EgressMode: "auto" (default; transparent where the host
 	// supports it), "transparent" (every TCP connection reaches the gateway;
 	// required) or "proxy" (only what honours HTTPS_PROXY).
@@ -461,8 +465,10 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: err.Error()})
 		return nil, &RejectedError{err}
 	}
-	// What the allowlist's @sets mean, for the gateway and the record alike.
+	// What the allowlist's @sets mean, and whether it is enforced or only
+	// reported on, for the gateway and the record alike.
 	spec.Network.EgressSets = sandbox.UsedSets(spec.Network.EgressAllow)
+	spec.Network.EgressReportOnly = r.cfg.EgressReport && spec.Network.Egress == sandbox.EgressRestricted
 
 	base := filepath.Join(r.cfg.StateDir, "runs", safe(req.RunID))
 	roots := map[string]string{
@@ -514,7 +520,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	egress := newEgressLog(func(kind, host string) {
 		r.emit(Event{Kind: kind, RunID: req.RunID, ThreadID: req.ThreadID, Detail: host})
 	})
-	egress.each = func(allowed bool, host string) { r.auditEgress(req.RunID, allowed, host) }
+	egress.each = func(kind, host string) { r.auditEgress(req.RunID, kind, host) }
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
 			return r.cfg.NewBackend(roots)

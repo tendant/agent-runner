@@ -33,6 +33,13 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	if err == nil && cfg.Agent.SandboxBackend != "" && cfg.Agent.SandboxBackend != "agentbox" {
 		err = fmt.Errorf("AGENT_SANDBOX_BACKEND=%s is no longer supported: isobox was removed (unset it)", cfg.Agent.SandboxBackend)
 	}
+	switch cfg.Agent.SandboxEgressEnforce {
+	case "", "enforce", "report":
+	default:
+		if err == nil {
+			err = fmt.Errorf("AGENT_SANDBOX_EGRESS_ENFORCE=%s: use enforce (the default) or report", cfg.Agent.SandboxEgressEnforce)
+		}
+	}
 	if err != nil {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
@@ -62,16 +69,17 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		}
 	}
 	rt, err := sandboxrt.New(sandboxrt.Config{
-		Mode:        mode,
-		StateDir:    filepath.Join(cfg.StateRoot, "sandbox"),
-		Instance:    host,
-		PolicyFile:  cfg.Agent.SandboxPolicyFile,
-		Memory:      cfg.Agent.SandboxMemory,
-		PIDs:        cfg.Agent.SandboxPIDs,
-		ScopedReads: scoped,
-		EgressAllow: cfg.Agent.SandboxEgressAllow,
-		EgressMode:  cfg.Agent.SandboxEgressMode,
-		EgressPorts: egressPorts,
+		Mode:         mode,
+		StateDir:     filepath.Join(cfg.StateRoot, "sandbox"),
+		Instance:     host,
+		PolicyFile:   cfg.Agent.SandboxPolicyFile,
+		Memory:       cfg.Agent.SandboxMemory,
+		PIDs:         cfg.Agent.SandboxPIDs,
+		ScopedReads:  scoped,
+		EgressAllow:  cfg.Agent.SandboxEgressAllow,
+		EgressReport: cfg.Agent.SandboxEgressEnforce == "report",
+		EgressMode:   cfg.Agent.SandboxEgressMode,
+		EgressPorts:  egressPorts,
 		// Prompts point agents at memory, and uploads reach them by path.
 		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
 		EvidenceFile: cfg.Agent.SandboxEvidence,

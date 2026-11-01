@@ -119,13 +119,19 @@ func (r *Runtime) auditLifecycle(e Event) {
 	r.auditMu.Unlock()
 }
 
-// auditEgress records one decision of the run's egress gateway.
-func (r *Runtime) auditEgress(runID string, allowed bool, host string) {
+// auditEgress records one decision of the run's egress gateway. A
+// connection its allowlist does not grant, let through to report on it, is
+// allowed with the reason that says so.
+func (r *Runtime) auditEgress(runID, kind, host string) {
+	d := audit.NetworkDetail{Destination: host}
 	typ := audit.TypeNetworkBlocked
-	if allowed {
+	switch kind {
+	case egressAllowed:
 		typ = audit.TypeNetworkAllowed
+	case egressOutside:
+		typ, d.Reason = audit.TypeNetworkAllowed, audit.ReasonOutsideAllowlist
 	}
-	r.audit(runID, typ, audit.NetworkDetail{Destination: host})
+	r.audit(runID, typ, d)
 }
 
 // auditModel records one decision of a run's model channel that refused a
