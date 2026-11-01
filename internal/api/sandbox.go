@@ -75,6 +75,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		PolicyFile:   cfg.Agent.SandboxPolicyFile,
 		Memory:       cfg.Agent.SandboxMemory,
 		PIDs:         cfg.Agent.SandboxPIDs,
+		CPUs:         cfg.Agent.SandboxCPUs,
 		ScopedReads:  scoped,
 		EgressAllow:  cfg.Agent.SandboxEgressAllow,
 		EgressReport: cfg.Agent.SandboxEgressEnforce == "report",

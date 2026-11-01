@@ -107,6 +107,9 @@ type SandboxLauncher struct {
 	Tag string
 	// OnCheck, if set, receives every check result (for events/logging).
 	OnCheck func(sandbox.CheckResult, error)
+	// OnUsage, if set, receives what each launch's sandbox used, once it is
+	// destroyed, when the backend measured it.
+	OnUsage func(sandbox.Usage)
 }
 
 func (l *SandboxLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd, func(), error) {
@@ -143,7 +146,14 @@ func (l *SandboxLauncher) Command(ctx context.Context, s LaunchSpec) (*exec.Cmd,
 		_ = ps.Destroy(ctx)
 		return nil, nil, err
 	}
-	return cmd, func() { _ = ps.Destroy(context.Background()) }, nil
+	return cmd, func() {
+		_ = ps.Destroy(context.Background())
+		if r, ok := ps.(sandbox.UsageReporter); ok && l.OnUsage != nil {
+			if u, ok := r.Usage(); ok {
+				l.OnUsage(u)
+			}
+		}
+	}, nil
 }
 
 // env builds the complete sandbox environment: a minimal base, allowlisted

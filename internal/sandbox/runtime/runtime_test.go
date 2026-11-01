@@ -297,6 +297,17 @@ func TestMemoryCapsEveryRun(t *testing.T) {
 			t.Errorf("pids %q must fail", bad)
 		}
 	}
+	rc, err := newWith(Config{CPUs: "1.5", PolicyFile: `{"version":1,"resources":{"cpus":8}}`})
+	if err != nil || rc.system.Resources.CPUs != 1.5 {
+		t.Errorf("cpus: %v %+v", err, rc)
+	} else if caps := sandbox.Required(rc.system); !containsCap(caps, sandbox.CapResourceCPU) {
+		t.Errorf("a CPU cap must require %s, got %v", sandbox.CapResourceCPU, caps)
+	}
+	for _, bad := range []string{"0", "-1", "two"} {
+		if _, err := newWith(Config{CPUs: bad}); err == nil {
+			t.Errorf("cpus %q must fail", bad)
+		}
+	}
 	// Seatbelt cannot cap memory: a capped run reports resource.memory as a gap there.
 	if caps := sandbox.Required(rt.system); !containsCap(caps, sandbox.CapResourceMemory) {
 		t.Errorf("a memory cap must require %s, got %v", sandbox.CapResourceMemory, caps)

@@ -40,6 +40,8 @@ type Event struct {
 	ThreadID string
 	Backend  string
 	Detail   string
+	// Usage, on sandbox.finished: what the run's sandboxes used, if measured.
+	Usage *audit.ResourceUsage
 }
 
 // Config configures the runtime.
@@ -65,6 +67,7 @@ type Config struct {
 	PolicyFile  string // optional system-layer SandboxSpec: a JSON file path, or inline JSON (see loadPolicy)
 	Memory      string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	PIDs        string // optional process/thread cap for every run; overrides the policy's pids
+	CPUs        string // optional CPU cap for every run, in cores ("2", "1.5"); overrides the policy's cpus
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
 	ScopedReads  bool
@@ -313,6 +316,13 @@ func New(cfg Config) (*Runtime, error) {
 		}
 		r.system.Resources.MemoryBytes = n
 	}
+	if cfg.CPUs != "" {
+		n, err := strconv.ParseFloat(strings.TrimSpace(cfg.CPUs), 64)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("sandbox cpus: bad count %q", cfg.CPUs)
+		}
+		r.system.Resources.CPUs = n
+	}
 	if cfg.PIDs != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(cfg.PIDs), 10, 64)
 		if err != nil || n <= 0 {
@@ -413,6 +423,29 @@ type Run struct {
 	backend  string
 	model    *modelRun // the run's model channels, if any
 	egress   *egressLog
+	usageMu  sync.Mutex
+	usage    *audit.ResourceUsage // over the run's measured sandboxes
+}
+
+// addUsage takes one launch's measured use into the run's: the highest
+// peak, the CPU time and OOM kills of all. A launch that lost processes to
+// the memory limit is on record as it ends.
+func (run *Run) addUsage(u sandbox.Usage) {
+	run.usageMu.Lock()
+	if run.usage == nil {
+		run.usage = &audit.ResourceUsage{}
+	}
+	run.usage.MemoryPeakBytes = max(run.usage.MemoryPeakBytes, u.MemoryPeakBytes)
+	run.usage.CPUSeconds += u.CPUTime.Seconds()
+	run.usage.OOMKills += u.OOMKills
+	run.usage.Sandboxes++
+	run.usageMu.Unlock()
+	if u.OOMKills > 0 {
+		run.rt.audit(run.req.RunID, audit.TypeResourceLimitHit, audit.ResourceDetail{Resource: "memory",
+			Limit: run.Spec.Resources.MemoryBytes, Reason: fmt.Sprintf("oom_kill: %d process(es) killed", u.OOMKills)})
+		run.rt.emit(Event{Kind: "sandbox.oom_kill", RunID: run.req.RunID, ThreadID: run.req.ThreadID, Backend: run.backend,
+			Detail: fmt.Sprintf("%d process(es) killed at the memory limit", u.OOMKills)})
+	}
 }
 
 // Egress is what the run's egress gateway allowed and refused, by host,
@@ -648,6 +681,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			"PI_CODING_AGENT_DIR=" + piDir,
 			"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(home, ".pi", "sessions"),
 		},
+		OnUsage: run.addUsage,
 		OnCheck: func(cr sandbox.CheckResult, err error) {
 			if err != nil || (r.cfg.Mode == sandbox.ModeStrict && len(cr.Gaps) > 0) {
 				r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Backend: cr.Backend, Detail: "check at launch failed"})
@@ -677,8 +711,11 @@ func (run *Run) Finish() {
 		if run.releaseT != nil {
 			run.releaseT()
 		}
+		run.usageMu.Lock()
+		usage := run.usage
+		run.usageMu.Unlock()
 		run.rt.emit(Event{Kind: "sandbox.finished", RunID: run.req.RunID, ThreadID: run.req.ThreadID, Backend: run.backend,
-			Detail: fmt.Sprintf("elapsed=%s", time.Since(run.started).Round(time.Millisecond))})
+			Detail: fmt.Sprintf("elapsed=%s", time.Since(run.started).Round(time.Millisecond)), Usage: usage})
 	})
 }
 

@@ -396,6 +396,54 @@ func TestModelBudgetRefusesOnceSpent(t *testing.T) {
 	}
 }
 
+// A run's measured use, over its sandboxes, is on its sandbox_closed: the
+// highest peak, the CPU time of all. A launch that lost processes to the
+// memory cap is a resource_limit_hit as it ends.
+func TestRunUsageOnClose(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.addUsage(sandbox.Usage{MemoryPeakBytes: 300 << 20, CPUTime: 1500 * time.Millisecond})
+	run.addUsage(sandbox.Usage{MemoryPeakBytes: 700 << 20, CPUTime: 2 * time.Second, OOMKills: 1})
+	run.Finish()
+	var closed audit.LifecycleDetail
+	var hits []audit.ResourceDetail
+	for _, e := range read() {
+		switch e.Type {
+		case audit.TypeSandboxClosed:
+			json.Unmarshal(e.Detail, &closed)
+		case audit.TypeResourceLimitHit:
+			var d audit.ResourceDetail
+			json.Unmarshal(e.Detail, &d)
+			hits = append(hits, d)
+		}
+	}
+	want := audit.ResourceUsage{MemoryPeakBytes: 700 << 20, CPUSeconds: 3.5, OOMKills: 1, Sandboxes: 2}
+	if closed.Usage == nil || *closed.Usage != want {
+		t.Errorf("usage %+v, want %+v", closed.Usage, want)
+	}
+	if len(hits) != 1 || hits[0].Resource != "memory" || !strings.HasPrefix(hits[0].Reason, "oom_kill") {
+		t.Errorf("resource_limit_hit %+v", hits)
+	}
+}
+
+// A run nothing measured closes without usage.
+func TestRunWithoutUsage(t *testing.T) {
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Finish()
+	for _, e := range read() {
+		if e.Type == audit.TypeSandboxClosed && strings.Contains(string(e.Detail), "usage") {
+			t.Errorf("unmeasured run recorded usage: %s", e.Detail)
+		}
+	}
+}
+
 // No budget: none in the snapshot, nothing refused.
 func TestNoModelBudget(t *testing.T) {
 	if BudgetMicros(0) != 0 || BudgetMicros(-1) != 0 || BudgetMicros(2.5) != 2_500_000 {

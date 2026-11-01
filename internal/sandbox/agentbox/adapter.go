@@ -528,6 +528,16 @@ func (p *prepared) runCleanups() {
 	}
 }
 
+// Usage is the agentbox sandbox's measured use (sandbox.UsageReporter).
+func (p *prepared) Usage() (sandbox.Usage, bool) {
+	r, ok := p.sb.(ab.UsageReporter)
+	if !ok {
+		return sandbox.Usage{}, false
+	}
+	u, ok := r.Usage()
+	return sandbox.Usage{MemoryPeakBytes: u.MemoryPeakBytes, CPUTime: u.CPUTime, OOMKills: u.OOMKills}, ok
+}
+
 // Destroy kills what is left of the commands and closes the sandbox.
 func (p *prepared) Destroy(ctx context.Context) error {
 	p.runCleanups()

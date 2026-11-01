@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"time"
 )
 
 // Backend enforces capabilities; it never owns policy.
@@ -32,6 +33,19 @@ type ProcSpec struct {
 type PreparedSandbox interface {
 	Run(ctx context.Context, p ProcSpec) (exitCode int, err error)
 	Destroy(ctx context.Context) error
+}
+
+// Usage is what one prepared sandbox used, as the host measured it.
+type Usage struct {
+	MemoryPeakBytes int64
+	CPUTime         time.Duration
+	OOMKills        int64 // processes killed for memory
+}
+
+// UsageReporter is implemented by prepared sandboxes the host can measure;
+// after Destroy, Usage is what the sandbox used in all (false: unmeasured).
+type UsageReporter interface {
+	Usage() (Usage, bool)
 }
 
 // Commander is implemented by sandboxes that can hand back an unstarted

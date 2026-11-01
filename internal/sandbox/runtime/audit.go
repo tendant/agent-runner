@@ -108,7 +108,7 @@ func (r *Runtime) auditLifecycle(e Event) {
 	}
 	r.auditMu.Unlock()
 	for _, id := range runs {
-		d := audit.LifecycleDetail{Backend: e.Backend, ThreadID: e.ThreadID, Reason: e.Detail}
+		d := audit.LifecycleDetail{Backend: e.Backend, ThreadID: e.ThreadID, Reason: e.Detail, Usage: e.Usage}
 		if typ == audit.TypeSandboxCreated || typ == audit.TypeSandboxRejected {
 			d.Agent, d.Project = r.cfg.Agent, project
 		}

@@ -41,8 +41,16 @@ Other settings:
   itself when it starts with `{`. Fields it leaves unset keep the default policy's values, so
   `{"version":1,"network":{"egress":"none"}}` still grants the workspace, home and tmp; a field
   it sets replaces the default's.
-* `AGENT_SANDBOX_MEMORY` (e.g. `4g`) and `AGENT_SANDBOX_PIDS` (e.g. `1024`): caps for every run,
-  overriding the policy's (Linux only, see [Fork bombs](#fork-bombs-memory-and-pids-caps)).
+* `AGENT_SANDBOX_MEMORY` (e.g. `4g`), `AGENT_SANDBOX_CPUS` (cores, e.g. `2`) and
+  `AGENT_SANDBOX_PIDS` (e.g. `1024`): caps for every run, overriding the policy's (Linux only, see
+  [Fork bombs](#fork-bombs-memory-and-pids-caps)). Memory and CPU are set on a systemd user scope
+  around each sandbox, so the runner's user needs a user manager that outlives logins
+  (`loginctl enable-linger <user>`); without one, a run that asks for either is refused.
+* Measured use: on Linux, whenever a user scope works, each sandbox runs in one even without caps,
+  and the run's `sandbox_closed` event records its highest peak memory, CPU time and OOM kills
+  (`usage`) over its sandboxes, one per agent CLI launch. A launch that lost processes to the memory
+  cap is also recorded as `resource_limit_hit` (`memory`, reason `oom_kill`). Measure first, then
+  set caps from what runs actually use.
 * `AGENT_SANDBOX_EGRESS_ALLOW` and `AGENT_SANDBOX_EGRESS_MODE`: see [Network](#network).
 * `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
 * `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain

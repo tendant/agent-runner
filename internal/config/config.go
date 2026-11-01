@@ -112,6 +112,7 @@ type AgentConfig struct {
 	SandboxPolicyFile    string   // AGENT_SANDBOX_POLICY — optional JSON SandboxSpec for the system layer
 	SandboxMemory        string   // AGENT_SANDBOX_MEMORY — memory cap for every sandbox run ("4g"); overrides the policy's memory_bytes
 	SandboxPIDs          string   // AGENT_SANDBOX_PIDS — process/thread cap for every sandbox run; overrides the policy's pids
+	SandboxCPUs          string   // AGENT_SANDBOX_CPUS — CPU cap for every sandbox run, in cores ("2", "1.5"); overrides the policy's cpus
 	SandboxEvidence      string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	Name                 string   // AGENT_NAME — this agent's name, on every sandboxed run's audit record (default: INSTANCE)
 	SandboxAuditDir      string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
@@ -430,6 +431,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxPolicyFile = envOrDefault("AGENT_SANDBOX_POLICY", cfg.Agent.SandboxPolicyFile)
 	cfg.Agent.SandboxMemory = envOrDefault("AGENT_SANDBOX_MEMORY", cfg.Agent.SandboxMemory)
 	cfg.Agent.SandboxPIDs = envOrDefault("AGENT_SANDBOX_PIDS", cfg.Agent.SandboxPIDs)
+	cfg.Agent.SandboxCPUs = envOrDefault("AGENT_SANDBOX_CPUS", cfg.Agent.SandboxCPUs)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
 	cfg.Agent.Name = envOrDefault("AGENT_NAME", envOrDefault("INSTANCE", cfg.Agent.Name))
 	cfg.Agent.SandboxAuditDir = envOrDefault("AGENT_SANDBOX_AUDIT_DIR", cfg.Agent.SandboxAuditDir)
