@@ -109,10 +109,15 @@ type NetworkPolicy struct {
 	// EgressReportOnly: a host EgressAllow does not grant is reached anyway
 	// and recorded as outside it, not refused (AGENT_SANDBOX_EGRESS_ENFORCE=
 	// report), set on a run's resolved spec.
-	EgressReportOnly bool    `json:"egress_report_only,omitempty"`
-	DNS              DNSMode `json:"dns,omitempty"`
-	Listen           *bool   `json:"listen,omitempty"` // nil = inherit; root default false
-	Expose           []int   `json:"expose,omitempty"`
+	EgressReportOnly bool `json:"egress_report_only,omitempty"`
+	// EgressInspect: the gateway reads and records each HTTP(S) request
+	// (AGENT_SANDBOX_EGRESS_INSPECT=on), except to EgressInspectExcept's
+	// hosts; set on a run's resolved spec.
+	EgressInspect       bool     `json:"egress_inspect,omitempty"`
+	EgressInspectExcept []string `json:"egress_inspect_except,omitempty"`
+	DNS                 DNSMode  `json:"dns,omitempty"`
+	Listen              *bool    `json:"listen,omitempty"` // nil = inherit; root default false
+	Expose              []int    `json:"expose,omitempty"`
 }
 
 // ResourcePolicy caps resources; zero means unset (inherit / unlimited at root).

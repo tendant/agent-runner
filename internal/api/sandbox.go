@@ -40,6 +40,13 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 			err = fmt.Errorf("AGENT_SANDBOX_EGRESS_ENFORCE=%s: use enforce (the default) or report", cfg.Agent.SandboxEgressEnforce)
 		}
 	}
+	switch cfg.Agent.SandboxEgressInspect {
+	case "", "off", "on":
+	default:
+		if err == nil {
+			err = fmt.Errorf("AGENT_SANDBOX_EGRESS_INSPECT=%s: use off (the default) or on", cfg.Agent.SandboxEgressInspect)
+		}
+	}
 	if err != nil {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(err)
@@ -69,18 +76,20 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		}
 	}
 	rt, err := sandboxrt.New(sandboxrt.Config{
-		Mode:         mode,
-		StateDir:     filepath.Join(cfg.StateRoot, "sandbox"),
-		Instance:     host,
-		PolicyFile:   cfg.Agent.SandboxPolicyFile,
-		Memory:       cfg.Agent.SandboxMemory,
-		PIDs:         cfg.Agent.SandboxPIDs,
-		CPUs:         cfg.Agent.SandboxCPUs,
-		ScopedReads:  scoped,
-		EgressAllow:  cfg.Agent.SandboxEgressAllow,
-		EgressReport: cfg.Agent.SandboxEgressEnforce == "report",
-		EgressMode:   cfg.Agent.SandboxEgressMode,
-		EgressPorts:  egressPorts,
+		Mode:          mode,
+		StateDir:      filepath.Join(cfg.StateRoot, "sandbox"),
+		Instance:      host,
+		PolicyFile:    cfg.Agent.SandboxPolicyFile,
+		Memory:        cfg.Agent.SandboxMemory,
+		PIDs:          cfg.Agent.SandboxPIDs,
+		CPUs:          cfg.Agent.SandboxCPUs,
+		ScopedReads:   scoped,
+		EgressAllow:   cfg.Agent.SandboxEgressAllow,
+		EgressReport:  cfg.Agent.SandboxEgressEnforce == "report",
+		EgressInspect: cfg.Agent.SandboxEgressInspect == "on",
+		InspectExcept: cfg.Agent.SandboxInspectExcept,
+		EgressMode:    cfg.Agent.SandboxEgressMode,
+		EgressPorts:   egressPorts,
 		// Prompts point agents at memory, and uploads reach them by path.
 		ReadAllow:    append([]string{cfg.MemoryDir, cfg.UploadsRoot}, cfg.Agent.SandboxReadAllow...),
 		EvidenceFile: cfg.Agent.SandboxEvidence,

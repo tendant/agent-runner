@@ -30,6 +30,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/sandbox/conformance"
 	"github.com/agent-runner/agent-runner/internal/sandbox/lease"
 	"github.com/tendant/agentbox/pkg/agentbox/audit"
+	abegress "github.com/tendant/agentbox/pkg/agentbox/egress"
 )
 
 // Event is a focused observability record. It never carries environment
@@ -58,6 +59,11 @@ type Config struct {
 	// recorded as outside it (AGENT_SANDBOX_EGRESS_ENFORCE=report), to try an
 	// allowlist before enforcing it. Internal addresses stay refused.
 	EgressReport bool
+	// EgressInspect: the gateway reads and records each HTTP(S) request, through
+	// a certificate authority made per run that the sandbox trusts
+	// (inspectTrust); InspectExcept's hosts are never inspected.
+	EgressInspect bool
+	InspectExcept []string
 	// EgressMode: "auto" (default; transparent where the host
 	// supports it), "transparent" (every TCP connection reaches the gateway;
 	// required) or "proxy" (only what honours HTTPS_PROXY).
@@ -505,6 +511,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	// reported on, for the gateway and the record alike.
 	spec.Network.EgressSets = sandbox.UsedSets(spec.Network.EgressAllow)
 	spec.Network.EgressReportOnly = r.cfg.EgressReport && spec.Network.Egress == sandbox.EgressRestricted
+	if r.cfg.EgressInspect && spec.Network.Egress == sandbox.EgressRestricted {
+		spec.Network.EgressInspect, spec.Network.EgressInspectExcept = true, r.cfg.InspectExcept
+	}
 
 	base := filepath.Join(r.cfg.StateDir, "runs", safe(req.RunID))
 	roots := map[string]string{
@@ -550,6 +559,20 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			readable = append(readable, p)
 		}
 	}
+	// Inspection: the run's certificate authority, and the trust files and
+	// variables that make the sandbox's tools accept it. A host with no
+	// system root bundle to add it to cannot inspect: the run goes on with
+	// hosts only, and says so.
+	var inspector *abegress.Inspector
+	var trustEnv []string
+	if spec.Network.EgressInspect {
+		var err error
+		if inspector, trustEnv, err = inspectTrust(roots[sandbox.RootTmp]); err != nil {
+			slog.Warn("sandbox egress inspection unavailable; recording hosts only", "run", req.RunID, "error", err)
+			r.emit(Event{Kind: "sandbox.inspect_unavailable", RunID: req.RunID, ThreadID: req.ThreadID, Detail: err.Error()})
+			spec.Network.EgressInspect, spec.Network.EgressInspectExcept = false, nil
+		}
+	}
 	var modelRoutes map[string]string // set once the model proxies start: sockets (Linux)
 	var modelPorts []int              // or loopback ports (macOS)
 	// The gateway's decisions, tallied for the run and reported per host.
@@ -563,7 +586,13 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		}
 		return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
 			HostPorts: modelPorts, OnEgress: egress.record, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
-			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode, EgressPorts: r.cfg.EgressPorts})
+			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode, EgressPorts: r.cfg.EgressPorts,
+			Inspect: inspector, InspectExcept: spec.Network.EgressInspectExcept,
+			OnRequest: func(info abegress.RequestInfo) { r.auditHTTP(req.RunID, info) },
+			OnInspection: func(host, reason string) {
+				r.audit(req.RunID, audit.TypeEgressInspection, audit.InspectionDetail{Host: host, Reason: reason})
+			},
+		})
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).
@@ -675,12 +704,12 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		},
 		// Config dirs in the sandbox home, over an AGENT_ISOLATED overlay's
 		// agent-home ones, which the sandbox can read but not write.
-		EnvForce: []string{
+		EnvForce: append([]string{
 			"CLAUDE_CONFIG_DIR=" + claudeDir,
 			"CODEX_HOME=" + codexDir,
 			"PI_CODING_AGENT_DIR=" + piDir,
 			"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(home, ".pi", "sessions"),
-		},
+		}, trustEnv...),
 		OnUsage: run.addUsage,
 		OnCheck: func(cr sandbox.CheckResult, err error) {
 			if err != nil || (r.cfg.Mode == sandbox.ModeStrict && len(cr.Gaps) > 0) {

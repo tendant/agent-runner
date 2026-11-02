@@ -126,6 +126,8 @@ type AgentConfig struct {
 	SandboxReadAllow     []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
 	SandboxEgressAllow   []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
 	SandboxEgressEnforce string   // AGENT_SANDBOX_EGRESS_ENFORCE — enforce (default): refuse hosts the allowlist does not grant | report: reach them and record them as outside it
+	SandboxEgressInspect string   // AGENT_SANDBOX_EGRESS_INSPECT — off (default) | on: the egress gateway reads and records every HTTP(S) request (api-visibility-design.md in agent-gate)
+	SandboxInspectExcept []string // AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT — hosts never inspected (allowlist patterns): tools that refuse the run's certificate
 	SandboxEgressMode    string   // AGENT_SANDBOX_EGRESS_MODE — agentbox: auto (default) | transparent | proxy
 	SandboxEgressPorts   []int    // AGENT_SANDBOX_EGRESS_PORTS — allowed destination ports (default: 443,80 for strict; 443,80,22 for permissive)
 	SandboxModelProxy    bool     // AGENT_SANDBOX_MODEL_PROXY — claude reaches the model through a per-run proxy holding the credential (default true)
@@ -445,6 +447,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)
 	cfg.Agent.SandboxEgressAllow = envSliceOrDefault("AGENT_SANDBOX_EGRESS_ALLOW", cfg.Agent.SandboxEgressAllow)
 	cfg.Agent.SandboxEgressEnforce = strings.ToLower(strings.TrimSpace(envOrDefault("AGENT_SANDBOX_EGRESS_ENFORCE", cfg.Agent.SandboxEgressEnforce)))
+	cfg.Agent.SandboxEgressInspect = strings.ToLower(strings.TrimSpace(envOrDefault("AGENT_SANDBOX_EGRESS_INSPECT", cfg.Agent.SandboxEgressInspect)))
+	cfg.Agent.SandboxInspectExcept = envSliceOrDefault("AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT", cfg.Agent.SandboxInspectExcept)
 	cfg.Agent.SandboxEgressMode = envOrDefault("AGENT_SANDBOX_EGRESS_MODE", cfg.Agent.SandboxEgressMode)
 	if ports := os.Getenv("AGENT_SANDBOX_EGRESS_PORTS"); ports != "" {
 		for _, p := range strings.Split(ports, ",") {

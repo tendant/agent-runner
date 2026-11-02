@@ -74,6 +74,14 @@ type Config struct {
 	EgressMode string
 	// EgressPorts are allowed destination ports for restricted egress (nil = default: 443,80)
 	EgressPorts []int
+	// Inspect, when the run's spec asks for inspection, is its certificate
+	// authority: the gateway reads each HTTP(S) request (OnRequest), except
+	// to InspectExcept's hosts; hosts not inspected are reported once each
+	// (OnInspection).
+	Inspect       *egress.Inspector
+	InspectExcept []string
+	OnRequest     func(egress.RequestInfo)
+	OnInspection  func(host, reason string)
 	// Backend overrides the agentbox backend (tests).
 	Backend ab.Backend
 }
@@ -286,6 +294,10 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		slog.Info("adapter egress config", "egress_ports", b.cfg.EgressPorts, "is_nil", b.cfg.EgressPorts == nil)
 		if on := b.cfg.OnEgress; on != nil {
 			gcfg.OnEvent = on
+		}
+		if spec.Network.EgressInspect && b.cfg.Inspect != nil {
+			gcfg.Inspect, gcfg.InspectExcept = b.cfg.Inspect, b.cfg.InspectExcept
+			gcfg.OnRequest, gcfg.OnInspection = b.cfg.OnRequest, b.cfg.OnInspection
 		}
 		if c.Gateway || c.ModelSocket {
 			base := os.Getenv("XDG_RUNTIME_DIR")

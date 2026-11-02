@@ -100,6 +100,15 @@ Other settings:
   reason `usage`); calls already sent complete, so a run can end somewhat over. The policy
   snapshot records the budget and the table version. Ledger-metered calls are left to
   ledger-gate's budgets.
+* `AGENT_SANDBOX_EGRESS_INSPECT=on`: the egress gateway reads every HTTP(S) request and records it
+  (`http_request`: method, host, path, status, bytes, duration; never headers, query string or
+  body). HTTPS is read through a certificate authority made for each run: its certificate, and a
+  bundle of the system roots with it, are written to the run's tmp, and the sandbox's tools are
+  pointed at them (`SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `REQUESTS_CA_BUNDLE`,
+  `PIP_CERT`, `CARGO_HTTP_CAINFO`, `NODE_EXTRA_CA_CERTS`). A tool that refuses the certificate fails
+  that request; the host then passes through for the rest of the run (`egress_inspection`,
+  `client_refused`). `AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT` lists hosts never inspected. Off by
+  default; restricted egress only. Design: agent-gate's `api-visibility-design.md`.
 * `AGENT_SANDBOX_BACKEND`: unset or `agentbox`. The isobox values (`gvisor`, `seatbelt`) are
   refused: isobox was removed. `AGENT_SANDBOX_READ` accepts only `scoped`, the default.
 
