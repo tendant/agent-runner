@@ -614,7 +614,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 

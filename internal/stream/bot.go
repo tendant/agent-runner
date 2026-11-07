@@ -425,6 +425,27 @@ func (b *Bot) SendNotification(ctx context.Context, message string) error {
 	return lastErr
 }
 
+// OpenProactiveThread starts a thread in channelID with a proactive check's
+// message (internal/proactive). The thread keeps the check's report as an
+// untrusted message for the run to see; with plan it waits for a yes, which
+// runs it through the ordinary confirmation flow. agent-stream assigns a
+// thread a bot starts to that bot, so the replies in it come here.
+func (b *Bot) OpenProactiveThread(ctx context.Context, channelID, report, message string, plan bool) error {
+	key, err := b.client.PostThreadRoot(ctx, channelID, OutMessage{Content: message, IdempotencyKey: uuid.NewString()})
+	if err != nil {
+		return err
+	}
+	conv := b.threadManager.GetOrCreate(key)
+	conv.SetScope(channelID)
+	conv.AddAlertMessage(report)
+	conv.AddMessage("assistant", message)
+	if plan {
+		conv.SetPlan(message)
+	}
+	slog.Info("stream bot: proactive thread opened", "channel_id", channelID, "thread", key, "plan", plan)
+	return nil
+}
+
 // Stop gracefully shuts down the bot.
 func (b *Bot) Stop() {
 	if b.cancel != nil {

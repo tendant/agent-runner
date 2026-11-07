@@ -437,6 +437,31 @@ func (b *Bot) SendNotification(_ context.Context, message string) error {
 	return nil
 }
 
+// OpenProactiveThread posts a proactive check's message in the chat
+// (TELEGRAM_CHAT_ID; target is "telegram"). A Telegram chat is one thread,
+// so a chat that is running something or waiting on a yes is not
+// interrupted: the check fails and its items come back after the cooldown.
+func (b *Bot) OpenProactiveThread(_ context.Context, _ string, report, message string, plan bool) error {
+	if b.chatID == 0 {
+		return fmt.Errorf("telegram: no default chat ID configured")
+	}
+	if b.api == nil {
+		return fmt.Errorf("telegram: bot not connected")
+	}
+	chatID := strconv.FormatInt(b.chatID, 10)
+	conv := b.threadManager.GetOrCreate(chatID)
+	if st := conv.GetState(); st == thread.StateExecuting || st == thread.StateConfirming {
+		return fmt.Errorf("telegram: the chat is busy (%s)", st)
+	}
+	b.send(b.chatID, message)
+	conv.AddAlertMessage(report)
+	conv.AddMessage("assistant", message)
+	if plan {
+		conv.SetPlan(message)
+	}
+	return nil
+}
+
 func (b *Bot) send(chatID int64, text string) {
 	if b.api == nil {
 		return

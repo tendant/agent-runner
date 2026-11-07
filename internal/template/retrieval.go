@@ -74,6 +74,7 @@ func Retrieve(memoryDir string) Retrieval {
 		"HEARTBEAT.md":  {},
 		"WELCOME.md":    {},
 		AlertPolicyFile: {},
+		"PROACTIVE.md":  {}, // read by the proactive checks, not by sessions
 	}
 
 	for _, entry := range entries {

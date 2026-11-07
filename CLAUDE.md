@@ -29,6 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `locks/` | Named advisory leases agent sessions take out on each other (`POST /lock`) |
 | `logging/` | Markdown audit log writer |
 | `metrics/` | Prometheus metrics |
+| `proactive/` | Proactive checks (PROACTIVE_DESIGN.md): due `agenda.md` items and unwatched failures, triaged and posted as a note or a yes/no proposal in `AGENT_PROACTIVE_CHAT`; never runs work unasked |
 | `scheduler/` | DB-backed workflow scheduler (cron/delayed tasks via simple-workflow) |
 | `sessionjournal/` | On-disk journal of active sessions powering restart recovery |
 | `stream/` | Agent Stream bot (SSE client, file upload/download) |

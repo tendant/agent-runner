@@ -150,10 +150,17 @@ type AgentConfig struct {
 	TaskResumeBackend bool          // AGENT_TASK_RESUME_BACKEND: continue pi/claude/codex conversations across task turns
 	ThreadRetention   time.Duration // AGENT_THREAD_RETENTION: how long an idle chat thread's history is kept (default 7 days)
 	ChatRetention     time.Duration // AGENT_CHAT_RETENTION: how long each day of a chat's messages is kept under ChatsRoot (default 90 days)
-	TaskIdleTTL       time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
-	MemoryDays        int           // Number of daily memory logs to include (default: 7)
-	MemoryPullOnStart bool          // Pull memory from git before each session
-	MemoryCharCap     int           // Max characters in composed memory section (0 = no limit)
+	// Proactive checks (PROACTIVE_DESIGN.md): the agent wakes on its own to
+	// look at its agenda and recent failures, and proposes work in a chat.
+	Proactive          bool          // AGENT_PROACTIVE — on|off (default off): the kill switch
+	ProactiveChat      string        // AGENT_PROACTIVE_CHAT — where proactive threads open: an agent-stream channel id, or "telegram"
+	ProactiveInterval  time.Duration // AGENT_PROACTIVE_INTERVAL — time between checks (default 30m, at least 5m)
+	ProactiveMaxPosts  int           // AGENT_PROACTIVE_MAX_POSTS — proactive messages per day (default 10)
+	ProactiveMaxChecks int           // AGENT_PROACTIVE_MAX_TRIAGES — model calls for proactive triage per day (default 24)
+	TaskIdleTTL        time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
+	MemoryDays         int           // Number of daily memory logs to include (default: 7)
+	MemoryPullOnStart  bool          // Pull memory from git before each session
+	MemoryCharCap      int           // Max characters in composed memory section (0 = no limit)
 
 	// Post-session memory curation: a cheap LLM pass (uses the fast-LLM
 	// config) that distills each session's outcome into lessons.md and
@@ -314,6 +321,9 @@ func defaultConfigForDataDir(data string) *Config {
 			TasksEnabled:        true,
 			TaskRetention:       24 * time.Hour,
 			TaskIdleTTL:         7 * 24 * time.Hour,
+			ProactiveInterval:   30 * time.Minute,
+			ProactiveMaxPosts:   10,
+			ProactiveMaxChecks:  24,
 			ChatRetention:       90 * 24 * time.Hour,
 			TaskResumeBackend:   true,
 			TaskMaxTurns:        10,
@@ -526,6 +536,16 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_PROACTIVE"))) {
+	case "on", "true", "1", "yes":
+		cfg.Agent.Proactive = true
+	case "off", "false", "0", "no":
+		cfg.Agent.Proactive = false
+	}
+	cfg.Agent.ProactiveChat = strings.TrimSpace(envOrDefault("AGENT_PROACTIVE_CHAT", cfg.Agent.ProactiveChat))
+	cfg.Agent.ProactiveInterval = max(envDurationOrDefault("AGENT_PROACTIVE_INTERVAL", cfg.Agent.ProactiveInterval), 5*time.Minute)
+	cfg.Agent.ProactiveMaxPosts = envIntOrDefault("AGENT_PROACTIVE_MAX_POSTS", cfg.Agent.ProactiveMaxPosts)
+	cfg.Agent.ProactiveMaxChecks = envIntOrDefault("AGENT_PROACTIVE_MAX_TRIAGES", cfg.Agent.ProactiveMaxChecks)
 	cfg.Agent.TaskMaxTurns = envIntOrDefault("AGENT_TASK_MAX_TURNS", cfg.Agent.TaskMaxTurns)
 	cfg.Agent.TaskMaxSeconds = envSecondsOrDefault("AGENT_TASK_MAX_SECONDS", cfg.Agent.TaskMaxSeconds)
 	cfg.Agent.TaskMaxCostUSD = envFloatOrDefault("AGENT_TASK_MAX_COST_USD", cfg.Agent.TaskMaxCostUSD)

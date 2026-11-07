@@ -280,3 +280,16 @@ func (c chatsExecutor) ExecuteWithLogAndSystemPrompt(ctx context.Context, w, sys
 	r, err := c.Execute(ctx, w, sys+"\n"+in)
 	return r, "", err
 }
+
+// The agenda is part of the memory instructions only while proactive
+// checks are on: nobody reads it otherwise.
+func TestRuntimeInstructionsAgenda(t *testing.T) {
+	off := runtimeInstructions(runtimeFacts{MemoryDir: "/m"})
+	on := runtimeInstructions(runtimeFacts{MemoryDir: "/m", Agenda: true})
+	if strings.Contains(off, "agenda.md") {
+		t.Error("agenda instructions without proactive checks")
+	}
+	if !strings.Contains(on, "`agenda.md`") || !strings.Contains(on, "GOALS.md") {
+		t.Errorf("no agenda instructions:\n%s", on)
+	}
+}

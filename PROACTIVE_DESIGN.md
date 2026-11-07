@@ -1,6 +1,6 @@
 # Proactive Agent and Controlled Self-Evolution — Design
 
-Status: draft, open questions in §16 · Scope: agent-runner (scheduler, thread analyzer, stream/telegram bots, execution, template, chatcmd); no agent-stream change
+Status: phase 1 built (§15.1 says how it differs from this draft); phases 2–4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
 
 ## 1. Problem
 
@@ -77,9 +77,9 @@ the operator's, lowercase is the agent's.
 | `agenda.md` | agent (staged merge) | open loops with optional due times (§6) |
 | `ALERTS.md` | operator | unchanged |
 
-`GOALS.md` and `PROACTIVE.md` join `HEARTBEAT.md` and `ALERTS.md` in the retrieval exclusion
-list (`template/retrieval.go`): they are read by triage, not dumped into every prompt.
-`GOALS.md` is summarized into a proactive session's prompt as `## Goals`.
+`PROACTIVE.md` joins `HEARTBEAT.md` and `ALERTS.md` in the retrieval exclusion list
+(`template/retrieval.go`): it is read by the checks, not put in prompts. `GOALS.md`, like other
+upper-case files, is in every session's prompt in full, and in every triage report.
 
 `HEARTBEAT.md` keeps its current meaning (the scheduler's status-row interval). The tick is a
 separate thing; the names are kept apart on purpose.
@@ -386,7 +386,7 @@ off  →  propose  →  notify  →  quiet
 
 ## 15. Phases
 
-1. **Proactive tick.** `GOALS.md`, `PROACTIVE.md`, `agenda.md`; gate, gather (agenda and
+1. **Proactive tick** (built, §15.1). `GOALS.md`, `PROACTIVE.md`, `agenda.md`; gate, gather (agenda and
    `sessions-failed` only), fingerprint, triage, act; caps and `/proactive`. All classes start at
    `propose`, so nothing runs without a yes. Measure: ticks per day that reach triage, posts per
    day, how many proposals people accept.
@@ -395,6 +395,33 @@ off  →  propose  →  notify  →  quiet
 3. **Trust ladder and signals.** `trust.json`, `notify`/`quiet`, automatic demotion; the
    `repo-ci` and `repo-commits` probes.
 4. **Evals.** The eval set and `/proposal eval`.
+
+### 15.1 Phase 1 as built
+
+`internal/proactive` (policy and agenda parsers, the `Service`), `thread.Analyzer.TriageProactive`,
+`OpenProactiveThread` on the stream and Telegram bots, `internal/api/proactive.go` (wiring and the
+chat router), `/proactive`, `/goals`, `/agenda`. Where it differs from §5–§7:
+
+- **The tick is an in-process loop**, not a scheduler task: the scheduler is opt-in and needs a
+  DB, and a check must work without one. It wakes every minute and checks when the interval has
+  passed since the last check recorded in `STATE_ROOT/proactive/state.json`, so a restart adds no
+  checks. `interval:` (a duration, not `cron:`) in `PROACTIVE.md` may lengthen it.
+- **No action classes or trust yet.** Triage returns `ignore`, `ask` or `plan`; an `execute`
+  becomes `plan` both in the analyzer and in the service. A proposal runs only on a person's yes,
+  through the thread's ordinary confirmation flow, as an ordinary chat session.
+- **Caps** are messages (`AGENT_PROACTIVE_MAX_POSTS`, 10) and triage calls
+  (`AGENT_PROACTIVE_MAX_TRIAGES`, 24) per day, in the policy's timezone. Without execution there
+  are no proactive sessions to cap or budget yet. `PROACTIVE.md` may lower them, never raise them.
+- **Signals:** due agenda items, and sessions that failed since the last check with nobody in a
+  chat to see it (sources other than stream/telegram/wechat). Failures come from the session
+  manager, so ones from before a restart are not seen. Each item is triaged once per 24 hours;
+  `/proactive tick` ignores that, and the quiet hours and the off switch, but not the caps.
+- **The agenda instructions** are in the runtime layer only while `AGENT_PROACTIVE` is on.
+- **agent-stream:** a thread a bot starts had no assignee, so replies in it reached no bot.
+  agent-stream now assigns a root a bot posts to that bot (`addressing.Decide`,
+  BOT_ADDRESSING_DESIGN.md). This also makes replies to `/notify` messages reach the bot.
+- **Telegram** is one thread per chat: a check that finds the chat running something or waiting
+  on a yes does not post, and its items come back after the cooldown.
 
 ## 16. Open questions
 

@@ -62,6 +62,7 @@ type Commander struct {
 	rt         Runtime
 	authMu     sync.Mutex // guards against concurrent /auth flows
 	authCancel func()     // non-nil while an auth flow is running
+	proactive  Proactive  // nil until SetProactive
 }
 
 // NewCommander creates a Commander backed by the given config and runtime.
@@ -157,6 +158,12 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleAuth(arg, send))
 	case lower == cmdAlerts || strings.HasPrefix(lower, cmdAlerts+" "):
 		return r(c.handleAlerts(strings.TrimSpace(text[len(cmdAlerts):])))
+	case lower == cmdProactive || strings.HasPrefix(lower, cmdProactive+" "):
+		return r(c.handleProactive(strings.TrimSpace(text[len(cmdProactive):])))
+	case lower == cmdGoals || strings.HasPrefix(lower, cmdGoals+" "):
+		return r(c.handleGoals(strings.TrimSpace(text[len(cmdGoals):])))
+	case lower == cmdAgenda:
+		return r(c.handleAgenda())
 	case lower == cmdEnv || strings.HasPrefix(lower, cmdEnv+" ") || strings.HasPrefix(lower, cmdEnv+"\n"):
 		return r(c.handleEnv(strings.TrimSpace(text[len(cmdEnv):])))
 	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
@@ -1168,6 +1175,7 @@ More: **/help config** · **/help env** · **/help repo** · **/help memory**
 **/prompt show** _[agent|workflow]_ · **/prompt check** — out-of-date lines · **/prompt preview** _[full] [message]_ — what a session would get
 **/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
 **/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
+**/proactive** — proactive checks: status · **on** · **off** · **tick** · **policy** · **/goals** — standing goals · **/agenda** — the agent's open loops
 
 **Setup** (agent-runner itself)
 **/config** — settings and readiness · **/config set** _KEY VALUE_ — one of agent-runner's settings (e.g. /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\>) · **/config unset** _KEY_
@@ -1344,6 +1352,9 @@ var knownCommands = map[string]string{
 	cmdPrompt:        "usage: " + cmdPrompt + " [show [agent|workflow]|check|preview [full] [message]]",
 	cmdRepo:          repoUsage,
 	cmdAlerts:        "usage: " + cmdAlerts + " [set <policy>|clear]",
+	cmdProactive:     "usage: " + cmdProactive + " [on|off|tick|policy [set <text>|clear]]",
+	cmdGoals:         "usage: " + cmdGoals + " [set <text>|clear]",
+	cmdAgenda:        "usage: " + cmdAgenda,
 	"/stop":          "usage: /stop [session-id]",
 	"/logs":          "usage: /logs [session-id-prefix]",
 	"/update-prompt": "usage: /update-prompt <content>",

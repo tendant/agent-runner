@@ -254,26 +254,48 @@ type OutMessage struct {
 
 // PostMessage posts a Message to a thread (or, for a c_ key, the channel).
 func (c *Client) PostMessage(ctx context.Context, key string, m OutMessage) error {
+	_, err := c.postMessage(ctx, key, m)
+	return err
+}
+
+// PostThreadRoot posts m as a new thread's root in channelID and returns
+// the thread's ID (its root message's ID).
+func (c *Client) PostThreadRoot(ctx context.Context, channelID string, m OutMessage) (string, error) {
+	if !strings.HasPrefix(channelID, "c_") {
+		return "", fmt.Errorf("not a channel id: %q", channelID)
+	}
+	id, err := c.postMessage(ctx, channelID, m)
+	if err == nil && id == "" {
+		err = fmt.Errorf("send message: the server returned no message_id")
+	}
+	return id, err
+}
+
+func (c *Client) postMessage(ctx context.Context, key string, m OutMessage) (string, error) {
 	data, err := json.Marshal(m)
 	if err != nil {
-		return fmt.Errorf("marshal message: %w", err)
+		return "", fmt.Errorf("marshal message: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.targetPath(key)+"/messages", bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+		return "", fmt.Errorf("send message: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("send message: status %d: %s", resp.StatusCode, string(respBody))
+		return "", fmt.Errorf("send message: status %d: %s", resp.StatusCode, string(respBody))
 	}
-	return nil
+	var out struct {
+		MessageID string `json:"message_id"`
+	}
+	_ = json.Unmarshal(respBody, &out)
+	return out.MessageID, nil
 }
 
 // WhoAmI returns the user ID the bot token authenticates as.

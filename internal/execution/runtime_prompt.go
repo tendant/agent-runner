@@ -24,6 +24,7 @@ type runtimeFacts struct {
 	Sandboxed  bool
 	MemoryDir  string                // as the agent sees it
 	MemoryCopy bool                  // MemoryDir is a staged copy, merged back at the end
+	Agenda     bool                  // proactive checks are on: keep agenda.md (PROACTIVE_DESIGN.md)
 	Secrets    []agentsecrets.Secret // the agent's secrets: names and descriptions are shown
 	Env        []agentsecrets.Secret // the agent's plain settings: shown with their values
 	Repos      []repos.Repo          // the registered repos in the workspace
@@ -87,7 +88,15 @@ func runtimeInstructions(f runtimeFacts) string {
 			"- `lessons.md`: lessons learned; append only\n" +
 			"- any other lowercase `.md` file, for a topic of its own (e.g. `oam_server.md`): these are only\n" +
 			"  listed in your prompt (Memory Files), by their first line, so start each with a one-line\n" +
-			"  summary, and read one when the task touches its topic\n\n" +
+			"  summary, and read one when the task touches its topic\n")
+		if f.Agenda {
+			b.WriteString("- `agenda.md`: your open loops, one checklist line each, e.g.\n" +
+				"  `- [ ] check the v0.1.4 deploy is healthy · due: 2026-11-08 18:00 · id: deploy-v014`.\n" +
+				"  Add one when you leave something unfinished or promise to look again later; mark it\n" +
+				"  `- [x]` when done. agent-runner checks due items and raises them with the people you work\n" +
+				"  for. `GOALS.md`, if present, holds the operator's standing goals: read it, never edit it\n")
+		}
+		b.WriteString("\n" +
 			"Append; delete only to correct an error. `agent.md` and `prompt.md` are your instructions, set by\n" +
 			"the operator: do not edit them; propose changes in your reply instead.\n")
 		if f.MemoryCopy {
@@ -152,7 +161,7 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 		return "", err
 	}
 	plain, secrets, _ := agentsecrets.Load(h.config.SecretsFile, h.config.EnvFile)
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Secrets: secrets, Env: plain, Repos: h.registeredRepos()}), nil
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Agenda: h.config.Agent.Proactive, Secrets: secrets, Env: plain, Repos: h.registeredRepos()}), nil
 }
 
 // threadKey names the thread a session belongs to, for its daily-log entry
