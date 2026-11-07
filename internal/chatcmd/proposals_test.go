@@ -30,6 +30,11 @@ func (f *fakeProposals) Reject(id, by, reason string) (string, error) {
 	return "ok rejected", nil
 }
 
+func (f *fakeProposals) Evaluate(id string) (string, error) {
+	f.calls = append(f.calls, "eval "+id)
+	return "started", nil
+}
+
 func (f *fakeProposals) Undo(id, by string) (string, error) {
 	f.calls = append(f.calls, "undo "+id)
 	return "ok undid", nil
@@ -91,5 +96,35 @@ func TestTrustCommand(t *testing.T) {
 	}
 	if got, _, _ := c.Handle("/trust ci-fix", nil); !strings.HasPrefix(got, "error: usage") {
 		t.Fatalf("one arg: %q", got)
+	}
+}
+
+func TestEvalsCommand(t *testing.T) {
+	c := &Commander{cfg: &config.Config{MemoryDir: t.TempDir()}}
+	if got, _, _ := c.Handle("/evals", nil); !strings.Contains(got, "empty") {
+		t.Fatalf("empty: %q", got)
+	}
+	if got, _, _ := c.Handle("/evals set lint\n---\nreply: gofmt\n---\nAdd hello.go.", nil); got != "ok saved eval lint (1 check(s))" {
+		t.Fatalf("set (newline): %q", got)
+	}
+	if got, _, _ := c.Handle("/evals set vet ---\ncommand: go vet ./...\n---\nFix the vet error.", nil); got != "ok saved eval vet (1 check(s))" {
+		t.Fatalf("set (space): %q", got)
+	}
+	if got, _, _ := c.Handle("/evals", nil); !strings.Contains(got, "**lint**: 1 check(s) · Add hello.go.") || !strings.Contains(got, "**vet**") {
+		t.Fatalf("list: %q", got)
+	}
+	if got, _, _ := c.Handle("/evals show vet", nil); !strings.Contains(got, "command: go vet") {
+		t.Fatalf("show: %q", got)
+	}
+	if got, _, _ := c.Handle("/evals set broken no checks here", nil); !strings.HasPrefix(got, "error:") {
+		t.Fatalf("bad eval: %q", got)
+	}
+	if got, _, _ := c.Handle("/evals remove lint", nil); got != "ok removed eval lint" {
+		t.Fatalf("remove: %q", got)
+	}
+	p := &fakeProposals{}
+	c.SetProposals(p)
+	if got, _, _ := c.Handle("/proposal eval p-1", nil); got != "started" || p.calls[0] != "eval p-1" {
+		t.Fatalf("eval: %q %v", got, p.calls)
 	}
 }

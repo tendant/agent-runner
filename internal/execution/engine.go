@@ -298,6 +298,13 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		source = "api"
 	}
 	message := session.Message
+	eval := session.Eval // non-nil: an eval replay that keeps nothing (agent.EvalSpec)
+	if source == "eval" && eval == nil {
+		// Only StartEval makes these; one without its spec (a restart lost
+		// it) must not run as an ordinary session that keeps its work.
+		h.FailSession(session.ID, "an eval replay without its spec is not run")
+		return
+	}
 	maxIter := session.MaxIterations
 	maxSeconds := session.MaxTotalSeconds
 	authorName := session.Author
@@ -368,7 +375,10 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		if memoryStage != nil {
 			memoryStage.Redact = sessionRedact
 		}
-		memResult := h.mergeMemory(sessionID, source, liveSession, memoryStage)
+		var memResult tmpl.MergeResult
+		if eval == nil { // an eval replay's memory changes are thrown away
+			memResult = h.mergeMemory(sessionID, source, liveSession, memoryStage)
+		}
 		finishedRun.RemoveHome() // after the merge: the memory copy was in it
 
 		// Write agent audit log
@@ -423,100 +433,103 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 			slog.Info("agent log written", "session_id", sessionID, "path", logFile)
 		}
 
-		// Write daily memory log with rich session details
-		msgPreview := message
-		msgPreview = textutil.Truncate(msgPreview, 80)
-		var changedFiles []string
-		seen := make(map[string]bool)
-		for _, iter := range snap.Iterations {
-			for _, f := range iter.ChangedFiles {
-				if !seen[f] {
-					seen[f] = true
-					changedFiles = append(changedFiles, f)
+		if eval == nil { // an eval replay leaves no daily log, curation or memory push
+			// Write daily memory log with rich session details
+			msgPreview := message
+			msgPreview = textutil.Truncate(msgPreview, 80)
+			var changedFiles []string
+			seen := make(map[string]bool)
+			for _, iter := range snap.Iterations {
+				for _, f := range iter.ChangedFiles {
+					if !seen[f] {
+						seen[f] = true
+						changedFiles = append(changedFiles, f)
+					}
 				}
 			}
-		}
-		var logLines []string
-		logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
-			time.Now().Format("15:04"), snap.Status, snap.SuccessfulIterations, snap.TotalCostUSD))
-		logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
-		if t := threadKey(liveSession); t != "" {
-			logLines = append(logLines, tmpl.ThreadLine+t)
-		}
-		if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
-			reviewLine := fmt.Sprintf("**Review:** score %d/10", rr.Score)
-			if len(rr.Issues) > 0 {
-				issues := strings.Join(rr.Issues, "; ")
-				issues = textutil.Truncate(issues, 200)
-				reviewLine += " — issues: " + issues
-			}
-			logLines = append(logLines, reviewLine)
-		}
-		if len(changedFiles) > 0 {
-			logLines = append(logLines, fmt.Sprintf("**Files:** %s", strings.Join(changedFiles, ", ")))
-		}
-		if snap.Error != "" {
-			errPreview := snap.Error
-			errPreview = textutil.Truncate(errPreview, 120)
-			logLines = append(logLines, fmt.Sprintf("**Error:** %s", errPreview))
-		}
-		dailyEntry := sessionRedact(strings.Join(logLines, "\n")) // pushed with memory
-		if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
-			slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
-			liveSession.AddWarning("daily log failed: " + err.Error())
-		} else if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: daily log (session "+sessionID+")", tmpl.DailyLogName()); err != nil {
-			slog.Warn("memory: daily log commit failed", "session_id", sessionID, "error", err)
-		}
-
-		// Post-session memory curation — before the push below so its output
-		// rides the same commit. Fresh context: the session ctx may already be
-		// canceled (stop/shutdown). Non-fatal; skipped for user-stopped
-		// sessions (nothing durable to learn from an aborted run).
-		if h.config.Agent.MemoryCurationEnabled && h.deps.CuratorClient() != nil && snap.Status != agent.SessionStatusStopped {
-			curIn := curator.Input{
-				TaskPreview:  msgPreview,
-				Status:       string(snap.Status),
-				Error:        snap.Error,
-				ChangedFiles: changedFiles,
+			var logLines []string
+			logLines = append(logLines, fmt.Sprintf("**[%s]** %s — %d iterations, $%.4f",
+				time.Now().Format("15:04"), snap.Status, snap.SuccessfulIterations, snap.TotalCostUSD))
+			logLines = append(logLines, fmt.Sprintf("**Task:** %s", msgPreview))
+			if t := threadKey(liveSession); t != "" {
+				logLines = append(logLines, tmpl.ThreadLine+t)
 			}
 			if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
-				curIn.HasReview = true
-				curIn.ReviewScore = rr.Score
-				curIn.ReviewIssues = rr.Issues
-				curIn.ReviewSuggestions = rr.Suggestions
+				reviewLine := fmt.Sprintf("**Review:** score %d/10", rr.Score)
+				if len(rr.Issues) > 0 {
+					issues := strings.Join(rr.Issues, "; ")
+					issues = textutil.Truncate(issues, 200)
+					reviewLine += " — issues: " + issues
+				}
+				logLines = append(logLines, reviewLine)
 			}
-			cur := curator.New(h.deps.CuratorClient(), curator.Config{
-				MemoryDir: h.config.MemoryDir,
-				CharCap:   h.config.Agent.MemoryCharCap,
-				Timeout:   time.Duration(h.config.Agent.MemoryCurationTimeoutSeconds) * time.Second,
-			})
-			if curSummary, err := cur.Curate(context.Background(), curIn); err != nil {
-				slog.Warn("memory curation failed (non-fatal)", "session_id", sessionID, "error", err)
-				liveSession.AddWarning("memory curation failed: " + err.Error())
-			} else {
-				slog.Info("memory curation completed", "session_id", sessionID,
-					"lesson_appended", curSummary.LessonAppended, "compacted", strings.Join(curSummary.FilesCompacted, ", "))
-				if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: curation (session "+sessionID+")", append([]string{curator.LessonsFile}, curSummary.FilesCompacted...)...); err != nil {
-					slog.Warn("memory: curation commit failed", "session_id", sessionID, "error", err)
+			if len(changedFiles) > 0 {
+				logLines = append(logLines, fmt.Sprintf("**Files:** %s", strings.Join(changedFiles, ", ")))
+			}
+			if snap.Error != "" {
+				errPreview := snap.Error
+				errPreview = textutil.Truncate(errPreview, 120)
+				logLines = append(logLines, fmt.Sprintf("**Error:** %s", errPreview))
+			}
+			dailyEntry := sessionRedact(strings.Join(logLines, "\n")) // pushed with memory
+			if err := tmpl.AppendDailyLog(h.config.MemoryDir, dailyEntry); err != nil {
+				slog.Warn("failed to write daily log", "session_id", sessionID, "error", err)
+				liveSession.AddWarning("daily log failed: " + err.Error())
+			} else if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: daily log (session "+sessionID+")", tmpl.DailyLogName()); err != nil {
+				slog.Warn("memory: daily log commit failed", "session_id", sessionID, "error", err)
+			}
+
+			// Post-session memory curation — before the push below so its output
+			// rides the same commit. Fresh context: the session ctx may already be
+			// canceled (stop/shutdown). Non-fatal; skipped for user-stopped
+			// sessions (nothing durable to learn from an aborted run).
+			if h.config.Agent.MemoryCurationEnabled && h.deps.CuratorClient() != nil && snap.Status != agent.SessionStatusStopped {
+				curIn := curator.Input{
+					TaskPreview:  msgPreview,
+					Status:       string(snap.Status),
+					Error:        snap.Error,
+					ChangedFiles: changedFiles,
+				}
+				if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
+					curIn.HasReview = true
+					curIn.ReviewScore = rr.Score
+					curIn.ReviewIssues = rr.Issues
+					curIn.ReviewSuggestions = rr.Suggestions
+				}
+				cur := curator.New(h.deps.CuratorClient(), curator.Config{
+					MemoryDir: h.config.MemoryDir,
+					CharCap:   h.config.Agent.MemoryCharCap,
+					Timeout:   time.Duration(h.config.Agent.MemoryCurationTimeoutSeconds) * time.Second,
+				})
+				if curSummary, err := cur.Curate(context.Background(), curIn); err != nil {
+					slog.Warn("memory curation failed (non-fatal)", "session_id", sessionID, "error", err)
+					liveSession.AddWarning("memory curation failed: " + err.Error())
+				} else {
+					slog.Info("memory curation completed", "session_id", sessionID,
+						"lesson_appended", curSummary.LessonAppended, "compacted", strings.Join(curSummary.FilesCompacted, ", "))
+					if _, err := tmpl.CommitMemoryFiles(h.config.MemoryDir, "memory: curation (session "+sessionID+")", append([]string{curator.LessonsFile}, curSummary.FilesCompacted...)...); err != nil {
+						slog.Warn("memory: curation commit failed", "session_id", sessionID, "error", err)
+					}
 				}
 			}
-		}
 
-		// [H5] Retry memory push up to 3 times to survive transient network errors.
-		memoryCreds := tmpl.MemoryGitCredsFromEnv()
-		var pushErr error
-		for attempt := range 3 {
-			if attempt > 0 {
-				time.Sleep(2 * time.Second)
-				slog.Info("retrying memory push", "session_id", sessionID, "attempt", attempt+1)
+			// [H5] Retry memory push up to 3 times to survive transient network errors.
+			memoryCreds := tmpl.MemoryGitCredsFromEnv()
+			var pushErr error
+			for attempt := range 3 {
+				if attempt > 0 {
+					time.Sleep(2 * time.Second)
+					slog.Info("retrying memory push", "session_id", sessionID, "attempt", attempt+1)
+				}
+				if pushErr = tmpl.CommitAndPushMemory(h.config.MemoryDir, memoryCreds); pushErr == nil {
+					break
+				}
+				slog.Warn("memory push attempt failed", "session_id", sessionID, "attempt", attempt+1, "error", pushErr)
 			}
-			if pushErr = tmpl.CommitAndPushMemory(h.config.MemoryDir, memoryCreds); pushErr == nil {
-				break
+			if pushErr != nil {
+				liveSession.AddWarning("memory push failed: " + pushErr.Error())
 			}
-			slog.Warn("memory push attempt failed", "session_id", sessionID, "attempt", attempt+1, "error", pushErr)
-		}
-		if pushErr != nil {
-			liveSession.AddWarning("memory push failed: " + pushErr.Error())
+
 		}
 
 		// Send notification to connected chat channels
@@ -530,7 +543,12 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 
 		// Cleanup workspace after pushing and logging are done. A task's
 		// workspace is kept for its next turn.
-		if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
+		if eval != nil && liveSession.WorkspacePath != "" {
+			// Nothing of a replay is kept: not even as rescued work.
+			if err := os.RemoveAll(liveSession.WorkspacePath); err != nil {
+				slog.Warn("failed to remove an eval replay's workspace", "path", liveSession.WorkspacePath, "error", err)
+			}
+		} else if liveSession.WorkspacePath != "" && liveSession.TaskWorkspace == "" {
 			if err := h.workspaceManager.CleanupWorkspace(liveSession.WorkspacePath); err != nil {
 				slog.Warn("failed to cleanup workspace", "path", liveSession.WorkspacePath, "error", err)
 			}
@@ -568,6 +586,9 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	if aborted {
 		return
 	}
+	if eval != nil {
+		h.applyEvalSkills(sessionID, checkoutPath, eval)
+	}
 	chatThread := h.stageChats(sessionID, liveSession, checkoutPath)
 	if h.sandboxed() {
 		// Before the agent can touch them: the configs host-side git will use.
@@ -583,6 +604,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 	// The agent's environment (/env): in every CLI's environment, listed in
 	// the prompt (secrets by name only).
 	agentPlain, agentSecrets := h.agentEnv(sessionID, liveSession)
+	if eval != nil {
+		// A replay acts on nothing outside its workspace that a login
+		// would reach: no secrets, and no self-push (evalRepos).
+		agentSecrets = nil
+	}
 	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), agentSecrets...), h.config.Agent.CLI))
 	// What the agent says is recorded and forwarded without secret values.
 	redactor := agentsecrets.NewRedactor(agentSecrets)
@@ -618,7 +644,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread, Proposals: h.proposalTargets()})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: evalRepos(h.registeredRepos(), eval), ChatThread: chatThread, Proposals: proposalTargetsFor(h, eval)})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
@@ -680,6 +706,11 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		// agent-rescue/<id>) and collect the files, then fail it, so a
 		// watcher reporting the failure has them.
 		as.Close()
+		if eval != nil {
+			h.runEvalChecks(ctx, sessionID, liveSession, checkoutPath, eval)
+			h.FailSession(sessionID, stopReason)
+			return
+		}
 		h.syncWorkspaceRepos(ctx, sessionID, source, liveSession, checkoutPath, message, deadline, plan, nil, nil, false)
 		finCtx, cancel := keepWorkCtx(ctx)
 		defer cancel()
@@ -701,6 +732,14 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		reviewSpan.SetAttributes(attribute.Int("review.score", rr.Score), attribute.Int("review.issues", len(rr.Issues)))
 	}
 	reviewSpan.End()
+
+	if eval != nil {
+		// A replay is judged where it stands: nothing is pushed, sent or
+		// scheduled.
+		h.runEvalChecks(ctx, sessionID, liveSession, checkoutPath, eval)
+		h.determineFinalStatus(ctx, sessionID, liveSession, completed, blockedOrStuck, stopReason)
+		return
+	}
 
 	// The sync runs its git work on contexts a shutdown does not cancel
 	// (see syncWorkspaceRepos); ctx itself still says whether to start
@@ -1310,15 +1349,27 @@ func (h *Engine) resolvePrompt(sessionID, message, memoryDir string) (string, er
 // cut.
 func (h *Engine) resolvePromptCuts(sessionID, message, memoryDir string) (string, []string, error) {
 	systemPromptPath, promptFilePath := h.deps.BootstrapPaths()
+	var overrides map[string]string // an eval replay's variant of the instructions
+	if h.agentManager != nil {
+		if live, ok := h.agentManager.GetSessionDirect(sessionID); ok && live.Eval != nil {
+			overrides = live.Eval.Overrides
+		}
+	}
+	readInstructions := func(target, path string) ([]byte, error) {
+		if content, ok := overrides[target]; ok {
+			return []byte(content), nil
+		}
+		return os.ReadFile(path)
+	}
 
 	// Read system instructions (agent.md); empty string if file missing — no error.
 	var systemInstructions string
-	if data, err := os.ReadFile(systemPromptPath); err == nil {
+	if data, err := readInstructions("agent.md", systemPromptPath); err == nil {
 		systemInstructions = strings.TrimSpace(string(data))
 	}
 
 	// Append prompt file (prompt.md) if non-empty.
-	if data, err := os.ReadFile(promptFilePath); err == nil {
+	if data, err := readInstructions("prompt.md", promptFilePath); err == nil {
 		if s := strings.TrimSpace(string(data)); s != "" {
 			if systemInstructions != "" {
 				systemInstructions += "\n\n" + s
@@ -1349,6 +1400,9 @@ func (h *Engine) resolvePromptCuts(sessionID, message, memoryDir string) (string
 
 	// Retrieve memory sections, trimmed to the configured budget.
 	retrieval := tmpl.Retrieve(h.config.MemoryDir)
+	if goals, ok := overrides["GOALS.md"]; ok {
+		retrieval = withFile(retrieval, "GOALS.md", goals)
+	}
 	retrieval, budgetWarnings := tmpl.ApplyBudget(retrieval, fileBudget)
 	for _, w := range budgetWarnings {
 		slog.Warn("memory budget", "action", w)
@@ -1651,6 +1705,8 @@ func (h *Engine) notifySessionResult(snap *agent.Session) {
 	// same task after the session completes.
 	switch snap.Source {
 	case "stream", "telegram", "wechat":
+		return
+	case "eval": // a replay reports to the comparison that started it
 		return
 	case "proactive":
 		// A quiet proactive run (PROACTIVE_DESIGN.md §12): its result is

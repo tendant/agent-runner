@@ -18,6 +18,15 @@ func (h *Engine) StartAgent(message, source, convID string) (string, error) {
 	return h.startAgent(agent.TaskTurn{Message: message, Source: source, ConvID: convID})
 }
 
+// StartEval starts an eval replay of message (PROACTIVE_DESIGN.md §11):
+// source "eval", no chat, nothing kept; see agent.EvalSpec.
+func (h *Engine) StartEval(message string, spec *agent.EvalSpec) (string, error) {
+	if spec == nil {
+		spec = &agent.EvalSpec{}
+	}
+	return h.startAgent(agent.TaskTurn{Message: message, Source: "eval", Eval: spec})
+}
+
 // StartTaskTurn starts one turn of a multi-turn task: like StartAgent, but
 // the run reuses and keeps the task's workspace at taskDir (see
 // TaskWorkspacePath) instead of preparing and deleting its own. Feedback,
@@ -70,6 +79,7 @@ func (h *Engine) startAgent(turn agent.TaskTurn) (string, error) {
 	session.ConvID = turn.ConvID
 	session.TaskWorkspace = turn.Dir
 	session.TaskFeedback = turn.Feedback
+	session.Eval = turn.Eval
 
 	// Missing credentials aren't fatal (some setups authenticate outside an
 	// API key env var), but surface them immediately as a session warning

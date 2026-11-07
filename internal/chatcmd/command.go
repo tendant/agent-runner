@@ -167,6 +167,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleAgenda())
 	case lower == cmdTrust || strings.HasPrefix(lower, cmdTrust+" "):
 		return r(c.handleTrust(strings.TrimSpace(text[len(cmdTrust):])))
+	case lower == cmdEvals || strings.HasPrefix(lower, cmdEvals+" ") || strings.HasPrefix(lower, cmdEvals+"\n"):
+		return r(c.handleEvals(strings.TrimSpace(text[len(cmdEvals):])))
 	case lower == cmdProposals:
 		return r(c.handleProposals())
 	case lower == cmdProposal || strings.HasPrefix(lower, cmdProposal+" "):
@@ -1185,7 +1187,7 @@ More: **/help config** · **/help env** · **/help repo** · **/help memory**
 **/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
 **/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
 **/proactive** — proactive checks: status · **on** · **off** · **tick** · **policy** · **/goals** — standing goals · **/agenda** — the agent's open loops · **/trust** _[class level]_ — what each action class may do unasked
-**/proposals** — the agent's proposals to change its instructions · **/proposal show** · **approve** · **reject** · **undo** _\<id\>_ · **/retrospective** — the weekly review: status · **on** · **off** · **now**
+**/proposals** — the agent's proposals to change its instructions · **/proposal show** · **approve** · **reject** · **undo** · **eval** _\<id\>_ · **/evals** — the eval set · **/retrospective** — the weekly review: status · **on** · **off** · **now**
 
 **Setup** (agent-runner itself)
 **/config** — settings and readiness · **/config set** _KEY VALUE_ — one of agent-runner's settings (e.g. /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\>) · **/config unset** _KEY_
@@ -1366,8 +1368,9 @@ var knownCommands = map[string]string{
 	cmdGoals:         "usage: " + cmdGoals + " [set <text>|clear]",
 	cmdAgenda:        "usage: " + cmdAgenda,
 	cmdProposals:     "usage: " + cmdProposals,
+	cmdEvals:         "usage: " + cmdEvals + " [show <name> | set <name> <content> | remove <name>]",
 	cmdTrust:         "usage: " + cmdTrust + " [<class> off|propose|notify|quiet]",
-	cmdProposal:      "usage: " + cmdProposal + " show|approve|reject|undo <id> [reason]",
+	cmdProposal:      "usage: " + cmdProposal + " show|approve|reject|undo|eval <id> [reason]",
 	cmdRetrospective: "usage: " + cmdRetrospective + " [on|off|now]",
 	"/stop":          "usage: /stop [session-id]",
 	"/logs":          "usage: /logs [session-id-prefix]",

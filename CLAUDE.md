@@ -21,6 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `config/` | Configuration loading from env files + environment (see Load priority below) |
 | `conversation/` | Conversational state machine and intent analyzer (ask/plan/execute) |
 | `curator/` | Post-session memory curation via a cheap LLM call (allowlisted writes only) |
+| `evals/` | The eval set (`MEMORY_DIR/evals`, `/evals`) and `/proposal eval`: past tasks replayed in eval mode (sandboxed, keeps nothing) with the current and the proposed instructions, compared by their checks |
 | `execution/` | Agent session engine: workspace prep, planner, iteration loop, reviewer, finalization |
 | `executor/` | Agent CLI invocation (opencode/claude/codex), workspace management, validation |
 | `git/` | Git operations (fetch, commit, push with retries) |

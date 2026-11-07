@@ -93,3 +93,35 @@ const trustHelp = `  /trust                    the classes, their levels and rec
 
 A class that runs without asking drops a level by itself when a run fails, stops, scores below 6
 with the reviewer, or has its memory changes undone (/memory undo). Runs need AGENT_SANDBOX=strict.`
+
+// BudgetLeft is what proactive work (runs, eval replays) may still spend
+// today: AGENT_PROACTIVE_BUDGET_USD, lowered by PROACTIVE.md, less what was
+// spent. No budget set: unlimited.
+func (s *Service) BudgetLeft() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pol := s.policy()
+	budget := cappedF(s.cfg.Settings().BudgetUSD, pol.BudgetUSD)
+	if budget <= 0 {
+		return 1e9
+	}
+	st := s.load()
+	if st.Day != pol.Day(s.cfg.Now()) {
+		return budget
+	}
+	return budget - st.Spent
+}
+
+// Spend records what proactive work outside a run spent (an eval replay)
+// against today's budget.
+func (s *Service) Spend(usd float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pol := s.policy()
+	st := s.load()
+	if day := pol.Day(s.cfg.Now()); st.Day != day {
+		st.Day, st.Posts, st.Triages, st.Sessions, st.Spent = day, 0, 0, 0, 0
+	}
+	st.Spent += usd
+	s.save(st)
+}

@@ -99,6 +99,14 @@ func (s *Server) recoverInterrupted(ctx context.Context, entry sessionjournal.En
 
 // recoverQueued re-enqueues a session that never started executing.
 func (s *Server) recoverQueued(ctx context.Context, entry sessionjournal.Entry, hooks map[string]sourceHooks) {
+	if entry.Source == "eval" {
+		// An eval replay's spec (its instruction overrides and checks) is not
+		// journaled, and the comparison that wanted it is gone: never run it
+		// again as an ordinary session, which would keep and push its work.
+		s.journal.Remove(entry.SessionID)
+		slog.Info("session recovery: queued eval replay dropped", "session_id", entry.SessionID)
+		return
+	}
 	session := restoredSession(entry)
 	session.Status = agent.SessionStatusQueued
 	session.StartedAt = time.Now()

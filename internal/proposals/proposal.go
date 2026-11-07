@@ -55,10 +55,12 @@ type Proposal struct {
 	Reason    string    `json:"reason,omitempty"`
 	Reminded  bool      `json:"reminded,omitempty"`
 	// Previous is the target's content before it was applied, for undo.
-	Previous    string   `json:"previous,omitempty"`
-	PrevExisted bool     `json:"prev_existed,omitempty"`
-	Chat        string   `json:"chat,omitempty"`    // where it was posted
-	Threads     []string `json:"threads,omitempty"` // its thread, and its reminder's
+	Previous    string    `json:"previous,omitempty"`
+	PrevExisted bool      `json:"prev_existed,omitempty"`
+	Eval        string    `json:"eval,omitempty"` // the latest eval comparison (/proposal eval)
+	EvalAt      time.Time `json:"eval_at,omitzero"`
+	Chat        string    `json:"chat,omitempty"`    // where it was posted
+	Threads     []string  `json:"threads,omitempty"` // its thread, and its reminder's
 }
 
 // Targets says where each proposable file lives. agent.md and prompt.md are

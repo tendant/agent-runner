@@ -10,6 +10,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/evals"
 	"github.com/agent-runner/agent-runner/internal/proactive"
 	"github.com/agent-runner/agent-runner/internal/proposals"
 	"github.com/agent-runner/agent-runner/internal/repos"
@@ -67,6 +68,23 @@ func (c proactiveChat) StartProactiveRun(ctx context.Context, target, intro, mes
 	return b.StartProactiveRun(ctx, target, intro, message)
 }
 
+// PostInThread posts in a proposal's thread (agent-stream), or in the
+// Telegram chat, which has no threads.
+func (c proactiveChat) PostInThread(ctx context.Context, target, thread, message string) error {
+	switch {
+	case strings.HasPrefix(target, "c_") && c.stream != nil && thread != "":
+		c.stream.NotifyConversation(ctx, thread, message)
+		return nil
+	case strings.HasPrefix(target, "c_") && c.stream != nil:
+		_, err := c.stream.OpenProposalThread(ctx, target, message)
+		return err
+	case strings.EqualFold(target, "telegram") && c.telegram != nil:
+		_, err := c.telegram.OpenProposalThread(ctx, target, message)
+		return err
+	}
+	return fmt.Errorf("AGENT_PROACTIVE_CHAT %q: no bot to post in", target)
+}
+
 func (c proactiveChat) OpenProposalThread(ctx context.Context, target, message string) (string, error) {
 	b, err := c.bot(target)
 	if err != nil {
@@ -75,9 +93,40 @@ func (c proactiveChat) OpenProposalThread(ctx context.Context, target, message s
 	return b.OpenProposalThread(ctx, target, message)
 }
 
+// evaluator is the eval set's comparison (PROACTIVE_DESIGN.md §11) as the
+// proposals see it.
+type evaluator struct{ r *evals.Runner }
+
+func (e evaluator) Check() (int, error) { return e.r.Check() }
+func (e evaluator) Compare(ctx context.Context, overrides map[string]string) (string, error) {
+	rep, err := e.r.Compare(ctx, overrides)
+	if err != nil {
+		return "", err
+	}
+	return rep.String(), nil
+}
+
+// newEvals builds the eval runner. Replays run sandboxed: AGENT_SANDBOX
+// must not be off. budgetLeft and spend are wired once the proactive
+// checks exist.
+func newEvals(cfg *config.Config, h *Handlers) *evals.Runner {
+	return &evals.Runner{
+		MemoryDir: cfg.MemoryDir,
+		Start:     h.execEngine.StartEval,
+		Get:       h.execEngine.GetAgentSession,
+		Ready: func() error {
+			if strings.EqualFold(cfg.Agent.SandboxMode, "off") || cfg.Agent.SandboxMode == "" {
+				return fmt.Errorf("eval replays run sandboxed, and AGENT_SANDBOX is off")
+			}
+			return nil
+		},
+	}
+}
+
 // newProposals builds the proposals' review (PROACTIVE_DESIGN.md §9).
-func newProposals(cfg *config.Config, paths func() (string, string), sb *stream.Bot, tb *telegram.Bot) *proposals.Service {
+func newProposals(cfg *config.Config, paths func() (string, string), sb *stream.Bot, tb *telegram.Bot, ev *evals.Runner) *proposals.Service {
 	return proposals.New(proposals.Config{
+		Eval:     evaluator{ev},
 		StateDir: filepath.Join(cfg.StateRoot, "proposals"),
 		Targets: func() proposals.Targets {
 			system, prompt := paths()

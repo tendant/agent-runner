@@ -30,8 +30,20 @@ const (
 
 // Chat posts a proposal (or its reminder) as a new thread in target and
 // returns the thread's key, "" when the chat has no threads to reply in.
+//
+// PostInThread posts message in thread (one OpenProposalThread returned),
+// or in target's chat when thread is "".
 type Chat interface {
 	OpenProposalThread(ctx context.Context, target, message string) (thread string, err error)
+	PostInThread(ctx context.Context, target, thread, message string) error
+}
+
+// Evaluator replays the eval set with the current instructions and with a
+// proposal's (internal/evals). Check says how many evals a comparison would
+// replay, or why it cannot run now.
+type Evaluator interface {
+	Check() (int, error)
+	Compare(ctx context.Context, overrides map[string]string) (report string, err error)
 }
 
 // Config wires a Service.
@@ -41,6 +53,7 @@ type Config struct {
 	Chat     Chat             // nil: stored and listed, not posted
 	Where    func() string    // AGENT_PROACTIVE_CHAT; "" = not posted
 	Enabled  func() bool      // AGENT_PROPOSALS
+	Eval     Evaluator        // nil: no /proposal eval
 	Now      func() time.Time // tests; default time.Now
 }
 
@@ -244,6 +257,9 @@ func (s *Service) message(p *Proposal) string {
 		b.WriteString(p.Why + "\n\n")
 	}
 	b.WriteString("```diff\n" + clip(s.diff(p), maxChatDiff) + "```\n\n")
+	if p.Eval != "" {
+		b.WriteString("**Eval** (" + p.EvalAt.Local().Format("Jan 2 15:04") + "):\n\n" + p.Eval + "\n\n")
+	}
 	fmt.Fprintf(&b, "Reply **yes** to apply it, or **no** and why to reject it (`/proposal approve %s`, `/proposal reject %s <reason>`).", p.ID, p.ID)
 	return b.String()
 }
@@ -312,6 +328,55 @@ func (s *Service) Approve(id, by string) (string, error) {
 		reply += "\n\nThe skill is in every session's workspace from the next session on."
 	}
 	return reply + fmt.Sprintf("\n\nTake it back with /proposal undo %s.", p.ID), nil
+}
+
+// Evaluate starts a comparison of a pending proposal on the eval set: each
+// eval is replayed with the current instructions and with the proposal's,
+// in the background. The result is posted in the proposal's thread and kept
+// with it (/proposal show). It returns at once, saying what it started.
+func (s *Service) Evaluate(id string) (string, error) {
+	if s.cfg.Eval == nil {
+		return "", errors.New("evals are not available in this process")
+	}
+	s.mu.Lock()
+	p, err := s.find(id)
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	if p.Status != StatusPending {
+		return "", fmt.Errorf("proposal %s is %s", p.ID, p.Status)
+	}
+	n, err := s.cfg.Eval.Check()
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		ctx := context.Background()
+		report, err := s.cfg.Eval.Compare(ctx, map[string]string{p.Target: p.Content})
+		if err != nil {
+			report = "The comparison failed: " + err.Error()
+		}
+		s.mu.Lock()
+		cur, lerr := s.load(p.ID)
+		if lerr == nil {
+			cur.Eval, cur.EvalAt = report, s.cfg.Now().UTC()
+			_ = s.save(cur)
+		}
+		s.mu.Unlock()
+		msg := fmt.Sprintf("**Eval of proposal %s** (%s): the eval set replayed with the current instructions and with the proposed ones.\n\n%s", p.ID, p.Title, report)
+		if where := s.cfg.Where(); where != "" && s.cfg.Chat != nil {
+			thread := ""
+			if len(p.Threads) > 0 {
+				thread = p.Threads[0]
+			}
+			if err := s.cfg.Chat.PostInThread(ctx, where, thread, msg); err != nil {
+				slog.Warn("proposals: could not post the eval", "id", p.ID, "error", err)
+			}
+		}
+		slog.Info("proposals: evaluated", "id", p.ID)
+	}()
+	return fmt.Sprintf("Replaying %d eval(s) twice, with the current instructions and with proposal %s's, one at a time. The comparison is posted in the proposal's thread and kept in /proposal show %s.", n, p.ID, p.ID), nil
 }
 
 // Undo takes an applied proposal back: the target gets its content from

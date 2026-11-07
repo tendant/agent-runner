@@ -2,6 +2,7 @@ package proposals
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,6 +83,11 @@ func TestDiff(t *testing.T) {
 type fakeChat struct {
 	posts []string
 	n     int
+}
+
+func (c *fakeChat) PostInThread(_ context.Context, _, thread, message string) error {
+	c.posts = append(c.posts, thread+": "+message)
+	return nil
 }
 
 func (c *fakeChat) OpenProposalThread(_ context.Context, _, message string) (string, error) {
@@ -324,5 +330,65 @@ func TestParseVerdict(t *testing.T) {
 		if v != want[0] || r != want[1] {
 			t.Errorf("%q: %q %q, want %q %q", text, v, r, want[0], want[1])
 		}
+	}
+}
+
+type fakeEvaluator struct {
+	err  error
+	got  chan map[string]string
+	n    int
+	fail error
+}
+
+func (e *fakeEvaluator) Check() (int, error) { return e.n, e.err }
+func (e *fakeEvaluator) Compare(_ context.Context, o map[string]string) (string, error) {
+	e.got <- o
+	return "| **all** | **1/2** | **2/2** |", e.fail
+}
+
+func TestEvaluate(t *testing.T) {
+	f := newFixture(t)
+	ev := &fakeEvaluator{n: 2, got: make(chan map[string]string, 1)}
+	f.svc.cfg.Eval = ev
+	f.write(t, "prompt.md", "old\n")
+	f.svc.Submit(context.Background(), Submission{SessionID: "s1", Files: []File{proposal("prompt.md", "", "Lint first", "new\n")}})
+	id := f.svc.Pending()[0].ID
+
+	reply, err := f.svc.Evaluate(id)
+	if err != nil || !strings.Contains(reply, "Replaying 2 eval(s)") {
+		t.Fatalf("%q %v", reply, err)
+	}
+	if o := <-ev.got; o["prompt.md"] != "new\n" {
+		t.Fatalf("overrides %v", o)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		p, _ := f.svc.find(id)
+		if p.Eval != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the comparison was not recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if show, _ := f.svc.Show(id, false); !strings.Contains(show, "**Eval**") || !strings.Contains(show, "2/2") {
+		t.Fatalf("show:\n%s", show)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for len(f.chat.posts) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(f.chat.posts) < 2 || !strings.HasPrefix(f.chat.posts[1], "thread-1: **Eval of proposal") {
+		t.Fatalf("posts %v", f.chat.posts)
+	}
+
+	ev.err = fmt.Errorf("eval replays run sandboxed, and AGENT_SANDBOX is off")
+	if _, err := f.svc.Evaluate(id); err == nil || !strings.Contains(err.Error(), "sandboxed") {
+		t.Fatalf("not ready: %v", err)
+	}
+	f.svc.cfg.Eval = nil
+	if _, err := f.svc.Evaluate(id); err == nil {
+		t.Fatal("evaluated without an evaluator")
 	}
 }

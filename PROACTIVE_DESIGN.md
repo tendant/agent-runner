@@ -1,6 +1,6 @@
 # Proactive Agent and Controlled Self-Evolution — Design
 
-Status: phases 1–3 built (§15.1–§15.3 say how they differ from this draft); phase 4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
+Status: phases 1–4 built (§15.1–§15.4 say how they differ from this draft), open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
 
 ## 1. Problem
 
@@ -518,6 +518,49 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
   the sandbox off it was proposed with the reason. `/trust`, `/trust <class> <level>` and the status
   lines worked. Runs under `AGENT_SANDBOX=strict`, demotion and the probes against real GitHub are
   covered by tests only.
+
+### 15.4 Phase 4 as built
+
+`internal/evals` (the eval set and the comparison), eval mode in the engine (`agent.EvalSpec`,
+`execution/eval.go`), `/evals`, and `/proposal eval`. Where it differs from §11:
+
+- **The set** is `MEMORY_DIR/evals/<name>.md`, at most 10. Each file is front-matter checks
+  (`file:`, `command:`, `reply:`, each repeatable), then the task message. It is written only with
+  `/evals set|remove`, each change a memory commit of its own. The folder is a subdirectory, so a
+  session's memory merge never touches it.
+  - `file:` must exist in the workspace afterwards.
+  - `command:` must exit 0 there.
+  - `reply:` must appear in the agent's reply (case-insensitive).
+- **A replay is an ordinary session in eval mode** (source `eval`, started by `Engine.StartEval`),
+  with the proposal's content in place of its target.
+  - `agent.md` and `prompt.md` are swapped in prompt composition, `GOALS.md` in the retrieved
+    memory, and a skill is written into the workspace (an operator skill of the same name still
+    wins).
+  - It keeps nothing. Its memory copy is not merged; there is no daily log, curation or memory
+    push; repos are not synced or pushed; nothing in `_send/`, `_schedule.json` or `_proposals/` is
+    collected; no chat is told; and its workspace is removed without being rescued.
+  - It is given none of the agent's secrets, and its repos are presented read-only, so it is
+    neither told its work will be pushed nor offered a self-push.
+  - After a restart, a queued replay is dropped, not re-run. A session of source `eval` without its
+    spec refuses to run, so a replay can never become an ordinary session.
+  - It is not hermetic: network egress is whatever `AGENT_SANDBOX` allows, so a task whose point is
+    an outside effect makes a poor eval.
+- **Checks run when the replay ends**, before its sandbox closes. A command check runs through the
+  replay's own sandbox launcher, never on the host. Replays need `AGENT_SANDBOX` on (permissive or
+  strict, not only strict), and without a sandbox a command check fails, unrun.
+- **The comparison** (`/proposal eval <id>`, a pending proposal only) runs in the background, one at
+  a time: each eval with the current instructions, then the proposed. The result is a table of
+  checks passed and reviewer scores (when the reviewer is on), with what did not pass and the cost.
+  It is posted in the proposal's thread (in the chat on Telegram) and kept on the proposal, where
+  `/proposal show` includes it.
+- **Cost** is counted against `AGENT_PROACTIVE_BUDGET_USD`, shared with proactive runs. It is checked
+  before each replay, so the last replay can go past it, and a comparison stops early when the
+  budget is spent.
+- **Seen live:** in a local trial with the sandbox on (permissive, Seatbelt) and a mock agent, a
+  weekly retrospective produced a `GOALS.md` proposal. `/evals set` saved a 4-check eval, and
+  `/proposal eval` posted "current 3/4, proposed 4/4" in the proposal's thread. The command check
+  ran in the sandbox. Nothing of either replay was kept: no daily log, rescue, outputs or memory
+  change. The $0.006 was counted against the budget. A real model was not used.
 
 ## 16. Open questions
 

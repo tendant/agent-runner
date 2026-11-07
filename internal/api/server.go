@@ -241,7 +241,8 @@ func NewServer(cfg *config.Config) *Server {
 	if streamBot != nil {
 		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
 	}
-	props := newProposals(cfg, handlers.BootstrapPaths, streamBot, telegramBot)
+	evalRunner := newEvals(cfg, handlers)
+	props := newProposals(cfg, handlers.BootstrapPaths, streamBot, telegramBot, evalRunner)
 	handlers.execEngine.SetProposals(props)
 	commander.SetProposals(props)
 	if streamBot != nil {
@@ -249,6 +250,7 @@ func NewServer(cfg *config.Config) *Server {
 	}
 	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot, props, handlers.StartAgent)
 	commander.SetProactive(proactiveChecks)
+	evalRunner.BudgetLeft, evalRunner.Spend = proactiveChecks.BudgetLeft, proactiveChecks.Spend
 
 	s := &Server{
 		config: cfg,

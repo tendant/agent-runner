@@ -2,11 +2,16 @@ package chatcmd
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/agent-runner/agent-runner/internal/evals"
 )
 
 const (
+	cmdEvals         = "/evals"
 	cmdProposals     = "/proposals"
 	cmdProposal      = "/proposal"
 	cmdRetrospective = "/retrospective"
@@ -19,6 +24,7 @@ type Proposals interface {
 	Approve(id, by string) (string, error)
 	Reject(id, by, reason string) (string, error)
 	Undo(id, by string) (string, error)
+	Evaluate(id string) (string, error)
 }
 
 // SetProposals connects /proposals and /proposal to review.
@@ -58,6 +64,8 @@ func (c *Commander) handleProposal(arg string) string {
 		reply, err = c.proposals.Reject(id, "an admin (chat command)", more)
 	case "undo", "revert":
 		reply, err = c.proposals.Undo(id, "an admin (chat command)")
+	case "eval":
+		reply, err = c.proposals.Evaluate(id)
 	case "", "help":
 		return proposalHelp
 	default:
@@ -104,6 +112,7 @@ lessons.md so it is not proposed again. Unreviewed ones are reminded after 3 day
   /proposal approve <id>             apply it
   /proposal reject <id> [reason]     close it
   /proposal undo <id>                put the file back as it was before it was applied
+  /proposal eval <id>                replay the eval set (/evals) with and without it, and compare
 
 Off switch: /config set AGENT_PROPOSALS off`
 
@@ -116,3 +125,90 @@ proposals to change the agent's instructions, each for your yes or no. It does n
   /retrospective now         run one now
 
 When: retrospective: mon 08:00 in PROACTIVE.md (/proactive policy), in its timezone.`
+
+// handleEvals is /evals [show <name> | set <name> <content> | remove <name>]:
+// the eval set in MEMORY_DIR/evals, the operator's.
+func (c *Commander) handleEvals(arg string) string {
+	sub, rest, _ := strings.Cut(strings.TrimSpace(arg), " ")
+	name, content, _ := strings.Cut(strings.TrimSpace(rest), " ")
+	if n, more, ok := strings.Cut(strings.TrimSpace(rest), "\n"); ok && !strings.Contains(n, " ") {
+		name, content = n, more // set <name>\n<content>
+	}
+	name = strings.TrimSpace(name)
+	switch strings.ToLower(sub) {
+	case "", "list":
+		set, err := evals.List(c.cfg.MemoryDir)
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		if len(set) == 0 {
+			return "The eval set is empty.\n\n" + evalsHelp
+		}
+		var b strings.Builder
+		b.WriteString("**Eval set** (" + evals.Dir + "/ in the memory dir)\n\n")
+		for _, e := range set {
+			fmt.Fprintf(&b, "- **%s**: %d check(s) · %s\n", e.Name, len(e.Checks), oneLine(e.Message, 80))
+			for _, p := range e.Problems {
+				b.WriteString("  - " + p + "\n")
+			}
+		}
+		return b.String() + "\n/proposal eval <id> compares a proposal on it."
+	case "show":
+		path, err := evals.Path(c.cfg.MemoryDir, name)
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "error: no eval " + name
+		}
+		return "**" + name + "**\n\n```\n" + strings.TrimSpace(string(data)) + "\n```"
+	case "set":
+		if name == "" || strings.TrimSpace(content) == "" {
+			return "error: usage: " + cmdEvals + " set <name> <content>\n\n" + evalsHelp
+		}
+		e, err := evals.Write(c.cfg.MemoryDir, name, content)
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		return fmt.Sprintf("ok saved eval %s (%d check(s))", e.Name, len(e.Checks))
+	case "remove", "rm", "delete":
+		ok, err := evals.Remove(c.cfg.MemoryDir, name)
+		switch {
+		case err != nil:
+			return "error: " + err.Error()
+		case !ok:
+			return "error: no eval " + name
+		}
+		return "ok removed eval " + name
+	case "help":
+		return evalsHelp
+	}
+	return "error: unknown " + cmdEvals + " command.\n\n" + evalsHelp
+}
+
+func oneLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
+const evalsHelp = `**Eval set.** Past tasks you choose, each a message and checks, replayed to compare a proposal
+with the current instructions (/proposal eval <id>). A replay runs sandboxed and keeps nothing: no
+memory, pushes, files or messages. Replays count against AGENT_PROACTIVE_BUDGET_USD.
+
+  /evals                          the set
+  /evals show <name>
+  /evals set <name> <content>     add or replace one (at most 10)
+  /evals remove <name>
+
+An eval:
+
+  ---
+  file: hello.go                  must exist in the workspace afterwards
+  command: go vet ./...           must exit 0 there (in the replay's sandbox)
+  reply: gofmt                    must appear in the agent's reply
+  ---
+  Add hello.go that prints hello, and commit it.`

@@ -97,6 +97,8 @@ type Session struct {
 	Error                string            `json:"error,omitempty"`
 	Warnings             []string          `json:"warnings,omitempty"`
 	Notes                []string          `json:"notes,omitempty"`        // what else came of the run (a proposal posted for review)
+	Eval                 *EvalSpec         `json:"-"`                      // non-nil: an eval replay (eval.go)
+	EvalResults          []EvalResult      `json:"eval_results,omitempty"` // an eval replay's check results
 	CallbackURL          string            `json:"callback_url,omitempty"` // webhook POSTed the final session on terminal status
 	TraceID              string            `json:"trace_id,omitempty"`     // OpenTelemetry trace id of the run, when tracing is enabled
 	WorkspacePath        string            `json:"-"`
@@ -363,11 +365,12 @@ func (s *Session) AddMessage(role, content string) {
 
 // TaskTurn describes one turn of a multi-turn task to start.
 type TaskTurn struct {
-	Message  string // the turn's prompt (context block + reply on later turns)
-	Source   string // session source tag, e.g. "stream"
-	ConvID   string // chat thread the task belongs to
-	Dir      string // the task's persistent workspace
-	Feedback string // user feedback to revise the plan with ("" = none)
+	Message  string    // the turn's prompt (context block + reply on later turns)
+	Source   string    // session source tag, e.g. "stream"
+	ConvID   string    // chat thread the task belongs to
+	Dir      string    // the task's persistent workspace
+	Feedback string    // user feedback to revise the plan with ("" = none)
+	Eval     *EvalSpec // an eval replay (nil: an ordinary run)
 }
 
 // SetTurnResult records what the agent reported about this turn of a task.
@@ -483,6 +486,8 @@ func (s *Session) Snapshot() *Session {
 		Error:                s.Error,
 		Warnings:             append([]string{}, s.Warnings...),
 		Notes:                append([]string{}, s.Notes...),
+		Eval:                 s.Eval,
+		EvalResults:          append([]EvalResult(nil), s.EvalResults...),
 		CallbackURL:          s.CallbackURL,
 		TraceID:              s.TraceID,
 		TotalCostUSD:         s.TotalCostUSD,
