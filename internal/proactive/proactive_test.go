@@ -2,6 +2,7 @@ package proactive
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,9 +87,9 @@ type fakeChat struct {
 	runs  []post // StartProactiveRun: report is the intro
 }
 
-func (c *fakeChat) StartProactiveRun(_ context.Context, target, intro, message string) error {
+func (c *fakeChat) StartProactiveRun(_ context.Context, target, intro, message string) (string, error) {
 	c.runs = append(c.runs, post{target: target, report: intro, message: message})
-	return nil
+	return fmt.Sprintf("run-%d", len(c.runs)), nil
 }
 
 func (c *fakeChat) OpenProactiveThread(_ context.Context, target, report, message string, plan bool) error {

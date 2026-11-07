@@ -16,6 +16,7 @@ const (
 	cmdProactive = "/proactive"
 	cmdGoals     = "/goals"
 	cmdAgenda    = "/agenda"
+	cmdTrust     = "/trust"
 )
 
 // Proactive is the proactive checks' surface the chat commands use.
@@ -25,6 +26,29 @@ type Proactive interface {
 	Tick(ctx context.Context, force bool) proactive.Outcome
 	RetroStatus() string
 	Retrospective(ctx context.Context) proactive.Outcome
+	TrustStatus() string
+	SetTrust(class, level string) (string, error)
+	SessionUndone(ctx context.Context, sessionID string) string
+}
+
+// handleTrust is /trust [<class> <level>]: the action classes' levels.
+// Raising one is the operator's alone (commands are admins' only).
+func (c *Commander) handleTrust(arg string) string {
+	if c.proactive == nil {
+		return "Trust levels are not available in this process."
+	}
+	f := strings.Fields(arg)
+	switch len(f) {
+	case 0:
+		return c.proactive.TrustStatus()
+	case 2:
+		reply, err := c.proactive.SetTrust(f[0], f[1])
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		return reply
+	}
+	return "error: usage: " + cmdTrust + " [<class> off|propose|notify|quiet]"
 }
 
 // SetProactive connects /proactive and /agenda to the running checks.
@@ -123,9 +147,10 @@ func (c *Commander) handleOperatorFile(name, cmd, arg, help string) string {
 }
 
 const proactiveHelp = `**Proactive checks.** Every AGENT_PROACTIVE_INTERVAL (30m) the agent looks at its due agenda
-items (` + "`agenda.md`" + `, which its sessions keep) and at sessions that failed with nobody watching.
-When something needs attention it posts a note, or a proposal that waits for your yes, in
-AGENT_PROACTIVE_CHAT. Nothing runs without a yes. A check with nothing new makes no model call.
+items (` + "`agenda.md`" + `, which its sessions keep), sessions that failed with nobody watching, and the
+signals PROACTIVE.md turns on (repo CI, new commits). When something needs attention it posts a note,
+or a proposal that waits for your yes, in AGENT_PROACTIVE_CHAT. Work runs without a yes only for an
+action class you raised with /trust (and AGENT_SANDBOX=strict). A check with nothing new makes no model call.
 
   /proactive               status, today's counts, the last check
   /proactive on | off      the kill switch (AGENT_PROACTIVE)
@@ -133,6 +158,7 @@ AGENT_PROACTIVE_CHAT. Nothing runs without a yes. A check with nothing new makes
   /proactive policy [set <text> | clear]   cadence, quiet hours, caps, what to raise (PROACTIVE.md)
   /goals [set <text> | clear]              standing goals (GOALS.md), in every session's prompt too
   /agenda                  the agent's open loops
+  /trust [<class> <level>] what each action class may do without asking
 
 Where messages go: /config set AGENT_PROACTIVE_CHAT <agent-stream channel id, or telegram>`
 
@@ -146,8 +172,16 @@ the reverse.
   quiet_hours: 22:00-07:00
   max_posts_per_day: 5
   retrospective: mon 08:00
+  signals: repo-ci, repo-commits
+  max_sessions_per_day: 3
   ---
-  Failed scheduled jobs: propose a fix. Due deploy checks: propose checking. Anything else: a short note.`
+  Failed scheduled jobs: propose a fix. Due deploy checks: propose checking. Anything else: a short note.
+
+  # Action classes
+  - ci-fix: CI failing on a watched repo's default branch. Investigate, fix, push.
+    trust: propose
+
+A class's trust: is only where it starts; /trust changes it.`
 
 const goalsHelp = `**Goals** (GOALS.md): standing objectives, in your words. Every session sees them, and the
 proactive checks weigh what they find against them.

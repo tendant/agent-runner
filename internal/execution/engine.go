@@ -1652,6 +1652,11 @@ func (h *Engine) notifySessionResult(snap *agent.Session) {
 	switch snap.Source {
 	case "stream", "telegram", "wechat":
 		return
+	case "proactive":
+		// A quiet proactive run (PROACTIVE_DESIGN.md §12): its result is
+		// the daily log's; the proactive checks follow it and tell the
+		// chat when it goes wrong.
+		return
 	}
 
 	preview := snap.Message

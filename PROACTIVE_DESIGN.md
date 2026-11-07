@@ -1,6 +1,6 @@
 # Proactive Agent and Controlled Self-Evolution — Design
 
-Status: phases 1 and 2 built (§15.1, §15.2 say how they differ from this draft); phases 3–4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
+Status: phases 1–3 built (§15.1–§15.3 say how they differ from this draft); phase 4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
 
 ## 1. Problem
 
@@ -464,6 +464,60 @@ weekly retrospective in `internal/proactive/retro.go`. Where it differs from §8
   `AGENT_SANDBOX`.
 - `AGENT_PROPOSALS` (default on) is the off switch. Off, `_proposals/` is dropped with a warning and the
   runtime layer goes back to "propose changes in your reply".
+
+### 15.3 Phase 3 as built
+
+`internal/trust` (levels, history, demotion), action classes in `proactive/policy.go`, execution and
+run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes in
+`proactive/signals.go`, and `/trust`. Where it differs from §5, §7 and §12:
+
+- **Classes** are list items in an `# Action classes` section of `PROACTIVE.md`'s body. Each is a name
+  and a description, with `trust:` and `quiet_hours: ignore` on the item's line or the lines below
+  it. A class with no `trust:`, or one that cannot be read, starts at `propose`. Triage names the
+  class and may answer `execute`; the runner alone decides what happens.
+- **No class, or a class the policy does not have:** at most `plan`, as in phase 1, not `ask` as the
+  §5.3 table says. A class at `off` is ignored. An `execute` runs only when all of these hold:
+  - the class's live level is `notify` or `quiet`;
+  - `AGENT_SANDBOX=strict`;
+  - no other proactive run is in flight;
+  - today's runs (`AGENT_PROACTIVE_MAX_SESSIONS`, 6) and spend (`AGENT_PROACTIVE_BUDGET_USD`, $5) are
+    not used up. `PROACTIVE.md` may lower both (`max_sessions_per_day`, `budget_usd_per_day`).
+
+  Otherwise it is posted as a proposal with the reason ("_Proposed, not run: …_"). A run in flight
+  only holds back executes; it does not skip the whole tick.
+- **notify** opens a thread in `AGENT_PROACTIVE_CHAT` and runs there at once. The run is an ordinary
+  chat session (`botcommon.Engine.RunNow`), and its result is posted in the thread. **quiet** starts a
+  session with source `proactive` that no chat watches and the notifier skips. Its result is in the
+  daily log only. Either way the request names the class and its description, asks the run to stay
+  within it, and carries the report marked as data.
+- **Following a run:** the check loop looks each minute at what finished.
+  - A completed run that the reviewer did not score below 6 counts as clean.
+  - A run that failed or stopped, or scored below 6, demotes its class one level. The chat is told,
+    past the post cap.
+  - Undoing such a session within 7 days with `/memory undo` also demotes its class.
+  - Not built yet: demotion when a run's repo commit is reverted, or when a person's reply is
+    classified as "this was wrong".
+  - A run that never reports back is forgotten after 24 hours.
+  - The budget counts the runs' session cost only, not triage calls. It is checked before a run
+    starts, so one run can go past it.
+- **Promotion** is `/trust <class> <level>` only. `/trust` suggests one after 10 clean runs in a row
+  at a level; the weekly report does not show it yet. Live levels and history are in
+  `STATE_ROOT/trust.json`, seeded from `PROACTIVE.md` the first time a class is seen, so later edits
+  to its `trust:` do not change a live level.
+- **Quiet hours** skip the tick unless some class has `quiet_hours: ignore`. Then triage runs, and a
+  verdict for any other class is held back until the quiet hours end; its items are not marked seen.
+- **Signals** are turned on in `PROACTIVE.md`'s front matter, not per goal in `GOALS.md`:
+  `signals: repo-ci, repo-commits`, with `repos: a, b` to limit them (default: every registered repo).
+  - `repo-ci` reads GitHub's check runs and commit statuses for the repo's branch (only for
+    github.com URLs). It uses the repo's login only when that is a token. It reports a failure once
+    no check is still running, keyed by the failing commit, so each red commit is triaged once.
+  - `repo-commits` fetches the bare cache (`repos.Sync`) and lists commits new since the last check.
+    The first check only records the branch head. Commit text is marked as other people's text in
+    the report.
+- **Seen live:** a real triage with one class at `notify` returned `execute` with that class, and with
+  the sandbox off it was proposed with the reason. `/trust`, `/trust <class> <level>` and the status
+  lines worked. Runs under `AGENT_SANDBOX=strict`, demotion and the probes against real GitHub are
+  covered by tests only.
 
 ## 16. Open questions
 

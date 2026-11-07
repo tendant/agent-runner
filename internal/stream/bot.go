@@ -451,10 +451,10 @@ func (b *Bot) OpenProactiveThread(ctx context.Context, channelID, report, messag
 // message there as a session at once (the weekly retrospective): no
 // confirmation, as the operator turned it on. The result is reported in the
 // thread like any run's.
-func (b *Bot) StartProactiveRun(_ context.Context, channelID, intro, message string) error {
+func (b *Bot) StartProactiveRun(_ context.Context, channelID, intro, message string) (string, error) {
 	key, err := b.client.PostThreadRoot(context.Background(), channelID, OutMessage{Content: intro, IdempotencyKey: uuid.NewString()})
 	if err != nil {
-		return err
+		return "", err
 	}
 	conv := b.threadManager.GetOrCreate(key)
 	conv.SetScope(channelID)
@@ -463,8 +463,10 @@ func (b *Bot) StartProactiveRun(_ context.Context, channelID, intro, message str
 	slog.Info("stream bot: proactive run started", "channel_id", channelID, "thread", key)
 	// The run outlives the caller (a chat command's timeout): it is watched
 	// on its own context, as a resumed session is.
-	b.engine.HandleConfirmation(context.Background(), key, conv)
-	return nil
+	if id := b.engine.RunNow(context.Background(), key, conv); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("the run did not start (see the thread)")
 }
 
 // OpenProposalThread posts a proposal for review as a new thread in

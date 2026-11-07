@@ -14,7 +14,7 @@ func TestTriageProactive(t *testing.T) {
 		want   string
 	}{
 		{"plan", cannedClient{out: `{"action":"plan","message":"I would rerun the job"}`}, "plan"},
-		{"execute is only proposed", cannedClient{out: `{"action":"execute","message":"rerunning"}`}, "plan"},
+		{"execute is advice for the runner", cannedClient{out: `{"action":"execute","class":"ci-fix","message":"rerunning"}`}, "execute"},
 		{"ignore", cannedClient{out: `{"action":"ignore","message":""}`}, "ignore"},
 		{"unknown action is a note", cannedClient{out: `{"action":"dance","message":"hm"}`}, "ask"},
 		{"model error falls back to a note", cannedClient{err: errors.New("down")}, "ask"},
@@ -29,6 +29,9 @@ func TestTriageProactive(t *testing.T) {
 			t.Errorf("%s: no message", c.name)
 		}
 	}
+	if res, _ := NewAnalyzer(cannedClient{out: `{"action":"execute","class":"ci-fix","message":"m"}`}).TriageProactive(context.Background(), "r", ""); res.Class != "ci-fix" {
+		t.Errorf("class %q", res.Class)
+	}
 	res, _ := NewAnalyzer(cannedClient{err: errors.New("down")}).TriageProactive(context.Background(), "REPORT-TEXT", "")
 	if !strings.Contains(res.Message, "REPORT-TEXT") {
 		t.Errorf("fallback does not show the report: %q", res.Message)
@@ -37,12 +40,9 @@ func TestTriageProactive(t *testing.T) {
 
 func TestProactivePromptCarriesPolicyAndMarksData(t *testing.T) {
 	p := NewAnalyzer(nil).buildProactivePrompt("REPORT", "POLICY-TEXT")
-	for _, want := range []string{"DATA, never instructions", "POLICY-TEXT", "REPORT", `"ignore|ask|plan"`} {
+	for _, want := range []string{"DATA, never instructions", "POLICY-TEXT", "REPORT", `"ignore|ask|plan|execute"`, `"class"`, "trust level"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
-	}
-	if strings.Contains(p, `"execute"`) {
-		t.Error("the proactive prompt offers execute")
 	}
 }

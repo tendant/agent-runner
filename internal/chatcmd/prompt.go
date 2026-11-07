@@ -1,6 +1,7 @@
 package chatcmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -110,6 +111,11 @@ func (c *Commander) handleMemoryUndo(sessionID string) string {
 	msg := fmt.Sprintf("undid %d change(s):\n%s", len(reverted), strings.Join(reverted, "\n"))
 	if err := tmpl.CommitAndPushMemory(c.cfg.MemoryDir, tmpl.MemoryGitCredsFromEnv()); err != nil {
 		msg += "\n(not pushed: " + err.Error() + "; /memory push retries)"
+	}
+	if c.proactive != nil {
+		if note := c.proactive.SessionUndone(context.Background(), sessionID); note != "" {
+			msg += "\n\n" + note
+		}
 	}
 	return msg
 }

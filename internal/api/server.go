@@ -247,7 +247,7 @@ func NewServer(cfg *config.Config) *Server {
 	if streamBot != nil {
 		streamBot.SetThreadReplies(props.ThreadReply)
 	}
-	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot, props)
+	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot, props, handlers.StartAgent)
 	commander.SetProactive(proactiveChecks)
 
 	s := &Server{

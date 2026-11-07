@@ -17,8 +17,9 @@ var imagePathRe = regexp.MustCompile(`\[Image:\s*([^\]]+)\]`)
 
 // AnalysisResult is the structured response from the analyzer.
 type AnalysisResult struct {
-	Action  string `json:"action"`  // "ask", "plan", "execute", or "ignore" (alerts only)
-	Message string `json:"message"` // question text or plan text
+	Action  string `json:"action"`          // "ask", "plan", "execute", or "ignore" (alerts only)
+	Message string `json:"message"`         // question text or plan text
+	Class   string `json:"class,omitempty"` // proactive triage: the action class the work belongs to, or ""
 }
 
 // Analyzer uses a fast LLM client to analyze conversation messages and decide

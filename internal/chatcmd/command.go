@@ -165,6 +165,8 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleGoals(strings.TrimSpace(text[len(cmdGoals):])))
 	case lower == cmdAgenda:
 		return r(c.handleAgenda())
+	case lower == cmdTrust || strings.HasPrefix(lower, cmdTrust+" "):
+		return r(c.handleTrust(strings.TrimSpace(text[len(cmdTrust):])))
 	case lower == cmdProposals:
 		return r(c.handleProposals())
 	case lower == cmdProposal || strings.HasPrefix(lower, cmdProposal+" "):
@@ -1182,7 +1184,7 @@ More: **/help config** · **/help env** · **/help repo** · **/help memory**
 **/prompt show** _[agent|workflow]_ · **/prompt check** — out-of-date lines · **/prompt preview** _[full] [message]_ — what a session would get
 **/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
 **/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
-**/proactive** — proactive checks: status · **on** · **off** · **tick** · **policy** · **/goals** — standing goals · **/agenda** — the agent's open loops
+**/proactive** — proactive checks: status · **on** · **off** · **tick** · **policy** · **/goals** — standing goals · **/agenda** — the agent's open loops · **/trust** _[class level]_ — what each action class may do unasked
 **/proposals** — the agent's proposals to change its instructions · **/proposal show** · **approve** · **reject** · **undo** _\<id\>_ · **/retrospective** — the weekly review: status · **on** · **off** · **now**
 
 **Setup** (agent-runner itself)
@@ -1364,6 +1366,7 @@ var knownCommands = map[string]string{
 	cmdGoals:         "usage: " + cmdGoals + " [set <text>|clear]",
 	cmdAgenda:        "usage: " + cmdAgenda,
 	cmdProposals:     "usage: " + cmdProposals,
+	cmdTrust:         "usage: " + cmdTrust + " [<class> off|propose|notify|quiet]",
 	cmdProposal:      "usage: " + cmdProposal + " show|approve|reject|undo <id> [reason]",
 	cmdRetrospective: "usage: " + cmdRetrospective + " [on|off|now]",
 	"/stop":          "usage: /stop [session-id]",

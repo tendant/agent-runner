@@ -8,12 +8,16 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/proactive"
 	"github.com/agent-runner/agent-runner/internal/proposals"
+	"github.com/agent-runner/agent-runner/internal/repos"
 	"github.com/agent-runner/agent-runner/internal/stream"
+	"github.com/agent-runner/agent-runner/internal/subagent"
 	"github.com/agent-runner/agent-runner/internal/telegram"
 	"github.com/agent-runner/agent-runner/internal/thread"
+	"github.com/agent-runner/agent-runner/internal/trust"
 )
 
 // proactiveChat opens a proactive thread where AGENT_PROACTIVE_CHAT says:
@@ -26,7 +30,7 @@ type proactiveChat struct {
 // chatBot is what a proactive chat needs of a bot.
 type chatBot interface {
 	OpenProactiveThread(ctx context.Context, target, report, message string, plan bool) error
-	StartProactiveRun(ctx context.Context, target, intro, message string) error
+	StartProactiveRun(ctx context.Context, target, intro, message string) (string, error)
 	OpenProposalThread(ctx context.Context, target, message string) (string, error)
 }
 
@@ -55,10 +59,10 @@ func (c proactiveChat) OpenProactiveThread(ctx context.Context, target, report, 
 	return b.OpenProactiveThread(ctx, target, report, message, plan)
 }
 
-func (c proactiveChat) StartProactiveRun(ctx context.Context, target, intro, message string) error {
+func (c proactiveChat) StartProactiveRun(ctx context.Context, target, intro, message string) (string, error) {
 	b, err := c.bot(target)
 	if err != nil {
-		return err
+		return "", err
 	}
 	return b.StartProactiveRun(ctx, target, intro, message)
 }
@@ -116,7 +120,17 @@ func sweepProposals(ctx context.Context, p *proposals.Service) {
 }
 
 // newProactive builds the proactive checks (PROACTIVE_DESIGN.md, phase 1).
-func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.Analyzer, sb *stream.Bot, tb *telegram.Bot, props *proposals.Service) *proactive.Service {
+// quietRunner starts a quiet proactive run: an ordinary session of source
+// "proactive", which no chat watches and the notifier skips.
+type quietRunner struct {
+	start func(message, source, convID string) (string, error)
+}
+
+func (r quietRunner) StartQuietRun(message string) (string, error) {
+	return r.start(message, "proactive", "")
+}
+
+func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.Analyzer, sb *stream.Bot, tb *telegram.Bot, props *proposals.Service, start func(message, source, convID string) (string, error)) *proactive.Service {
 	return proactive.New(proactive.Config{
 		MemoryDir: cfg.MemoryDir,
 		StateDir:  filepath.Join(cfg.StateRoot, "proactive"),
@@ -130,6 +144,9 @@ func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.
 				MaxTriages: a.ProactiveMaxChecks,
 
 				Retrospective: a.Retrospective,
+				MaxSessions:   a.ProactiveMaxRuns,
+				BudgetUSD:     a.ProactiveBudgetUSD,
+				Sandboxed:     strings.EqualFold(a.SandboxMode, "strict"),
 			}
 		},
 		Sessions: func() []proactive.Session {
@@ -139,15 +156,26 @@ func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.
 				if snap.CompletedAt == nil {
 					continue
 				}
-				out = append(out, proactive.Session{
+				ps := proactive.Session{
 					ID: snap.ID, Source: snap.Source, Message: snap.Message, Error: snap.Error,
-					Status: string(snap.Status), Ended: *snap.CompletedAt,
-				})
+					Status: string(snap.Status), Ended: *snap.CompletedAt, CostUSD: snap.TotalCostUSD,
+				}
+				if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
+					ps.ReviewScore = rr.Score
+				}
+				out = append(out, ps)
 			}
 			return out
 		},
 		Triager:   analyzer,
 		Chat:      proactiveChat{stream: sb, telegram: tb},
 		Proposals: proposalLines(props),
+		Trust:     trust.New(filepath.Join(cfg.StateRoot, "trust.json")),
+		Runner:    quietRunner{start: start},
+		Signals: &proactive.RepoSignals{
+			Repos:     repos.New(cfg.ReposFile).List,
+			CacheRoot: cfg.RepoCacheRoot,
+			Secrets:   agentsecrets.New(cfg.SecretsFile),
+		},
 	})
 }

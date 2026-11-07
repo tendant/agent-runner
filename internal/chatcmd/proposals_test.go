@@ -76,3 +76,20 @@ func TestRetrospectiveCommand(t *testing.T) {
 		t.Fatalf("now: %q", got)
 	}
 }
+
+func TestTrustCommand(t *testing.T) {
+	c := &Commander{cfg: &config.Config{MemoryDir: t.TempDir()}}
+	if got, _, _ := c.Handle("/trust", nil); !strings.Contains(got, "not available") {
+		t.Fatalf("without checks: %q", got)
+	}
+	c.SetProactive(&fakeProactive{})
+	if got, _, _ := c.Handle("/trust", nil); got != "TRUST" {
+		t.Fatalf("status: %q", got)
+	}
+	if got, _, _ := c.Handle("/trust ci-fix notify", nil); got != "set ci-fix notify" {
+		t.Fatalf("set: %q", got)
+	}
+	if got, _, _ := c.Handle("/trust ci-fix", nil); !strings.HasPrefix(got, "error: usage") {
+		t.Fatalf("one arg: %q", got)
+	}
+}

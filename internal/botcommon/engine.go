@@ -83,9 +83,16 @@ func (e *Engine) HandleConfirmation(ctx context.Context, id string, conv *thread
 	e.runTurn(ctx, id, conv, false)
 }
 
+// RunNow starts a run from the thread's latest user message at once, as a
+// yes would (a proactive run), and returns its session; "" when it did not
+// start (the thread was told why).
+func (e *Engine) RunNow(ctx context.Context, id string, conv *thread.Thread) string {
+	return e.runTurn(ctx, id, conv, false)
+}
+
 // runTurn starts a run from the thread's latest user message. With tasks on
 // it is a task turn; feedback marks the message as feedback on the task.
-func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, feedback bool) {
+func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, feedback bool) (sessionID string) {
 	e.Sender.Status(ctx, id, e.StartText)
 	conv.SetState(thread.StateExecuting)
 
@@ -119,10 +126,7 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 		prefix = note + "\n\n" + prefix
 	}
 
-	var (
-		sessionID string
-		err       error
-	)
+	var err error
 	if ts, ok := e.taskStarter(); ok {
 		sessionID, err = e.startTaskTurn(ts, id, message, currentMsg, prefix, feedback)
 	} else {
@@ -133,12 +137,12 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 		// raced): this one waits for it, like any message sent during a run.
 		conv.QueueInput(currentMsg)
 		e.Sender.Reply(ctx, id, "Message queued — I'll process it after the current task finishes.")
-		return
+		return ""
 	}
 	if err != nil {
 		conv.SetState(thread.StateGathering)
 		e.Sender.Final(ctx, id, fmt.Sprintf("Failed to start agent: %s", err))
-		return
+		return ""
 	}
 	conv.SetActiveSession(sessionID)
 
@@ -148,6 +152,7 @@ func (e *Engine) runTurn(ctx context.Context, id string, conv *thread.Thread, fe
 	}
 
 	e.watchSession(ctx, id, sessionID, conv)
+	return sessionID
 }
 
 // watchSession follows a running session in the background: reports progress

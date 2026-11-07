@@ -157,6 +157,8 @@ type AgentConfig struct {
 	ProactiveInterval  time.Duration // AGENT_PROACTIVE_INTERVAL — time between checks (default 30m, at least 5m)
 	ProactiveMaxPosts  int           // AGENT_PROACTIVE_MAX_POSTS — proactive messages per day (default 10)
 	ProactiveMaxChecks int           // AGENT_PROACTIVE_MAX_TRIAGES — model calls for proactive triage per day (default 24)
+	ProactiveMaxRuns   int           // AGENT_PROACTIVE_MAX_SESSIONS — proactive runs (work started without asking) per day (default 6)
+	ProactiveBudgetUSD float64       // AGENT_PROACTIVE_BUDGET_USD — what proactive runs may spend per day (default 5)
 	Proposals          bool          // AGENT_PROPOSALS — on|off (default on): sessions may propose changes to their instructions in _proposals/
 	Retrospective      bool          // AGENT_RETROSPECTIVE — on|off (default off): a weekly session that reviews the week and proposes changes
 	TaskIdleTTL        time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
@@ -327,6 +329,8 @@ func defaultConfigForDataDir(data string) *Config {
 			ProactiveMaxPosts:   10,
 			ProactiveMaxChecks:  24,
 			Proposals:           true,
+			ProactiveMaxRuns:    6,
+			ProactiveBudgetUSD:  5,
 			ChatRetention:       90 * 24 * time.Hour,
 			TaskResumeBackend:   true,
 			TaskMaxTurns:        10,
@@ -541,6 +545,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
 	cfg.Agent.Proactive = envOnOff("AGENT_PROACTIVE", cfg.Agent.Proactive)
 	cfg.Agent.Proposals = envOnOff("AGENT_PROPOSALS", cfg.Agent.Proposals)
+	cfg.Agent.ProactiveMaxRuns = envIntOrDefault("AGENT_PROACTIVE_MAX_SESSIONS", cfg.Agent.ProactiveMaxRuns)
+	cfg.Agent.ProactiveBudgetUSD = envFloatOrDefault("AGENT_PROACTIVE_BUDGET_USD", cfg.Agent.ProactiveBudgetUSD)
 	cfg.Agent.Retrospective = envOnOff("AGENT_RETROSPECTIVE", cfg.Agent.Retrospective)
 	cfg.Agent.ProactiveChat = strings.TrimSpace(envOrDefault("AGENT_PROACTIVE_CHAT", cfg.Agent.ProactiveChat))
 	cfg.Agent.ProactiveInterval = max(envDurationOrDefault("AGENT_PROACTIVE_INTERVAL", cfg.Agent.ProactiveInterval), 5*time.Minute)

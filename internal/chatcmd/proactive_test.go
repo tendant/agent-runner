@@ -21,6 +21,11 @@ func (f *fakeProactive) Tick(_ context.Context, force bool) proactive.Outcome {
 }
 
 func (f *fakeProactive) RetroStatus() string { return "RETRO" }
+func (f *fakeProactive) TrustStatus() string { return "TRUST" }
+func (f *fakeProactive) SetTrust(class, level string) (string, error) {
+	return "set " + class + " " + level, nil
+}
+func (f *fakeProactive) SessionUndone(context.Context, string) string { return "" }
 func (f *fakeProactive) Retrospective(context.Context) proactive.Outcome {
 	return proactive.Outcome{Result: "started"}
 }

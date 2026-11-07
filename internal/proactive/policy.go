@@ -1,16 +1,20 @@
 // Package proactive wakes the agent on its own (PROACTIVE_DESIGN.md): on a
-// cadence it looks at the agent's due agenda items and the sessions that
-// failed with nobody watching, and when something needs attention asks the
-// fast model what to do about it, then posts a note or a proposal in a chat.
-// Phase 1 never runs work by itself: a proposal waits for a person's yes,
-// through the ordinary confirmation flow of the thread it opens.
+// cadence it looks at the agent's due agenda items, the sessions that failed
+// with nobody watching and the watched repos' signals, and when something
+// needs attention asks the fast model what to do about it, then posts a note
+// or a proposal in a chat. Work runs without a person's yes only for an
+// action class the operator raised to notify or quiet (/trust), under a
+// strict sandbox and the daily caps; a run that goes wrong lowers it again.
 package proactive
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/agent-runner/agent-runner/internal/trust"
 )
 
 // Files in the memory dir. Upper case, so a session cannot edit them
@@ -32,12 +36,21 @@ const (
 //	---
 //	Failed nightly jobs: propose a fix. Agenda items about deploys: raise them...
 type Policy struct {
-	Interval   time.Duration  // 0: the environment's
-	Location   *time.Location // for quiet hours and the daily caps; nil: local time
-	QuietFrom  int            // minutes after midnight; QuietFrom == QuietTo: none
-	QuietTo    int
-	MaxPosts   int // 0: the environment's; never raises it
-	MaxTriages int
+	Interval    time.Duration  // 0: the environment's
+	Location    *time.Location // for quiet hours and the daily caps; nil: local time
+	QuietFrom   int            // minutes after midnight; QuietFrom == QuietTo: none
+	QuietTo     int
+	MaxPosts    int // 0: the environment's; never raises it
+	MaxTriages  int
+	MaxSessions int     // proactive runs per day; 0: the environment's; never raises it
+	BudgetUSD   float64 // what proactive runs may spend per day; 0: the environment's; never raises it
+	// Signals are the probes to run (signals: repo-ci, repo-commits), on
+	// Repos (repos: a, b; empty: every registered repo).
+	Signals []string
+	Repos   []string
+	// Classes are the action classes, from an "Action classes" section
+	// of the body (§7).
+	Classes []Class
 	// RetroDay and RetroAt are when the weekly retrospective runs
 	// (retrospective: mon 08:00); default Monday 08:00.
 	RetroDay time.Weekday
@@ -76,6 +89,20 @@ func ParsePolicy(content string) Policy {
 			p.MaxTriages, err = strconv.Atoi(val)
 		case "retrospective":
 			p.RetroDay, p.RetroAt, err = parseWeekly(val)
+		case "max_sessions_per_day":
+			p.MaxSessions, err = strconv.Atoi(val)
+		case "budget_usd_per_day":
+			p.BudgetUSD, err = strconv.ParseFloat(strings.TrimPrefix(val, "$"), 64)
+		case "signals":
+			for _, sig := range list(val) {
+				if sig != SignalCI && sig != SignalCommits {
+					p.Problems = append(p.Problems, "signals: unknown signal "+sig+" (repo-ci, repo-commits)")
+					continue
+				}
+				p.Signals = append(p.Signals, sig)
+			}
+		case "repos":
+			p.Repos = list(val)
 		default:
 			err = fmt.Errorf("unknown setting")
 		}
@@ -83,7 +110,105 @@ func ParsePolicy(content string) Policy {
 			p.Problems = append(p.Problems, key+": "+err.Error())
 		}
 	}
+	p.Classes, p.Problems = parseClasses(p.Text, p.Problems)
 	return p
+}
+
+// Signal probes (§5.2).
+const (
+	SignalCI      = "repo-ci"      // the latest CI result on a repo's branch (GitHub)
+	SignalCommits = "repo-commits" // new commits on a repo's branch
+)
+
+// Class is an action class: a named kind of work the operator lets the
+// agent do proactively, at an initial trust level.
+type Class struct {
+	Name        string
+	Description string
+	Trust       trust.Level // the initial level; the live one is in trust.json
+	IgnoreQuiet bool        // quiet_hours: ignore
+}
+
+// Class finds a class by name.
+func (p Policy) Class(name string) (Class, bool) {
+	for _, c := range p.Classes {
+		if strings.EqualFold(c.Name, strings.TrimSpace(name)) {
+			return c, true
+		}
+	}
+	return Class{}, false
+}
+
+var classLine = regexp.MustCompile(`^[-*]\s+([a-z0-9][a-z0-9-]*)\s*:\s*(.*)$`)
+
+// parseClasses reads the classes from the body's "Action classes" section:
+//
+//	# Action classes
+//
+//	- ci-fix: CI failing on a watched repo's default branch. Investigate, fix, push.
+//	  trust: propose
+//	- daily-digest: a morning summary of what changed. quiet_hours: ignore
+//	  trust: notify
+//
+// A class is a list item; trust: and quiet_hours: may follow on its line or
+// on the indented lines below it.
+func parseClasses(body string, problems []string) ([]Class, []string) {
+	var out []Class
+	in := false
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "#") {
+			in = strings.Contains(strings.ToLower(line), "action classes")
+			continue
+		}
+		if !in || line == "" {
+			continue
+		}
+		if m := classLine.FindStringSubmatch(line); m != nil && raw == strings.TrimLeft(raw, " \t") {
+			out = append(out, Class{Name: m[1], Trust: trust.Propose})
+			line = m[2]
+		} else if len(out) == 0 {
+			continue
+		}
+		c := &out[len(out)-1]
+		var desc []string
+		for _, part := range strings.Split(line, ". ") {
+			k, v, ok := strings.Cut(part, ":")
+			k = strings.ToLower(strings.TrimSpace(k))
+			v = strings.TrimSuffix(strings.TrimSpace(v), ".")
+			switch {
+			case ok && k == "trust":
+				l, good := trust.ParseLevel(v)
+				if !good {
+					problems = append(problems, c.Name+": unknown trust level "+v+" (off, propose, notify, quiet)")
+					continue
+				}
+				c.Trust = l
+			case ok && k == "quiet_hours":
+				c.IgnoreQuiet = strings.EqualFold(v, "ignore")
+			default:
+				desc = append(desc, strings.TrimSpace(part))
+			}
+		}
+		if d := strings.TrimSpace(strings.Join(desc, ". ")); d != "" {
+			if c.Description != "" {
+				c.Description += " "
+			}
+			c.Description += d
+		}
+	}
+	return out, problems
+}
+
+// list splits "a, b c" into its items.
+func list(v string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(strings.Trim(v, "[]"), func(r rune) bool { return r == ',' || r == ' ' }) {
+		if f = strings.Trim(f, `"'`); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Quiet reports whether t falls in the policy's quiet hours.
@@ -191,4 +316,13 @@ func splitFrontMatter(content string) (front, body string) {
 		return rest[:i], after
 	}
 	return "", content
+}
+
+func (p Policy) anyIgnoresQuiet() bool {
+	for _, c := range p.Classes {
+		if c.IgnoreQuiet {
+			return true
+		}
+	}
+	return false
 }

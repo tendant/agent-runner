@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `locks/` | Named advisory leases agent sessions take out on each other (`POST /lock`) |
 | `logging/` | Markdown audit log writer |
 | `metrics/` | Prometheus metrics |
-| `proactive/` | Proactive checks (PROACTIVE_DESIGN.md): due `agenda.md` items and unwatched failures, triaged and posted as a note or a yes/no proposal in `AGENT_PROACTIVE_CHAT`; never runs work unasked. Also the weekly retrospective (`AGENT_RETROSPECTIVE`) |
+| `proactive/` | Proactive checks (PROACTIVE_DESIGN.md): due `agenda.md` items and unwatched failures, triaged and posted as a note or a yes/no proposal in `AGENT_PROACTIVE_CHAT`; never runs work unasked. Also the weekly retrospective (`AGENT_RETROSPECTIVE`), action classes that may run unasked by trust level (under `AGENT_SANDBOX=strict`), and the `repo-ci`/`repo-commits` signal probes |
 | `proposals/` | The agent's proposals to change agent.md, prompt.md, GOALS.md or its own skills (`_proposals/`, PROACTIVE_DESIGN.md §15.2): validated, posted for review, applied only on an admin's yes, undoable |
 | `scheduler/` | DB-backed workflow scheduler (cron/delayed tasks via simple-workflow) |
 | `sessionjournal/` | On-disk journal of active sessions powering restart recovery |
@@ -38,6 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `task/` | Multi-turn task records, store, retention sweep, per-turn context block |
 | `telegram/` | Telegram bot |
 | `template/` | Memory system: prompt composition, retrieval, budget, daily logs, git sync |
+| `trust/` | Live trust levels of proactive action classes (`STATE_ROOT/trust.json`): off → propose → notify → quiet; raised only by `/trust`, lowered automatically when a run goes wrong |
 | `wechat/` | WeChat bot (iLink API) |
 | `repos/` | Repo registry (`/repo`, `/repos`): bare fetch-only cache, checkouts, per-repo logins from an `/env secret` (REPOS_DESIGN.md) |
 | `agentsecrets/` | The agent's environment (`/env`): plain settings (`DATA_DIR/env.json`) and secrets (`DATA_DIR/secrets.json`), apart from agent-runner's own (`/config`) |

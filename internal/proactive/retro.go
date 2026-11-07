@@ -58,7 +58,7 @@ func (s *Service) Retrospective(ctx context.Context) Outcome {
 	pol := s.policy()
 	intro := fmt.Sprintf("**Weekly retrospective** (%s – %s)\n\nLooking back over the week's sessions for patterns worth a change to the agent's instructions. The report follows in this thread; each proposal is posted on its own for your yes or no.",
 		pol.in(since).Format("Jan 2"), pol.in(now).Format("Jan 2"))
-	err := s.cfg.Chat.StartProactiveRun(ctx, set.Chat, intro, s.retroMessage(since, now, pol))
+	_, err := s.cfg.Chat.StartProactiveRun(ctx, set.Chat, intro, s.retroMessage(since, now, pol))
 	o := Outcome{At: now, Result: "started"}
 	if err != nil {
 		o = Outcome{At: now, Result: "error", Reason: err.Error()}
