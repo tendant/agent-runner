@@ -666,6 +666,10 @@ func (h *Handlers) executeJob(job *jobs.Job, repo repos.Repo) {
 		if strings.Contains(err.Error(), "TIMEOUT") {
 			errorCode = "TIMEOUT"
 		}
+		var limit *sandboxrt.LimitError
+		if errors.As(context.Cause(runCtx), &limit) {
+			err, errorCode = limit, "SANDBOX_LIMIT"
+		}
 		h.failJob(jobID, logData, err.Error(), errorCode)
 		return
 	}

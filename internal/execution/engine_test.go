@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -395,6 +396,8 @@ var _ = fmt.Sprintf // suppress unused import
 func TestDetermineFinalStatus(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
+	diskLimitCtx, cancelDisk := context.WithCancelCause(context.Background())
+	cancelDisk(&sandboxrt.LimitError{Resource: "disk", Limit: 1 << 30, Used: 3 << 29})
 
 	tests := []struct {
 		name           string
@@ -436,6 +439,12 @@ func TestDetermineFinalStatus(t *testing.T) {
 			ctx:           cancelledCtx,
 			wantStatus:    agent.SessionStatusFailed,
 			wantErrPrefix: "context cancelled before completion",
+		},
+		{
+			name:          "a sandbox limit fails the session with its reason",
+			ctx:           diskLimitCtx,
+			wantStatus:    agent.SessionStatusFailed,
+			wantErrPrefix: "sandbox disk limit exceeded",
 		},
 		{
 			name:          "time limit prefix fails the session",

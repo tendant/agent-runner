@@ -74,6 +74,12 @@ type Config struct {
 	Memory      string // optional memory cap for every run ("4g", "512m", bytes); overrides the policy's memory_bytes
 	PIDs        string // optional process/thread cap for every run; overrides the policy's pids
 	CPUs        string // optional CPU cap for every run, in cores ("2", "1.5"); overrides the policy's cpus
+	// Disk caps what a run's workspace, home and tmp hold together ("20g");
+	// overrides the policy's disk_bytes. The runtime enforces it itself,
+	// polling (see sandbox.WatchDisk): a run past it is ended.
+	Disk string
+	// DiskPoll is the shortest time between disk polls (0: 5s).
+	DiskPoll time.Duration
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
 	ScopedReads  bool
@@ -329,6 +335,16 @@ func New(cfg Config) (*Runtime, error) {
 		}
 		r.system.Resources.CPUs = n
 	}
+	if cfg.Disk != "" {
+		n, err := ParseBytes(cfg.Disk)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox disk: %w", err)
+		}
+		r.system.Resources.DiskBytes = n
+	}
+	if cfg.DiskPoll == 0 {
+		r.cfg.DiskPoll = 5 * time.Second
+	}
 	if cfg.PIDs != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(cfg.PIDs), 10, 64)
 		if err != nil || n <= 0 {
@@ -582,9 +598,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	egress.each = func(kind, host string) { r.auditEgress(req.RunID, kind, host) }
 	newBackend := func(roots map[string]string) sandbox.Backend {
 		if r.cfg.NewBackend != nil {
-			return r.cfg.NewBackend(roots)
+			return diskWatched{r.cfg.NewBackend(roots)}
 		}
-		return abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
+		return diskWatched{abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
 			HostPorts: modelPorts, OnEgress: egress.record, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
 			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode, EgressPorts: r.cfg.EgressPorts,
 			Inspect: inspector, InspectExcept: spec.Network.EgressInspectExcept,
@@ -592,7 +608,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			OnInspection: func(host, reason string) {
 				r.audit(req.RunID, audit.TypeEgressInspection, audit.InspectionDetail{Host: host, Reason: reason})
 			},
-		})
+		})}
 	}
 
 	// Pre-flight: a strict run with gaps never starts (and never takes a lease).
@@ -628,7 +644,8 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		releaseThread()
 		return nil, err
 	}
-	runCtx, cancel := context.WithCancel(runCtx)
+	runCtx, cancelCause := context.WithCancelCause(runCtx)
+	cancel := func() { cancelCause(nil) }
 	run := &Run{rt: r, req: req, Spec: spec, cancel: cancel, stop: make(chan struct{}), roots: roots, releaseT: releaseThread, started: time.Now(), backend: res.Backend, egress: egress}
 	go func() { // keep the sandbox lease alive while the run is active
 		t := time.NewTicker(r.cfg.LeaseTTL / 3)
@@ -640,12 +657,15 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			case <-t.C:
 				if err := r.store.Renew(name, r.owner, r.cfg.LeaseTTL, nil); err != nil {
 					r.emit(Event{Kind: "sandbox.enforcement_lost", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "sandbox lease lost"})
-					cancel()
+					cancelCause(&LimitError{Reason: "sandbox lease lost"})
 					return
 				}
 			}
 		}
 	}()
+	if limit := spec.Resources.DiskBytes; limit > 0 {
+		go run.watchDisk(runCtx, cancelCause, limit)
+	}
 
 	// The model channels: the CLIs get their proxies' URLs and per-run
 	// tokens, never the credentials. Without them (none configured, or no
@@ -720,6 +740,83 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	run.Ctx = executor.WithLauncher(runCtx, launcher)
 	r.emit(Event{Kind: "sandbox.started", RunID: req.RunID, ThreadID: req.ThreadID, Backend: res.Backend, Detail: gapNote})
 	return run, nil
+}
+
+// LimitError ends a run the runtime stopped: past its disk cap, or with its
+// enforcement lost. It is the run context's cause (context.Cause).
+type LimitError struct {
+	Resource string // "disk", or "" for lost enforcement
+	Limit    int64
+	Used     int64
+	Reason   string
+}
+
+func (e *LimitError) Error() string {
+	if e.Resource == "disk" {
+		return fmt.Sprintf("sandbox disk limit exceeded: the run's files take %s, over its %s (AGENT_SANDBOX_DISK)",
+			humanBytes(e.Used), humanBytes(e.Limit))
+	}
+	return "sandbox: " + e.Reason
+}
+
+// humanBytes writes n in binary units, as AGENT_SANDBOX_DISK reads them.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit && exp < 3; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
+
+// diskWatched is a backend whose checks count the runtime's disk watch:
+// the check before a run and the launcher's at each launch alike.
+type diskWatched struct{ sandbox.Backend }
+
+func (b diskWatched) Check(ctx context.Context, spec sandbox.SandboxSpec) (sandbox.CheckResult, error) {
+	res, err := b.Backend.Check(ctx, spec)
+	if err != nil {
+		return res, err
+	}
+	return withDiskWatch(res, spec), nil
+}
+
+// withDiskWatch records the disk cap as enforced, by the runtime rather than
+// the backend: a run with one is watched (watchDisk). Polled, so it says so.
+func withDiskWatch(res sandbox.CheckResult, spec sandbox.SandboxSpec) sandbox.CheckResult {
+	if spec.Resources.DiskBytes <= 0 {
+		return res
+	}
+	gaps := res.Gaps[:0:0]
+	for _, g := range res.Gaps {
+		if g.Capability != sandbox.CapResourceDisk {
+			gaps = append(gaps, g)
+		}
+	}
+	res.Gaps = gaps
+	if !slices.Contains(res.Enforced, sandbox.CapResourceDisk) {
+		res.Enforced = append(slices.Clone(res.Enforced), sandbox.CapResourceDisk)
+		slices.Sort(res.Enforced)
+	}
+	res.Caveats = append(slices.Clone(res.Caveats), "disk cap enforced by the runner, polling the run's workspace, home and tmp: what is written between polls can overshoot it")
+	return res
+}
+
+// watchDisk ends the run once its workspace, home and tmp take more than
+// limit, with the reason on the record and as the run context's cause.
+func (run *Run) watchDisk(ctx context.Context, cancel context.CancelCauseFunc, limit int64) {
+	dirs := []string{run.roots[sandbox.RootWorkspace], run.roots[sandbox.RootHome], run.roots[sandbox.RootTmp]}
+	sandbox.WatchDisk(ctx, dirs, limit, run.rt.cfg.DiskPoll, func(used int64) {
+		e := &LimitError{Resource: "disk", Limit: limit, Used: used}
+		run.rt.audit(run.req.RunID, audit.TypeResourceLimitHit, audit.ResourceDetail{Resource: "disk", Limit: limit,
+			Reason: fmt.Sprintf("used %d bytes", used)})
+		run.rt.emit(Event{Kind: "sandbox.disk_limit", RunID: run.req.RunID, ThreadID: run.req.ThreadID, Backend: run.backend, Detail: e.Error()})
+		cancel(e)
+	})
 }
 
 // Finish ends the run: stops renewal, releases leases, removes the run's tmp.

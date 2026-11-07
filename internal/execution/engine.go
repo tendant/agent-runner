@@ -1248,6 +1248,11 @@ func (h *Engine) determineFinalStatus(ctx context.Context, sessionID string, liv
 		return
 	}
 	if ctx.Err() != nil {
+		var limit *sandboxrt.LimitError
+		if errors.As(context.Cause(ctx), &limit) {
+			h.FailSession(sessionID, limit.Error())
+			return
+		}
 		h.FailSession(sessionID, "context cancelled before completion")
 		return
 	}

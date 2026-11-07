@@ -83,6 +83,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		Memory:        cfg.Agent.SandboxMemory,
 		PIDs:          cfg.Agent.SandboxPIDs,
 		CPUs:          cfg.Agent.SandboxCPUs,
+		Disk:          cfg.Agent.SandboxDisk,
 		ScopedReads:   scoped,
 		EgressAllow:   cfg.Agent.SandboxEgressAllow,
 		EgressReport:  cfg.Agent.SandboxEgressEnforce == "report",

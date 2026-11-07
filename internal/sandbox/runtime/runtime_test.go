@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -345,5 +347,68 @@ func TestEgressMapping(t *testing.T) {
 	_, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Instance: "test", EgressAllow: []string{"@github", "@nope"}})
 	if err == nil || !strings.Contains(err.Error(), "@nope") || !strings.Contains(err.Error(), "@github") {
 		t.Errorf("an unknown set must fail closed, naming the known ones: %v", err)
+	}
+}
+
+// A disk cap is the runtime's to enforce: a backend that reports
+// resource.disk as a gap does not keep a strict run from starting, and a run
+// whose files pass the cap is ended, with the reason as its context's cause.
+func TestDiskCapEndsTheRun(t *testing.T) {
+	e := &evs{}
+	got := &sandbox.ProcSpec{}
+	gaps := []sandbox.Gap{{Capability: sandbox.CapResourceDisk, Reason: "not enforced by backend"}}
+	rt, err := New(Config{Mode: sandbox.ModeStrict, StateDir: t.TempDir(), Instance: "test", OnEvent: e.add, LeaseTTL: time.Second,
+		Disk: "1m", DiskPoll: 10 * time.Millisecond,
+		NewBackend: func(map[string]string) sandbox.Backend { return fakeBackend{gaps, got} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.system.Resources.DiskBytes != 1<<20 {
+		t.Fatalf("disk = %d", rt.system.Resources.DiskBytes)
+	}
+	ws := t.TempDir()
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", Workspace: ws})
+	if err != nil {
+		t.Fatalf("a strict run with a disk cap must start: %v", err)
+	}
+	defer run.Finish()
+	select {
+	case <-run.Ctx.Done():
+		t.Fatal("run ended under its cap")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := os.WriteFile(filepath.Join(ws, "big"), bytes.Repeat([]byte("x"), 2<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-run.Ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("run not ended past its disk cap")
+	}
+	var le *LimitError
+	if !errors.As(context.Cause(run.Ctx), &le) || le.Resource != "disk" || le.Used < 2<<20 {
+		t.Fatalf("cause = %v", context.Cause(run.Ctx))
+	}
+	if !strings.Contains(le.Error(), "1.0 MiB") || !e.has("sandbox.disk_limit") {
+		t.Errorf("error %q, events %v", le.Error(), e.k)
+	}
+}
+
+func TestDiskCapConfig(t *testing.T) {
+	rt, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Disk: "20g", PolicyFile: `{"version":1,"resources":{"disk_bytes":1024}}`})
+	if err != nil || rt.system.Resources.DiskBytes != 20<<30 {
+		t.Fatalf("disk: %v %+v", err, rt)
+	}
+	if _, err := New(Config{Mode: sandbox.ModePermissive, StateDir: t.TempDir(), Disk: "lots"}); err == nil {
+		t.Error("a bad disk size must fail")
+	}
+	// Without a cap, the check is the backend's as it was.
+	res := sandbox.CheckResult{Gaps: []sandbox.Gap{{Capability: sandbox.CapResourceDisk}}}
+	if out := withDiskWatch(res, sandbox.SandboxSpec{}); len(out.Gaps) != 1 {
+		t.Errorf("no cap: %+v", out)
+	}
+	out := withDiskWatch(res, sandbox.SandboxSpec{Resources: sandbox.ResourcePolicy{DiskBytes: 1}})
+	if len(out.Gaps) != 0 || !slices.Contains(out.Enforced, sandbox.CapResourceDisk) || len(out.Caveats) != 1 || len(res.Gaps) != 1 {
+		t.Errorf("cap: %+v (input %+v)", out, res)
 	}
 }

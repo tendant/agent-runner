@@ -46,6 +46,8 @@ Other settings:
   [Fork bombs](#fork-bombs-memory-and-pids-caps)). Memory and CPU are set on a systemd user scope
   around each sandbox, so the runner's user needs a user manager that outlives logins
   (`loginctl enable-linger <user>`); without one, a run that asks for either is refused.
+* `AGENT_SANDBOX_DISK` (e.g. `20g`): a cap on what each run's workspace, sandbox home and tmp
+  hold together, overriding the policy's `disk_bytes` (Linux and macOS, see [Disk](#disk)).
 * Measured use: on Linux, whenever a user scope works, each sandbox runs in one even without caps,
   and the run's `sandbox_closed` event records its highest peak memory, CPU time and OOM kills
   (`usage`) over its sandboxes, one per agent CLI launch. A launch that lost processes to the memory
@@ -364,7 +366,9 @@ AGENT_SANDBOX_EVIDENCE=agentbox-host.json AGENT_SANDBOX=strict ...
   other host programs' processes are visible. Closing a sandbox finds its processes by their
   profile, which needs a cgo build; without cgo, a process that left its process group
   (`setsid`) outlives it.
-* **No disk quota:** `WatchDisk`/`LimitedWriter` exist but are not wired into runs.
+* **The disk cap is polled** (see [Disk](#disk)): a burst between polls can overshoot it, and
+  it does not count what an agent writes outside its workspace, home and tmp (nothing else is
+  writable to it).
 * **In-place runs:** the sandbox writes the task workspace directly. The validated-diff export with
   durable quarantine (`internal/sandbox/workspace`) is implemented and tested but not in the run path.
 * **The model proxy covers Anthropic, OpenAI and DeepSeek** for claude, codex and pi (DeepSeek:
@@ -397,6 +401,24 @@ Linux: a fork bomb under `AGENT_SANDBOX_MEMORY=512m` must be killed well before 
 timeout, and one under `AGENT_SANDBOX_PIDS=256` (no memory cap) must hit `EAGAIN` and let the
 session complete, each with the host's available memory and the runner unharmed.
 
+## Disk
+
+`AGENT_SANDBOX_DISK` (or the policy's `disk_bytes`) caps the disk a run's writable dirs take
+together: its workspace (the repo checkouts included, and for a task the workspace its turns
+share), its sandbox home (per thread) and its tmp. No backend enforces `resource.disk`; the
+runner does, on Linux and macOS alike, so a strict run with a cap starts and its check records
+`resource.disk` as enforced, with a caveat that it is polled.
+
+The runner walks the dirs every 5 seconds at most often, and at least ten times as long as the
+last walk took (a large tree is walked at most once a minute). It counts allocated blocks, so a
+sparse file counts what it holds, and a hard-linked file once. A run past the cap is ended like a
+lost lease: its sandboxes are closed, the record gets `resource_limit_hit` (`disk`), the runner
+logs `sandbox.disk_limit`, and the session fails with "sandbox disk limit exceeded: the run's
+files take …, over its …" (a one-shot job with `SANDBOX_LIMIT`).
+
+Size it for the largest checkout plus build output: `20g` is a reasonable start for repos with
+`node_modules` or Go module caches in the home.
+
 ## Operations
 
 * **Supervisor:** run `sandbox-supervisor --leases STATE_ROOT/sandbox/leases` as a separate
@@ -404,7 +426,7 @@ session complete, each with the host's available memory and the runner unharmed.
   reaps sandboxes whose lease expired *and* whose owner process is dead. It never reaps a live
   runner because an instance ID differs. Events: `sandbox.timeout`, `sandbox.orphan_reaped`,
   `sandbox.enforcement_lost`, `sandbox.teardown_incomplete`.
-* **Events logged by the runner:** `sandbox.started|finished|rejected|enforcement_lost` and
+* **Events logged by the runner:** `sandbox.started|finished|rejected|enforcement_lost|disk_limit` and
   `sandbox.egress_allowed|egress_denied` (ids and names only, never env values, payloads or
   secrets).
 * **Thread runs:** one active run per Thread, bounded queue; a lost lease cancels the run.

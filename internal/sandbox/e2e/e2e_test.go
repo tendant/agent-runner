@@ -91,10 +91,11 @@ func (s *fakeSB) Close(context.Context) error {
 }
 
 type harness struct {
-	t      *testing.T
-	state  string
-	events []string
-	mu     sync.Mutex
+	t        *testing.T
+	state    string
+	events   []string
+	mu       sync.Mutex
+	diskPoll time.Duration
 }
 
 func newHarness(t *testing.T) *harness { return &harness{t: t, state: t.TempDir()} }
@@ -104,7 +105,8 @@ func (h *harness) runtime(mode sandbox.Mode, policy string) *sandboxrt.Runtime {
 		NewBackend: func(roots map[string]string) sandbox.Backend {
 			return abadapter.New(abadapter.Config{Roots: roots, Backend: fakeAB{}})
 		},
-		OnEvent: func(e sandboxrt.Event) { h.mu.Lock(); h.events = append(h.events, e.Kind); h.mu.Unlock() }}
+		OnEvent:  func(e sandboxrt.Event) { h.mu.Lock(); h.events = append(h.events, e.Kind); h.mu.Unlock() },
+		DiskPoll: h.diskPoll}
 	if policy != "" {
 		p := filepath.Join(h.t.TempDir(), "policy.json")
 		os.WriteFile(p, []byte(policy), 0o600)
@@ -226,6 +228,37 @@ func TestTimeoutKillsProcessTree(t *testing.T) {
 	_, err = runCLI(t, run.Ctx, ws, "sh", "-c", "sleep 30; echo FINISHED")
 	if err == nil || time.Since(start) > 10*time.Second {
 		t.Errorf("run must be killed by the timeout: err=%v after %v", err, time.Since(start))
+	}
+}
+
+// A process that keeps writing past the run's disk cap is killed with the
+// run, and the run says why. The backend cannot cap disk; the runtime does,
+// so a strict run with a cap starts.
+func TestDiskCapKillsAWritingProcess(t *testing.T) {
+	h := newHarness(t)
+	h.diskPoll = 20 * time.Millisecond
+	rt := h.runtime(sandbox.ModeStrict, basePolicy(`{"disk_bytes":1048576}`))
+	ws := t.TempDir()
+	run, err := rt.Begin(context.Background(), sandboxrt.BeginReq{RunID: "run-disk", Workspace: ws})
+	if err != nil {
+		t.Fatalf("a strict run with a disk cap must start: %v", err)
+	}
+	defer run.Finish()
+	start := time.Now()
+	_, err = runCLI(t, run.Ctx, ws, "sh", "-c", "while :; do head -c 262144 /dev/zero >> fill; sleep 0.05; done")
+	if err == nil || time.Since(start) > 10*time.Second {
+		t.Fatalf("the writer must be killed at the cap: err=%v after %v", err, time.Since(start))
+	}
+	var le *sandboxrt.LimitError
+	if !errors.As(context.Cause(run.Ctx), &le) || le.Resource != "disk" || !h.has("sandbox.disk_limit") {
+		t.Errorf("cause %v, events %v", context.Cause(run.Ctx), h.events)
+	}
+	// Killed, not left writing: the file stops growing.
+	fi1, _ := os.Stat(filepath.Join(ws, "fill"))
+	time.Sleep(200 * time.Millisecond)
+	fi2, _ := os.Stat(filepath.Join(ws, "fill"))
+	if fi1 == nil || fi2 == nil || fi2.Size() != fi1.Size() {
+		t.Errorf("the writer outlived its run: %v then %v", fi1, fi2)
 	}
 }
 
