@@ -82,11 +82,17 @@ func FormatStatusLine(session *agent.Session) string {
 
 // FormatWarningsSuffix returns "\n\n⚠ <warnings>" joined by "; ", or "" if
 // the session has no warnings. Identical across all three chat bots.
+//
+// The session's notes (agent.Session.AddNote) come first, a line each.
 func FormatWarningsSuffix(session *agent.Session) string {
-	if len(session.Warnings) == 0 {
-		return ""
+	var out string
+	for _, n := range session.Notes {
+		out += "\n\n" + n
 	}
-	return fmt.Sprintf("\n\n⚠ %s", strings.Join(session.Warnings, "; "))
+	if len(session.Warnings) == 0 {
+		return out
+	}
+	return out + fmt.Sprintf("\n\n⚠ %s", strings.Join(session.Warnings, "; "))
 }
 
 // maxIterationOutputChars caps the per-iteration output preview, matching

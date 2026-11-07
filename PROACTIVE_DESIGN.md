@@ -1,6 +1,6 @@
 # Proactive Agent and Controlled Self-Evolution — Design
 
-Status: phase 1 built (§15.1 says how it differs from this draft); phases 2–4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
+Status: phases 1 and 2 built (§15.1, §15.2 say how they differ from this draft); phases 3–4 draft, open questions in §16 · Scope: agent-runner (proactive, thread analyzer, stream/telegram bots, execution, template, chatcmd); one agent-stream change (§15.1)
 
 ## 1. Problem
 
@@ -422,6 +422,48 @@ chat router), `/proactive`, `/goals`, `/agenda`. Where it differs from §5–§7
   BOT_ADDRESSING_DESIGN.md). This also makes replies to `/notify` messages reach the bot.
 - **Telegram** is one thread per chat: a check that finds the chat running something or waiting
   on a yes does not post, and its items come back after the cooldown.
+
+### 15.2 Phase 2 as built
+
+`internal/proposals` (parser, validation, store, review, diff), `_proposals/` collection in
+`execution/proposals.go`, the agent's own skills, `/proposals`, `/proposal`, `/retrospective`, and the
+weekly retrospective in `internal/proactive/retro.go`. Where it differs from §8–§10:
+
+- **The change is the full new content**, not a diff: an agent writes whole files more reliably than
+  patches that apply. The runner computes the diff people review. A `## Change` that is a diff is
+  dropped with a message saying so; one fenced block around the whole content is unwrapped.
+- **Bases** are git blob hashes (`git hash-object`), listed with every target in the runtime layer, so
+  a session need not compute one. A missing `base:` on an existing file is taken as the content at
+  collection time. Approval re-checks it: a target edited after the proposal was written is not
+  overwritten, and the proposal is closed as `stale`.
+- **Undo** is `/proposal undo <id>`, not `/memory undo` (which takes back a session's commits): it puts
+  back the content from before (removing a new skill), and refuses if the file was edited since. Each
+  approval and undo is a memory commit of its own, naming the proposal, its session and the approver.
+- **Limits:** 3 proposals per session, 3 pending per target, 10 pending in all, 64 KiB; a proposal
+  holding a secret value of the agent's environment is dropped. What was dropped is a session warning;
+  what was posted is a note on the session's result (`agent.Session.Notes`).
+- **Review** is in `AGENT_PROACTIVE_CHAT`. Each proposal is its own thread. On agent-stream, a reply of
+  yes or no (with a reason) in that thread decides it, but only from an admin
+  (`stream.Bot.SetThreadReplies`); any other reply is an ordinary message. Telegram has no threads,
+  so there it is decided with `/proposal approve|reject`. Without `AGENT_PROACTIVE_CHAT`, proposals are
+  only listed by `/proposals`. An hourly sweep sends one reminder after 3 days, expires a proposal
+  after 14, and forgets one decided 90 days ago (the change itself stays in git).
+- **A rejection** is a dated entry in `lessons.md`, which every session reads.
+- **The agent's own skills** live in `MEMORY_DIR/skills/<name>/SKILL.md`. Only an approved proposal
+  writes there: the staged merge takes only top-level files. They are copied into each workspace
+  after `AGENT_SKILLS_DIR`'s, and an operator skill of the same name wins (`executor.AddSkills`).
+- **The retrospective is opt-in** (`AGENT_RETROSPECTIVE`, default off): a weekly run is a billed
+  session. It runs in the proactive loop, not the scheduler, for the same reason as the tick.
+  `retrospective: mon 08:00` in `PROACTIVE.md` sets when, in its timezone. Turning it on waits for the
+  next slot, and a missed slot runs once when the process is back. It opens a thread in
+  `AGENT_PROACTIVE_CHAT` and runs there at once, without a confirmation, as an ordinary chat session.
+  Its request covers the period's daily logs, `lessons.md`, the open agenda, `GOALS.md`, the sessions
+  that failed since the last start, and the proposals made or decided in the period. It asks for
+  patterns with two pieces of evidence each, at most 3 proposals, and no repo changes. That last point
+  is an instruction only: phase 2 does not take the repos out of its workspace or sandbox it beyond
+  `AGENT_SANDBOX`.
+- `AGENT_PROPOSALS` (default on) is the off switch. Off, `_proposals/` is dropped with a warning and the
+  runtime layer goes back to "propose changes in your reply".
 
 ## 16. Open questions
 

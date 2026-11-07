@@ -63,6 +63,7 @@ type Commander struct {
 	authMu     sync.Mutex // guards against concurrent /auth flows
 	authCancel func()     // non-nil while an auth flow is running
 	proactive  Proactive  // nil until SetProactive
+	proposals  Proposals  // nil until SetProposals
 }
 
 // NewCommander creates a Commander backed by the given config and runtime.
@@ -164,6 +165,12 @@ func (c *Commander) Handle(text string, send func(string)) (reply, sessionID str
 		return r(c.handleGoals(strings.TrimSpace(text[len(cmdGoals):])))
 	case lower == cmdAgenda:
 		return r(c.handleAgenda())
+	case lower == cmdProposals:
+		return r(c.handleProposals())
+	case lower == cmdProposal || strings.HasPrefix(lower, cmdProposal+" "):
+		return r(c.handleProposal(strings.TrimSpace(text[len(cmdProposal):])))
+	case lower == cmdRetrospective || strings.HasPrefix(lower, cmdRetrospective+" "):
+		return r(c.handleRetrospective(strings.TrimSpace(text[len(cmdRetrospective):])))
 	case lower == cmdEnv || strings.HasPrefix(lower, cmdEnv+" ") || strings.HasPrefix(lower, cmdEnv+"\n"):
 		return r(c.handleEnv(strings.TrimSpace(text[len(cmdEnv):])))
 	case lower == cmdPrompt || strings.HasPrefix(lower, cmdPrompt+" "):
@@ -1176,6 +1183,7 @@ More: **/help config** · **/help env** · **/help repo** · **/help memory**
 **/set-agent** _\<content\>_ — replace agent.md · **/set-prompt** _\<content\>_ — replace prompt.md
 **/alerts** — the alert policy: what the agent may do about CI/monitoring alerts without asking · **/alerts set** _\<policy\>_ · **/alerts clear**
 **/proactive** — proactive checks: status · **on** · **off** · **tick** · **policy** · **/goals** — standing goals · **/agenda** — the agent's open loops
+**/proposals** — the agent's proposals to change its instructions · **/proposal show** · **approve** · **reject** · **undo** _\<id\>_ · **/retrospective** — the weekly review: status · **on** · **off** · **now**
 
 **Setup** (agent-runner itself)
 **/config** — settings and readiness · **/config set** _KEY VALUE_ — one of agent-runner's settings (e.g. /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\>) · **/config unset** _KEY_
@@ -1355,6 +1363,9 @@ var knownCommands = map[string]string{
 	cmdProactive:     "usage: " + cmdProactive + " [on|off|tick|policy [set <text>|clear]]",
 	cmdGoals:         "usage: " + cmdGoals + " [set <text>|clear]",
 	cmdAgenda:        "usage: " + cmdAgenda,
+	cmdProposals:     "usage: " + cmdProposals,
+	cmdProposal:      "usage: " + cmdProposal + " show|approve|reject|undo <id> [reason]",
+	cmdRetrospective: "usage: " + cmdRetrospective + " [on|off|now]",
 	"/stop":          "usage: /stop [session-id]",
 	"/logs":          "usage: /logs [session-id-prefix]",
 	"/update-prompt": "usage: /update-prompt <content>",

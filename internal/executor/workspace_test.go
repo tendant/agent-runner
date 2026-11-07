@@ -234,3 +234,41 @@ func TestCleanupWorkspace_RescuesUnsavedWork(t *testing.T) {
 		t.Fatalf("a clean workspace: err %v, told %v", err, told)
 	}
 }
+
+func TestAddSkillsOperatorWins(t *testing.T) {
+	agentDir := t.TempDir()
+	op := filepath.Join(agentDir, ".claude", "skills", "deploy")
+	if err := os.MkdirAll(op, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(op, "SKILL.md"), []byte("operator"), 0o644)
+
+	mem := t.TempDir()
+	for name, body := range map[string]string{"deploy": "agent", "release-notes": "notes"} {
+		os.MkdirAll(filepath.Join(mem, name), 0o755)
+		os.WriteFile(filepath.Join(mem, name, "SKILL.md"), []byte(body), 0o644)
+	}
+	os.MkdirAll(filepath.Join(mem, "empty"), 0o755) // no SKILL.md: not a skill
+
+	if err := AddSkills(agentDir, mem); err != nil {
+		t.Fatal(err)
+	}
+	read := func(p ...string) string {
+		b, _ := os.ReadFile(filepath.Join(append([]string{agentDir}, p...)...))
+		return string(b)
+	}
+	if got := read(".claude", "skills", "deploy", "SKILL.md"); got != "operator" {
+		t.Fatalf("operator skill replaced: %q", got)
+	}
+	for _, d := range []string{".claude", ".agents"} {
+		if got := read(d, "skills", "release-notes", "SKILL.md"); got != "notes" {
+			t.Fatalf("%s: agent skill missing: %q", d, got)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(agentDir, ".claude", "skills", "empty")); !os.IsNotExist(err) {
+		t.Fatal("a directory without SKILL.md was copied")
+	}
+	if err := AddSkills(agentDir, filepath.Join(mem, "missing")); err != nil {
+		t.Fatalf("missing dir: %v", err)
+	}
+}

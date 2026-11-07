@@ -38,14 +38,18 @@ type Policy struct {
 	QuietTo    int
 	MaxPosts   int // 0: the environment's; never raises it
 	MaxTriages int
-	Text       string // the body: what the operator wants raised, proposed or ignored
-	Problems   []string
+	// RetroDay and RetroAt are when the weekly retrospective runs
+	// (retrospective: mon 08:00); default Monday 08:00.
+	RetroDay time.Weekday
+	RetroAt  int    // minutes after midnight
+	Text     string // the body: what the operator wants raised, proposed or ignored
+	Problems []string
 }
 
 // ParsePolicy reads PROACTIVE.md. A malformed line is reported in Problems
 // and otherwise ignored: a bad policy never stops the checks.
 func ParsePolicy(content string) Policy {
-	var p Policy
+	p := Policy{RetroDay: time.Monday, RetroAt: 8 * 60}
 	front, body := splitFrontMatter(content)
 	p.Text = strings.TrimSpace(body)
 	for _, line := range strings.Split(front, "\n") {
@@ -70,6 +74,8 @@ func ParsePolicy(content string) Policy {
 			p.MaxPosts, err = strconv.Atoi(val)
 		case "max_triages_per_day":
 			p.MaxTriages, err = strconv.Atoi(val)
+		case "retrospective":
+			p.RetroDay, p.RetroAt, err = parseWeekly(val)
 		default:
 			err = fmt.Errorf("unknown setting")
 		}
@@ -115,6 +121,50 @@ func parseQuietHours(v string) (from, to int, err error) {
 		return 0, 0, err
 	}
 	return from, to, nil
+}
+
+var weekdays = map[string]time.Weekday{
+	"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday,
+	"thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,
+}
+
+// parseWeekly reads "mon 08:00" (a weekday, by its first three letters or
+// in full, then HH:MM).
+func parseWeekly(v string) (time.Weekday, int, error) {
+	day, at, ok := strings.Cut(strings.TrimSpace(v), " ")
+	if !ok {
+		return time.Monday, 8 * 60, fmt.Errorf("want a weekday and HH:MM, e.g. mon 08:00")
+	}
+	day = strings.ToLower(day)
+	if len(day) > 3 {
+		day = day[:3]
+	}
+	wd, ok := weekdays[day]
+	if !ok {
+		return time.Monday, 8 * 60, fmt.Errorf("unknown weekday %q", day)
+	}
+	m, err := clock(at)
+	if err != nil {
+		return time.Monday, 8 * 60, err
+	}
+	return wd, m, nil
+}
+
+// NextRetro is the first retrospective slot after t.
+func (p Policy) NextRetro(after time.Time) time.Time {
+	t := p.in(after)
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	for i := 0; i <= 7; i++ {
+		d := day.AddDate(0, 0, i)
+		if d.Weekday() != p.RetroDay {
+			continue
+		}
+		slot := time.Date(d.Year(), d.Month(), d.Day(), p.RetroAt/60, p.RetroAt%60, 0, 0, d.Location())
+		if slot.After(after) {
+			return slot
+		}
+	}
+	return day.AddDate(0, 0, 14) // unreachable
 }
 
 func clock(s string) (int, error) {

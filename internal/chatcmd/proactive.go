@@ -23,6 +23,8 @@ type Proactive interface {
 	Status() string
 	Agenda() string
 	Tick(ctx context.Context, force bool) proactive.Outcome
+	RetroStatus() string
+	Retrospective(ctx context.Context) proactive.Outcome
 }
 
 // SetProactive connects /proactive and /agenda to the running checks.
@@ -143,6 +145,7 @@ the reverse.
   timezone: America/Los_Angeles
   quiet_hours: 22:00-07:00
   max_posts_per_day: 5
+  retrospective: mon 08:00
   ---
   Failed scheduled jobs: propose a fix. Due deploy checks: propose checking. Anything else: a short note.`
 

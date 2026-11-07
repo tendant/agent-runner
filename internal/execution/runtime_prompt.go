@@ -29,6 +29,7 @@ type runtimeFacts struct {
 	Env        []agentsecrets.Secret // the agent's plain settings: shown with their values
 	Repos      []repos.Repo          // the registered repos in the workspace
 	ChatThread string                // the session's thread in _chats/ ("": no chat record)
+	Proposals  []proposalTarget      // what may be proposed (_proposals/); nil: proposals are off
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -98,7 +99,12 @@ func runtimeInstructions(f runtimeFacts) string {
 		}
 		b.WriteString("\n" +
 			"Append; delete only to correct an error. `agent.md` and `prompt.md` are your instructions, set by\n" +
-			"the operator: do not edit them; propose changes in your reply instead.\n")
+			"the operator: do not edit them; ")
+		if len(f.Proposals) > 0 {
+			b.WriteString("propose changes to them in `_proposals/` (below).\n")
+		} else {
+			b.WriteString("propose changes in your reply instead.\n")
+		}
 		if f.MemoryCopy {
 			b.WriteString("\nThis directory is your own copy. Changes to its lowercase `.md` files (new ones too) are\n" +
 				"saved when the session ends; `agent.md`, `prompt.md`, upper-case files such as `HEARTBEAT.md`,\n" +
@@ -146,6 +152,27 @@ func runtimeInstructions(f runtimeFacts) string {
 			"It is a copy made for this session: changing it changes nothing.\n")
 	}
 
+	if len(f.Proposals) > 0 {
+		b.WriteString("\n### Proposing changes to your instructions\n\n")
+		b.WriteString("When you see a pattern your instructions should cover (the same mistake in several sessions, a\n" +
+			"procedure people keep explaining), propose a change: write `_proposals/<short-name>.md` in your\n" +
+			"working directory. A person reviews each one; nothing changes until they approve it. Propose only\n" +
+			"what the evidence supports, at most 3 per session, and never what lessons.md says was rejected.\n\n" +
+			"```\n---\ntarget: prompt.md\nbase: <the target's base below; omit for a new skill>\n" +
+			"title: <one line>\nevidence: [<session ids or dates>]\n---\n\n## Why\n<what happened, and why this change helps>\n\n" +
+			"## Change\n<the full new content of the target: not a diff>\n```\n\n" +
+			"What you may propose, with its current base:\n\n")
+		for _, t := range f.Proposals {
+			base := "new"
+			if t.Base != "" {
+				base = t.Base
+			}
+			b.WriteString("- `" + t.Target + "`: " + base + "\n")
+		}
+		b.WriteString("- `skills/<name>/SKILL.md`: a new skill of your own (lowercase name), in every later session's\n" +
+			"  workspace once approved\n")
+	}
+
 	b.WriteString("\n### Files for the user\n\n")
 	b.WriteString("To send the user files, put them in `_send/` in your working directory: they are delivered when\n" +
 		"the session ends.\n")
@@ -161,7 +188,7 @@ func (h *Engine) PreviewPrompt(message string) (string, error) {
 		return "", err
 	}
 	plain, secrets, _ := agentsecrets.Load(h.config.SecretsFile, h.config.EnvFile)
-	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Agenda: h.config.Agent.Proactive, Secrets: secrets, Env: plain, Repos: h.registeredRepos()}), nil
+	return p + runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: h.config.MemoryDir, MemoryCopy: true, Agenda: h.config.Agent.Proactive, Secrets: secrets, Env: plain, Repos: h.registeredRepos(), Proposals: h.proposalTargets()}), nil
 }
 
 // threadKey names the thread a session belongs to, for its daily-log entry

@@ -58,6 +58,7 @@ type Bot struct {
 	// admins may run chat commands here: STREAM_ADMIN_USERS plus the bot's
 	// owner, as the server reports it at start. Set before listening.
 	admins            map[string]bool
+	threadReplies     ThreadReplies               // nil: none
 	uploadsDir        string                      // persistent directory for user-uploaded files
 	listFailures      int                         // channel listings failed in a row (syncChannels; one goroutine at a time)
 	pollInterval      time.Duration               // >0 = poll mode; 0 = SSE mode
@@ -445,6 +446,48 @@ func (b *Bot) OpenProactiveThread(ctx context.Context, channelID, report, messag
 	slog.Info("stream bot: proactive thread opened", "channel_id", channelID, "thread", key, "plan", plan)
 	return nil
 }
+
+// StartProactiveRun starts a thread in channelID with intro and runs
+// message there as a session at once (the weekly retrospective): no
+// confirmation, as the operator turned it on. The result is reported in the
+// thread like any run's.
+func (b *Bot) StartProactiveRun(_ context.Context, channelID, intro, message string) error {
+	key, err := b.client.PostThreadRoot(context.Background(), channelID, OutMessage{Content: intro, IdempotencyKey: uuid.NewString()})
+	if err != nil {
+		return err
+	}
+	conv := b.threadManager.GetOrCreate(key)
+	conv.SetScope(channelID)
+	conv.AddMessage("assistant", intro)
+	conv.AddMessage("user", message)
+	slog.Info("stream bot: proactive run started", "channel_id", channelID, "thread", key)
+	// The run outlives the caller (a chat command's timeout): it is watched
+	// on its own context, as a resumed session is.
+	b.engine.HandleConfirmation(context.Background(), key, conv)
+	return nil
+}
+
+// OpenProposalThread posts a proposal for review as a new thread in
+// channelID and returns the thread, where a yes or no decides it
+// (SetThreadReplies).
+func (b *Bot) OpenProposalThread(ctx context.Context, channelID, message string) (string, error) {
+	key, err := b.client.PostThreadRoot(ctx, channelID, OutMessage{Content: message, IdempotencyKey: uuid.NewString()})
+	if err != nil {
+		return "", err
+	}
+	conv := b.threadManager.GetOrCreate(key)
+	conv.SetScope(channelID)
+	conv.AddMessage("assistant", message)
+	return key, nil
+}
+
+// ThreadReplies answers a person's message in a thread before anything else
+// does, when it is for something the thread is about (a proposal's yes or
+// no); handled is false to let the message through.
+type ThreadReplies func(thread, userID string, admin bool, text string) (reply string, handled bool)
+
+// SetThreadReplies installs the hook for replies in special threads.
+func (b *Bot) SetThreadReplies(fn ThreadReplies) { b.threadReplies = fn }
 
 // Stop gracefully shuts down the bot.
 func (b *Bot) Stop() {
@@ -958,6 +1001,15 @@ func (b *Bot) handleMessageEvent(ctx context.Context, channelID string, event Ev
 			return
 		}
 		text = cmd
+	} else if b.threadReplies != nil && msg.SenderKind == "human" {
+		if reply, ok := b.threadReplies(key, msg.UserID, b.isAdmin(msg.UserID), stripLeadingMention(text)); ok {
+			conv := b.threadManager.GetOrCreate(key)
+			conv.SetScope(channelID)
+			conv.AddMessage("user", text)
+			conv.AddMessage("assistant", reply)
+			b.emitFinal(ctx, key, reply)
+			return
+		}
 	}
 	b.handleMessage(ctx, channelID, key, text)
 }

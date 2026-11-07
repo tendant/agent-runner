@@ -81,7 +81,15 @@ type post struct {
 	plan                    bool
 }
 
-type fakeChat struct{ posts []post }
+type fakeChat struct {
+	posts []post
+	runs  []post // StartProactiveRun: report is the intro
+}
+
+func (c *fakeChat) StartProactiveRun(_ context.Context, target, intro, message string) error {
+	c.runs = append(c.runs, post{target: target, report: intro, message: message})
+	return nil
+}
 
 func (c *fakeChat) OpenProactiveThread(_ context.Context, target, report, message string, plan bool) error {
 	c.posts = append(c.posts, post{target, report, message, plan})
@@ -268,5 +276,75 @@ func TestStateSurvivesRestart(t *testing.T) {
 	}
 	if s := again.Status(); !strings.Contains(s, "1/10 messages") {
 		t.Fatalf("status:\n%s", s)
+	}
+}
+
+func TestRetroSchedule(t *testing.T) {
+	p := ParsePolicy("---\ntimezone: UTC\nretrospective: friday 17:30\n---\n")
+	if len(p.Problems) != 0 || p.RetroDay != time.Friday || p.RetroAt != 17*60+30 {
+		t.Fatalf("%+v", p)
+	}
+	thu := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC) // a Thursday
+	if got := p.NextRetro(thu); !got.Equal(time.Date(2026, 11, 6, 17, 30, 0, 0, time.UTC)) {
+		t.Fatalf("next after Thu: %v", got)
+	}
+	if got := p.NextRetro(time.Date(2026, 11, 6, 17, 30, 0, 0, time.UTC)); got.Day() != 13 {
+		t.Fatalf("next after the slot itself: %v", got)
+	}
+	if d := ParsePolicy(""); d.RetroDay != time.Monday || d.RetroAt != 8*60 {
+		t.Fatalf("default %+v", d)
+	}
+	if bad := ParsePolicy("---\nretrospective: someday\n---\n"); len(bad.Problems) != 1 {
+		t.Fatalf("bad schedule: %+v", bad.Problems)
+	}
+}
+
+func TestRetrospective(t *testing.T) {
+	f := newFixture(t) // Sunday 2026-11-08 12:00 UTC
+	f.set.Retrospective = true
+	f.write(t, PolicyFile, "---\ntimezone: UTC\n---\n")
+	f.sessions = []Session{
+		{ID: "s-bad", Source: "stream", Status: "failed", Error: "tests failed", Ended: f.now.Add(-48 * time.Hour)},
+		{ID: "s-ok", Source: "stream", Status: "completed", Ended: f.now.Add(-time.Hour)},
+	}
+	f.svc.cfg.Proposals = func(time.Time) []string { return []string{"- p-1 prompt.md: rejected (too broad)"} }
+
+	// Turning it on waits for the next slot (Monday 08:00), not now.
+	if f.svc.retroDue() {
+		t.Fatal("due at once after turning on")
+	}
+	f.now = time.Date(2026, 11, 9, 7, 59, 0, 0, time.UTC)
+	if f.svc.retroDue() {
+		t.Fatal("due before the slot")
+	}
+	f.now = time.Date(2026, 11, 9, 8, 0, 0, 0, time.UTC)
+	if !f.svc.retroDue() {
+		t.Fatal("not due at the slot")
+	}
+	if o := f.svc.Retrospective(context.Background()); o.Result != "started" {
+		t.Fatalf("outcome %+v", o)
+	}
+	if f.svc.retroDue() {
+		t.Fatal("due again right after running")
+	}
+	if len(f.chat.runs) != 1 {
+		t.Fatalf("runs %d", len(f.chat.runs))
+	}
+	r := f.chat.runs[0]
+	for _, want := range []string{"s-bad", "tests failed", "p-1 prompt.md: rejected", "_proposals/", "at least two sessions", "do not change, commit or push"} {
+		if !strings.Contains(r.message, want) {
+			t.Errorf("message lacks %q:\n%s", want, r.message)
+		}
+	}
+	if strings.Contains(r.message, "s-ok") || r.target != "c_1" || !strings.Contains(r.report, "Weekly retrospective") {
+		t.Fatalf("run %+v", r)
+	}
+	if st := f.svc.RetroStatus(); !strings.Contains(st, "on") || !strings.Contains(st, "Mon 2026-11-16 08:00") {
+		t.Fatalf("status:\n%s", st)
+	}
+
+	f.set.Chat = ""
+	if o := f.svc.Retrospective(context.Background()); o.Result != "skipped" {
+		t.Fatalf("no chat: %+v", o)
 	}
 }

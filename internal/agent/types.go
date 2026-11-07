@@ -96,6 +96,7 @@ type Session struct {
 	CompletedAt          *time.Time        `json:"completed_at,omitempty"`
 	Error                string            `json:"error,omitempty"`
 	Warnings             []string          `json:"warnings,omitempty"`
+	Notes                []string          `json:"notes,omitempty"`        // what else came of the run (a proposal posted for review)
 	CallbackURL          string            `json:"callback_url,omitempty"` // webhook POSTed the final session on terminal status
 	TraceID              string            `json:"trace_id,omitempty"`     // OpenTelemetry trace id of the run, when tracing is enabled
 	WorkspacePath        string            `json:"-"`
@@ -238,6 +239,18 @@ func (s *Session) SetRedactor(redact func(string) string) {
 	s.mu.Unlock()
 }
 
+// Redact is text with the session's secret values hidden (SetRedactor);
+// text as is when it has no redactor.
+func (s *Session) Redact(text string) string {
+	s.mu.RLock()
+	redact := s.redact
+	s.mu.RUnlock()
+	if redact == nil {
+		return text
+	}
+	return redact(text)
+}
+
 func (s *Session) AddIteration(result IterationResult) {
 	s.mu.Lock()
 	if s.redact != nil {
@@ -307,6 +320,14 @@ func (s *Session) SetTraceID(id string) {
 func (s *Session) AddWarning(msg string) {
 	s.mu.Lock()
 	s.Warnings = append(s.Warnings, msg)
+	s.mu.Unlock()
+}
+
+// AddNote records something else that came of the run, shown with its
+// result (a proposal posted for review).
+func (s *Session) AddNote(msg string) {
+	s.mu.Lock()
+	s.Notes = append(s.Notes, msg)
 	s.mu.Unlock()
 }
 
@@ -461,6 +482,7 @@ func (s *Session) Snapshot() *Session {
 		CompletedAt:          s.CompletedAt,
 		Error:                s.Error,
 		Warnings:             append([]string{}, s.Warnings...),
+		Notes:                append([]string{}, s.Notes...),
 		CallbackURL:          s.CallbackURL,
 		TraceID:              s.TraceID,
 		TotalCostUSD:         s.TotalCostUSD,
@@ -528,6 +550,9 @@ func (s *Session) ToResponse() map[string]any {
 	}
 	if len(s.Warnings) > 0 {
 		resp["warnings"] = s.Warnings
+	}
+	if len(s.Notes) > 0 {
+		resp["notes"] = s.Notes
 	}
 	if s.TraceID != "" {
 		resp["trace_id"] = s.TraceID

@@ -94,6 +94,7 @@ type Engine struct {
 	// callbacks delivers terminal results to a session's CallbackURL; nil
 	// disables webhooks.
 	callbacks *callback.Dispatcher
+	proposals ProposalSink // nil: sessions cannot propose
 
 	// sandbox confines every agent CLI a run starts; nil or mode off runs them
 	// on the host as before.

@@ -157,6 +157,8 @@ type AgentConfig struct {
 	ProactiveInterval  time.Duration // AGENT_PROACTIVE_INTERVAL — time between checks (default 30m, at least 5m)
 	ProactiveMaxPosts  int           // AGENT_PROACTIVE_MAX_POSTS — proactive messages per day (default 10)
 	ProactiveMaxChecks int           // AGENT_PROACTIVE_MAX_TRIAGES — model calls for proactive triage per day (default 24)
+	Proposals          bool          // AGENT_PROPOSALS — on|off (default on): sessions may propose changes to their instructions in _proposals/
+	Retrospective      bool          // AGENT_RETROSPECTIVE — on|off (default off): a weekly session that reviews the week and proposes changes
 	TaskIdleTTL        time.Duration // AGENT_TASK_IDLE_TTL — expire a task waiting for input or paused this long (default 7d)
 	MemoryDays         int           // Number of daily memory logs to include (default: 7)
 	MemoryPullOnStart  bool          // Pull memory from git before each session
@@ -324,6 +326,7 @@ func defaultConfigForDataDir(data string) *Config {
 			ProactiveInterval:   30 * time.Minute,
 			ProactiveMaxPosts:   10,
 			ProactiveMaxChecks:  24,
+			Proposals:           true,
 			ChatRetention:       90 * 24 * time.Hour,
 			TaskResumeBackend:   true,
 			TaskMaxTurns:        10,
@@ -536,12 +539,9 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_PROACTIVE"))) {
-	case "on", "true", "1", "yes":
-		cfg.Agent.Proactive = true
-	case "off", "false", "0", "no":
-		cfg.Agent.Proactive = false
-	}
+	cfg.Agent.Proactive = envOnOff("AGENT_PROACTIVE", cfg.Agent.Proactive)
+	cfg.Agent.Proposals = envOnOff("AGENT_PROPOSALS", cfg.Agent.Proposals)
+	cfg.Agent.Retrospective = envOnOff("AGENT_RETROSPECTIVE", cfg.Agent.Retrospective)
 	cfg.Agent.ProactiveChat = strings.TrimSpace(envOrDefault("AGENT_PROACTIVE_CHAT", cfg.Agent.ProactiveChat))
 	cfg.Agent.ProactiveInterval = max(envDurationOrDefault("AGENT_PROACTIVE_INTERVAL", cfg.Agent.ProactiveInterval), 5*time.Minute)
 	cfg.Agent.ProactiveMaxPosts = envIntOrDefault("AGENT_PROACTIVE_MAX_POSTS", cfg.Agent.ProactiveMaxPosts)
@@ -816,6 +816,17 @@ func envFloatOrDefault(key string, fallback float64) float64 {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
 		}
+	}
+	return fallback
+}
+
+// envOnOff reads an on|off switch (true/false, 1/0, yes/no too).
+func envOnOff(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "on", "true", "1", "yes":
+		return true
+	case "off", "false", "0", "no":
+		return false
 	}
 	return fallback
 }

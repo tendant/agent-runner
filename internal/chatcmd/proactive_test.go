@@ -20,6 +20,11 @@ func (f *fakeProactive) Tick(_ context.Context, force bool) proactive.Outcome {
 	return proactive.Outcome{Result: "plan", Items: []string{"agenda:x"}, Message: "m"}
 }
 
+func (f *fakeProactive) RetroStatus() string { return "RETRO" }
+func (f *fakeProactive) Retrospective(context.Context) proactive.Outcome {
+	return proactive.Outcome{Result: "started"}
+}
+
 func TestProactiveCommands(t *testing.T) {
 	c := &Commander{cfg: &config.Config{MemoryDir: t.TempDir()}}
 	if got, _, ok := c.Handle("/proactive", nil); !ok || !strings.Contains(got, "not available") {

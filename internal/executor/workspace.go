@@ -170,6 +170,38 @@ func (w *WorkspaceManager) PrepareAgentWorkspaceAt(workspacePath, skillsDir stri
 	return workspacePath, nil
 }
 
+// AddSkills copies the skills in dir (a subdirectory each, with its
+// SKILL.md) into the workspace at agentDir, beside the ones already there;
+// a skill of the same name already there wins (an operator's skill over the
+// agent's own). A missing dir is no skills.
+func AddSkills(agentDir, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Type()&os.ModeSymlink != 0 || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err != nil {
+			continue
+		}
+		for _, skills := range []string{filepath.Join(agentDir, ".claude", "skills"), filepath.Join(agentDir, ".agents", "skills")} {
+			dst := filepath.Join(skills, e.Name())
+			if _, err := os.Lstat(dst); err == nil {
+				continue
+			}
+			if err := copyDir(filepath.Join(dir, e.Name()), dst); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // copyDir recursively copies a directory. Symlinks are resolved to their
 // content rather than reproduced, preventing agents from placing links that
 // point outside the workspace into persistent storage (memory dir, outputs).

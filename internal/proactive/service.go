@@ -23,6 +23,8 @@ type Settings struct {
 	Interval   time.Duration
 	MaxPosts   int
 	MaxTriages int
+	// Retrospective is AGENT_RETROSPECTIVE: the weekly review session.
+	Retrospective bool
 }
 
 // Session is what a check needs to know about a finished agent session.
@@ -45,8 +47,12 @@ type Triager interface {
 // Chat opens a proactive thread in target and posts message there. With
 // plan, the thread waits for a yes that runs it (thread.StateConfirming);
 // report is kept in the thread, marked as untrusted, for the run to see.
+//
+// StartProactiveRun opens a thread in target with intro and runs message
+// there as a session at once, reporting to the thread (the retrospective).
 type Chat interface {
 	OpenProactiveThread(ctx context.Context, target, report, message string, plan bool) error
+	StartProactiveRun(ctx context.Context, target, intro, message string) error
 }
 
 // Config wires a Service.
@@ -57,6 +63,9 @@ type Config struct {
 	Sessions  func() []Session // recent sessions, any order
 	Triager   Triager
 	Chat      Chat
+	// Proposals describes the proposals made or decided since a time, a
+	// line each, for the retrospective; nil: none.
+	Proposals func(since time.Time) []string
 	Now       func() time.Time // tests; default time.Now
 }
 
@@ -85,6 +94,12 @@ type state struct {
 	Triages  int                  `json:"triages"`
 	Seen     map[string]time.Time `json:"seen"` // item key -> when it was last triaged
 	Last     *Outcome             `json:"last,omitempty"`
+
+	// The weekly retrospective: the last one, and when the schedule was
+	// first seen on (so turning it on does not run one at once).
+	LastRetro  time.Time `json:"last_retro,omitzero"`
+	RetroSince time.Time `json:"retro_since,omitzero"`
+	RetroNote  string    `json:"retro_note,omitempty"`
 }
 
 // Outcome is what one tick did, for /proactive and the log.
@@ -120,6 +135,10 @@ func (s *Service) Run(ctx context.Context) {
 		case <-t.C:
 		}
 		set := s.cfg.Settings()
+		if set.Retrospective && s.retroDue() {
+			o := s.Retrospective(ctx)
+			slog.Info("proactive: retrospective", "result", o.Result, "reason", o.Reason)
+		}
 		if !set.Enabled {
 			continue
 		}

@@ -167,6 +167,10 @@ func recordToolMetric(ev executor.Event) {
 // a CallbackURL. nil disables delivery.
 func (h *Engine) SetCallbacks(d *callback.Dispatcher) { h.callbacks = d }
 
+// SetProposals connects the sessions' _proposals/ to review
+// (internal/proposals); nil: proposals are off.
+func (h *Engine) SetProposals(p ProposalSink) { h.proposals = p }
+
 // SetSandbox installs the sandbox runtime (nil = host execution).
 func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 
@@ -614,7 +618,7 @@ func (h *Engine) ExecuteAgentWithContext(ctx context.Context, session *agent.Ses
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: h.registeredRepos(), ChatThread: chatThread, Proposals: h.proposalTargets()})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 
@@ -739,6 +743,8 @@ func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) 
 			}
 			_ = os.MkdirAll(filepath.Join(checkout, "_send"), 0o755)
 			_ = os.Remove(filepath.Join(checkout, "_schedule.json"))
+			_ = os.RemoveAll(filepath.Join(checkout, proposalsDir))
+			h.addMemorySkills(sessionID, checkout)
 			slog.Info("reusing task workspace", "session_id", sessionID, "path", taskDir)
 			// A repo registered since the task's last turn joins it now.
 			h.checkoutRepos(sessionID, liveSession, checkout)
@@ -764,8 +770,21 @@ func (h *Engine) prepareWorkspace(sessionID string, liveSession *agent.Session) 
 
 	// checkoutPath is the agent's CWD — repos, _send/, _progress.json live here
 	checkoutPath = filepath.Join(workspacePath, "workspace")
+	h.addMemorySkills(sessionID, checkoutPath)
 	h.checkoutRepos(sessionID, liveSession, checkoutPath)
 	return checkoutPath, false
+}
+
+// addMemorySkills puts the agent's own skills (MEMORY_DIR/skills, written
+// only by an approved proposal) in the workspace beside AGENT_SKILLS_DIR's;
+// an operator skill of the same name wins.
+func (h *Engine) addMemorySkills(sessionID, checkoutPath string) {
+	if h.config.MemoryDir == "" {
+		return
+	}
+	if err := executor.AddSkills(checkoutPath, filepath.Join(h.config.MemoryDir, "skills")); err != nil {
+		slog.Warn("workspace: could not add the memory dir's skills", "session_id", sessionID, "error", err)
+	}
 }
 
 // runPlanner runs Phase 1: the optional planner sub-agent (non-fatal on a
@@ -1215,6 +1234,8 @@ func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liv
 			}
 		}
 	}
+
+	h.collectProposals(ctx, sessionID, liveSession, checkoutPath)
 
 	// Collect and submit scheduled tasks from _schedule.json.
 	if schedEntries, err := collectScheduleEntries(checkoutPath); err != nil {

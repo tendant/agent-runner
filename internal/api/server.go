@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"github.com/agent-runner/agent-runner/internal/proactive"
+	"github.com/agent-runner/agent-runner/internal/proposals"
 	"github.com/agent-runner/agent-runner/internal/repos"
 	"github.com/agent-runner/agent-runner/internal/rescue"
 	tmpl "github.com/agent-runner/agent-runner/internal/template"
@@ -59,6 +60,7 @@ type Server struct {
 	tasks         *task.Store // nil unless AGENT_TASKS_ENABLED
 	stopSweeper   context.CancelFunc
 	proactive     *proactive.Service // the proactive checks; idle while AGENT_PROACTIVE is off
+	proposals     *proposals.Service // the agent's proposals to change its instructions
 	stopProactive context.CancelFunc
 }
 
@@ -239,7 +241,13 @@ func NewServer(cfg *config.Config) *Server {
 	if streamBot != nil {
 		streamBot.SetWeChatReloader(wechatBot.Reload, cfg.WeChat.BaseURL)
 	}
-	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot)
+	props := newProposals(cfg, handlers.BootstrapPaths, streamBot, telegramBot)
+	handlers.execEngine.SetProposals(props)
+	commander.SetProposals(props)
+	if streamBot != nil {
+		streamBot.SetThreadReplies(props.ThreadReply)
+	}
+	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot, props)
 	commander.SetProactive(proactiveChecks)
 
 	s := &Server{
@@ -261,6 +269,7 @@ func NewServer(cfg *config.Config) *Server {
 		journal:       journal,
 		tasks:         tasks,
 		proactive:     proactiveChecks,
+		proposals:     props,
 	}
 	s.configureRescue(workspaceManager)
 	return s
@@ -389,6 +398,9 @@ func (s *Server) Start() error {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.stopProactive = cancel
 		go s.proactive.Run(ctx)
+		if s.proposals != nil {
+			go sweepProposals(ctx, s.proposals)
+		}
 	}
 
 	// Setup graceful shutdown
