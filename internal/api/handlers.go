@@ -76,6 +76,29 @@ func (m *MultiNotifier) SendNotification(ctx context.Context, message string) er
 	return ne
 }
 
+// SendNotificationFiles is SendNotification with files attached, by the
+// backends that can attach them; the others name them instead.
+func (m *MultiNotifier) SendNotificationFiles(ctx context.Context, message string, files []agent.OutputFile) error {
+	ne := &NotifyError{}
+	for _, n := range m.notifiers {
+		var err error
+		if fn, ok := n.(execution.FileNotifier); ok {
+			err = fn.SendNotificationFiles(ctx, message, files)
+		} else {
+			err = n.SendNotification(ctx, message+execution.FilesNote(files))
+		}
+		if err != nil {
+			ne.Failed = append(ne.Failed, fmt.Sprintf("%s: %v", notifierName(n), err))
+		} else {
+			ne.Sent++
+		}
+	}
+	if len(ne.Failed) == 0 {
+		return nil
+	}
+	return ne
+}
+
 // NotifyError reports a notification that some or all backends failed to
 // send: Sent got it, Failed lists the others with their errors.
 type NotifyError struct {

@@ -1743,10 +1743,20 @@ func (h *Engine) notifySessionResult(snap *agent.Session) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	timeout := 10 * time.Second
+	if len(snap.OutputFiles) > 0 {
+		timeout = 2 * time.Minute // uploads
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	if err := h.deps.Notifier().SendNotification(ctx, msg); err != nil {
+	var err error
+	if fn, ok := h.deps.Notifier().(FileNotifier); ok && len(snap.OutputFiles) > 0 {
+		err = fn.SendNotificationFiles(ctx, msg, snap.OutputFiles)
+	} else {
+		err = h.deps.Notifier().SendNotification(ctx, msg+FilesNote(snap.OutputFiles))
+	}
+	if err != nil {
 		slog.Error("notification failed", "session_id", snap.ID, "error", err)
 	} else {
 		slog.Info("notification sent", "session_id", snap.ID)

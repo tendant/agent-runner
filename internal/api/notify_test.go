@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/agent-runner/agent-runner/internal/agent"
 )
 
 type fakeNotifier struct{ err error }
@@ -70,5 +72,39 @@ func TestLoopbackHostMiddleware(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("Host %s: %d, want %d", host, rec.Code, want)
 		}
+	}
+}
+
+type fileNotifier struct {
+	files *[]string
+}
+
+func (f fileNotifier) SendNotification(context.Context, string) error { return nil }
+func (f fileNotifier) SendNotificationFiles(_ context.Context, _ string, files []agent.OutputFile) error {
+	for _, x := range files {
+		*f.files = append(*f.files, x.Name)
+	}
+	return nil
+}
+
+type textNotifier struct{ got *string }
+
+func (n textNotifier) SendNotification(_ context.Context, m string) error { *n.got = m; return nil }
+
+// Files go to the backends that can attach them; the others get the message
+// with the files named.
+func TestMultiNotifierFiles(t *testing.T) {
+	var attached []string
+	var text string
+	m := NewMultiNotifier(fileNotifier{&attached}, textNotifier{&text})
+	files := []agent.OutputFile{{Name: "report.md", Data: []byte("x")}}
+	if err := m.SendNotificationFiles(context.Background(), "done", files); err != nil {
+		t.Fatal(err)
+	}
+	if len(attached) != 1 || attached[0] != "report.md" {
+		t.Errorf("attached: %v", attached)
+	}
+	if !strings.HasPrefix(text, "done") || !strings.Contains(text, "report.md") {
+		t.Errorf("text backend got %q", text)
 	}
 }

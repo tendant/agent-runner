@@ -426,6 +426,34 @@ func (b *Bot) SendNotification(ctx context.Context, message string) error {
 	return lastErr
 }
 
+// SendNotificationFiles is SendNotification with files attached: each is
+// uploaded into the channel and the message carries them. A file that fails
+// to upload is named in the message instead.
+func (b *Bot) SendNotificationFiles(ctx context.Context, message string, files []agent.OutputFile) error {
+	var lastErr error
+	for _, channelID := range b.activeChannels() {
+		var ids, failed []string
+		for _, f := range files {
+			id, err := b.client.UploadFile(ctx, channelID, f.Name, f.ContentType, f.Data)
+			if err != nil {
+				slog.Error("stream bot: failed to upload a notification's file", "channel_id", channelID, "file", f.Name, "error", err)
+				failed = append(failed, f.Name)
+				continue
+			}
+			ids = append(ids, id)
+		}
+		content := message
+		if len(failed) > 0 {
+			content += fmt.Sprintf("\n\nCould not attach %d file(s) (upload failed): %s", len(failed), strings.Join(failed, ", "))
+		}
+		if err := b.client.SendMessage(ctx, channelID, content, ids); err != nil {
+			slog.Error("stream bot: failed to notify", "channel_id", channelID, "error", err)
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
 // OpenProactiveThread starts a thread in channelID with a proactive check's
 // message (internal/proactive). The thread keeps the check's report as an
 // untrusted message for the run to see; with plan it waits for a yes, which

@@ -27,6 +27,25 @@ type Notifier interface {
 	SendNotification(ctx context.Context, message string) error
 }
 
+// FileNotifier is a Notifier that can also attach files: a background
+// session's _send/ output goes with its result.
+type FileNotifier interface {
+	SendNotificationFiles(ctx context.Context, message string, files []agent.OutputFile) error
+}
+
+// FilesNote is the line a backend that cannot attach files adds instead,
+// naming them, so the reader knows they exist.
+func FilesNote(files []agent.OutputFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	names := make([]string, len(files))
+	for i, f := range files {
+		names[i] = f.Name
+	}
+	return fmt.Sprintf("\n\n(%d file(s) not attached here, kept with the session's outputs: %s)", len(files), strings.Join(names, ", "))
+}
+
 // ScheduleEntry represents a single scheduled task written by an agent.
 type ScheduleEntry struct {
 	Message        string `json:"message"`
