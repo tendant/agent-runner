@@ -45,6 +45,15 @@ type Session struct {
 	// the session spent.
 	ReviewScore int
 	CostUSD     float64
+	// Pushed is the commits the runner pushed for it, as they landed.
+	Pushed []Commit
+}
+
+// Commit is one commit a run put on a remote branch.
+type Commit struct {
+	Repo    string `json:"repo"`
+	SHA     string `json:"sha"`
+	Subject string `json:"subject"`
 }
 
 // Triager asks the fast model what to do about a check's report: "ignore",
@@ -63,7 +72,17 @@ type Triager interface {
 // class at notify); it returns the session.
 type Chat interface {
 	OpenProactiveThread(ctx context.Context, target, report, message string, plan bool) error
-	StartProactiveRun(ctx context.Context, target, intro, message string) (sessionID string, err error)
+	StartProactiveRun(ctx context.Context, target, intro, message string) (sessionID, thread string, err error)
+}
+
+// Judge says whether a person's reply to a run's work says it was wrong.
+type Judge interface {
+	JudgeReply(ctx context.Context, work, reply string) (wrong bool, reason string, err error)
+}
+
+// RevertFinder finds which of a run's commits were reverted since it ran.
+type RevertFinder interface {
+	Reverted(ctx context.Context, repo string, since time.Time, commits []Commit) ([]Revert, error)
 }
 
 // Runner starts a proactive run nobody watches in a chat (a class at
@@ -88,6 +107,10 @@ type Config struct {
 	// Runner starts quiet runs; Signals probes the repos. nil: none.
 	Runner  Runner
 	Signals Prober
+	// Judge reads replies in a run's thread; Reverts looks for reverts of
+	// its commits. nil: those demotions are off.
+	Judge   Judge
+	Reverts RevertFinder
 	Now     func() time.Time // tests; default time.Now
 }
 
@@ -130,6 +153,8 @@ type state struct {
 	Runs     map[string]Run    `json:"runs,omitempty"`
 	Done     map[string]Run    `json:"done,omitempty"`
 	Heads    map[string]string `json:"heads,omitempty"` // repo-commits: repo -> the commit last seen
+
+	LastRevertCheck time.Time `json:"last_revert_check,omitzero"`
 }
 
 // Run is one proactive run: work a class's trust let start unasked.
@@ -139,6 +164,12 @@ type Run struct {
 	Started time.Time   `json:"started"`
 	Ended   time.Time   `json:"ended,omitzero"`
 	Result  string      `json:"result,omitempty"`
+	Thread  string      `json:"thread,omitempty"`  // a notify run's thread
+	Work    string      `json:"work,omitempty"`    // what triage said it would do
+	Commits []Commit    `json:"commits,omitempty"` // what it pushed
+	// Demoted: the run already cost its class a level. One run demotes at
+	// most once, whatever else is found wrong with it.
+	Demoted bool `json:"demoted,omitempty"`
 }
 
 // runTimeout is how long a run that never reports back is waited for.
@@ -181,6 +212,7 @@ func (s *Service) Run(ctx context.Context) {
 		case <-t.C:
 		}
 		s.followRuns(ctx)
+		s.checkReverts(ctx)
 		set := s.cfg.Settings()
 		if set.Retrospective && s.retroDue() {
 			o := s.Retrospective(ctx)
@@ -378,12 +410,12 @@ func (s *Service) act(ctx context.Context, now time.Time, set Settings, pol Poli
 func (s *Service) execute(ctx context.Context, now time.Time, set Settings, st *state, cls Class, level trust.Level, res *thread.AnalysisResult, report string, o Outcome) Outcome {
 	message := runMessage(now, cls, res.Message, report)
 	var (
-		sid string
-		err error
+		sid, thread string
+		err         error
 	)
 	if level == trust.Notify {
 		intro := fmt.Sprintf("**Proactive run** (%s, at notify)\n\n%s\n\nRunning it now; the result follows here. `/trust %s propose` makes it ask first.", cls.Name, strings.TrimSpace(res.Message), cls.Name)
-		sid, err = s.cfg.Chat.StartProactiveRun(ctx, set.Chat, intro, message)
+		sid, thread, err = s.cfg.Chat.StartProactiveRun(ctx, set.Chat, intro, message)
 		if err == nil {
 			st.Posts++
 		}
@@ -397,7 +429,7 @@ func (s *Service) execute(ctx context.Context, now time.Time, set Settings, st *
 	if st.Runs == nil {
 		st.Runs = map[string]Run{}
 	}
-	st.Runs[sid] = Run{Class: cls.Name, Level: level, Started: now}
+	st.Runs[sid] = Run{Class: cls.Name, Level: level, Started: now, Thread: thread, Work: oneLine(res.Message, 500)}
 	st.Sessions++
 	if s.cfg.Trust != nil {
 		s.cfg.Trust.Executed(cls.Name)
@@ -446,6 +478,7 @@ func (s *Service) followRuns(ctx context.Context) {
 			continue
 		}
 		r.Ended = ss.Ended
+		r.Commits = ss.Pushed
 		st.Spent += ss.CostUSD
 		var problem string
 		switch {
@@ -464,9 +497,10 @@ func (s *Service) followRuns(ctx context.Context) {
 			}
 		} else {
 			r.Result = "failed: " + problem
-			if s.cfg.Trust != nil {
+			if s.cfg.Trust != nil && !r.Demoted {
 				from, to := s.cfg.Trust.Failed(r.Class, problem)
 				notices = append(notices, demotionNotice(r.Class, from, to, problem))
+				r.Demoted = true
 			}
 		}
 		if st.Done == nil {
@@ -510,7 +544,7 @@ func (s *Service) SessionUndone(ctx context.Context, sessionID string) string {
 	s.mu.Lock()
 	st := s.load()
 	r, ok := st.Done[sessionID]
-	if !ok || s.cfg.Trust == nil {
+	if !ok || r.Demoted || s.cfg.Trust == nil {
 		s.mu.Unlock()
 		return ""
 	}

@@ -130,9 +130,9 @@ func TestStreamBot_ProposalThreadReply(t *testing.T) {
 // The retrospective runs at once in the thread it opens.
 func TestStreamBot_StartProactiveRun(t *testing.T) {
 	bot, starter, threadMgr, _, _ := newProactiveTestBot(t)
-	id, err := bot.StartProactiveRun(context.Background(), "c_1", "**Weekly retrospective**", "[Weekly retrospective] review the week")
-	if err != nil || id == "" {
-		t.Fatalf("id %q err %v", id, err)
+	id, thread, err := bot.StartProactiveRun(context.Background(), "c_1", "**Weekly retrospective**", "[Weekly retrospective] review the week")
+	if err != nil || id == "" || thread != "m_root" {
+		t.Fatalf("id %q thread %q err %v", id, thread, err)
 	}
 	bot.wg.Wait()
 	if !starter.called.Load() {

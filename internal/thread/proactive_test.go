@@ -46,3 +46,22 @@ func TestProactivePromptCarriesPolicyAndMarksData(t *testing.T) {
 		}
 	}
 }
+
+func TestJudgeReply(t *testing.T) {
+	for out, want := range map[string]bool{
+		`{"wrong": true, "reason": "reverted the wrong file"}`: true,
+		`{"wrong": false, "reason": ""}`:                       false,
+		"sounds good":                                          false,
+	} {
+		got, _, _ := NewAnalyzer(cannedClient{out: out}).JudgeReply(context.Background(), "fixed CI", "reply")
+		if got != want {
+			t.Errorf("%q: %v, want %v", out, got, want)
+		}
+	}
+	if wrong, _, err := NewAnalyzer(cannedClient{err: errors.New("down")}).JudgeReply(context.Background(), "w", "r"); wrong || err == nil {
+		t.Errorf("an error is not a rejection: %v %v", wrong, err)
+	}
+	if _, reason, _ := NewAnalyzer(cannedClient{out: `{"wrong":true,"reason":"broke prod"}`}).JudgeReply(context.Background(), "w", "r"); reason != "broke prod" {
+		t.Errorf("reason %q", reason)
+	}
+}

@@ -87,9 +87,9 @@ type fakeChat struct {
 	runs  []post // StartProactiveRun: report is the intro
 }
 
-func (c *fakeChat) StartProactiveRun(_ context.Context, target, intro, message string) (string, error) {
+func (c *fakeChat) StartProactiveRun(_ context.Context, target, intro, message string) (string, string, error) {
 	c.runs = append(c.runs, post{target: target, report: intro, message: message})
-	return fmt.Sprintf("run-%d", len(c.runs)), nil
+	return fmt.Sprintf("run-%d", len(c.runs)), fmt.Sprintf("thread-%d", len(c.runs)), nil
 }
 
 func (c *fakeChat) OpenProactiveThread(_ context.Context, target, report, message string, plan bool) error {

@@ -31,7 +31,7 @@ type proactiveChat struct {
 // chatBot is what a proactive chat needs of a bot.
 type chatBot interface {
 	OpenProactiveThread(ctx context.Context, target, report, message string, plan bool) error
-	StartProactiveRun(ctx context.Context, target, intro, message string) (string, error)
+	StartProactiveRun(ctx context.Context, target, intro, message string) (string, string, error)
 	OpenProposalThread(ctx context.Context, target, message string) (string, error)
 }
 
@@ -60,10 +60,10 @@ func (c proactiveChat) OpenProactiveThread(ctx context.Context, target, report, 
 	return b.OpenProactiveThread(ctx, target, report, message, plan)
 }
 
-func (c proactiveChat) StartProactiveRun(ctx context.Context, target, intro, message string) (string, error) {
+func (c proactiveChat) StartProactiveRun(ctx context.Context, target, intro, message string) (string, string, error) {
 	b, err := c.bot(target)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	return b.StartProactiveRun(ctx, target, intro, message)
 }
@@ -180,6 +180,11 @@ func (r quietRunner) StartQuietRun(message string) (string, error) {
 }
 
 func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.Analyzer, sb *stream.Bot, tb *telegram.Bot, props *proposals.Service, start func(message, source, convID string) (string, error)) *proactive.Service {
+	probes := &proactive.RepoSignals{
+		Repos:     repos.New(cfg.ReposFile).List,
+		CacheRoot: cfg.RepoCacheRoot,
+		Secrets:   agentsecrets.New(cfg.SecretsFile),
+	}
 	return proactive.New(proactive.Config{
 		MemoryDir: cfg.MemoryDir,
 		StateDir:  filepath.Join(cfg.StateRoot, "proactive"),
@@ -212,6 +217,9 @@ func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.
 				if rr, ok := snap.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
 					ps.ReviewScore = rr.Score
 				}
+				for _, c := range snap.Pushed {
+					ps.Pushed = append(ps.Pushed, proactive.Commit{Repo: c.Repo, SHA: c.SHA, Subject: c.Subject})
+				}
 				out = append(out, ps)
 			}
 			return out
@@ -221,10 +229,8 @@ func newProactive(cfg *config.Config, sessions *agent.Manager, analyzer *thread.
 		Proposals: proposalLines(props),
 		Trust:     trust.New(filepath.Join(cfg.StateRoot, "trust.json")),
 		Runner:    quietRunner{start: start},
-		Signals: &proactive.RepoSignals{
-			Repos:     repos.New(cfg.ReposFile).List,
-			CacheRoot: cfg.RepoCacheRoot,
-			Secrets:   agentsecrets.New(cfg.SecretsFile),
-		},
+		Signals:   probes,
+		Reverts:   probes,
+		Judge:     analyzer,
 	})
 }

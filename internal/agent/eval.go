@@ -32,3 +32,20 @@ func (s *Session) SetEvalResults(r []EvalResult) {
 	s.EvalResults = append([]EvalResult(nil), r...)
 	s.mu.Unlock()
 }
+
+// PushedCommit is a commit a session's work put on a remote branch.
+type PushedCommit struct {
+	Repo    string `json:"repo"`
+	SHA     string `json:"sha"`
+	Subject string `json:"subject"`
+}
+
+// AddPushed records commits the runner pushed for the session.
+func (s *Session) AddPushed(c ...PushedCommit) {
+	if len(c) == 0 {
+		return
+	}
+	s.mu.Lock()
+	s.Pushed = append(s.Pushed, c...)
+	s.mu.Unlock()
+}

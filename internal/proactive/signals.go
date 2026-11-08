@@ -246,3 +246,64 @@ func (r *RepoSignals) get(ctx context.Context, token, path string, v any) error 
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(v)
 }
+
+// Revert is a commit found reverted.
+type Revert struct {
+	Commit Commit
+	By     string // the reverting commit
+}
+
+// Reverted fetches repo's cache and finds which of commits were reverted on
+// its branch since since: by git revert's "This reverts commit <sha>", or a
+// subject `Revert "<subject>"` (a revert of a commit whose hash changed).
+func (r *RepoSignals) Reverted(ctx context.Context, repo string, since time.Time, commits []Commit) ([]Revert, error) {
+	if r == nil || r.Repos == nil {
+		return nil, nil
+	}
+	list, err := r.Repos()
+	if err != nil {
+		return nil, err
+	}
+	var rp *repos.Repo
+	for i := range list {
+		if list[i].Name == repo {
+			rp = &list[i]
+		}
+	}
+	if rp == nil {
+		return nil, nil // no longer registered
+	}
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	if err := repos.Sync(pctx, *rp, r.CacheRoot, r.Secrets); err != nil {
+		return nil, err
+	}
+	ref := "HEAD"
+	if rp.Branch != "" {
+		ref = "refs/heads/" + rp.Branch
+	}
+	out, err := git(pctx, repos.CachePath(r.CacheRoot, rp.Name), "log", "--since="+since.UTC().Format(time.RFC3339), "--format=%H%x1f%s%x1f%b%x1e", ref)
+	if err != nil {
+		return nil, err
+	}
+	var found []Revert
+	for _, entry := range strings.Split(out, "\x1e") {
+		parts := strings.SplitN(strings.TrimSpace(entry), "\x1f", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		sha, subject, body := parts[0], parts[1], ""
+		if len(parts) == 3 {
+			body = parts[2]
+		}
+		for _, c := range commits {
+			if c.SHA != "" && sha == c.SHA {
+				continue // the commit itself
+			}
+			if (len(c.SHA) >= 7 && strings.Contains(body, "This reverts commit "+c.SHA)) || subject == `Revert "`+c.Subject+`"` {
+				found = append(found, Revert{Commit: c, By: sha})
+			}
+		}
+	}
+	return found, nil
+}

@@ -339,7 +339,7 @@ func TestPushRepos_RescuesOnAnyFailure(t *testing.T) {
 	run(repo, "commit", "-q", "--allow-empty", "-m", "agent's work")
 
 	ops := gitpkg.NewOperations(1, 0)
-	conflicts, warnings := pushRepos(context.Background(), map[string]*gitpkg.Operations{repo: ops}, []string{repo}, "sess-1")
+	conflicts, warnings, _ := pushRepos(context.Background(), map[string]*gitpkg.Operations{repo: ops}, []string{repo}, "sess-1")
 	if len(conflicts) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "agent-rescue/sess-1") {
 		t.Fatalf("conflicts %v, warnings %q", conflicts, warnings)
 	}
@@ -426,5 +426,46 @@ func TestSyncWorkspaceRepos_UncommittedWorkReported(t *testing.T) {
 	}
 	if len(snap.Warnings) == 0 || !strings.Contains(snap.Warnings[len(snap.Warnings)-1], "work not saved") {
 		t.Errorf("a session that is no task turn should warn: %v", snap.Warnings)
+	}
+}
+
+// A push records its commits as they landed: rebased onto what another
+// session pushed meanwhile, with their new hashes.
+func TestPushRepos_RecordsLandedCommits(t *testing.T) {
+	base := t.TempDir()
+	remote := filepath.Join(base, "remote.git")
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(base, "init", "-q", "--bare", "-b", "main", remote)
+	repo := filepath.Join(base, "app")
+	run(base, "clone", "-q", remote, repo)
+	run(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	run(repo, "push", "-q", "-u", "origin", "HEAD:main")
+	other := filepath.Join(base, "other")
+	run(base, "clone", "-q", remote, other)
+	run(other, "commit", "-q", "--allow-empty", "-m", "someone else's")
+	run(other, "push", "-q", "origin", "HEAD:main")
+	run(repo, "commit", "-q", "--allow-empty", "-m", "fix the flaky test")
+	before := run(repo, "rev-parse", "HEAD")
+
+	conflicts, warnings, pushed := pushRepos(context.Background(), map[string]*gitpkg.Operations{repo: gitpkg.NewOperations(3, 0)}, []string{repo}, "sess-1")
+	if len(conflicts) != 0 || len(warnings) != 0 {
+		t.Fatalf("conflicts %v warnings %v", conflicts, warnings)
+	}
+	landed := run(repo, "rev-parse", "HEAD")
+	if len(pushed) != 1 || pushed[0].Subject != "fix the flaky test" || pushed[0].SHA != landed || pushed[0].Repo != "app" {
+		t.Fatalf("pushed %+v (landed %s)", pushed, landed)
+	}
+	if landed == before {
+		t.Fatal("the test meant a rebase to change the hash")
 	}
 }

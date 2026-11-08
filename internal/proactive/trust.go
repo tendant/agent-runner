@@ -92,7 +92,9 @@ const trustHelp = `  /trust                    the classes, their levels and rec
   /trust <class> <level>    off | propose | notify (run, then tell) | quiet (run, log only)
 
 A class that runs without asking drops a level by itself when a run fails, stops, scores below 6
-with the reviewer, or has its memory changes undone (/memory undo). Runs need AGENT_SANDBOX=strict.`
+with the reviewer, has its memory changes undone (/memory undo), has a commit it pushed reverted,
+or gets a reply in its thread saying it was wrong (all within 7 days; once per run). Runs need
+AGENT_SANDBOX=strict.`
 
 // BudgetLeft is what proactive work (runs, eval replays) may still spend
 // today: AGENT_PROACTIVE_BUDGET_USD, lowered by PROACTIVE.md, less what was

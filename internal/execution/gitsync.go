@@ -77,7 +77,8 @@ func (h *Engine) syncWorkspaceRepos(
 		// a conflict turn that used up time cannot leave the next round
 		// with a dead context.
 		gitCtx, cancelGit := keepWorkCtx(ctx)
-		conflicts, warnings := pushRepos(gitCtx, ops, candidates, sessionID)
+		conflicts, warnings, pushed := pushRepos(gitCtx, ops, candidates, sessionID)
+		liveSession.AddPushed(pushed...)
 		canIterate := as != nil && promptBuilder != nil &&
 			!liveSession.StopRequested() && ctx.Err() == nil && time.Now().Before(deadline)
 		if len(conflicts) == 0 {
@@ -224,7 +225,10 @@ func (h *Engine) pushableRepos(checkoutPath string) (repos, untrusted []string) 
 // (ops; a repo with none is not pushed). Repos whose rebase hit conflicts
 // come back in conflicts (rebase left in progress); any other push failure
 // becomes a warning string.
-func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos []string, sessionID string) (conflicts []*gitpkg.RebaseConflictError, warnings []string) {
+//
+// pushed is what reached the branch: each commit as it landed (after the
+// rebase Push may do), for a later revert of it to be recognized.
+func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos []string, sessionID string) (conflicts []*gitpkg.RebaseConflictError, warnings []string, pushed []agent.PushedCommit) {
 	for _, repo := range repos {
 		ops, ok := opsFor[repo]
 		if !ok {
@@ -261,8 +265,10 @@ func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos 
 			}
 			continue
 		}
+		subjects := unpushedSubjects(ctx, repo)
 		err := ops.Push(ctx, repo)
 		if err == nil {
+			pushed = append(pushed, landedCommits(ctx, repo, subjects)...)
 			continue
 		}
 		var rc *gitpkg.RebaseConflictError
@@ -281,7 +287,52 @@ func pushRepos(ctx context.Context, opsFor map[string]*gitpkg.Operations, repos 
 			warnings = append(warnings, fmt.Sprintf("agent committed in %s but git push failed: %v (and saving them to %s failed too: %v)", name, err, rescue, rerr))
 		}
 	}
-	return conflicts, warnings
+	return conflicts, warnings, pushed
+}
+
+// unpushedSubjects is the subjects of the commits a push is about to send
+// (those hasUnpushedCommits counts), newest first.
+func unpushedSubjects(ctx context.Context, repoPath string) []string {
+	args := []string{"log", "--format=%s", "-n", "100", "@{u}..HEAD"}
+	if gitCmd(ctx, repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}").Run() != nil {
+		args = []string{"log", "--format=%s", "-n", "100", "HEAD", "--not", "--remotes=origin"}
+	}
+	out, err := gitCmd(ctx, repoPath, args...).Output()
+	if err != nil {
+		return nil
+	}
+	var subjects []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			subjects = append(subjects, l)
+		}
+	}
+	return subjects
+}
+
+// landedCommits finds, after a push, the commits with those subjects among
+// HEAD's latest: their hashes as they landed, a rebase included.
+func landedCommits(ctx context.Context, repoPath string, subjects []string) []agent.PushedCommit {
+	if len(subjects) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, s := range subjects {
+		want[s] = true
+	}
+	out, err := gitCmd(ctx, repoPath, "log", "--format=%H%x1f%s", "-n", fmt.Sprint(len(subjects)+50), "HEAD").Output()
+	if err != nil {
+		return nil
+	}
+	var got []agent.PushedCommit
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		sha, subject, ok := strings.Cut(l, "\x1f")
+		if ok && want[subject] {
+			got = append(got, agent.PushedCommit{Repo: filepath.Base(repoPath), SHA: sha, Subject: subject})
+			delete(want, subject)
+		}
+	}
+	return got
 }
 
 // parkConflictedWork abandons the rebase and pushes the session's local

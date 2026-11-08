@@ -99,6 +99,7 @@ type Session struct {
 	Notes                []string          `json:"notes,omitempty"`        // what else came of the run (a proposal posted for review)
 	Eval                 *EvalSpec         `json:"-"`                      // non-nil: an eval replay (eval.go)
 	EvalResults          []EvalResult      `json:"eval_results,omitempty"` // an eval replay's check results
+	Pushed               []PushedCommit    `json:"pushed,omitempty"`       // commits the runner pushed for it
 	CallbackURL          string            `json:"callback_url,omitempty"` // webhook POSTed the final session on terminal status
 	TraceID              string            `json:"trace_id,omitempty"`     // OpenTelemetry trace id of the run, when tracing is enabled
 	WorkspacePath        string            `json:"-"`
@@ -488,6 +489,7 @@ func (s *Session) Snapshot() *Session {
 		Notes:                append([]string{}, s.Notes...),
 		Eval:                 s.Eval,
 		EvalResults:          append([]EvalResult(nil), s.EvalResults...),
+		Pushed:               append([]PushedCommit(nil), s.Pushed...),
 		CallbackURL:          s.CallbackURL,
 		TraceID:              s.TraceID,
 		TotalCostUSD:         s.TotalCostUSD,

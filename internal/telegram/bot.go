@@ -465,25 +465,25 @@ func (b *Bot) OpenProactiveThread(_ context.Context, _ string, report, message s
 // StartProactiveRun posts intro in the chat and runs message as a session
 // at once (the weekly retrospective), reporting there. A busy chat is not
 // interrupted.
-func (b *Bot) StartProactiveRun(_ context.Context, _ string, intro, message string) (string, error) {
+func (b *Bot) StartProactiveRun(_ context.Context, _ string, intro, message string) (string, string, error) {
 	if b.chatID == 0 {
-		return "", fmt.Errorf("telegram: no default chat ID configured")
+		return "", "", fmt.Errorf("telegram: no default chat ID configured")
 	}
 	if b.api == nil {
-		return "", fmt.Errorf("telegram: bot not connected")
+		return "", "", fmt.Errorf("telegram: bot not connected")
 	}
 	chatID := strconv.FormatInt(b.chatID, 10)
 	conv := b.threadManager.GetOrCreate(chatID)
 	if st := conv.GetState(); st == thread.StateExecuting || st == thread.StateConfirming {
-		return "", fmt.Errorf("telegram: the chat is busy (%s)", st)
+		return "", "", fmt.Errorf("telegram: the chat is busy (%s)", st)
 	}
 	b.send(b.chatID, intro)
 	conv.AddMessage("assistant", intro)
 	conv.AddMessage("user", message)
 	if id := b.engine.RunNow(context.Background(), chatID, conv); id != "" {
-		return id, nil
+		return id, "", nil
 	}
-	return "", fmt.Errorf("the run did not start (see the chat)")
+	return "", "", fmt.Errorf("the run did not start (see the chat)")
 }
 
 // OpenProposalThread posts a proposal for review in the chat. A Telegram

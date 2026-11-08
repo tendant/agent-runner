@@ -245,12 +245,19 @@ func NewServer(cfg *config.Config) *Server {
 	props := newProposals(cfg, handlers.BootstrapPaths, streamBot, telegramBot, evalRunner)
 	handlers.execEngine.SetProposals(props)
 	commander.SetProposals(props)
-	if streamBot != nil {
-		streamBot.SetThreadReplies(props.ThreadReply)
-	}
 	proactiveChecks := newProactive(cfg, agentManager, analyzer, streamBot, telegramBot, props, handlers.StartAgent)
 	commander.SetProactive(proactiveChecks)
 	evalRunner.BudgetLeft, evalRunner.Spend = proactiveChecks.BudgetLeft, proactiveChecks.Spend
+	if streamBot != nil {
+		// A yes or no in a proposal's thread decides it; any other reply in
+		// a proactive run's thread is judged for "this was wrong".
+		streamBot.SetThreadReplies(func(thread, user string, admin bool, text string) (string, bool) {
+			if reply, ok := props.ThreadReply(thread, user, admin, text); ok {
+				return reply, true
+			}
+			return proactiveChecks.ThreadReply(thread, user, admin, text)
+		})
+	}
 
 	s := &Server{
 		config: cfg,

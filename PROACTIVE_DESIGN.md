@@ -495,8 +495,22 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
   - A run that failed or stopped, or scored below 6, demotes its class one level. The chat is told,
     past the post cap.
   - Undoing such a session within 7 days with `/memory undo` also demotes its class.
-  - Not built yet: demotion when a run's repo commit is reverted, or when a person's reply is
-    classified as "this was wrong".
+  - **A revert** of a commit the run pushed, within 7 days, demotes its class.
+    - The runner records each commit it pushes as it landed (`agent.Session.Pushed`). It matches
+      the pre-push subjects to their hashes after the push, so a rebase onto other work is
+      followed.
+    - Every 30 minutes, the check loop fetches those repos' caches and looks on the branch for
+      `This reverts commit <sha>`, or a subject `Revert "<subject>"`.
+    - Not seen: commits the agent pushed itself (self-push) rather than the runner, and a revert
+      that only edits the code back by hand.
+  - **A reply saying it was wrong:** a person's message in a notify run's thread is judged in the
+    background by the fast model (`Analyzer.JudgeReply`), and a clear "this was wrong" demotes the
+    class.
+    - The thread answers the message as usual either way, and an unclear or failed judgment
+      counts as not wrong.
+    - Only on agent-stream: a Telegram chat has no thread per run, and quiet runs have none.
+    - These calls are not counted against the daily triage cap.
+  - **One run demotes its class at most once,** whatever else is found wrong with it.
   - A run that never reports back is forgotten after 24 hours.
   - The budget counts the runs' session cost only, not triage calls. It is checked before a run
     starts, so one run can go past it.
