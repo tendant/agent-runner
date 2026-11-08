@@ -516,7 +516,17 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
 - **End to end:** `e2e/proactive_real_claude_e2e_test.go` runs a sample task (a Go repo whose
   tests fail) on the real claude CLI under `AGENT_SANDBOX=strict`. It covers a plan and a yes, a
   run nobody asked for, a demotion after a revert, and a proposal with its eval; it passes in
-  about 4 minutes. A new commit alone gives triage no evidence of a failure (with no `repo-ci`, the
+  about 4 minutes.
+  - The eval is a task where the proposal matters: a failing test that contradicts its
+    function's doc comment.
+    - Under the current instructions the agent "fixes" the test, which the eval's check that
+      the test is unchanged catches (1/2).
+    - Under the proposed rule ("Never edit the tests: they are the specification, even when they
+      look wrong") it changes the code (2/2).
+    - It came out the same in two runs.
+  - The rule is given to the agent word for word. When the model wrote its own, it added "if a
+    test seems wrong, stop and tell the user"; the replay then stopped, and the eval rightly
+    scored that proposal no better. A new commit alone gives triage no evidence of a failure (with no `repo-ci`, the
   model rightly ignored a "refactor" commit), so the test raises the breakage as a due agenda
   item.
   - A run that never reports back is forgotten after 24 hours.
@@ -584,7 +594,8 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
   strict, not only strict), and without a sandbox a command check fails, unrun.
 - **The comparison** (`/proposal eval <id>`, a pending proposal only) runs in the background, one at
   a time: each eval with the current instructions, then the proposed. The result is a table of
-  checks passed and reviewer scores (when the reviewer is on), with what did not pass and the cost.
+  checks passed and reviewer scores (when the reviewer is on), with what did not pass, each failed
+  replay's last reply (why it did what it did), and the cost.
   It is posted in the proposal's thread (in the chat on Telegram) and kept on the proposal, where
   `/proposal show` includes it.
 - **Cost** is counted against `AGENT_PROACTIVE_BUDGET_USD`, shared with proactive runs. It is checked

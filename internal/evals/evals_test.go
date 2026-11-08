@@ -70,7 +70,8 @@ func (f *fakeEngine) start(message string, spec *agent.EvalSpec) (string, error)
 	if spec.Overrides != nil {
 		score = 8
 	}
-	f.sessions[id] = &agent.Session{ID: id, Status: agent.SessionStatusCompleted, EvalResults: res, TotalCostUSD: 0.5, ReviewJSON: &subagent.ReviewResult{Score: score}}
+	f.sessions[id] = &agent.Session{ID: id, Status: agent.SessionStatusCompleted, EvalResults: res, TotalCostUSD: 0.5, ReviewJSON: &subagent.ReviewResult{Score: score},
+		Iterations: []agent.IterationResult{{Output: "I fixed the\ncode."}, {Output: ""}}}
 	return id, nil
 }
 
@@ -102,7 +103,7 @@ func TestCompare(t *testing.T) {
 		t.Fatal("the variants are not current then proposed")
 	}
 	out := rep.String()
-	for _, want := range []string{"| a | 1/2, review 5 | 2/2, review 8 |", "| **all** | **2/4, review 5.0** | **4/4, review 8.0** |", "a (current): reply y: nope", "4 replays, $2.00."} {
+	for _, want := range []string{"| a | 1/2, review 5 | 2/2, review 8 |", "| **all** | **2/4, review 5.0** | **4/4, review 8.0** |", "a (current): reply y: nope", "  - its reply: I fixed the code.", "4 replays, $2.00."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q:\n%s", want, out)
 		}

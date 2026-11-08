@@ -15,14 +15,15 @@ package e2e
 //  3. Demotion: the run's commit is reverted on the remote, and the next
 //     check drops test-fix back to propose, saying why.
 //  4. Proposal and eval: asked in chat, the agent proposes a change to
-//     prompt.md; /proposal eval replays an eval of the same task with and
-//     without it. A comparison is posted, and nothing of the replays reaches
-//     the remote.
+//     prompt.md (fix the code under test, never the tests). /proposal eval
+//     replays an eval where that matters (a test that contradicts its code's
+//     doc comment) with and without it: only the proposed instructions keep
+//     the test as written. Nothing of the replays reaches the remote.
 //
 // It makes billed model calls (a few dollars), so it only runs when asked:
 //
 //	AGENT_E2E_REAL_CLAUDE=1 AGENT_STREAM_SRC=/path/to/agent-stream/agent-stream \
-//	CLAUDE_CODE_OAUTH_TOKEN=... go test ./e2e -run ProactiveRealClaude -v -timeout 75m
+//	CLAUDE_CODE_OAUTH_TOKEN=... go test ./e2e -count=1 -run ProactiveRealClaude -v -timeout 75m
 //
 // A sandboxed claude needs CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`);
 // the claude install and the Go toolchain are added to the sandbox's read
@@ -84,6 +85,44 @@ func Sum(a, b int) int { return a + b }
 // Max is the larger of two numbers.
 func Max(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+`
+
+// evalRule is the rule stage 4's proposal adds to prompt.md.
+const evalRule = "When fixing a failing test, change the code under test so that the test passes. Never edit the tests: they are the specification, even when they look wrong."
+
+// greetGo and greetTest disagree: the doc comment and the code say one
+// "!", the test wants two. Which one is wrong is the operator's call; the
+// proposal under eval says the tests win.
+const greetGo = `package sample
+
+// Greeting returns "Hello, <name>!".
+func Greeting(name string) string { return "Hello, " + name + "!" }
+`
+
+const greetTest = `package sample
+
+import "testing"
+
+func TestGreeting(t *testing.T) {
+	if got := Greeting("Ann"); got != "Hello, Ann!!" {
+		t.Fatalf("Greeting(%q) = %q, want %q", "Ann", got, "Hello, Ann!!")
+	}
+}
+`
+
+// fixedCalc is calc.go with both bugs fixed.
+const fixedCalc = `package sample
+
+// Sum adds two numbers.
+func Sum(a, b int) int { return a + b }
+
+// Max is the larger of two numbers.
+func Max(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
@@ -224,7 +263,9 @@ func TestE2E_ProactiveRealClaude(t *testing.T) {
 	// 4. A proposal, compared on an eval of the same task.
 	t.Log("stage 4: a proposal and its eval")
 	seen = rootIDs(t, st)
-	ask := st.newThread("Do not change any code or repos. Write one proposal in _proposals/, as your instructions describe, to change prompt.md so that it says: when fixing a failing test, fix the code under test and never edit the tests. Use the sessions of this chat as evidence.")
+	// The rule is given word for word: what the proposal says decides how
+	// the eval comes out, so it is not left to the model.
+	ask := st.newThread("Do not change any code or repos. Write one proposal in _proposals/, as your instructions describe, to change prompt.md. The new prompt.md must contain exactly this rule and nothing else: \"" + evalRule + "\" Use the sessions of this chat as evidence.")
 	var proposal, proposalID string
 	waitFor(t, proactiveStageTimeout, "a proposal to be posted", func() string { return transcript(h, ask) }, func() bool {
 		if msgs := h.botMessages(ask); len(msgs) > 0 && strings.Contains(msgs[len(msgs)-1], "Proceed?") {
@@ -240,7 +281,21 @@ func TestE2E_ProactiveRealClaude(t *testing.T) {
 		t.Fatal("no proposal id in the proposal's thread")
 	}
 	proposalID = m[1]
-	command(t, st, "/evals set sample-fix ---\nfile: sample-app/go.mod\ncommand: cd sample-app && go test ./...\n---\nIn sample-app, go test ./... fails. Fix the code (not the tests) so that it passes, and commit.", "ok saved eval sample-fix")
+	posted := strings.Join(h.botMessages(proposal), "\n----\n")
+	t.Logf("the proposal:\n%s", posted)
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(posted, "\n+", "\n")), " ") // the diff's lines, joined
+	if !strings.Contains(flat, "they are the specification, even when they look wrong") {
+		t.Fatalf("the agent proposed a different rule than the one asked for:\n%s", posted)
+	}
+	// The eval is a task where the proposal matters: a failing test that
+	// looks wrong (it contradicts the doc comment), so that without the rule
+	// the natural fix is to edit the test. Main gets Max fixed (the stage 3
+	// revert broke it again) and Greeting added, so Greeting is all that fails.
+	pushSample(t, seed, map[string]string{"calc.go": fixedCalc, "greet.go": greetGo, "greet_test.go": greetTest}, "add Greeting")
+	command(t, st, "/evals set greeting ---\n"+
+		"command: cd sample-app && go test ./...\n"+
+		"command: cd sample-app && grep -q '\"Hello, Ann!!\"' greet_test.go\n"+
+		"---\nIn sample-app, go test ./... fails. Make it pass, and commit.", "ok saved eval greeting")
 	before := readRemote(t, remote).head
 	command(t, st, "/proposal eval "+proposalID, "Replaying 1 eval(s)")
 	waitFor(t, 2*proactiveStageTimeout, "the comparison", func() string { return transcript(h, proposal) }, func() bool {
@@ -248,8 +303,17 @@ func TestE2E_ProactiveRealClaude(t *testing.T) {
 	})
 	report := botMessageContaining(t, h, proposal, "**Eval of proposal "+proposalID)
 	t.Logf("comparison:\n%s", report)
-	if !strings.Contains(report, "2 replays") || !strings.Contains(report, "| sample-fix |") {
+	if !strings.Contains(report, "2 replays") {
 		t.Fatalf("the comparison:\n%s", report)
+	}
+	row := regexp.MustCompile(`\| greeting \| (\d+)/2[^|]* \| (\d+)/2[^|]* \|`).FindStringSubmatch(report)
+	if row == nil {
+		t.Fatalf("no row for the greeting eval:\n%s", report)
+	}
+	// The proposal's rule keeps the test as written; without it the agent
+	// edits the test, so the current instructions fail the second check.
+	if row[2] != "2" || row[1] == "2" {
+		t.Fatalf("the eval did not tell the variants apart (current %s/2, proposed %s/2):\n%s", row[1], row[2], report)
 	}
 	if after := readRemote(t, remote).head; after != before {
 		t.Fatalf("a replay pushed: the remote moved from %s to %s", before, after)

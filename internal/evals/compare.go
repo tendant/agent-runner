@@ -50,6 +50,7 @@ type Run struct {
 	Score     int // the reviewer's, 0: none
 	CostUSD   float64
 	Failed    []string // the checks that did not pass, and why
+	Reply     string   // the agent's last reply, to see why it did what it did
 }
 
 // Report is a comparison's outcome.
@@ -170,6 +171,12 @@ func (r *Runner) replay(ctx context.Context, e Eval, variant string, spec *agent
 		switch s.Status {
 		case agent.SessionStatusCompleted, agent.SessionStatusFailed, agent.SessionStatusStopped:
 			run.Status = string(s.Status)
+			for i := len(s.Iterations) - 1; i >= 0; i-- {
+				if out := strings.TrimSpace(s.Iterations[i].Output); out != "" {
+					run.Reply = out
+					break
+				}
+			}
 			run.CostUSD = s.TotalCostUSD
 			if rr, ok := s.ReviewJSON.(*subagent.ReviewResult); ok && rr != nil {
 				run.Score = rr.Score
@@ -252,6 +259,9 @@ func (rep Report) String() string {
 		for _, f := range run.Failed {
 			fails = append(fails, fmt.Sprintf("- %s (%s): %s", run.Eval, run.Variant, f))
 		}
+		if len(run.Failed) > 0 && run.Reply != "" {
+			fails = append(fails, fmt.Sprintf("  - its reply: %s", replyLine(run.Reply, 300)))
+		}
 	}
 	if len(fails) > 0 {
 		b.WriteString("\nNot passed:\n" + strings.Join(fails[:min(len(fails), 20)], "\n") + "\n")
@@ -261,4 +271,13 @@ func (rep Report) String() string {
 		b.WriteString(" Stopped early: " + rep.Stopped + ".")
 	}
 	return b.String()
+}
+
+// replyLine is a reply on one line, cut to n bytes.
+func replyLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		s = s[:n] + "…"
+	}
+	return s
 }

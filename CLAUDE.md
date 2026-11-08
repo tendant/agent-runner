@@ -95,7 +95,7 @@ go test -race ./...
 ```
 - E2E tests in `e2e/` use mock CLI bash scripts prepended to PATH
 - Multi-turn tasks end to end against a real agent-stream server (both built and run as binaries, fake `claude` in `e2e/testdata/mock-claude-tasks.py`): `AGENT_STREAM_SRC=/abs/path/to/agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v` (skipped when unset); add `AGENT_E2E_REAL_CLAUDE=1` and `-run TasksRealClaude -timeout 45m` for the same stack with the real claude CLI (billed, uses the local claude login)
-- The proactive agent end to end on a sample task, on the same stack with the real claude CLI under `AGENT_SANDBOX=strict`. It checks a plan and a yes, a run nobody asked for, a demotion after a revert, and a proposal with its eval. It is billed and needs `CLAUDE_CODE_OAUTH_TOKEN`: `AGENT_E2E_REAL_CLAUDE=1 AGENT_STREAM_SRC=... CLAUDE_CODE_OAUTH_TOKEN=... go test ./e2e -run ProactiveRealClaude -v -timeout 75m`
+- The proactive agent end to end on a sample task, on the same stack with the real claude CLI under `AGENT_SANDBOX=strict`. It checks a plan and a yes, a run nobody asked for, a demotion after a revert, and a proposal with its eval. It is billed and needs `CLAUDE_CODE_OAUTH_TOKEN`: `AGENT_E2E_REAL_CLAUDE=1 AGENT_STREAM_SRC=... CLAUDE_CODE_OAUTH_TOKEN=... go test ./e2e -count=1 -run ProactiveRealClaude -v -timeout 75m`
 - Always run with `-race`; CI also gates on `gofmt -l` and `go vet`
 
 ### Configuration
