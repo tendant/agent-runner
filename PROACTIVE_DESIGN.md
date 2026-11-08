@@ -530,8 +530,20 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
     the report.
 - **Seen live:** a real triage with one class at `notify` returned `execute` with that class, and with
   the sandbox off it was proposed with the reason. `/trust`, `/trust <class> <level>` and the status
-  lines worked. Runs under `AGENT_SANDBOX=strict`, demotion and the probes against real GitHub are
-  covered by tests only.
+  lines worked.
+- **Seen live, under `AGENT_SANDBOX=strict`** (Seatbelt; a local agent-stream; a mock agent that
+  commits; a registered repo with a local remote; triage and the reply judge on the real model):
+  - A due "CI is red" item was triaged `execute` in `ci-fix` (at `notify`), and the run started
+    unasked in a thread of its own.
+  - It pushed its commit, and the run's landed hash and thread were recorded.
+  - A thank-you in the thread changed nothing. "that was wrong: you pushed straight to main without
+    anyone reviewing it" demoted the class to `propose`, with the reason quoted.
+  - After `/trust ci-fix notify`, a second run pushed. A `git revert` of its commit, pushed to the
+    remote, demoted the class at the next 30-minute check, naming both commits.
+  - With the sandbox on and no fast-model API key, triage and the judge run the `claude` CLI
+    inside the sandbox, so its install must be readable there: `AGENT_SANDBOX_READ_ALLOW` must
+    include it (e.g. `~/.local`), or triage falls back to posting the raw report.
+  - The probes against real GitHub are still covered by tests only.
 
 ### 15.4 Phase 4 as built
 
