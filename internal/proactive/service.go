@@ -212,7 +212,7 @@ func (s *Service) Run(ctx context.Context) {
 		case <-t.C:
 		}
 		s.followRuns(ctx)
-		s.checkReverts(ctx)
+		s.checkReverts(ctx, false)
 		set := s.cfg.Settings()
 		if set.Retrospective && s.retroDue() {
 			o := s.Retrospective(ctx)
@@ -235,8 +235,14 @@ func (s *Service) interval(set Settings, p Policy) time.Duration {
 
 // Tick runs one check. force (from /proactive tick) runs it even when the
 // checks are off or in quiet hours, and triages items seen recently; the
-// daily caps still apply.
+// daily caps still apply. A forced check first takes in the runs that
+// finished and looks for reverts of their commits at once, so it acts on
+// the classes' levels as they are now.
 func (s *Service) Tick(ctx context.Context, force bool) Outcome {
+	if force {
+		s.followRuns(ctx)
+		s.checkReverts(ctx, true)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.cfg.Now()

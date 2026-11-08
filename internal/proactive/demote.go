@@ -15,16 +15,17 @@ import (
 // (each look fetches the repos they pushed to).
 const revertCheckEvery = 30 * time.Minute
 
-// checkReverts looks, every 30 minutes, for reverts of the commits the last
-// 7 days' runs pushed, and demotes the class of a run that was reverted.
-func (s *Service) checkReverts(ctx context.Context) {
+// checkReverts looks, every 30 minutes (now, with force), for reverts of the
+// commits the last 7 days' runs pushed, and demotes the class of a run that
+// was reverted.
+func (s *Service) checkReverts(ctx context.Context, force bool) {
 	if s.cfg.Reverts == nil || s.cfg.Trust == nil {
 		return
 	}
 	s.mu.Lock()
 	st := s.load()
 	now := s.cfg.Now()
-	if now.Sub(st.LastRevertCheck) < revertCheckEvery {
+	if !force && now.Sub(st.LastRevertCheck) < revertCheckEvery {
 		s.mu.Unlock()
 		return
 	}

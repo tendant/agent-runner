@@ -63,18 +63,18 @@ func TestRevertDemotes(t *testing.T) {
 	f.svc.cfg.Reverts = rv
 	ctx := context.Background()
 
-	f.svc.checkReverts(ctx)
+	f.svc.checkReverts(ctx, false)
 	if rv.calls != 1 || ts.Level("ci-fix", trust.Notify) != trust.Notify {
 		t.Fatalf("nothing reverted: calls %d level %s", rv.calls, ts.Level("ci-fix", trust.Notify))
 	}
 	// Throttled: not again within 30 minutes.
 	rv.found = []Revert{{Commit: Commit{Repo: "app", SHA: "abc1234def", Subject: "fix the red test"}, By: "fff9999"}}
-	f.svc.checkReverts(ctx)
+	f.svc.checkReverts(ctx, false)
 	if rv.calls != 1 {
 		t.Fatal("looked again within 30 minutes")
 	}
 	f.now = f.now.Add(31 * time.Minute)
-	f.svc.checkReverts(ctx)
+	f.svc.checkReverts(ctx, false)
 	if l := ts.Level("ci-fix", trust.Notify); l != trust.Propose {
 		t.Fatalf("after the revert: %s", l)
 	}
@@ -84,14 +84,20 @@ func TestRevertDemotes(t *testing.T) {
 	}
 	// Once per run: neither another look nor an undo demotes it again.
 	f.now = f.now.Add(31 * time.Minute)
-	f.svc.checkReverts(ctx)
+	f.svc.checkReverts(ctx, false)
 	if f.svc.SessionUndone(ctx, "run-1") != "" || ts.Level("ci-fix", trust.Notify) != trust.Propose {
 		t.Fatalf("demoted twice: %s", ts.Level("ci-fix", trust.Notify))
+	}
+	// /proactive tick looks at once, throttle or not.
+	rv.calls = 0
+	f.svc.Tick(ctx, true)
+	if rv.calls != 0 {
+		t.Fatal("looked at a run that already demoted its class")
 	}
 	// After 7 days a run's commits are no longer watched.
 	rv.calls = 0
 	f.now = f.now.Add(8 * 24 * time.Hour)
-	f.svc.checkReverts(ctx)
+	f.svc.checkReverts(ctx, false)
 	if rv.calls != 0 {
 		t.Fatal("an old run was looked at")
 	}
@@ -177,5 +183,17 @@ func TestRepoReverted(t *testing.T) {
 	}
 	if got, _ := rs.Reverted(context.Background(), "gone", since, commits); len(got) != 0 {
 		t.Fatal("an unregistered repo")
+	}
+}
+
+func TestForcedTickChecksRevertsAtOnce(t *testing.T) {
+	f, ts := startNotifyRun(t)
+	rv := &fakeReverts{}
+	f.svc.cfg.Reverts = rv
+	f.svc.checkReverts(context.Background(), false) // the scheduled look: nothing yet
+	rv.found = []Revert{{Commit: Commit{Repo: "app", SHA: "abc1234def", Subject: "fix the red test"}, By: "fff9999"}}
+	f.svc.Tick(context.Background(), true) // well within 30 minutes
+	if rv.calls != 2 || ts.Level("ci-fix", trust.Notify) != trust.Propose {
+		t.Fatalf("calls %d level %s", rv.calls, ts.Level("ci-fix", trust.Notify))
 	}
 }

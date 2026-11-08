@@ -511,6 +511,14 @@ run tracking in `proactive/service.go`, the `repo-ci` and `repo-commits` probes 
     - Only on agent-stream: a Telegram chat has no thread per run, and quiet runs have none.
     - These calls are not counted against the daily triage cap.
   - **One run demotes its class at most once,** whatever else is found wrong with it.
+  - `/proactive tick` first takes in finished runs and looks for reverts at once, without waiting
+    for the 30-minute schedule, so a forced check acts on the classes' levels as they are now.
+- **End to end:** `e2e/proactive_real_claude_e2e_test.go` runs a sample task (a Go repo whose
+  tests fail) on the real claude CLI under `AGENT_SANDBOX=strict`. It covers a plan and a yes, a
+  run nobody asked for, a demotion after a revert, and a proposal with its eval; it passes in
+  about 4 minutes. A new commit alone gives triage no evidence of a failure (with no `repo-ci`, the
+  model rightly ignored a "refactor" commit), so the test raises the breakage as a due agenda
+  item.
   - A run that never reports back is forgotten after 24 hours.
   - The budget counts the runs' session cost only, not triage calls. It is checked before a run
     starts, so one run can go past it.
