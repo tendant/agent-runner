@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,6 +126,27 @@ func TestSeedDoesNotFollowPlantedLinks(t *testing.T) {
 	if err := seedDir(src, home, ".codex", []string{"settings.json"}); err == nil {
 		if _, err := os.Stat(filepath.Join(runnerDir, "settings.json")); err == nil {
 			t.Error("seeded into the linked runner directory")
+		}
+	}
+}
+
+// A sandboxed pi gets its MCP servers (mcp.json) but never a login: not
+// auth.json and not the MCP OAuth tokens in mcp-auth.json.
+func TestSeedPiMCPServersNotLogins(t *testing.T) {
+	src, home := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(src, "mcp.json"), `{"mcpServers":{"x":{"command":"/bin/x"}}}`)
+	write(t, filepath.Join(src, "mcp-auth.json"), `{"token":"secret"}`)
+	write(t, filepath.Join(src, "auth.json"), `{"key":"secret"}`)
+	if err := seedDir(src, home, filepath.Join(".pi", "agent"), piConfigEntries); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(home, ".pi", "agent")
+	if b, err := os.ReadFile(filepath.Join(dst, "mcp.json")); err != nil || !strings.Contains(string(b), "/bin/x") {
+		t.Errorf("mcp.json not seeded: %v %s", err, b)
+	}
+	for _, name := range []string{"mcp-auth.json", "auth.json"} {
+		if _, err := os.Stat(filepath.Join(dst, name)); err == nil {
+			t.Errorf("%s seeded into the sandbox", name)
 		}
 	}
 }

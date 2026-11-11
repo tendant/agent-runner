@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,12 +84,28 @@ type Client struct {
 	raw    *ringBuffer
 }
 
+// workspaceSkills is where executor.AddSkills puts skills for pi, codex and
+// opencode, relative to the workspace (pi's working directory).
+const workspaceSkills = ".agents/skills"
+
 // Start spawns the pi process bound to the workspace.
 func Start(opts Options) (*Client, error) {
 	if opts.Binary == "" {
 		opts.Binary = "pi"
 	}
 	args := []string{"--mode", "rpc"}
+	// pi 1.x gates project-local resources (.pi/settings.json, .pi/mcp.json,
+	// .pi/extensions, project .agents/skills, ...) behind project trust, and
+	// RPC mode skips them when nothing decided. Decide explicitly: never load
+	// what the workspace supplies (the agent could plant an extension or an
+	// MCP server for its next process), and pass the skills agent-runner
+	// itself put in the workspace by path, which loads them without trust.
+	args = append(args, "--no-approve")
+	if opts.Workspace != "" {
+		if fi, err := os.Stat(filepath.Join(opts.Workspace, workspaceSkills)); err == nil && fi.IsDir() {
+			args = append(args, "--skill", workspaceSkills)
+		}
+	}
 	if opts.SessionDir != "" && opts.SessionID != "" {
 		args = append(args, "--session-dir", opts.SessionDir, "--session-id", opts.SessionID)
 	} else {

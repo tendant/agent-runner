@@ -331,7 +331,8 @@ its `.credentials.json` would break the host login when a copy refreshes the rot
   with egress `none` too.
 * **codex and pi config:** `CODEX_HOME` (`~/.codex`) and `PI_CODING_AGENT_DIR` (`~/.pi/agent`, sessions
   in `~/.pi/sessions`) are in the sandbox home too, seeded from `~/.codex` / `~/.pi/agent` (or
-  `agent-home/`) with `AGENTS.md`, `prompts/`, `skills/` and pi's `settings.json`, never `auth.json`.
+  `agent-home/`) with `AGENTS.md`, `prompts/`, `skills/` and pi's `settings.json` and `mcp.json` (its
+  MCP servers, as claude gets its `mcpServers`), never `auth.json` or pi's `mcp-auth.json`.
 * **Config:** `CLAUDE_CONFIG_DIR` is `/home/agent/.claude` (the thread's sandbox home: writable,
   kept across a task's turns so `--resume` works). Before each run it is refreshed from
   `~/.claude` (or `agent-home/claude` with `AGENT_ISOLATED=true`), copying only `settings.json`,

@@ -11,7 +11,8 @@ chat interfaces (Telegram, Agent Stream, WeChat), scheduled tasks and a REST API
 - Git (repo credentials are given in chat with `/env secret`, not on the host)
 - One agent CLI on `$PATH`: `pi` (default), `claude`, `codex` or `opencode`. `POST /bootstrap`
   (or `/bootstrap` in chat) installs a missing one. On a headless Linux server, opencode also needs
-  `xvfb` (see [docs/agents.md](docs/agents.md#opencode-on-linux-ubuntudebian)).
+  `xvfb` (see [docs/agents.md](docs/agents.md#opencode-on-linux-ubuntudebian)). pi gets the
+  `mcp.json` MCP servers from pi 1.0 on (`npm install -g @earendil-works/pi-coding-agent` upgrades it).
 
 ## Quick start
 

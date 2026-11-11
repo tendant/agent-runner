@@ -80,6 +80,7 @@ func Provision() ([]mcpsetup.Result, error) {
 		ClaudeConfigDir: filepath.Join(dir, "claude"),
 		CodexConfig:     filepath.Join(dir, "codex", "config.toml"),
 		OpencodeConfig:  filepath.Join(dir, "xdg", "opencode", "opencode.json"),
+		PiConfig:        filepath.Join(dir, "pi", "agent", "mcp.json"),
 	}), nil
 }
 
@@ -116,8 +117,7 @@ func seedAuth(dir string) {
 }
 
 // syncSkills copies skills/ into each CLI's skills directory: claude's
-// config dir and pi's agent dir (pi consumes Agent-Skills-standard skills
-// instead of MCP servers).
+// config dir and pi's agent dir.
 func syncSkills(dir string) error {
 	src := SkillsDir
 	if _, err := os.Stat(src); os.IsNotExist(err) {

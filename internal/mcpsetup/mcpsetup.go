@@ -4,7 +4,7 @@
 // Registration is reconciliation: the declaration states which servers each
 // executor should have, and Ensure converges the CLI configs to match —
 // idempotently, using each tool's native mechanism (the claude CLI for
-// claude, config-file merges for codex and opencode).
+// claude, config-file merges for codex, opencode and pi).
 //
 // Security: an MCP registration configures arbitrary command execution, so
 // declarations come only from the operator's mcp.json. Chat commands may
@@ -127,8 +127,7 @@ func Ensure(cli string, cfg *Config) []Result {
 		case "opencode":
 			action, err = ensureOpencodeAt(opencodeConfigPath(), name, srv)
 		case "pi":
-			// pi has no MCP support by design; it consumes skills instead.
-			action = "skipped (pi has no MCP support; use skills)"
+			action, err = ensurePiAt(piConfigPath(), name, srv)
 		default:
 			err = fmt.Errorf("unknown CLI %q", cli)
 		}
@@ -185,12 +184,11 @@ type Paths struct {
 	ClaudeConfigDir string
 	CodexConfig     string
 	OpencodeConfig  string
+	PiConfig        string
 }
 
 // EnsureAll converges every supported client on the declaration, targeted at
 // the given paths — used when provisioning an isolated executor profile.
-// pi is intentionally absent: it has no MCP support (skills are its
-// integration surface, synced separately by agenthome).
 func EnsureAll(cfg *Config, paths Paths) []Result {
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return nil
@@ -209,6 +207,10 @@ func EnsureAll(cfg *Config, paths Paths) []Result {
 	if opencodePath == "" {
 		opencodePath = opencodeConfigPath()
 	}
+	piPath := paths.PiConfig
+	if piPath == "" {
+		piPath = piConfigPath()
+	}
 
 	var results []Result
 	for _, name := range names {
@@ -220,6 +222,7 @@ func EnsureAll(cfg *Config, paths Paths) []Result {
 			{"claude", func() (string, error) { return ensureClaudeIn(paths.ClaudeConfigDir, name, srv) }},
 			{"codex", func() (string, error) { return ensureCodexAt(codexPath, name, srv) }},
 			{"opencode", func() (string, error) { return ensureOpencodeAt(opencodePath, name, srv) }},
+			{"pi", func() (string, error) { return ensurePiAt(piPath, name, srv) }},
 		} {
 			action, err := entry.fn()
 			if err != nil {
@@ -346,6 +349,72 @@ func ensureOpencodeAt(path, name string, srv Server) (string, error) {
 		return "", err
 	}
 	return "registered", nil
+}
+
+// --- pi: merge into the "mcpServers" object of mcp.json (pi 1.0+) ---
+
+// piConfigPath is pi's user-level MCP file: $PI_CODING_AGENT_DIR/mcp.json,
+// ~/.pi/agent/mcp.json by default.
+func piConfigPath() string {
+	if dir := os.Getenv("PI_CODING_AGENT_DIR"); dir != "" {
+		return filepath.Join(expandHome(dir), "mcp.json")
+	}
+	return filepath.Join(homeDir(), ".pi", "agent", "mcp.json")
+}
+
+// ensurePiAt writes the server as a stdio entry in pi's mcp.json, keeping
+// every other entry and key. pi's format is the common mcpServers shape.
+func ensurePiAt(path, name string, srv Server) (string, error) {
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return "", fmt.Errorf("parse %s: %w", path, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	desired := map[string]any{"command": srv.Command}
+	if len(srv.Args) > 0 {
+		desired["args"] = toAnySlice(srv.Args)
+	}
+	if len(srv.Env) > 0 {
+		env := map[string]any{}
+		for k, v := range srv.Env {
+			env[k] = v
+		}
+		desired["env"] = env
+	}
+
+	servers, _ := cfg["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	action := "registered"
+	if existing, ok := servers[name].(map[string]any); ok {
+		// Keep the operator's pi-only settings (exposure, timeout, enabled...)
+		// and compare only the fields the declaration owns.
+		merged := map[string]any{}
+		for k, v := range existing {
+			if k != "command" && k != "args" && k != "env" && k != "url" && k != "type" {
+				merged[k] = v
+			}
+		}
+		for k, v := range desired {
+			merged[k] = v
+		}
+		if reflect.DeepEqual(canonical(existing), canonical(merged)) {
+			return "present", nil
+		}
+		desired = merged
+		action = "updated"
+	}
+	servers[name] = desired
+	cfg["mcpServers"] = servers
+	if err := writeJSON(path, cfg); err != nil {
+		return "", err
+	}
+	return action, nil
 }
 
 // --- helpers ---

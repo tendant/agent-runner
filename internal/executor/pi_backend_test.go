@@ -59,7 +59,7 @@ func TestPiExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := "--mode\nrpc\n--no-session\n--provider\nanthropic\n--model\nclaude-sonnet-5\n"
+	wantArgs := "--mode\nrpc\n--no-approve\n--no-session\n--provider\nanthropic\n--model\nclaude-sonnet-5\n"
 	if string(args) != wantArgs {
 		t.Errorf("args:\n got %q\nwant %q", args, wantArgs)
 	}

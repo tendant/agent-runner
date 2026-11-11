@@ -80,3 +80,51 @@ func TestLiveSessionResume(t *testing.T) {
 		t.Fatal("pi did not restore the conversation")
 	}
 }
+
+// TestLiveWorkspaceSkills runs the real pi (PI_LIVE=1): a skill in the
+// workspace's .agents/skills reaches the model, and one a workspace plants in
+// .pi/skills (trust-gated) does not.
+func TestLiveWorkspaceSkills(t *testing.T) {
+	if os.Getenv("PI_LIVE") == "" {
+		t.Skip()
+	}
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		chunk := func(v any) { b, _ := json.Marshal(v); fmt.Fprintf(w, "data: %s\n\n", b) }
+		chunk(map[string]any{"id": "x", "object": "chat.completion.chunk", "model": "mock", "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": "done"}, "finish_reason": "stop"}}})
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	agentDir := t.TempDir()
+	cfg := fmt.Sprintf(`{"providers":{"mock":{"baseUrl":%q,"api":"openai-completions","apiKey":"x","compat":{"supportsDeveloperRole":false,"supportsReasoningEffort":false},"models":[{"id":"mock-1"}]}}}`, srv.URL+"/v1")
+	os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(cfg), 0o644)
+	ws := t.TempDir()
+	skill := func(dir, name string) {
+		p := filepath.Join(ws, dir, name)
+		os.MkdirAll(p, 0o755)
+		os.WriteFile(filepath.Join(p, "SKILL.md"), []byte("---\nname: "+name+"\ndescription: Use for "+name+" work.\n---\nSteps.\n"), 0o644)
+	}
+	skill(".agents/skills", "runner-provided")
+	skill(".pi/skills", "workspace-planted")
+
+	c, err := Start(Options{Binary: "pi", Provider: "mock", Model: "mock-1", Workspace: ws,
+		Env: []string{"PI_CODING_AGENT_DIR=" + agentDir, "PI_OFFLINE=1", "PI_TELEMETRY=0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := c.Prompt(ctx, "hi"); err != nil {
+		t.Fatalf("prompt: %v\n%s", err, c.StderrTail())
+	}
+	if !strings.Contains(body, "runner-provided") {
+		t.Error("the workspace's .agents/skills skill did not reach the model")
+	}
+	if strings.Contains(body, "workspace-planted") {
+		t.Error("a trust-gated .pi/skills skill was loaded")
+	}
+}

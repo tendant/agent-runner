@@ -108,12 +108,13 @@ func seedDirIn(src string, root *os.Root, rel string, entries []string) error {
 
 // codexConfigEntries and piConfigEntries are what a sandboxed codex or pi gets
 // of its host (or agent-home) config: instructions, prompts and skills, and
-// pi's settings. Never auth.json (logins), config.toml (it can select a
+// pi's settings and MCP servers (mcp.json, as claude gets its mcpServers).
+// Never auth.json or pi's mcp-auth.json (logins), config.toml (it can select a
 // ChatGPT login or other providers) or sessions. pi's models.json is written
 // per run by the model channel (writePiModels).
 var (
 	codexConfigEntries = []string{"AGENTS.md", "prompts", "skills"}
-	piConfigEntries    = []string{"AGENTS.md", "settings.json", "prompts", "skills"}
+	piConfigEntries    = []string{"AGENTS.md", "settings.json", "mcp.json", "prompts", "skills"}
 )
 
 // copyEntry copies a host file or directory tree (src, trusted) to dst

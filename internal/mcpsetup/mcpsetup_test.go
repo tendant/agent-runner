@@ -167,12 +167,61 @@ func TestEnsureUnknownCLI(t *testing.T) {
 	}
 }
 
-func TestEnsurePiSkipped(t *testing.T) {
-	// pi has no MCP support; declarations must be skipped, not errored.
+func TestEnsurePi(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pi", "agent", "mcp.json")
+	// An operator's own server and a pi-only setting on ours must survive.
+	writeFile(t, path, `{"autoEnableCodemode":false,"mcpServers":{"docs":{"url":"https://example.com/mcp"},`+
+		`"maildirx":{"command":"/old","exposure":"direct"}}}`)
+
+	srv := Server{Command: "/bin/maildirx", Args: []string{"mcp"}, Env: map[string]string{"MAIL_ROOT": "/mail"}}
+	action, err := ensurePiAt(path, "maildirx", srv)
+	if err != nil || action != "updated" {
+		t.Fatalf("first ensure: %q, %v", action, err)
+	}
+	var cfg struct {
+		AutoEnableCodemode *bool                     `json:"autoEnableCodemode"`
+		MCPServers         map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(mustRead(t, path)), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoEnableCodemode == nil || *cfg.AutoEnableCodemode {
+		t.Error("top-level key lost")
+	}
+	if cfg.MCPServers["docs"]["url"] != "https://example.com/mcp" {
+		t.Error("operator's server lost")
+	}
+	got := cfg.MCPServers["maildirx"]
+	if got["command"] != "/bin/maildirx" || got["exposure"] != "direct" {
+		t.Errorf("entry = %v", got)
+	}
+	if env, _ := got["env"].(map[string]any); env["MAIL_ROOT"] != "/mail" {
+		t.Errorf("env = %v", got["env"])
+	}
+	if args, _ := got["args"].([]any); len(args) != 1 || args[0] != "mcp" {
+		t.Errorf("args = %v", got["args"])
+	}
+
+	if action, err := ensurePiAt(path, "maildirx", srv); err != nil || action != "present" {
+		t.Fatalf("second ensure: %q, %v", action, err)
+	}
+
+	fresh := filepath.Join(t.TempDir(), "mcp.json")
+	if action, err := ensurePiAt(fresh, "x", Server{Command: "/bin/x"}); err != nil || action != "registered" {
+		t.Fatalf("new file: %q, %v", action, err)
+	}
+}
+
+func TestEnsurePiUsesAgentDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", dir)
 	cfg := &Config{Servers: map[string]Server{"x": {Command: "/bin/x"}}}
 	results := Ensure("pi", cfg)
-	if len(results) != 1 || results[0].Err != nil || !strings.Contains(results[0].Action, "skipped") {
-		t.Fatalf("expected skipped result, got %+v", results)
+	if len(results) != 1 || results[0].Err != nil || results[0].Action != "registered" {
+		t.Fatalf("results = %+v", results)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(dir, "mcp.json")), `"/bin/x"`) {
+		t.Error("server not written to $PI_CODING_AGENT_DIR/mcp.json")
 	}
 }
 

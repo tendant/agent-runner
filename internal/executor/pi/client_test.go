@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -179,5 +182,41 @@ func TestTimeoutAbortsGracefully(t *testing.T) {
 	// kill grace.
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Errorf("abort took %v, expected fast graceful settle", elapsed)
+	}
+}
+
+// pi 1.x: the workspace's own .pi resources are never trusted, and the
+// skills agent-runner put in .agents/skills are passed by path.
+func TestStartTrustAndSkillFlags(t *testing.T) {
+	for _, withSkills := range []bool{false, true} {
+		ws := t.TempDir()
+		if withSkills {
+			if err := os.MkdirAll(filepath.Join(ws, ".agents", "skills", "s"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var got []string
+		c, err := Start(Options{
+			Binary:    os.Args[0],
+			Workspace: ws,
+			Env:       []string{"GO_WANT_FAKE_PI=1"},
+			Command: func(name string, args []string, dir string, env []string) (*exec.Cmd, func(), error) {
+				got = append([]string(nil), args...)
+				cmd := exec.Command(name)
+				cmd.Dir, cmd.Env = dir, append(os.Environ(), env...)
+				return cmd, func() {}, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		joined := strings.Join(got, " ")
+		if !strings.Contains(joined, "--no-approve") {
+			t.Errorf("args %q: want --no-approve", joined)
+		}
+		if hasSkill := strings.Contains(joined, "--skill .agents/skills"); hasSkill != withSkills {
+			t.Errorf("skills dir present=%v, args %q", withSkills, joined)
+		}
 	}
 }

@@ -61,10 +61,18 @@ supply commands):
 ```
 
 On startup the runner reconciles the declaration into the active CLI's own
-config (via `claude mcp add`, `~/.codex/config.toml`, or
-`~/.config/opencode/opencode.json`) — idempotently, so a fresh host or
-container converges on boot. `/install-mcp [name]` triggers the same
-reconciliation from chat.
+config (via `claude mcp add`, `~/.codex/config.toml`,
+`~/.config/opencode/opencode.json`, or pi's `~/.pi/agent/mcp.json`, pi 1.0+)
+— idempotently, so a fresh host or container converges on boot.
+`/install-mcp [name]` triggers the same reconciliation from chat. In pi's
+`mcp.json` the runner owns only `command`, `args` and `env` of a declared
+server; pi-only settings you add to its entry (`exposure`, `timeout`,
+`enabled`, ...) are kept.
+
+pi runs with `--no-approve`: nothing a workspace supplies in `.pi/`
+(settings, `mcp.json`, extensions, skills) is loaded, so an agent cannot
+give its next pi process an extension or an MCP server. The skills the runner
+puts in the workspace's `.agents/skills/` are passed with `--skill`.
 
 ## opencode on Linux (Ubuntu/Debian)
 
