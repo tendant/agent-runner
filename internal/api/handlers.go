@@ -176,6 +176,11 @@ func NewHandlers(
 	h.sandbox = newSandboxRuntime(cfg)
 	h.execEngine.SetSandbox(h.sandbox)
 	h.execEngine.SetLockManager(h.lockManager)
+	if secret, err := execution.LoadJobSecret(filepath.Join(cfg.StateRoot, "job-secret")); err != nil {
+		slog.Warn("job secret not kept: runners' tokens will not survive a restart", "error", err)
+	} else {
+		h.execEngine.SetJobSecret(secret)
+	}
 	return h
 }
 

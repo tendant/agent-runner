@@ -40,6 +40,10 @@ type Backend interface {
 	Alive(ctx context.Context, h Handle) (running bool, failure string, err error)
 }
 
+// SetJobDispatcherURL sets the URL runners on other backends reach this
+// server at (AGENT_JOB_DISPATCHER_URL).
+func (h *Engine) SetJobDispatcherURL(u string) { h.jobURL = u }
+
 // SetBackend sets where sessions run. Call before any session runs; the
 // default is the local backend.
 func (h *Engine) SetBackend(b Backend) { h.backend = b }
@@ -50,10 +54,22 @@ func (h *Engine) SetBackend(b Backend) { h.backend = b }
 func (h *Engine) RunQueued(session *agent.Session) {
 	done := h.runStarted(session.ID)
 	b := h.backend
-	if _, err := b.Start(h.agentManager.Context(), Spec{SessionID: session.ID}); err != nil {
+	spec := Spec{SessionID: session.ID}
+	remote := b.Name() != "local"
+	if remote {
+		// Accept the runner's requests before it can make them.
+		h.registerRemote(session.ID)
+		spec.ReportURL, spec.Token = h.jobURL, h.SessionToken(session.ID)
+	}
+	if _, err := b.Start(h.agentManager.Context(), spec); err != nil {
 		slog.Error("execution backend failed to start session", "backend", b.Name(), "session_id", session.ID, "error", err)
+		if remote {
+			h.endRemote(session.ID)
+		}
 		h.FailSession(session.ID, fmt.Sprintf("could not start the run (%s): %v", b.Name(), err))
 		h.runEnded(session.ID)
+	} else if remote {
+		countRemoteStart(session)
 	}
 	<-done
 }

@@ -131,6 +131,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/lock", handlers.HandleLock)
 	mux.HandleFunc("/lock/", handlers.HandleUnlock)
 	mux.HandleFunc("/locks", handlers.HandleListLocks)
+	mux.HandleFunc(internalSessionsPrefix, handlers.HandleInternalSession)
 	mountAudit(mux, cfg.Agent.SandboxAuditDir)
 
 	// Apply middleware
@@ -646,7 +647,9 @@ func mountAudit(mux *http.ServeMux, dir string) {
 // apiKeyMiddleware validates the X-API-Key header
 func apiKeyMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/metrics" {
+		// Runners authenticate with their session's token instead
+		// (HandleInternalSession).
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, internalSessionsPrefix) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -396,6 +396,15 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 	}
 }
 
+// Ended removes the journal entry of a session whose terminal state came
+// from elsewhere than CompleteSession, FailSession or MarkSessionStopped: a
+// job's result applied to it (JOBS_DESIGN.md §7.2).
+func (m *Manager) Ended(sessionID string) {
+	if m.journal != nil {
+		m.journal.Remove(sessionID)
+	}
+}
+
 // MarkSessionStopped marks a session as stopped at the user's request —
 // a distinct terminal state from completed/failed (see Session.Stop).
 func (m *Manager) MarkSessionStopped(sessionID, reason string) {

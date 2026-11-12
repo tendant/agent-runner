@@ -318,7 +318,23 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   ID, `Alive` asks the engine, `Stop` does nothing (the run honors the stop request itself). The
   scheduler's path (`runner_bridge.go`) still calls `ExecuteAgentWithContext` directly, outside
   the queue; it moves onto the backend with 2e.
-- **2c:** `/internal/sessions/{id}/spec|report|result|control` and per-session tokens (§7, §11).
+- **2c, the dispatcher's endpoints (built).** `internal/api/internal_sessions.go` serves
+  `GET spec`, `POST report`, `POST result` and `GET control?wait=` under `/internal/sessions/{id}/`;
+  the logic is in `execution/dispatch.go`. The routes skip the API key and take
+  `Authorization: Bearer <token>`, where the token is an HMAC of the session ID under
+  `STATE_ROOT/job-secret` (made once, 0600), so it survives a restart (§10). A token works only for
+  a session that `RunQueued` started on a non-local backend; a wrong token and an unknown session
+  both give 401. Reports carry `seq` and apply only when newer. The result is taken once: its
+  snapshot is applied, the journal entry dropped, the session finalized as a local one is, and the
+  worker let go. A retried result answers `duplicate`. After the result every route answers 410,
+  and the runner should exit. Control returns at once on a stop or queued steer messages and
+  otherwise waits (at most 60s); a steer is delivered once. Not yet:
+  - `Engine.Steer` still goes only to local runs; it queues for remote ones with 2e, once the
+    runner reports whether its CLI can steer.
+  - Exec events travel whole in each report, not as a delta (§7.4).
+  - The result shares the server's 32 MiB body cap, so `_send/` files over roughly 24 MiB do not
+    fit; `AGENT_JOB_MAX_OUTPUT_BYTES` and the other `AGENT_JOB_*` settings come with 2d and 2e.
+  - With no API key, the loopback-Host check still applies, which suits `subprocess` but not k8s.
 - **2d:** `agent-runner run-session`.
 - **2e:** the `subprocess` backend; the mock-CLI e2e suites again with
   `AGENT_EXECUTION_BACKEND=subprocess`, plus stop, steer, a killed runner and a dispatcher restart.

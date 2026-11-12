@@ -128,6 +128,13 @@ type Engine struct {
 	// closed when it ends.
 	backend Backend
 	runs    sync.Map
+
+	// The dispatcher's side of runs on other backends (dispatch.go): the
+	// key session tokens derive from, the URL runners reach this server
+	// at, and the remote runs by session ID.
+	jobSecret []byte
+	jobURL    string
+	remote    sync.Map
 }
 
 // SetLockManager wires the advisory lock manager, so leases a session took out
@@ -138,6 +145,7 @@ func (e *Engine) SetLockManager(m *locks.Manager) { e.locks = m }
 func New(cfg *config.Config, mgr *agent.Manager, wm *executor.WorkspaceManager, rl *logging.RunLogger, deps Deps) *Engine {
 	e := &Engine{config: cfg, agentManager: mgr, workspaceManager: wm, runLogger: rl, deps: deps}
 	e.backend = &localBackend{h: e}
+	e.jobSecret = randomSecret()
 	return e
 }
 

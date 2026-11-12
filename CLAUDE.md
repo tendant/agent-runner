@@ -78,6 +78,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `POST /schedule` / `GET /schedules` / `DELETE /schedule/{id}` — scheduled tasks
 - `GET /sessions`, `GET /projects`, `GET /status/{project}`
 - `GET/POST /repos`, `DELETE /repos/{name}` — the repo registry (as `/repo` in chat)
+- `/internal/sessions/{id}/spec|report|result|control` — runners on other execution backends (JOBS_DESIGN.md §7); session bearer token, not the API key
 
 ## Development
 
