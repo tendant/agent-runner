@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"math"
 	"os"
@@ -419,6 +420,7 @@ type BeginReq struct {
 	ThreadID  string
 	RunID     string
 	Project   string          // the project the run works on, if one (the audit record says so)
+	TraceID   string          // the run's trace (W3C trace ID), on its record; Begin takes it from ctx's span when empty
 	Workspace string          // host path of the agent's working directory
 	Layers    []sandbox.Layer // bot/agent/workspace/run layers after the system layer
 	MaxSecond int             // hard wall-clock for the whole run (0 = none)
@@ -505,6 +507,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	}
 	if r.cfg.Mode == sandbox.ModeOff {
 		return &Run{Ctx: ctx, rt: r, req: req, stop: make(chan struct{})}, nil
+	}
+	if sc := trace.SpanContextFromContext(ctx); req.TraceID == "" && sc.HasTraceID() {
+		req.TraceID = sc.TraceID().String()
 	}
 	if req.RunID == "" || req.Workspace == "" {
 		return nil, errors.New("sandbox: run id and workspace required")

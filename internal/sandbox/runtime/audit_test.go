@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -67,9 +68,18 @@ func types(evs []audit.Event) []string {
 	return out
 }
 
+const testTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+// tracedCtx carries a span, as a session's run context does.
+func tracedCtx() context.Context {
+	tid, _ := trace.TraceIDFromHex(testTraceID)
+	sid, _ := trace.SpanIDFromHex("00f067aa0ba902b7")
+	return trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled}))
+}
+
 func TestAuditRecordsARun(t *testing.T) {
 	rt, read, _ := auditRT(t, sandbox.ModePermissive, []sandbox.Gap{{Capability: sandbox.CapResourceMemory, Reason: "no cgroup"}}, Config{Agent: "travel"})
-	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Project: "web-app", Workspace: t.TempDir()})
+	run, err := rt.Begin(tracedCtx(), BeginReq{RunID: "r1", ThreadID: "t1", Project: "web-app", Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +124,12 @@ func TestAuditRecordsARun(t *testing.T) {
 	var created audit.LifecycleDetail
 	json.Unmarshal(evs[1].Detail, &created)
 	if created.Backend != "fake" || created.ThreadID != "t1" || created.Reason != "unenforced: resource.memory" ||
-		created.Agent != "travel" || created.Project != "web-app" {
+		created.Agent != "travel" || created.Project != "web-app" || created.TraceID != testTraceID {
 		t.Errorf("created detail %s", evs[1].Detail)
 	}
 	var closed audit.LifecycleDetail
 	json.Unmarshal(evs[len(evs)-1].Detail, &closed)
-	if closed.Agent != "" || closed.Project != "" {
+	if closed.Agent != "" || closed.Project != "" || closed.TraceID != "" {
 		t.Errorf("whose run it is belongs on the start, not every lifecycle event: %s", evs[len(evs)-1].Detail)
 	}
 	if len(rt.auditRuns) != 0 {
@@ -131,13 +141,18 @@ func TestAuditRecordsARun(t *testing.T) {
 // refused under.
 func TestAuditRecordsARejection(t *testing.T) {
 	rt, read, _ := auditRT(t, sandbox.ModeStrict, []sandbox.Gap{{Capability: sandbox.CapResourceMemory}}, Config{})
-	if _, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()}); err == nil {
+	if _, err := rt.Begin(tracedCtx(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()}); err == nil {
 		t.Fatal("strict run with gaps started")
 	}
 	evs := read()
 	if len(evs) != 2 || evs[0].Type != audit.TypePolicySnapshot || evs[1].Type != audit.TypeSandboxRejected ||
 		evs[1].PolicyID == "" || evs[1].PolicyID != evs[0].PolicyID {
 		t.Fatalf("events %+v", evs)
+	}
+	var rejected audit.LifecycleDetail
+	json.Unmarshal(evs[1].Detail, &rejected)
+	if rejected.TraceID != testTraceID {
+		t.Errorf("rejected detail %s: no trace", evs[1].Detail)
 	}
 	if len(rt.auditRuns) != 0 {
 		t.Errorf("refused run still followed: %v", rt.auditRuns)

@@ -1,0 +1,25 @@
+# Local development services for agent-runner (run agent-runner itself with
+# `go run ./cmd/server`).
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Jaeger: a trace per session (docs/api.md, Traces). With it up, set in .env:
+#
+#   TRACING_ENABLED=true
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+#
+# and open http://localhost:16686 (service "agent-runner"). agent-gate links
+# runs to their traces with AGENTGATE_TRACE_URL=http://localhost:16686/trace/{trace_id}.
+# Traces are kept in memory: they are gone when the container stops.
+services:
+  jaeger:
+    image: jaegertracing/jaeger:2.0.0
+    container_name: agent-runner-jaeger
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    volumes:
+      - ./dev/jaeger.yaml:/etc/jaeger/config.yaml:ro
+    ports:
+      - "127.0.0.1:16686:16686" # UI and query API
+      - "127.0.0.1:4317:4317"   # OTLP gRPC (OTEL_EXPORTER_OTLP_PROTOCOL=grpc)
+      - "127.0.0.1:4318:4318"   # OTLP HTTP (the default protocol)
+    restart: unless-stopped

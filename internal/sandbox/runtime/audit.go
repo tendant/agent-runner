@@ -17,6 +17,7 @@ import (
 type auditRun struct {
 	thread  string
 	project string
+	trace   string // the run's trace ID
 	policy  string // the snapshot digest its events carry
 	started bool
 }
@@ -48,7 +49,7 @@ func (r *Runtime) auditPolicy(req BeginReq, spec sandbox.SandboxSpec, res sandbo
 		slog.Error("sandbox audit: policy snapshot not recorded", "run", req.RunID, "error", err)
 	}
 	r.auditMu.Lock()
-	r.auditRuns[req.RunID] = &auditRun{thread: req.ThreadID, project: req.Project, policy: id}
+	r.auditRuns[req.RunID] = &auditRun{thread: req.ThreadID, project: req.Project, trace: req.TraceID, policy: id}
 	r.auditMu.Unlock()
 }
 
@@ -101,16 +102,17 @@ func (r *Runtime) auditLifecycle(e Event) {
 	if a := r.auditRuns[e.RunID]; a != nil && typ == audit.TypeSandboxCreated {
 		a.started = true
 	}
-	// Whose run it is, where the record starts: created, or refused.
-	var project string
+	// Whose run it is, and its trace, where the record starts: created, or
+	// refused.
+	var project, traceID string
 	if a := r.auditRuns[e.RunID]; a != nil {
-		project = a.project
+		project, traceID = a.project, a.trace
 	}
 	r.auditMu.Unlock()
 	for _, id := range runs {
 		d := audit.LifecycleDetail{Backend: e.Backend, ThreadID: e.ThreadID, Reason: e.Detail, Usage: e.Usage}
 		if typ == audit.TypeSandboxCreated || typ == audit.TypeSandboxRejected {
-			d.Agent, d.Project = r.cfg.Agent, project
+			d.Agent, d.Project, d.TraceID = r.cfg.Agent, project, traceID
 		}
 		r.audit(id, typ, d)
 	}
