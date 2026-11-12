@@ -328,23 +328,20 @@ func TestSessionServices(t *testing.T) {
 	}
 }
 
-// A secret the sandbox's gateway injects is not the agent's: it leaves the
-// prompt's list and the environment, and the prompt says which host is
-// signed in for it.
-func TestInjectedSecretsLeaveTheAgent(t *testing.T) {
-	secrets := []agentsecrets.Secret{{Name: "GITHUB_TOKEN", Value: "a"}, {Name: "NPM_TOKEN", Value: "b"}}
-	kept := withoutSecrets(secrets, []string{"GITHUB_TOKEN"})
-	if len(kept) != 1 || kept[0].Name != "NPM_TOKEN" {
-		t.Fatalf("kept %v", kept)
-	}
-	if got := withoutSecrets(secrets, nil); len(got) != 2 {
-		t.Errorf("nothing withheld: %v", got)
-	}
-	got := runtimeInstructions(runtimeFacts{Secrets: kept, Injected: []sandbox.InjectGrant{{Host: "api.github.com", Header: "Authorization", Credentials: []string{"GITHUB_TOKEN"}}}})
-	if !strings.Contains(got, "`api.github.com`: Authorization from `$GITHUB_TOKEN`") || !strings.Contains(got, "Signed in for you") {
+// The prompt names the hosts the sandbox's gateway signs in to, and never
+// the runner's credential as something in the agent's environment.
+func TestRuntimeInstructionsInjected(t *testing.T) {
+	got := runtimeInstructions(runtimeFacts{
+		Secrets:  []agentsecrets.Secret{{Name: "NPM_TOKEN", Value: "b"}},
+		Injected: []sandbox.InjectGrant{{Host: "api.github.com", Header: "Authorization", Credentials: []string{"GITHUB_API_TOKEN"}}},
+	})
+	if !strings.Contains(got, "Signed in for you") || !strings.Contains(got, "- `api.github.com` (Authorization)") {
 		t.Errorf("prompt:\n%s", got)
 	}
-	if strings.Contains(got, "- `$GITHUB_TOKEN`") {
-		t.Error("the injected secret is still listed as the agent's")
+	if strings.Contains(got, "GITHUB_API_TOKEN") {
+		t.Error("the runner's credential is named to the agent")
+	}
+	if !strings.Contains(got, "- `$NPM_TOKEN`") {
+		t.Error("the agent's own secret is not listed")
 	}
 }

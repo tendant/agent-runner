@@ -54,9 +54,11 @@ type Config struct {
 	Instance      string // runner instance id
 	AgentboxRunsc string // Linux: agentbox's runsc (default /usr/local/bin/runsc, else PATH)
 	// Inject are the credentials the egress gateway adds to HTTPS requests
-	// (AGENT_SANDBOX_INJECT), from each run's secrets (BeginReq.Secrets),
-	// which the sandbox then does not get (Run.Withheld).
-	Inject []sandbox.Inject
+	// (AGENT_SANDBOX_INJECT). InjectSecret looks up the runner's own secret a
+	// rule names (/config secret, else its environment), at each run; the
+	// agent's /env is never consulted, so its secrets stay its own.
+	Inject       []sandbox.Inject
+	InjectSecret func(name string) (string, bool)
 	// Services are the fixed upstreams runs may reach by name
 	// (AGENT_SANDBOX_SERVICES), on the system layer: a run whose policy has
 	// network gets them, and lower layers may only drop some.
@@ -456,10 +458,10 @@ type BeginReq struct {
 	Workspace string          // host path of the agent's working directory
 	Layers    []sandbox.Layer // bot/agent/workspace/run layers after the system layer
 	MaxSecond int             // hard wall-clock for the whole run (0 = none)
-	// Secrets are the agent's secret values, by name, for the gateway's
-	// credential injection (Config.Inject); nil for a run that is not an
-	// agent session, which gets no injection. Never logged or recorded.
-	Secrets map[string]string
+	// Inject: the run is an agent session that may use the gateway's
+	// credential injection (Config.Inject). Not the model fallback, not an
+	// eval replay.
+	Inject bool
 }
 
 // RejectedError is returned when a strict run cannot start.
@@ -483,7 +485,7 @@ type Run struct {
 	backend  string
 	model    *modelRun // the run's model channels, if any
 	services *serviceRun
-	withheld []string // the secrets the gateway injects, kept from the sandbox
+	injected map[string]string // the credentials the gateway adds, by name, for redaction
 	egress   *egressLog
 	usageMu  sync.Mutex
 	usage    *audit.ResourceUsage // over the run's measured sandboxes
@@ -623,10 +625,10 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	// system root bundle to add it to cannot inspect: the run goes on with
 	// hosts only, and says so.
 	// Credential injection: the gateway adds each rule's header to its
-	// host's HTTPS requests, with the run's secrets; those secrets are
-	// withheld from the sandbox. Injection needs inspection: of only the
-	// rules' hosts when inspection is otherwise off.
-	injectRules, withheld := r.injectRules(&spec, req)
+	// host's HTTPS requests, with the runner's own secrets, which never
+	// enter the sandbox. Injection needs inspection: of only the rules'
+	// hosts when inspection is otherwise off.
+	injectRules, injectedValues := r.injectRules(&spec, req)
 	var inspector *abegress.Inspector
 	var trustEnv []string
 	if spec.Network.EgressInspect {
@@ -636,10 +638,9 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			r.emit(Event{Kind: "sandbox.inspect_unavailable", RunID: req.RunID, ThreadID: req.ThreadID, Detail: err.Error()})
 			spec.Network.EgressInspect, spec.Network.EgressInspectExcept, spec.Network.EgressInspectOnly = false, nil, nil
 			if len(injectRules) > 0 {
-				// Its secrets stay withheld: the agent's requests go
-				// unauthenticated rather than with a key it holds.
+				// The agent's requests go unauthenticated.
 				r.emit(Event{Kind: "sandbox.inject_unavailable", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "no inspection: " + err.Error()})
-				injectRules, spec.Network.Inject = nil, nil
+				injectRules, injectedValues, spec.Network.Inject = nil, nil, nil
 			}
 		}
 	}
@@ -700,7 +701,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	}
 	runCtx, cancelCause := context.WithCancelCause(runCtx)
 	cancel := func() { cancelCause(nil) }
-	run := &Run{rt: r, req: req, Spec: spec, withheld: withheld, cancel: cancel, stop: make(chan struct{}), roots: roots, releaseT: releaseThread, started: time.Now(), backend: res.Backend, egress: egress}
+	run := &Run{rt: r, req: req, Spec: spec, injected: injectedValues, cancel: cancel, stop: make(chan struct{}), roots: roots, releaseT: releaseThread, started: time.Now(), backend: res.Backend, egress: egress}
 	go func() { // keep the sandbox lease alive while the run is active
 		t := time.NewTicker(r.cfg.LeaseTTL / 3)
 		defer t.Stop()
@@ -1030,37 +1031,42 @@ func serviceNames(svs []sandbox.Service) []string {
 	return out
 }
 
-// Withheld are the secrets the run's gateway injects (AGENT_SANDBOX_INJECT):
-// the session must not hand them to the sandbox.
-func (run *Run) Withheld() []string {
+// InjectedSecrets are the credentials the run's gateway adds to requests
+// (AGENT_SANDBOX_INJECT), by name: what the session redacts from what the
+// agent says, as a service may echo one back.
+func (run *Run) InjectedSecrets() map[string]string {
 	if run == nil {
 		return nil
 	}
-	return run.withheld
+	return run.injected
 }
 
 // injectRules builds the run's credential injection from Config.Inject and
-// the run's secrets, and records it on spec (names, never values). A rule
-// whose secret the run lacks is skipped and said so; its secrets are
-// withheld all the same.
-func (r *Runtime) injectRules(spec *sandbox.SandboxSpec, req BeginReq) ([]abegress.InjectRule, []string) {
-	if len(r.cfg.Inject) == 0 || spec.Network.Egress != sandbox.EgressRestricted || req.Secrets == nil {
-		return nil, nil // nil Secrets: not a session (the model fallback, an eval)
+// the runner's secrets, and records it on spec (names, never values). A rule
+// whose secret the runner lacks is skipped and said so.
+func (r *Runtime) injectRules(spec *sandbox.SandboxSpec, req BeginReq) ([]abegress.InjectRule, map[string]string) {
+	if len(r.cfg.Inject) == 0 || spec.Network.Egress != sandbox.EgressRestricted || !req.Inject || r.cfg.InjectSecret == nil {
+		return nil, nil
 	}
 	var rules []abegress.InjectRule
-	var withheld, hosts []string
+	var hosts []string
+	values := map[string]string{}
 	for _, in := range r.cfg.Inject {
 		names := in.Secrets()
+		secrets := map[string]string{}
 		for _, n := range names {
-			if !slices.Contains(withheld, n) {
-				withheld = append(withheld, n)
+			if v, ok := r.cfg.InjectSecret(n); ok {
+				secrets[n] = v
 			}
 		}
-		v, ok := in.Expand(req.Secrets)
+		v, ok := in.Expand(secrets)
 		if !ok {
 			r.emit(Event{Kind: "sandbox.inject_unavailable", RunID: req.RunID, ThreadID: req.ThreadID,
-				Detail: in.Host + ": the agent has no " + strings.Join(names, ", ") + " (/env secret)"})
+				Detail: in.Host + ": agent-runner has no " + strings.Join(names, ", ") + " (/config secret)"})
 			continue
+		}
+		for _, n := range names {
+			values[n] = secrets[n]
 		}
 		header := http.CanonicalHeaderKey(in.Header)
 		rules = append(rules, abegress.InjectRule{Host: in.Host, Header: header, Value: v, Name: strings.Join(names, ",")})
@@ -1070,5 +1076,5 @@ func (r *Runtime) injectRules(spec *sandbox.SandboxSpec, req BeginReq) ([]abegre
 	if len(rules) > 0 && !spec.Network.EgressInspect {
 		spec.Network.EgressInspect, spec.Network.EgressInspectOnly = true, hosts
 	}
-	return rules, withheld
+	return rules, values
 }

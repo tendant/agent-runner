@@ -642,6 +642,10 @@ func (c *Commander) handleConfigCommand(arg string) string {
 		return c.handleConfigSet(strings.TrimSpace(rest))
 	case "unset":
 		return c.handleConfigUnset(strings.TrimSpace(rest))
+	case "secret":
+		return c.handleConfigSecret(arg)
+	case "secrets":
+		return c.handleConfigSecrets()
 	}
 	return "error: " + configUsage
 }
@@ -704,6 +708,11 @@ func (c *Commander) handleConfigSet(args string) string {
 func (c *Commander) handleConfigUnset(key string) string {
 	if key == "" || strings.ContainsAny(key, " =") {
 		return "error: usage: /config unset KEY"
+	}
+	if was, err := c.unsetRunnerSecret(key); err != nil {
+		return "error: " + err.Error()
+	} else if was {
+		return "agent-runner: its secret " + key + " removed, from the next session."
 	}
 	if err := checkSettingName(key); err != nil {
 		return "error: " + err.Error()
@@ -1320,7 +1329,7 @@ func checkSettingName(name string) error {
 }
 
 // configUsage is /config's usage.
-const configUsage = "usage: /config  ·  /config set KEY VALUE  ·  /config unset KEY  ·  /config help"
+const configUsage = "usage: /config  ·  /config set KEY VALUE  ·  /config unset KEY  ·  /config secret NAME VALUE  ·  /config secrets  ·  /config help"
 
 // configHelp is /config help (and /help config).
 const configHelp = `**/config** is agent-runner itself: how it runs agents (its model and key, its CLI, limits,
@@ -1331,6 +1340,8 @@ need is /env.
 **Change one:** /config set AGENT\_CLI claude · /config set DEEPSEEK\_API\_KEY \<key\> ·
 /config set AGENT\_MAX\_ITERATION\_SECONDS 900
 **Drop one:** /config unset AGENT\_MAX\_ITERATION\_SECONDS (.env or the default applies again)
+**Its own secrets:** /config secret NAME VALUE · /config secrets — credentials it adds to the
+agent's HTTPS requests itself (AGENT\_SANDBOX\_INJECT), so the agent never holds them
 
 Only settings agent-runner reads are taken (.env.example lists them): anything else would be
 saved and never read, and is refused with a pointer to /env. Most apply at once; the reply says

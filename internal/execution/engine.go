@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -177,20 +176,6 @@ func (h *Engine) SetProposals(p ProposalSink) { h.proposals = p }
 // SetSandbox installs the sandbox runtime (nil = host execution).
 func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 
-// withoutSecrets is secrets less the names in drop.
-func withoutSecrets(secrets []agentsecrets.Secret, drop []string) []agentsecrets.Secret {
-	if len(drop) == 0 {
-		return secrets
-	}
-	var out []agentsecrets.Secret
-	for _, s := range secrets {
-		if !slices.Contains(drop, s.Name) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // injectedGrants are the credentials the run's gateway adds to requests.
 func injectedGrants(run *sandboxrt.Run) []sandbox.InjectGrant {
 	if run == nil {
@@ -238,7 +223,7 @@ func (h *Engine) sandboxed() bool { return h.sandbox != nil && h.sandbox.Mode() 
 // strict-mode rejection fails the session before any work starts. egress
 // reports what the run's egress gateway allowed and refused (nil without a
 // sandbox).
-func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int, secrets []agentsecrets.Secret) (_ context.Context, run *sandboxrt.Run, aborted bool) {
+func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent.Session, checkoutPath string, maxSeconds int) (_ context.Context, run *sandboxrt.Run, aborted bool) {
 	if h.sandbox == nil || h.sandbox.Mode() == "off" {
 		return ctx, nil, false
 	}
@@ -251,13 +236,8 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 	if live.TaskWorkspace != "" {
 		thread = filepath.Base(live.TaskWorkspace) // all turns of a task share a Thread
 	}
-	req := sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds}
-	if live.Eval == nil { // an eval replay holds no secrets, so injects none
-		req.Secrets = map[string]string{}
-		for _, sec := range secrets {
-			req.Secrets[sec.Name] = sec.Value
-		}
-	}
+	// An eval replay acts on nothing outside its workspace: no credentials.
+	req := sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds, Inject: live.Eval == nil}
 	if live.Eval != nil {
 		// An eval replay reaches nothing outside its workspace: no services.
 		req.Layers = []sandbox.Layer{{Name: sandbox.LayerRun, Spec: sandbox.SandboxSpec{Version: sandbox.SpecVersion,
@@ -557,17 +537,13 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 		// would reach: no secrets, and no self-push (evalRepos).
 		agentSecrets = nil
 	}
-	ctx, sandboxRun, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds, agentSecrets)
+	ctx, sandboxRun, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
 	if sandboxAborted {
 		return
 	}
-	// The secrets the sandbox's gateway adds to requests itself
-	// (AGENT_SANDBOX_INJECT) are not the agent's to hold: kept out of its
-	// environment and its prompt's list, still redacted from what it says.
-	cliSecrets := withoutSecrets(agentSecrets, sandboxRun.Withheld())
 	// Where the network services are (AGENT_SANDBOX_SERVICES): their own
 	// addresses; a sandbox sets its service ports over them.
-	sessionEnv := agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), cliSecrets...), h.config.Agent.CLI)
+	sessionEnv := agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), agentSecrets...), h.config.Agent.CLI)
 	for _, sv := range h.configuredServices() {
 		addr := sv.Upstream
 		if eval != nil {
@@ -577,7 +553,14 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 	}
 	ctx = executor.WithSessionEnv(ctx, sessionEnv)
 	// What the agent says is recorded and forwarded without secret values.
-	redactor := agentsecrets.NewRedactor(agentSecrets)
+	// The credentials the sandbox's gateway adds to requests (agent-runner's
+	// own, AGENT_SANDBOX_INJECT) are never the agent's, yet a service can
+	// echo one back: redacted as its secrets are.
+	redactSecrets := append([]agentsecrets.Secret{}, agentSecrets...)
+	for name, v := range sandboxRun.InjectedSecrets() {
+		redactSecrets = append(redactSecrets, agentsecrets.Secret{Name: name, Value: v})
+	}
+	redactor := agentsecrets.NewRedactor(redactSecrets)
 	liveSession.SetRedactor(redactor.Redact)
 	sessionRedact = redactor.Redact
 	spanRedaction.Set(redactor.Redact)
@@ -612,7 +595,7 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: cliSecrets, Injected: injectedGrants(sandboxRun), Env: agentPlain, Repos: evalRepos(h.registeredRepos(), eval), ChatThread: chatThread, Proposals: proposalTargetsFor(h, eval), Services: h.sessionServices(sandboxRun, eval != nil)})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Injected: injectedGrants(sandboxRun), Env: agentPlain, Repos: evalRepos(h.registeredRepos(), eval), ChatThread: chatThread, Proposals: proposalTargetsFor(h, eval), Services: h.sessionServices(sandboxRun, eval != nil)})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 

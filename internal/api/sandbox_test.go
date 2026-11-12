@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"os"
 	"path/filepath"
 	"slices"
@@ -214,5 +215,31 @@ func TestSandboxDeepSeekChannel(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	if _, ok := sandboxModelChannels(cfg)["deepseek"]; ok {
 		t.Error("no key, no channel")
+	}
+}
+
+// An inject rule's secret is agent-runner's own: /config secret's file
+// first, then its environment; never the agent's /env.
+func TestRunnerSecretLookup(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{RunnerSecretsFile: filepath.Join(dir, "runner-secrets.json"), SecretsFile: filepath.Join(dir, "secrets.json")}
+	agentsecrets.New(cfg.SecretsFile).Set("AGENTS_ONLY", "agent-value", "")
+	agentsecrets.New(cfg.RunnerSecretsFile).Set("GITHUB_API_TOKEN", "from-file", "")
+	t.Setenv("GITHUB_API_TOKEN", "from-env")
+	t.Setenv("DEPLOY_ONLY", "deploy-value")
+	look := runnerSecret(cfg)
+	if v, ok := look("GITHUB_API_TOKEN"); !ok || v != "from-file" {
+		t.Errorf("file first: %q %v", v, ok)
+	}
+	if v, ok := look("DEPLOY_ONLY"); !ok || v != "deploy-value" {
+		t.Errorf("environment: %q %v", v, ok)
+	}
+	if v, ok := look("AGENTS_ONLY"); ok {
+		t.Errorf("the agent's secret was used: %q", v)
+	}
+	// A new one applies without a restart.
+	agentsecrets.New(cfg.RunnerSecretsFile).Set("LATER", "x", "")
+	if _, ok := look("LATER"); !ok {
+		t.Error("a secret added later was not found")
 	}
 }

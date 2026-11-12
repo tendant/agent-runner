@@ -42,8 +42,13 @@ type Config struct {
 	RescueRetention time.Duration
 	MemoryDir       string // Convention: ./memory (seeded defaults + daily logs + curated memory)
 	SecretsFile     string // DATA_DIR/secrets.json: the agent's secrets (/env secret), apart from the runner's .env
-	EnvFile         string // DATA_DIR/env.json: the agent's plain settings (/env set)
-	ReposFile       string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
+	// RunnerSecretsFile (STATE_ROOT/runner-secrets.json) holds agent-runner's
+	// own secrets (/config secret): credentials the runner uses for the agent
+	// and never hands it, such as the ones the sandbox's gateway adds to
+	// requests (AGENT_SANDBOX_INJECT).
+	RunnerSecretsFile string
+	EnvFile           string // DATA_DIR/env.json: the agent's plain settings (/env set)
+	ReposFile         string // DATA_DIR/repos.json: the repos agents work on (/repo; REPOS_DESIGN.md)
 
 	// Execution limits
 	MaxRuntimeSeconds int
@@ -298,6 +303,7 @@ func defaultConfigForDataDir(data string) *Config {
 		RescueRetention:          30 * 24 * time.Hour,
 		MemoryDir:                filepath.Join(data, "memory"),
 		SecretsFile:              filepath.Join(data, "secrets.json"),
+		RunnerSecretsFile:        filepath.Join(data, "state", "runner-secrets.json"),
 		EnvFile:                  filepath.Join(data, "env.json"),
 		ReposFile:                filepath.Join(data, "repos.json"),
 		MaxRuntimeSeconds:        300,
@@ -430,6 +436,7 @@ func LoadFromEnv() (*Config, error) {
 
 	cfg.RepoCacheRoot = envOrDefault("REPO_CACHE_ROOT", cfg.RepoCacheRoot)
 	cfg.StateRoot = envOrDefault("STATE_ROOT", cfg.StateRoot)
+	cfg.RunnerSecretsFile = filepath.Join(cfg.StateRoot, "runner-secrets.json")
 	cfg.LogsRoot = envOrDefault("LOGS_ROOT", cfg.LogsRoot)
 	cfg.TmpRoot = envOrDefault("TMP_ROOT", cfg.TmpRoot)
 	cfg.OutputsRoot = envOrDefault("OUTPUTS_ROOT", cfg.OutputsRoot)
@@ -705,6 +712,7 @@ func (c *Config) copyFrom(n *Config) {
 	c.RescueRetention = n.RescueRetention
 	c.MemoryDir = n.MemoryDir
 	c.SecretsFile = n.SecretsFile
+	c.RunnerSecretsFile = n.RunnerSecretsFile
 	c.EnvFile = n.EnvFile
 	c.ReposFile = n.ReposFile
 	c.MaxRuntimeSeconds = n.MaxRuntimeSeconds

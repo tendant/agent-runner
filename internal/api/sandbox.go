@@ -102,6 +102,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		EgressAllow:   cfg.Agent.SandboxEgressAllow,
 		Services:      services,
 		Inject:        injects,
+		InjectSecret:  runnerSecret(cfg),
 		EgressReport:  cfg.Agent.SandboxEgressEnforce == "report",
 		EgressInspect: cfg.Agent.SandboxEgressInspect == "on",
 		InspectExcept: cfg.Agent.SandboxInspectExcept,
@@ -154,6 +155,9 @@ func sandboxPrivatePaths(cfg *config.Config) []string {
 		// Agent secrets reach the sandbox as environment variables, by
 		// name; the file holding them all is not the agent's to read.
 		paths = append(paths, cfg.SecretsFile, agentsecrets.FilesDir(cfg.SecretsFile))
+	}
+	if cfg.RunnerSecretsFile != "" {
+		paths = append(paths, cfg.RunnerSecretsFile) // under STATE_ROOT too, unless moved
 	}
 	if cfg.Agent.SandboxAuditDir != "" {
 		// The record of what runs did is not theirs to read.
@@ -467,4 +471,26 @@ func auditSource(host, agent string) string {
 		return "agent-runner:" + host
 	}
 	return "agent-runner:" + host + ":" + agent
+}
+
+// runnerSecret looks up one of agent-runner's own secrets for credential
+// injection: in /config secret's file (read at each run, so a new one
+// applies from the next session), else in its own environment (a
+// deployment's, like the model keys). Never the agent's /env.
+func runnerSecret(cfg *config.Config) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		if cfg.RunnerSecretsFile != "" {
+			if list, err := agentsecrets.New(cfg.RunnerSecretsFile).List(); err == nil {
+				for _, s := range list {
+					if s.Name == name && s.Value != "" {
+						return s.Value, true
+					}
+				}
+			} else {
+				slog.Warn("runner secrets unreadable", "file", cfg.RunnerSecretsFile, "error", err)
+			}
+		}
+		v, ok := os.LookupEnv(name)
+		return v, ok && v != ""
+	}
 }

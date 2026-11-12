@@ -163,35 +163,52 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// A run's credential injection: its rules from the run's secrets, on its
-// policy by name, inspection turned on for their hosts only, and their
-// secrets withheld from the sandbox; a rule whose secret the run lacks is
-// skipped, its secret still withheld.
+// A run's credential injection: its rules from the runner's secrets (never
+// the agent's), on its policy by name, inspection turned on for their hosts
+// only, and the values handed back for redaction; a rule whose secret the
+// runner lacks is skipped and said so; a run that is not a session gets none.
 func TestInjectRules(t *testing.T) {
-	ins, _ := sandbox.ParseInjects("api.github.com:Authorization=Bearer $GITHUB_TOKEN;gitea.example.com:Authorization=token $GITEA_TOKEN")
+	ins, _ := sandbox.ParseInjects("api.github.com:Authorization=Bearer $GITHUB_API_TOKEN;gitea.example.com:Authorization=token $GITEA_TOKEN")
 	var events []string
-	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Inject: ins, OnEvent: func(e Event) { events = append(events, e.Kind+" "+e.Detail) }})
-	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", Workspace: t.TempDir(), Secrets: map[string]string{"GITHUB_TOKEN": "ghp_real", "OTHER": "x"}})
+	lookup := func(n string) (string, bool) {
+		if n == "GITHUB_API_TOKEN" {
+			return "ghp_real", true
+		}
+		return "", false
+	}
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Inject: ins, InjectSecret: lookup,
+		OnEvent: func(e Event) { events = append(events, e.Kind+" "+e.Detail) }})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", Workspace: t.TempDir(), Inject: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer run.Finish()
 	n := run.Spec.Network
-	if len(n.Inject) != 1 || n.Inject[0].Host != "api.github.com" || n.Inject[0].Header != "Authorization" || n.Inject[0].Credentials[0] != "GITHUB_TOKEN" {
+	if len(n.Inject) != 1 || n.Inject[0].Host != "api.github.com" || n.Inject[0].Header != "Authorization" || n.Inject[0].Credentials[0] != "GITHUB_API_TOKEN" {
 		t.Errorf("inject %+v", n.Inject)
 	}
 	if !n.EgressInspect || len(n.EgressInspectOnly) != 1 || n.EgressInspectOnly[0] != "api.github.com" {
 		t.Errorf("inspect %v only %v", n.EgressInspect, n.EgressInspectOnly)
 	}
-	if w := run.Withheld(); len(w) != 2 || w[0] != "GITHUB_TOKEN" || w[1] != "GITEA_TOKEN" {
-		t.Errorf("withheld %v", w)
+	if v := run.InjectedSecrets(); len(v) != 1 || v["GITHUB_API_TOKEN"] != "ghp_real" {
+		t.Errorf("for redaction: %v", v)
 	}
-	if !strings.Contains(strings.Join(events, "\n"), "sandbox.inject_unavailable gitea.example.com: the agent has no GITEA_TOKEN") {
+	if !strings.Contains(strings.Join(events, "\n"), "sandbox.inject_unavailable gitea.example.com: agent-runner has no GITEA_TOKEN") {
 		t.Errorf("events %v", events)
 	}
 	for _, e := range read() {
 		if strings.Contains(string(e.Detail), "ghp_real") {
 			t.Errorf("a secret value on the record: %s %s", e.Type, e.Detail)
 		}
+	}
+
+	// Not a session (the model fallback, an eval replay): no injection.
+	other, err := rt.Begin(context.Background(), BeginReq{RunID: "r2", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Finish()
+	if other.Spec.Network.Inject != nil || other.InjectedSecrets() != nil {
+		t.Errorf("a non-session run injects: %+v", other.Spec.Network.Inject)
 	}
 }

@@ -146,10 +146,10 @@ func runtimeInstructions(f runtimeFacts) string {
 	}
 
 	if len(f.Injected) > 0 {
-		b.WriteString("\nSigned in for you (agent-runner adds the credential to each HTTPS request to the host, so it is not\n" +
-			"in your environment; send these requests without one, and use https):\n\n")
+		b.WriteString("\nSigned in for you: agent-runner adds its own credential to each HTTPS request to these hosts.\n" +
+			"Send them without one (it would be replaced), over https:\n\n")
 		for _, g := range f.Injected {
-			b.WriteString("- `" + g.Host + "`: " + g.Header + " from `$" + strings.Join(g.Credentials, "`, `$") + "`\n")
+			b.WriteString("- `" + g.Host + "` (" + g.Header + ")\n")
 		}
 	}
 
