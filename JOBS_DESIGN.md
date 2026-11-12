@@ -1,6 +1,6 @@
 # Session Jobs — Design
 
-Status: draft · Scope: agent-runner (agent manager, execution engine, API, config); a deployment in agent-stream-stack (or wherever agent-runner runs)
+Status: draft; step 1 of §15 built (§15.1) · Scope: agent-runner (agent manager, execution engine, API, config); a deployment in agent-stream-stack (or wherever agent-runner runs)
 
 ## 1. Problem
 
@@ -283,6 +283,24 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
 3. **Cross-pod state.** `flock` repo-cache lock, memory clone in the runner and single-writer finalization in the dispatcher, journal handles and re-attach (§10).
 4. **`k8s-job` backend.** Job template, `Alive` from Job/Pod status, RBAC; tested against a fake clientset, then on a kind cluster in CI.
 5. **Images and deploy.** A slim dispatcher image (no Node, no CLIs) and the runner image; manifests (Deployment, Service, ServiceAccount/Role, PVC, NetworkPolicy, ResourceQuota); move the bot onto it.
+
+### 15.1 Step 1 as built
+
+`Engine.ExecuteAgentWithContext` is the `local` backend: it calls `runSession` (the run) with a
+`localReporter`, whose `Finish` calls `finalizeSession` (`internal/execution/report.go`).
+
+- **The run** keeps the workspace, sandbox, prompt, planner, loop, reviewer, git sync and outputs, then
+  merges the agent's own memory edits and removes the sandbox home, and builds a `RunResult`: the
+  snapshot taken before the merge (as the logs always used), the prompt outline and cuts, the planner
+  prompt, the memory merge's saved/skipped, the sandbox egress, and the run's redactor. It cleans up
+  the workspace after `Finish` returns, and ends the session span.
+- **Finalization** gets everything else: the active-sessions gauge, `locks.ReleaseAll`, the sessions
+  counter, the audit log, the daily log, curation, the memory push, the chat notice and the webhook.
+  It looks the live session up by ID, as the dispatcher will.
+- **One change of order:** the gauge, the lock release and the sessions counter now come after the
+  memory merge instead of just before it, so a session holds its advisory locks for the length of
+  the merge.
+- `RunResult` is plain data except `Redact`. Step 2 has the runner redact before it reports.
 
 Steps 1–2 are useful without Kubernetes (a crashed CLI no longer takes the bots down with `subprocess`).
 
