@@ -53,7 +53,7 @@ Other settings:
   (`usage`) over its sandboxes, one per agent CLI launch. A launch that lost processes to the memory
   cap is also recorded as `resource_limit_hit` (`memory`, reason `oom_kill`). Measure first, then
   set caps from what runs actually use.
-* `AGENT_SANDBOX_EGRESS_ALLOW`, `AGENT_SANDBOX_EGRESS_MODE` and `AGENT_SANDBOX_SERVICES`: see [Network](#network).
+* `AGENT_SANDBOX_EGRESS_ALLOW`, `AGENT_SANDBOX_EGRESS_MODE`, `AGENT_SANDBOX_SERVICES` and `AGENT_SANDBOX_INJECT`: see [Network](#network).
 * `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
 * `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain
   settings; model credentials are never passed while the model proxy is on. Credentials an
@@ -196,6 +196,37 @@ policy layer may drop some but never add or repoint one, and a run with no netwo
 has none; an eval replay has none either. Each connection is a `network_allowed` event with
 `service`, `destination`, `port` and `protocol: tcp`. The upstream must still be reachable from
 the runner's host. A malformed `AGENT_SANDBOX_SERVICES` rejects every sandboxed run.
+
+**Credentials added for you.** An API token the agent would send on every request need not be
+the agent's at all. Set `AGENT_SANDBOX_INJECT=api.github.com:Authorization=Bearer $GITHUB_TOKEN`
+(rules separated by `;`, each `host:Header=value`). The host is a name or `*.wildcard`, and the
+value uses the agent's `/env` secrets as `$NAME` or `${NAME}`. What changes for a sandboxed run:
+* The run's egress gateway sets that header on each HTTPS request to the host, over any the agent
+  sends.
+* The secrets a rule uses are withheld from the sandbox: they are not in the agent's environment,
+  and its prompt lists the host as signed in for it instead. They are still redacted from what the
+  agent says.
+* A credential never goes out over plain HTTP, and never to a host the gateway does not inspect.
+* Injection turns inspection on for just those hosts when `AGENT_SANDBOX_EGRESS_INSPECT` is off.
+  A host in `AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT` never gets the credential, and neither does one
+  whose client refuses the run's certificate.
+* The hosts must be in the egress allowlist; agent-runner warns at start-up when one is not.
+
+On the record, the run's policy lists each rule (`network.inject`: host, header and credential
+name), and each `http_request` the gateway authenticated names its `credentials`. Values are
+never recorded.
+
+A rule whose secret the agent lacks is skipped (`sandbox.inject_unavailable`). So is every rule
+when inspection is unavailable on the host. Either way the secret stays withheld, and the agent's
+requests go out unauthenticated. Unsandboxed runs have no gateway: they get the secrets in their
+environment as before. An eval replay gets no credentials. A malformed `AGENT_SANDBOX_INJECT`
+rejects every sandboxed run.
+
+Limits:
+* A service that echoes request headers back (an echo or debug endpoint) shows the agent the
+  credential. Its output is still redacted on record.
+* A secret used both for injection and as a repo's `/env` login for pushing is withheld, so the
+  agent cannot push with it.
 
 **What it did.** Each run tallies the gateway's decisions by host. The first time a run reaches
 or is refused a host, the runner logs `sandbox.egress_allowed` or `sandbox.egress_denied` with

@@ -77,6 +77,14 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
 		return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_SERVICES: %w", err))
 	}
+	injects, err := sandbox.ParseInjects(cfg.Agent.SandboxInject)
+	if err != nil {
+		if rec != nil {
+			rec.Close()
+		}
+		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
+		return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_INJECT: %w", err))
+	}
 	egressPorts := cfg.Agent.SandboxEgressPorts
 	if len(egressPorts) == 0 {
 		egressPorts = []int{443, 80}
@@ -93,6 +101,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		ScopedReads:   scoped,
 		EgressAllow:   cfg.Agent.SandboxEgressAllow,
 		Services:      services,
+		Inject:        injects,
 		EgressReport:  cfg.Agent.SandboxEgressEnforce == "report",
 		EgressInspect: cfg.Agent.SandboxEgressInspect == "on",
 		InspectExcept: cfg.Agent.SandboxInspectExcept,

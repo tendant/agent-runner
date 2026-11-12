@@ -125,6 +125,7 @@ type AgentConfig struct {
 	SandboxEnvAllow      []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
 	SandboxRead          string   // AGENT_SANDBOX_READ — "scoped" (the default and only value; "host" is rejected)
 	SandboxReadAllow     []string // AGENT_SANDBOX_READ_ALLOW — extra host paths readable with scoped reads
+	SandboxInject        string   // AGENT_SANDBOX_INJECT — host:Header=value;... credentials the egress gateway adds to a sandboxed run's HTTPS requests, from the agent's /env secrets ($NAME), which the sandbox then does not get
 	SandboxServices      string   // AGENT_SANDBOX_SERVICES — name=host:port,... fixed upstreams (a database, a cache) a sandboxed run reaches by name, outside the egress gateway
 	SandboxEgressAllow   []string // AGENT_SANDBOX_EGRESS_ALLOW — agentbox: hosts egress may reach (default any public host)
 	SandboxEgressEnforce string   // AGENT_SANDBOX_EGRESS_ENFORCE — enforce (default): refuse hosts the allowlist does not grant | report: reach them and record them as outside it
@@ -479,6 +480,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxReadAllow = envSliceOrDefault("AGENT_SANDBOX_READ_ALLOW", cfg.Agent.SandboxReadAllow)
 	cfg.Agent.SandboxEgressAllow = envSliceOrDefault("AGENT_SANDBOX_EGRESS_ALLOW", cfg.Agent.SandboxEgressAllow)
 	cfg.Agent.SandboxServices = envOrDefault("AGENT_SANDBOX_SERVICES", cfg.Agent.SandboxServices)
+	cfg.Agent.SandboxInject = envOrDefault("AGENT_SANDBOX_INJECT", cfg.Agent.SandboxInject)
 	cfg.Agent.SandboxEgressEnforce = strings.ToLower(strings.TrimSpace(envOrDefault("AGENT_SANDBOX_EGRESS_ENFORCE", cfg.Agent.SandboxEgressEnforce)))
 	cfg.Agent.SandboxEgressInspect = strings.ToLower(strings.TrimSpace(envOrDefault("AGENT_SANDBOX_EGRESS_INSPECT", cfg.Agent.SandboxEgressInspect)))
 	cfg.Agent.SandboxInspectExcept = envSliceOrDefault("AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT", cfg.Agent.SandboxInspectExcept)

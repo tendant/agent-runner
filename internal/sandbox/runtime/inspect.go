@@ -62,5 +62,6 @@ func inspectTrust(dir string) (*abegress.Inspector, []string, error) {
 // auditHTTP records one request the egress gateway inspected.
 func (r *Runtime) auditHTTP(runID string, i abegress.RequestInfo) {
 	r.audit(runID, audit.TypeHTTPRequest, audit.HTTPRequestDetail{Host: i.Host, Method: i.Method, Path: i.Path, Status: i.Status,
-		RequestBytes: i.RequestBytes, ResponseBytes: i.ResponseBytes, DurationMS: i.Duration.Milliseconds(), Protocol: i.Protocol, Error: i.Error})
+		RequestBytes: i.RequestBytes, ResponseBytes: i.ResponseBytes, DurationMS: i.Duration.Milliseconds(), Protocol: i.Protocol, Error: i.Error,
+		Credentials: i.Credentials})
 }

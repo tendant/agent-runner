@@ -61,3 +61,28 @@ func TestResolveServices(t *testing.T) {
 		t.Error("a service named twice")
 	}
 }
+
+func TestParseInjects(t *testing.T) {
+	ins, err := ParseInjects(" API.github.com:Authorization=Bearer $GITHUB_TOKEN ; *.gitea.example:X-Api-Key=${GITEA_TOKEN}-${GITEA_TOKEN}:$OTHER;")
+	if err != nil || len(ins) != 2 {
+		t.Fatalf("%+v %v", ins, err)
+	}
+	if ins[0] != (Inject{Host: "api.github.com", Header: "Authorization", Template: "Bearer $GITHUB_TOKEN"}) {
+		t.Errorf("rule 0 %+v", ins[0])
+	}
+	if got := ins[1].Secrets(); len(got) != 2 || got[0] != "GITEA_TOKEN" || got[1] != "OTHER" {
+		t.Errorf("secrets %v", got)
+	}
+	if v, ok := ins[1].Expand(map[string]string{"GITEA_TOKEN": "a", "OTHER": "b"}); !ok || v != "a-a:b" {
+		t.Errorf("expand %q %v", v, ok)
+	}
+	if _, ok := ins[1].Expand(map[string]string{"GITEA_TOKEN": "a"}); ok {
+		t.Error("expanded with a secret missing")
+	}
+	for _, bad := range []string{"api.github.com", "api.github.com:Authorization", "api.github.com:Authorization=Bearer fixed",
+		"*:Authorization=$T", "@github:Authorization=$T", "10.0.0.5:Authorization=$T", ":Authorization=$T", "a b:Authorization=$T"} {
+		if _, err := ParseInjects(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

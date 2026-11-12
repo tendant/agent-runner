@@ -80,8 +80,12 @@ type Config struct {
 	// (OnInspection).
 	Inspect       *egress.Inspector
 	InspectExcept []string
-	OnRequest     func(egress.RequestInfo)
-	OnInspection  func(host, reason string)
+	// Inject are the credentials the gateway sets on inspected HTTPS
+	// requests (AGENT_SANDBOX_INJECT), values filled in from the run's
+	// secrets; they need Inspect.
+	Inject       []egress.InjectRule
+	OnRequest    func(egress.RequestInfo)
+	OnInspection func(host, reason string)
 	// Backend overrides the agentbox backend (tests).
 	Backend ab.Backend
 }
@@ -296,6 +300,7 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 		}
 		if spec.Network.EgressInspect && b.cfg.Inspect != nil {
 			gcfg.Inspect, gcfg.InspectExcept = b.cfg.Inspect, b.cfg.InspectExcept
+			gcfg.InspectOnly, gcfg.Inject = spec.Network.EgressInspectOnly, b.cfg.Inject
 			gcfg.OnRequest, gcfg.OnInspection = b.cfg.OnRequest, b.cfg.OnInspection
 		}
 		if c.Gateway || c.ModelSocket {

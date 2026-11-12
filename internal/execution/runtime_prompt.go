@@ -3,6 +3,7 @@ package execution
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ type runtimeFacts struct {
 	ChatThread string                // the session's thread in _chats/ ("": no chat record)
 	Proposals  []proposalTarget      // what may be proposed (_proposals/); nil: proposals are off
 	Services   []string              // the network services the session may reach (AGENT_SANDBOX_SERVICES)
+	Injected   []sandbox.InjectGrant // credentials the sandbox's gateway adds to requests (AGENT_SANDBOX_INJECT)
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -140,6 +142,14 @@ func runtimeInstructions(f runtimeFacts) string {
 				line += ": " + s.Description
 			}
 			b.WriteString(line + "\n")
+		}
+	}
+
+	if len(f.Injected) > 0 {
+		b.WriteString("\nSigned in for you (agent-runner adds the credential to each HTTPS request to the host, so it is not\n" +
+			"in your environment; send these requests without one, and use https):\n\n")
+		for _, g := range f.Injected {
+			b.WriteString("- `" + g.Host + "`: " + g.Header + " from `$" + strings.Join(g.Credentials, "`, `$") + "`\n")
 		}
 	}
 

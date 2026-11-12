@@ -11,6 +11,7 @@ import (
 	"net"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -118,15 +119,96 @@ type NetworkPolicy struct {
 	// hosts; set on a run's resolved spec.
 	EgressInspect       bool     `json:"egress_inspect,omitempty"`
 	EgressInspectExcept []string `json:"egress_inspect_except,omitempty"`
-	DNS                 DNSMode  `json:"dns,omitempty"`
-	Listen              *bool    `json:"listen,omitempty"` // nil = inherit; root default false
-	Expose              []int    `json:"expose,omitempty"`
+	// EgressInspectOnly limits inspection to these hosts: set on a run's
+	// resolved spec when only credential injection asks for it.
+	EgressInspectOnly []string `json:"egress_inspect_only,omitempty"`
+	// Inject are the credentials the gateway adds to the run's HTTPS
+	// requests (AGENT_SANDBOX_INJECT), by name: set on a run's resolved spec,
+	// so its record says which host got which credential.
+	Inject []InjectGrant `json:"inject,omitempty"`
+	DNS    DNSMode       `json:"dns,omitempty"`
+	Listen *bool         `json:"listen,omitempty"` // nil = inherit; root default false
+	Expose []int         `json:"expose,omitempty"`
 	// Services are fixed upstreams the run may reach by name, outside the
 	// egress gateway (AGENT_SANDBOX_SERVICES): a database, a cache, an
 	// internal API. Each is one host:port, so granting one opens nothing
 	// else, internal addresses included. nil = inherit; a run with no
 	// network (egress none) has none.
 	Services []Service `json:"services,omitempty"`
+}
+
+// InjectGrant is one credential a run's gateway adds: to Host's HTTPS
+// requests, as Header, from the agent's secrets named in Credentials.
+type InjectGrant struct {
+	Host        string   `json:"host"`
+	Header      string   `json:"header"`
+	Credentials []string `json:"credentials"`
+}
+
+// Inject is one AGENT_SANDBOX_INJECT rule: Template is the header's value,
+// with the agent's secrets as $NAME or ${NAME}.
+type Inject struct {
+	Host     string
+	Header   string
+	Template string
+}
+
+var secretRef = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// Secrets are the secret names the rule's value uses, in order.
+func (in Inject) Secrets() []string {
+	var out []string
+	for _, m := range secretRef.FindAllStringSubmatch(in.Template, -1) {
+		n := m[1] + m[2]
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// Expand is the rule's value with the secrets filled in, and false when one
+// it uses is missing or empty.
+func (in Inject) Expand(secrets map[string]string) (string, bool) {
+	ok := true
+	v := secretRef.ReplaceAllStringFunc(in.Template, func(ref string) string {
+		m := secretRef.FindStringSubmatch(ref)
+		val := secrets[m[1]+m[2]]
+		if val == "" {
+			ok = false
+		}
+		return val
+	})
+	return v, ok
+}
+
+// ParseInjects reads AGENT_SANDBOX_INJECT: rules separated by ";", each
+// host:Header=value, e.g.
+// "api.github.com:Authorization=Bearer $GITHUB_TOKEN; *.gitea.example:Authorization=token ${GITEA_TOKEN}".
+// The host is a name or *.wildcard; the value must use at least one secret.
+func ParseInjects(v string) ([]Inject, error) {
+	var out []Inject
+	for _, item := range strings.Split(v, ";") {
+		if item = strings.TrimSpace(item); item == "" {
+			continue
+		}
+		host, rest, ok := strings.Cut(item, ":")
+		header, tmpl, ok2 := strings.Cut(rest, "=")
+		in := Inject{Host: strings.ToLower(strings.TrimSpace(host)), Header: strings.TrimSpace(header), Template: strings.TrimSpace(tmpl)}
+		switch {
+		case !ok || !ok2 || in.Host == "" || in.Header == "" || in.Template == "":
+			return nil, fmt.Errorf("inject %q: want host:Header=value", item)
+		case in.Host == "*" || strings.HasPrefix(in.Host, "@") || strings.ContainsAny(in.Host, "/ ") || net.ParseIP(in.Host) != nil:
+			return nil, fmt.Errorf("inject %q: the host must be a name or *.wildcard", item)
+		case len(in.Secrets()) == 0:
+			return nil, fmt.Errorf("inject %q: the value uses no secret ($NAME)", item)
+		}
+		if err := validHostPattern(in.Host); err != nil {
+			return nil, fmt.Errorf("inject %q: %w", item, err)
+		}
+		out = append(out, in)
+	}
+	return out, nil
 }
 
 // Service is one named upstream (NetworkPolicy.Services).
