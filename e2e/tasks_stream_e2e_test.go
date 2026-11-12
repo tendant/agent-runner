@@ -127,6 +127,10 @@ func startTaskStack(t *testing.T, pathPrefix string, runnerEnv ...string) *taskS
 		"DATA_DIR=" + dataDir,
 		"API_BIND=" + strings.TrimPrefix(runnerURL, "http://"),
 		"AGENT_CLI=claude",
+		// The claude here is a mock, and its call log lives outside the
+		// workspace, where a sandboxed run cannot write; the sandbox has
+		// its own e2e (internal/sandbox/e2e, ProactiveRealClaude).
+		"AGENT_SANDBOX=off",
 		"AGENT_TASKS_ENABLED=true",
 		"AGENT_REVIEWER_ENABLED=false",
 		"WELCOME_ENABLED=false",

@@ -281,6 +281,33 @@ func (h *Handlers) Steer(sessionID, text string) error {
 	return h.execEngine.Steer(sessionID, text)
 }
 
+// The bots find multi-turn tasks and /cancel by these optional interfaces
+// on their starter; without them a bot silently runs one-shot sessions.
+var (
+	_ botcommon.TaskStarter    = (*Handlers)(nil)
+	_ botcommon.SessionStopper = (*Handlers)(nil)
+)
+
+// StartTaskTurn delegates to execEngine (multi-turn tasks, TASKS_DESIGN.md).
+func (h *Handlers) StartTaskTurn(turn agent.TaskTurn) (string, error) {
+	return h.execEngine.StartTaskTurn(turn)
+}
+
+// TaskWorkspacePath delegates to execEngine.
+func (h *Handlers) TaskWorkspacePath(taskKey string) string {
+	return h.execEngine.TaskWorkspacePath(taskKey)
+}
+
+// FinishTaskWorkspace delegates to execEngine.
+func (h *Handlers) FinishTaskWorkspace(taskDir string) {
+	h.execEngine.FinishTaskWorkspace(taskDir)
+}
+
+// StopSession delegates to execEngine.
+func (h *Handlers) StopSession(sessionID string) error {
+	return h.execEngine.StopSession(sessionID)
+}
+
 // AddMessage adds a follow-up message to a conversation thread, steering if
 // the session is running or queuing otherwise. convID routes to the right
 // conversation thread.
