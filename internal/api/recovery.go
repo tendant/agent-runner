@@ -116,7 +116,7 @@ func (s *Server) recoverQueued(ctx context.Context, entry sessionjournal.Entry, 
 		s.journal.Remove(entry.SessionID)
 		return
 	}
-	if err := s.agentManager.Enqueue(session, s.handlers.execEngine.ExecuteAgent); err != nil {
+	if err := s.agentManager.Enqueue(session, s.handlers.execEngine.RunQueued); err != nil {
 		s.agentManager.FailSession(session.ID, "interrupted by server restart (queue full on recovery)")
 		s.notifyRecovery(ctx, entry, hooks, fmt.Sprintf(
 			"⚠️ The queued task %q could not be recovered after a server restart. Resend it to retry.",

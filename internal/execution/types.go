@@ -122,6 +122,12 @@ type Engine struct {
 	// locks holds the advisory leases sessions take out on each other. Optional:
 	// nil disables the auto-release sweep at session end. See SetLockManager.
 	locks *locks.Manager
+
+	// backend is where sessions run (backend.go), local unless SetBackend. runs maps
+	// the IDs of sessions whose run has started and not ended to the channel
+	// closed when it ends.
+	backend Backend
+	runs    sync.Map
 }
 
 // SetLockManager wires the advisory lock manager, so leases a session took out
@@ -130,7 +136,9 @@ func (e *Engine) SetLockManager(m *locks.Manager) { e.locks = m }
 
 // New creates an Engine.
 func New(cfg *config.Config, mgr *agent.Manager, wm *executor.WorkspaceManager, rl *logging.RunLogger, deps Deps) *Engine {
-	return &Engine{config: cfg, agentManager: mgr, workspaceManager: wm, runLogger: rl, deps: deps}
+	e := &Engine{config: cfg, agentManager: mgr, workspaceManager: wm, runLogger: rl, deps: deps}
+	e.backend = &localBackend{h: e}
+	return e
 }
 
 // collectScheduleEntries reads _schedule.json from the workspace directory.

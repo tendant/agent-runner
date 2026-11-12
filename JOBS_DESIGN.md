@@ -310,7 +310,14 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   when a `Session` field has no wire counterpart. `execution.RunResultWire` is the result a runner
   sends: no redactor, so the runner redacts what finalization would (message, planner and
   iteration prompts, error) before it sends.
-- **2b:** the `Backend` interface (§6), with `local` behind the manager's worker.
+- **2b, the backend (built).** `execution.Backend` (§6) with `Name`, `Start`, `Stop`, `Alive`;
+  `Handle` is JSON for the journal. The manager's worker function is `Engine.RunQueued`: it starts
+  the session on the backend and waits until the backend calls `runEnded`, so a worker still holds
+  one session at a time when the run is elsewhere. A run that cannot start fails its session.
+  `local` (the default) runs `ExecuteAgentWithContext` in a goroutine; its `Ref` is the session
+  ID, `Alive` asks the engine, `Stop` does nothing (the run honors the stop request itself). The
+  scheduler's path (`runner_bridge.go`) still calls `ExecuteAgentWithContext` directly, outside
+  the queue; it moves onto the backend with 2e.
 - **2c:** `/internal/sessions/{id}/spec|report|result|control` and per-session tokens (§7, §11).
 - **2d:** `agent-runner run-session`.
 - **2e:** the `subprocess` backend; the mock-CLI e2e suites again with

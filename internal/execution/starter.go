@@ -89,7 +89,7 @@ func (h *Engine) startAgent(turn agent.TaskTurn) (string, error) {
 	}
 
 	sessionID := session.ID
-	if err := h.agentManager.Enqueue(session, h.ExecuteAgent); err != nil {
+	if err := h.agentManager.Enqueue(session, h.RunQueued); err != nil {
 		h.FailSession(sessionID, "agent queue is full")
 		return "", fmt.Errorf("agent queue is full")
 	}
