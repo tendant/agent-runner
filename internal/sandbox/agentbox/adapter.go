@@ -291,7 +291,6 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 	if spec.Network.Egress == sandbox.EgressRestricted {
 		gcfg := egress.Config{Allow: spec.Network.EgressAllow, Sets: spec.Network.EgressSets, Ports: b.cfg.EgressPorts,
 			ReportOnly: spec.Network.EgressReportOnly}
-		slog.Info("adapter egress config", "egress_ports", b.cfg.EgressPorts, "is_nil", b.cfg.EgressPorts == nil)
 		if on := b.cfg.OnEgress; on != nil {
 			gcfg.OnEvent = on
 		}

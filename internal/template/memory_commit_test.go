@@ -117,6 +117,15 @@ func TestCommitAndPushMemoryParentRepoOptIn(t *testing.T) {
 	if err := CommitAndPushMemory(mem, MemoryGitCreds{}); err != nil || count() != "1" {
 		t.Errorf("opt-in: %v, %s commits", err, count())
 	}
+	// The commit is agent-runner's; the repo's own identity is untouched.
+	author, _ := exec.Command("git", "-C", outer, "log", "-1", "--format=%ae").Output()
+	if got := strings.TrimSpace(string(author)); got != "agent-runner@local" {
+		t.Errorf("memory commit author = %q", got)
+	}
+	email, _ := exec.Command("git", "-C", outer, "config", "--local", "user.email").Output()
+	if got := strings.TrimSpace(string(email)); got != "t@t" {
+		t.Errorf("the outer repo's user.email became %q", got)
+	}
 }
 
 // Pulling into a memory repo with no commits yet (after /memory git on an

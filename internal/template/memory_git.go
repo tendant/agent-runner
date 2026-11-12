@@ -254,9 +254,14 @@ func commitMemoryToParentRepo(memoryDir string) error {
 	}
 
 	msg := "[memory] " + time.Now().Format("2006-01-02") + ": " + summariseChanges(out)
-	_ = gitRunEnv(repoRoot, nil, "config", "user.email", "agent-runner@local")
-	_ = gitRunEnv(repoRoot, nil, "config", "user.name", "agent-runner")
-	if err := gitRunEnv(repoRoot, nil, "commit", "-m", msg); err != nil {
+	// The identity is this commit's only: the parent repo is someone else's,
+	// and writing it into the repo's config made every later commit there,
+	// by anyone, look like agent-runner's.
+	ident := []string{
+		"GIT_AUTHOR_NAME=agent-runner", "GIT_AUTHOR_EMAIL=agent-runner@local",
+		"GIT_COMMITTER_NAME=agent-runner", "GIT_COMMITTER_EMAIL=agent-runner@local",
+	}
+	if err := gitRunEnv(repoRoot, ident, "commit", "-m", msg); err != nil {
 		return err
 	}
 	slog.Info("memory committed to parent repo", "root", repoRoot, "msg", msg)

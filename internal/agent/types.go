@@ -352,9 +352,14 @@ func (s *Session) GetAndClearPendingMessages() []string {
 	return msgs
 }
 
-// AddMessage appends a message to the conversation history
+// AddMessage appends a message to the conversation history.
+// The content is redacted like iteration output: messages are served by
+// GET /agent/{id}, GET /sessions and the webhook payload.
 func (s *Session) AddMessage(role, content string) {
 	s.mu.Lock()
+	if s.redact != nil {
+		content = s.redact(content)
+	}
 	s.Messages = append(s.Messages, Message{
 		Role:    role,
 		Content: content,

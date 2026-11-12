@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -274,5 +275,17 @@ func TestToResponse_IncludesEvents(t *testing.T) {
 	}
 	if events[len(events)-1].Seq != uint64(maxResponseEvents+12) {
 		t.Errorf("cap should keep the newest tail, last seq=%d", events[len(events)-1].Seq)
+	}
+}
+
+// Conversation messages are served by GET /agent/{id}, GET /sessions and
+// webhooks, so they are redacted like iteration output.
+func TestAddMessageRedacts(t *testing.T) {
+	s := &Session{}
+	s.SetRedactor(func(x string) string { return strings.ReplaceAll(x, "s3cr3t", "[redacted]") })
+	s.AddMessage("assistant", "the key is s3cr3t")
+	msgs, _ := s.ToResponse()["messages"].([]Message)
+	if len(msgs) != 1 || strings.Contains(msgs[0].Content, "s3cr3t") || !strings.Contains(msgs[0].Content, "[redacted]") {
+		t.Fatalf("messages = %+v", msgs)
 	}
 }

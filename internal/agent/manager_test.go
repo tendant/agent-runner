@@ -429,3 +429,25 @@ func TestQueueLength(t *testing.T) {
 
 	close(blocker)
 }
+
+// A message without a conversation must not reach a running API session,
+// all of which have no conversation either.
+func TestFindRunningSessionByConvIDEmpty(t *testing.T) {
+	m := NewManager(3600, 10, 1)
+	s, err := m.CreateSession("work", nil, "a", "", 1, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.Status = SessionStatusRunning
+	s.mu.Unlock()
+	if got := m.FindRunningSessionByConvID(""); got != nil {
+		t.Fatalf("empty convID matched session %s", got.ID)
+	}
+	s.mu.Lock()
+	s.ConvID = "c1"
+	s.mu.Unlock()
+	if got := m.FindRunningSessionByConvID("c1"); got != s {
+		t.Fatal("convID c1 not found")
+	}
+}

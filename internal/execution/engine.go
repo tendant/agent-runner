@@ -1045,6 +1045,9 @@ func (h *Engine) runIterationLoop(
 				userMessage += "\n\n"
 			}
 			userMessage += "Additional context:\n" + strings.Join(pendingMsgs, "\n")
+			// Keep it for later iterations: a one-shot backend gets the
+			// full prompt each time, and would otherwise lose the message.
+			message = userMessage
 		} else {
 			userMessage = message
 		}

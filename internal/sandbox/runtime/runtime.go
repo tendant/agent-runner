@@ -138,8 +138,9 @@ var strictModeApprovedHosts = []string{
 
 // DefaultSystemSpec is the policy used when no PolicyFile is configured: the
 // workspace, sandbox home and tmp are writable; everything else on the host is
-// not. Host SSH keys (~/.ssh) are denied for security. Agents can use SSH
-// outbound (port 22) with keys provided via /env or stored in /workspace/.ssh.
+// not. The host's ~/.ssh is never readable (only the agent CLIs' installs of
+// the host home are); the deny is of .ssh in the sandbox home, the
+// runner-managed home the agent runs in.
 func DefaultSystemSpec() sandbox.SandboxSpec {
 	return sandbox.SandboxSpec{
 		Version: sandbox.SpecVersion,
