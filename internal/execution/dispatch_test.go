@@ -104,9 +104,18 @@ func TestJobControl(t *testing.T) {
 		t.Fatalf("idle control %+v err %v after %v", c, err, time.Since(start))
 	}
 
+	// Steer reaches a remote run only once its runner says its CLI takes
+	// it; until then it fails, and the chat falls back to a follow-up run.
+	if err := e.Steer(s.ID, "early"); err == nil {
+		t.Error("steer queued for a runner that has not said it can take it")
+	}
+	w, _ := s.Wire()
+	if err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 1, Session: w, Steerable: true}); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		_ = e.queueSteer(s.ID, "use main")
+		_ = e.Steer(s.ID, "use main")
 	}()
 	c, err = e.JobControl(ctx, s.ID, spec.Token, 5*time.Second)
 	if err != nil || len(c.Steer) != 1 || c.Steer[0] != "use main" {

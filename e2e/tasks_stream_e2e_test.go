@@ -549,6 +549,11 @@ func cleanEnv(extra ...string) []string {
 		}
 		env = append(env, kv)
 	}
+	// The backend under test, for AGENT_EXECUTION_BACKEND=subprocess runs
+	// of the suite: the server binary is its own runner.
+	if b := os.Getenv("AGENT_EXECUTION_BACKEND"); b != "" {
+		env = append(env, "AGENT_EXECUTION_BACKEND="+b)
+	}
 	hasPath := false
 	for _, kv := range extra {
 		if strings.HasPrefix(kv, "PATH=") {

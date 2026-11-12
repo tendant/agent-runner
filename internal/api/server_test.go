@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -146,6 +147,38 @@ func TestAuditRoute(t *testing.T) {
 	if code := get("/audit/segments/"+audit.SegmentName(0), "k"); code != http.StatusOK {
 		t.Errorf("segment: %d", code)
 	}
+
+	// A runner's own record is served under /audit/runners/{session}/.
+	rrec, err := audit.OpenDirRecorder(RunnerAuditDir(dir, "agent-1"), "host", audit.DirOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rrec.Record(audit.Event{RunID: "agent-1", Type: audit.TypeSandboxCreated}, nil)
+	rrec.Close()
+	if code := get("/audit/runners", ""); code != http.StatusUnauthorized {
+		t.Errorf("runners without the key: %d", code)
+	}
+	req, _ := http.NewRequest("GET", srv.URL+"/audit/runners", nil)
+	req.Header.Set("X-API-Key", "k")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed struct{ Runners []string }
+	_ = json.NewDecoder(resp.Body).Decode(&listed)
+	resp.Body.Close()
+	if len(listed.Runners) != 1 || listed.Runners[0] != "agent-1" {
+		t.Errorf("runners %v", listed.Runners)
+	}
+	if code := get("/audit/runners/agent-1/segments/"+audit.SegmentName(0), "k"); code != http.StatusOK {
+		t.Errorf("runner segment: %d", code)
+	}
+	for _, bad := range []string{"/audit/runners/agent-2/segments", "/audit/runners/.x/segments"} {
+		if code := get(bad, "k"); code != http.StatusNotFound {
+			t.Errorf("%s: %d", bad, code)
+		}
+	}
+
 	empty := http.NewServeMux()
 	mountAudit(empty, "")
 	rec404 := httptest.NewRecorder()

@@ -41,7 +41,7 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":1000}'
 	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 
 	return &e2eEnv{
 		server:       ts,
@@ -160,6 +160,10 @@ func baseE2EConfig(repoCacheDir, logsDir, tmpDir string) *config.Config {
 			APIKey: "",
 		},
 		Agent: config.AgentConfig{
+			// AGENT_EXECUTION_BACKEND=subprocess runs these suites with each
+			// session in an `agent-runner run-session` child (TestMain).
+			ExecutionBackend:    os.Getenv("AGENT_EXECUTION_BACKEND"),
+			JobRunnerBin:        os.Getenv("AGENT_JOB_RUNNER_BIN"),
 			MaxIterations:       50,
 			MaxTotalSeconds:     60,
 			MaxIterationSeconds: 30,
@@ -282,7 +286,7 @@ echo '{"result":"Done"}'
 	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// Only allow *.go files — secret.txt should fail validation
@@ -322,7 +326,7 @@ func TestE2E_ApiKeyAuth(t *testing.T) {
 	cfg.API.APIKey = "secret-key-123"
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// Request without API key should fail
@@ -405,7 +409,7 @@ echo '{"result":"Done"}'
 	cfg := baseE2EConfig(repoCacheDir, logsDir, tmpDir)
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// First request should succeed

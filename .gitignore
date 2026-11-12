@@ -56,3 +56,6 @@ agent-home/
 .env.sops.tmp
 .env.sops.bak
 !.env.example
+
+# The memory-dir lock file (beside the memory dir)
+memory.lock

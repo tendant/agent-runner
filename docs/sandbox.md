@@ -71,6 +71,10 @@ Other settings:
   from the API, read-only and behind `API_KEY`: `GET /audit/segments` lists the segments,
   `GET /audit/segments/{name}` serves one (Range requests resume from an offset). Without
   `API_KEY` the API, and so the record, is reachable on loopback only.
+  A session run by a runner process (`AGENT_EXECUTION_BACKEND=subprocess`, JOBS_DESIGN.md)
+  records its runs in a directory of its own, `<AGENT_SANDBOX_AUDIT_DIR>-runners/<session>`,
+  since a record directory has one writer: `GET /audit/runners` lists them, and each is served
+  the same way under `/audit/runners/{session}/`. agent-gate does not pull these yet.
 * `AGENT_NAME` (default `INSTANCE`): the agent's name, and for a job its project (the registered
   repo it runs on), are on each run's record (its `sandbox_created` or `sandbox_rejected` event),
   so agent-gate can filter and group runs by them. Sessions work across every registered repo

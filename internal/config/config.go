@@ -145,6 +145,11 @@ type AgentConfig struct {
 	TasksEnabled      bool          // AGENT_TASKS_ENABLED (default true; false = one-shot runs)
 	JobReportRetry    time.Duration // AGENT_JOB_REPORT_RETRY — how long a runner keeps retrying the dispatcher (JOBS_DESIGN.md §7.2; default 15m)
 	JobMaxOutputBytes int           // AGENT_JOB_MAX_OUTPUT_BYTES — cap on the _send/ files a runner sends in its result (default 24 MiB)
+	ExecutionBackend  string        // AGENT_EXECUTION_BACKEND — where sessions run: "local" (in process, the default) or "subprocess" (JOBS_DESIGN.md §6)
+	JobDispatcherURL  string        // AGENT_JOB_DISPATCHER_URL — the URL runners reach this server at (default http://<API_BIND>, loopback for 0.0.0.0)
+	JobRunnerBin      string        // AGENT_JOB_RUNNER_BIN — the agent-runner binary the subprocess backend starts (default: this one)
+	JobHeartbeat      time.Duration // AGENT_JOB_HEARTBEAT — a runner not heard from this long is checked, and failed if gone (default 2m)
+	JobStopGrace      time.Duration // AGENT_JOB_STOP_GRACE — how long a stopped session's runner gets before it is ended (default 2m)
 	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
 	TaskMaxTurns      int           // AGENT_TASK_MAX_TURNS — turns before a task pauses for a go-ahead (default 10; 0 = no limit)
 	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
@@ -328,6 +333,9 @@ func defaultConfigForDataDir(data string) *Config {
 			TaskRetention:       24 * time.Hour,
 			JobReportRetry:      15 * time.Minute,
 			JobMaxOutputBytes:   24 << 20,
+			ExecutionBackend:    "local",
+			JobHeartbeat:        2 * time.Minute,
+			JobStopGrace:        2 * time.Minute,
 			TaskIdleTTL:         7 * 24 * time.Hour,
 			ProactiveInterval:   30 * time.Minute,
 			ProactiveMaxPosts:   10,
@@ -548,6 +556,11 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
 	cfg.Agent.JobReportRetry = envDurationOrDefault("AGENT_JOB_REPORT_RETRY", cfg.Agent.JobReportRetry)
 	cfg.Agent.JobMaxOutputBytes = envIntOrDefault("AGENT_JOB_MAX_OUTPUT_BYTES", cfg.Agent.JobMaxOutputBytes)
+	cfg.Agent.ExecutionBackend = envOrDefault("AGENT_EXECUTION_BACKEND", cfg.Agent.ExecutionBackend)
+	cfg.Agent.JobDispatcherURL = envOrDefault("AGENT_JOB_DISPATCHER_URL", cfg.Agent.JobDispatcherURL)
+	cfg.Agent.JobRunnerBin = envOrDefault("AGENT_JOB_RUNNER_BIN", cfg.Agent.JobRunnerBin)
+	cfg.Agent.JobHeartbeat = envDurationOrDefault("AGENT_JOB_HEARTBEAT", cfg.Agent.JobHeartbeat)
+	cfg.Agent.JobStopGrace = envDurationOrDefault("AGENT_JOB_STOP_GRACE", cfg.Agent.JobStopGrace)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
 	cfg.Agent.Proactive = envOnOff("AGENT_PROACTIVE", cfg.Agent.Proactive)
 	cfg.Agent.Proposals = envOnOff("AGENT_PROPOSALS", cfg.Agent.Proposals)

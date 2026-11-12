@@ -2,8 +2,12 @@ package template
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // memoryMu serialises writes to the shared memory dir.
@@ -15,10 +19,40 @@ import (
 // Unsynchronised, concurrent callers collide on .git/index.lock, abort each
 // other's rebases, and lose read-modify-write updates.
 //
-// The lock covers this process only. The agent CLI subprocess is also told to
-// edit memory files directly (see internal/clisetup), and no in-process lock can
-// cover that — the git history remains the undo mechanism there.
+// With sessions in runner processes (AGENT_EXECUTION_BACKEND=subprocess,
+// JOBS_DESIGN.md) the writers are in several processes, so the mutex is
+// paired with an flock on <memoryDir>.lock, beside the dir rather than in
+// it, where git would see it (lockMemory). The agent CLI is also told to
+// edit memory files directly (see internal/clisetup), and no lock covers
+// that: the git history remains the undo mechanism there.
 var memoryMu sync.Mutex
+
+// lockMemory takes the memory-dir lock, in this process and across
+// processes on the same dir, and returns its release. If the lock file
+// cannot be used, the in-process lock alone is held, as before.
+func lockMemory(memoryDir string) func() {
+	memoryMu.Lock()
+	if memoryDir == "" {
+		return memoryMu.Unlock
+	}
+	path := filepath.Clean(memoryDir) + ".lock"
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err == nil {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if err != nil {
+			f.Close()
+		}
+	}
+	if err != nil {
+		slog.Debug("memory lock: no cross-process lock", "path", path, "error", err)
+		return memoryMu.Unlock
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+		memoryMu.Unlock()
+	}
+}
 
 // WithMemoryLock runs fn holding the memory-dir lock.
 //
@@ -29,9 +63,8 @@ var memoryMu sync.Mutex
 //
 // Do not hold it across an LLM call or any other long, network-bound operation;
 // use WriteMemoryFileIfUnchanged for read-think-write cycles instead.
-func WithMemoryLock(fn func() error) error {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+func WithMemoryLock(memoryDir string, fn func() error) error {
+	defer lockMemory(memoryDir)()
 	return fn()
 }
 
@@ -43,8 +76,7 @@ func WithMemoryLock(fn func() error) error {
 // ReadMemoryFile followed by WriteMemoryFile loses one update when two callers
 // interleave.
 func UpdateMemoryFile(memoryDir, name string, fn func(existing string) (string, error)) error {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	existing, err := readMemoryFile(memoryDir, name)
 	if err != nil {
@@ -66,8 +98,7 @@ func UpdateMemoryFile(memoryDir, name string, fn func(existing string) (string, 
 // an LLM call, then writes a rewrite of what it read. Without the check that
 // rewrite silently discards anything another writer appended in between.
 func WriteMemoryFileIfUnchanged(memoryDir, name, expected, content string) (bool, error) {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	current, err := readMemoryFile(memoryDir, name)
 	if err != nil {

@@ -43,6 +43,10 @@ const MaxControlWait = 60 * time.Second
 type JobReport struct {
 	Seq     uint64             `json:"seq"`
 	Session *agent.SessionWire `json:"session"`
+	// Steerable: the run's CLI session takes steer messages now (a
+	// persistent backend, between its start and end), so the dispatcher's
+	// Steer can queue them instead of failing (§7.3).
+	Steerable bool `json:"steerable,omitempty"`
 }
 
 // JobControl answers a runner's control poll (§7.3).
@@ -53,12 +57,15 @@ type JobControl struct {
 
 // remoteRun is the dispatcher's record of a session running elsewhere.
 type remoteRun struct {
-	mu     sync.Mutex
-	seq    uint64   // last report applied
-	ended  bool     // result taken, or the run failed without one
-	result bool     // the result was taken
-	steer  []string // steer messages for the next control poll
-	wake   chan struct{}
+	mu        sync.Mutex
+	seq       uint64    // last report applied
+	ended     bool      // the runner has nothing left to do: its requests get ErrJobEnded
+	result    bool      // the result was taken
+	closed    bool      // finalized here: the result taken, or the run failed without one
+	steerable bool      // as of the last report
+	lastSeen  time.Time // the runner's last request, for the heartbeat (§9)
+	steer     []string  // steer messages for the next control poll
+	wake      chan struct{}
 }
 
 func (r *remoteRun) poke() {
@@ -118,7 +125,7 @@ func (h *Engine) registerRemote(sessionID string) {
 		}
 		return true
 	})
-	h.remote.Store(sessionID, &remoteRun{wake: make(chan struct{}, 1)})
+	h.remote.Store(sessionID, &remoteRun{wake: make(chan struct{}, 1), lastSeen: time.Now()})
 }
 
 // endRemote marks a remote run over: the runner's further requests get
@@ -142,7 +149,11 @@ func (h *Engine) authJob(sessionID, token string) (*agent.Session, *remoteRun, e
 	if !ok {
 		return nil, nil, ErrJobAuth
 	}
-	return s, v.(*remoteRun), nil
+	r := v.(*remoteRun)
+	r.mu.Lock()
+	r.lastSeen = time.Now()
+	r.mu.Unlock()
+	return s, r, nil
 }
 
 // JobSpec is the session as its runner starts it (§7.1).
@@ -181,7 +192,7 @@ func (h *Engine) JobReport(sessionID, token string, rep *JobReport) error {
 	if err := s.ApplyWire(rep.Session, DecodeWire); err != nil {
 		return err
 	}
-	run.seq = rep.Seq
+	run.seq, run.steerable = rep.Seq, rep.Steerable
 	return nil
 }
 
@@ -211,7 +222,7 @@ func (h *Engine) JobResult(ctx context.Context, sessionID, token string, w *RunR
 		run.mu.Unlock()
 		return false, ErrJobEnded
 	}
-	run.result, run.ended = true, true
+	run.result, run.ended, run.closed = true, true, true
 	run.mu.Unlock()
 	run.poke()
 
@@ -312,6 +323,12 @@ func (h *Engine) queueSteer(sessionID, text string) error {
 	if r.ended {
 		r.mu.Unlock()
 		return fmt.Errorf("session %s has ended", sessionID)
+	}
+	if !r.steerable {
+		// A one-shot CLI, or none running: the caller falls back (a
+		// follow-up run) rather than lose the message.
+		r.mu.Unlock()
+		return fmt.Errorf("session %s has no live executor session", sessionID)
 	}
 	r.steer = append(r.steer, text)
 	r.mu.Unlock()

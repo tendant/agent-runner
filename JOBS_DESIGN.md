@@ -316,8 +316,8 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   one session at a time when the run is elsewhere. A run that cannot start fails its session.
   `local` (the default) runs `ExecuteAgentWithContext` in a goroutine; its `Ref` is the session
   ID, `Alive` asks the engine, `Stop` does nothing (the run honors the stop request itself). The
-  scheduler's path (`runner_bridge.go`) still calls `ExecuteAgentWithContext` directly, outside
-  the queue; it moves onto the backend with 2e.
+  scheduler's path (`runner_bridge.go`) still called `ExecuteAgentWithContext` directly, outside
+  the queue; it moved onto the backend in 2e.
 - **2c, the dispatcher's endpoints (built).** `internal/api/internal_sessions.go` serves
   `GET spec`, `POST report`, `POST result` and `GET control?wait=` under `/internal/sessions/{id}/`;
   the logic is in `execution/dispatch.go`. The routes skip the API key and take
@@ -329,8 +329,8 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   worker let go. A retried result answers `duplicate`. After the result every route answers 410,
   and the runner should exit. Control returns at once on a stop or queued steer messages and
   otherwise waits (at most 60s); a steer is delivered once. Not yet:
-  - `Engine.Steer` still goes only to local runs; it queues for remote ones with 2e, once the
-    runner reports whether its CLI can steer.
+  - `Engine.Steer` still went only to local runs; 2e queues it for remote ones whose runner
+    reports a CLI that can steer.
   - Exec events travel whole in each report, not as a delta (§7.4).
   - The result shares the server's 32 MiB body cap, so `_send/` files over roughly 24 MiB do not
     fit; `AGENT_JOB_MAX_OUTPUT_BYTES` and the other `AGENT_JOB_*` settings come with 2d and 2e.
@@ -363,13 +363,66 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
 
   Tested in process (`execution/runner_test.go`): a dispatcher serving the endpoints over HTTP
   and a runner engine, covering a completed run (one audit log, one trace), stop and steer, a run
-  the dispatcher ended, client retries and the output cap. Open for 2e:
-  - The `-runners` audit directories are not yet served at `/audit/`.
-  - The memory-dir lock is in-process: a runner's memory merge and the dispatcher's daily log for
-    another session could overlap with `AGENT_MAX_CONCURRENT` > 1.
-  - `Engine.Steer` on the dispatcher still reaches only local runs.
-- **2e:** the `subprocess` backend; the mock-CLI e2e suites again with
-  `AGENT_EXECUTION_BACKEND=subprocess`, plus stop, steer, a killed runner and a dispatcher restart.
+  the dispatcher ended, client retries and the output cap. What it left open (the `-runners`
+  audit records, the in-process memory lock, steer for remote runs) was done in 2e.
+- **2e, the subprocess backend (built).** `AGENT_EXECUTION_BACKEND=subprocess` runs each session
+  as `agent-runner run-session` (`AGENT_JOB_RUNNER_BIN`, default the server's own binary), a child
+  in a process group of its own, so a crash or restart of the server leaves it running
+  (`execution/subprocess.go`). Details:
+  - **Configuration:** the child reads the server's in-memory configuration as JSON on stdin
+    (`-config -`), so it runs with what the server runs with, `/config set` changes included,
+    whatever its environment. The token is in its environment.
+  - **Dispatcher URL:** runners reach the server at `AGENT_JOB_DISPATCHER_URL`, by default
+    `http://API_BIND`, with loopback for an unspecified host and the bound port when `API_BIND`
+    asks for port 0.
+  - **Supervision** (`execution/supervise.go`, §9):
+    - A runner that exits without a result fails its session at once, with how it exited.
+    - A runner not heard from for `AGENT_JOB_HEARTBEAT` (2m) is checked with `Alive`, and a gone
+      one fails its session with the backend's reason.
+    - A stopped session whose runner still runs after `AGENT_JOB_STOP_GRACE` (2m) is ended through
+      `Backend.Stop`: SIGTERM to its group, SIGKILL 10s later. It is then marked stopped, as asked.
+    - Each of these finalizes the session from the runner's last report (audit log, daily log,
+      notification), as a local failure is, and a later result from that runner is refused.
+  - **Restart** (§10):
+    - The journal entry of a running session records its backend and ref (the pid); `Handle`
+      gains the session ID.
+    - On shutdown the dispatcher leaves remote runs alone: their workers return, the sessions
+      stay running and journaled.
+    - On startup, before it serves, a journaled run on this backend whose process is still that
+      session's `run-session` (checked with `ps`, so a reused pid does not count) is re-attached
+      (`Engine.Reattach`): the session is restored as running, its watcher resumed, and the
+      runner's token works again, since it derives from `STATE_ROOT/job-secret`.
+    - A run that is gone fails, as before. A re-attached run does not hold a queue worker, so
+      right after a restart more sessions than `AGENT_MAX_CONCURRENT` can run.
+  - **Steer:** the runner's reports say whether its CLI session takes steer messages (a persistent
+    backend, while it runs). `Engine.Steer` on the dispatcher queues for a remote run only then,
+    and otherwise fails, so the chat still falls back to a follow-up run.
+  - **The scheduler's path** (`runner_bridge.go`) runs through the backend too (`Engine.RunNow`:
+    outside the queue, waiting for the run, its context's end stopping the session). On `local`
+    it is unchanged.
+  - **Memory lock:** the memory-dir lock also takes an `flock` on `<MEMORY_DIR>.lock`, so the
+    server and runners serialize their memory writes across processes.
+  - **Audit records:** the runners' sandbox records are served at `/audit/runners` and
+    `/audit/runners/{session}/`.
+
+  Tested:
+  - `e2e/subprocess_e2e_test.go`, with real runner processes built from the tree: a session
+    completes in a runner; a runner killed mid-run fails its session at once; a dispatcher
+    restart mid-run (a new server on the same address and state) re-attaches and finalizes the
+    result.
+  - The whole e2e package passes again with `AGENT_EXECUTION_BACKEND=subprocess` (TestMain
+    builds the runner), stop included, and so do the agent-stream suites, whose server binary is
+    its own runner.
+  - Unit tests: the heartbeat, a runner exiting, the stop grace, shutdown, re-attach and
+    recovery.
+  - Steer through a real runner needs a persistent CLI: it is covered in process
+    (`TestRunRemoteStopAndSteer`), not end to end.
+
+  Open:
+  - agent-gate does not pull the `-runners` records yet.
+  - Exec events still travel whole in each report, not as a delta (§7.4).
+  - A runner that is alive but wedged is not ended: only its own deadline stops it.
+  - `Alive` after a restart relies on `ps` (Linux and macOS).
 
 Steps 1–2 are useful without Kubernetes (a crashed CLI no longer takes the bots down with `subprocess`).
 

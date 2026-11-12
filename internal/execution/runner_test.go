@@ -190,9 +190,14 @@ func TestRunRemoteStopAndSteer(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the runner never started the CLI")
 	}
-	// The runner's own copy runs; steer it through the dispatcher.
-	if err := js.dispatcher.handlers.queueSteer(s.ID, "use main"); err != nil {
-		t.Fatal(err)
+	// The runner's own copy runs; steer it through the dispatcher's Steer,
+	// as a chat message would, once the runner has said its CLI takes it.
+	deadline := time.Now().Add(30 * time.Second)
+	for js.dispatcher.handlers.Steer(s.ID, "use main") != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the dispatcher never took a steer for the remote run")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	select {
 	case text := <-live.steered:

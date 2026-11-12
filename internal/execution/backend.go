@@ -23,6 +23,7 @@ type Spec struct {
 type Handle struct {
 	Backend string `json:"backend"`
 	Ref     string `json:"ref,omitempty"`
+	Session string `json:"session,omitempty"` // the session it runs
 }
 
 // Backend runs sessions somewhere: in process (local), as a child process
@@ -44,14 +45,37 @@ type Backend interface {
 // server at (AGENT_JOB_DISPATCHER_URL).
 func (h *Engine) SetJobDispatcherURL(u string) { h.jobURL = u }
 
+// Backend is where sessions run.
+func (h *Engine) Backend() Backend { return h.backend }
+
+// JobDispatcherURL is the URL runners on other backends reach this server
+// at; empty until set.
+func (h *Engine) JobDispatcherURL() string { return h.jobURL }
+
 // SetBackend sets where sessions run. Call before any session runs; the
 // default is the local backend.
 func (h *Engine) SetBackend(b Backend) { h.backend = b }
 
 // RunQueued is the manager's worker function for a session: it starts the
 // session's run on the backend and returns once the run has ended, so a
-// worker holds one session at a time whatever the backend.
-func (h *Engine) RunQueued(session *agent.Session) {
+// worker holds one session at a time whatever the backend. A run elsewhere
+// outlives a shutdown: RunQueued then returns, and the next server
+// re-attaches to it (JOBS_DESIGN.md §10).
+func (h *Engine) RunQueued(session *agent.Session) { h.run(session) }
+
+// RunNow runs a session outside the queue and returns once it has ended:
+// the scheduler's path, whose leases already serialize its work. ctx ending
+// stops the session.
+func (h *Engine) RunNow(ctx context.Context, session *agent.Session) {
+	if h.backend.Name() == "local" {
+		h.ExecuteAgentWithContext(ctx, session)
+		return
+	}
+	defer context.AfterFunc(ctx, session.RequestStop)()
+	h.run(session)
+}
+
+func (h *Engine) run(session *agent.Session) {
 	done := h.runStarted(session.ID)
 	b := h.backend
 	spec := Spec{SessionID: session.ID}
@@ -61,17 +85,23 @@ func (h *Engine) RunQueued(session *agent.Session) {
 		h.registerRemote(session.ID)
 		spec.ReportURL, spec.Token = h.jobURL, h.SessionToken(session.ID)
 	}
-	if _, err := b.Start(h.agentManager.Context(), spec); err != nil {
+	handle, err := b.Start(h.agentManager.Context(), spec)
+	if err != nil {
 		slog.Error("execution backend failed to start session", "backend", b.Name(), "session_id", session.ID, "error", err)
 		if remote {
 			h.endRemote(session.ID)
 		}
 		h.FailSession(session.ID, fmt.Sprintf("could not start the run (%s): %v", b.Name(), err))
 		h.runEnded(session.ID)
-	} else if remote {
-		countRemoteStart(session)
+		return
 	}
-	<-done
+	if !remote {
+		<-done
+		return
+	}
+	countRemoteStart(session)
+	h.recordStarted(session.ID, handle)
+	h.superviseRemote(session, b, handle, done)
 }
 
 // runStarted registers a session's run and returns the channel runEnded

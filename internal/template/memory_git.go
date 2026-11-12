@@ -74,8 +74,7 @@ func configureCredHelper(memoryDir, user string) error {
 // differs from the existing one it is updated via set-url. Credentials are
 // applied via a git credential helper — the stored remote URL stays clean.
 func InitMemoryGit(memoryDir, remote string, creds MemoryGitCreds) (InitMemoryGitResult, error) {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	var res InitMemoryGitResult
 	if memoryDir == "" {
@@ -159,8 +158,7 @@ func PullMemory(memoryDir string, creds MemoryGitCreds) (string, error) {
 	// Serialise against every other memory writer: a concurrent pull, push or
 	// file write collides on .git/index.lock, and a `rebase --abort` from
 	// another caller's failure path would abort this rebase.
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	if _, err := os.Stat(filepath.Join(memoryDir, ".git")); err != nil {
 		return "", fmt.Errorf("memory dir is not a git repo — run /memory git <remote-url> first")
@@ -282,8 +280,7 @@ func CommitAndPushMemory(memoryDir string, creds MemoryGitCreds) error {
 	// Held across add/commit/push and the rebase recovery inside pushMemory:
 	// `git add -A` stages whatever is in the dir, so an unsynchronised peer
 	// write lands in this commit half-finished.
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	// Warn if a nested memory/ subdir exists — the agent shouldn't create it.
 	// Not auto-removed: the user may want to inspect or back it up manually.

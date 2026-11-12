@@ -222,6 +222,7 @@ func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session,
 	tick := time.NewTicker(reportInterval)
 	defer tick.Stop()
 	changed := true // the dispatcher has not seen the runner's own state yet
+	steerable := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -231,7 +232,8 @@ func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session,
 			continue
 		case <-tick.C:
 		}
-		if !changed {
+		now := h.canSteer(s.ID)
+		if !changed && now == steerable {
 			continue
 		}
 		w, err := s.Wire()
@@ -240,9 +242,9 @@ func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session,
 			continue
 		}
 		seq++
-		switch err := c.Report(ctx, &JobReport{Seq: seq, Session: w}); {
+		switch err := c.Report(ctx, &JobReport{Seq: seq, Session: w, Steerable: now}); {
 		case err == nil:
-			changed = false
+			changed, steerable = false, now
 		case errors.Is(err, ErrJobEnded), errors.Is(err, ErrJobAuth):
 			slog.Warn("runner: the dispatcher ended this run", "session_id", s.ID, "error", err)
 			endRun()

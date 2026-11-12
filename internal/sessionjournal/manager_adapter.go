@@ -20,6 +20,10 @@ func ForManager(j *Journal) *ManagerJournal {
 }
 
 func (m *ManagerJournal) record(snap *agent.Session, status string) {
+	m.write(snap, status, "", "")
+}
+
+func (m *ManagerJournal) write(snap *agent.Session, status, backend, ref string) {
 	entry := Entry{
 		SessionID:       snap.ID,
 		Source:          snap.Source,
@@ -34,6 +38,8 @@ func (m *ManagerJournal) record(snap *agent.Session, status string) {
 		TaskWorkspace:   snap.TaskWorkspace,
 		TaskFeedback:    snap.TaskFeedback,
 		Status:          status,
+		Backend:         backend,
+		Ref:             ref,
 		CreatedAt:       createdAt(snap),
 	}
 	if err := m.journal.Write(entry); err != nil {
@@ -43,6 +49,9 @@ func (m *ManagerJournal) record(snap *agent.Session, status string) {
 
 func (m *ManagerJournal) RecordQueued(snap *agent.Session)  { m.record(snap, "queued") }
 func (m *ManagerJournal) RecordRunning(snap *agent.Session) { m.record(snap, "running") }
+func (m *ManagerJournal) RecordStarted(snap *agent.Session, backend, ref string) {
+	m.write(snap, "running", backend, ref)
+}
 
 func (m *ManagerJournal) Remove(sessionID string) {
 	if err := m.journal.Remove(sessionID); err != nil {

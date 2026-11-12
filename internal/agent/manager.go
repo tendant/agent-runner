@@ -19,6 +19,9 @@ import (
 type Journal interface {
 	RecordQueued(snapshot *Session)
 	RecordRunning(snapshot *Session)
+	// RecordStarted records a running session's run handle (JOBS_DESIGN.md
+	// §10): its execution backend and that backend's reference to the run.
+	RecordStarted(snapshot *Session, backend, ref string)
 	Remove(sessionID string)
 }
 
@@ -404,6 +407,17 @@ func (m *Manager) FailSession(sessionID, errMsg string) {
 func (m *Manager) Ended(sessionID string) {
 	if m.journal != nil {
 		m.journal.Remove(sessionID)
+	}
+}
+
+// RecordStarted journals where a running session's run is, so a restarted
+// server can re-attach to it (JOBS_DESIGN.md §10).
+func (m *Manager) RecordStarted(sessionID, backend, ref string) {
+	m.mu.RLock()
+	session, exists := m.sessions[sessionID]
+	m.mu.RUnlock()
+	if exists && m.journal != nil {
+		m.journal.RecordStarted(session.Snapshot(), backend, ref)
 	}
 }
 

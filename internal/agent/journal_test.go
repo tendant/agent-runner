@@ -25,6 +25,7 @@ func (r *recordingJournal) RecordRunning(s *Session) {
 	defer r.mu.Unlock()
 	r.running = append(r.running, s.ID)
 }
+func (r *recordingJournal) RecordStarted(s *Session, _, _ string) { r.RecordRunning(s) }
 func (r *recordingJournal) Remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

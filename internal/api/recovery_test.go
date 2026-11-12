@@ -11,6 +11,7 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/sessionjournal"
 )
 
@@ -202,5 +203,58 @@ func TestRecovery_DuplicateRestoreIsNonFatal(t *testing.T) {
 
 	if _, ok := srv.agentManager.GetSession("agent-dup"); !ok {
 		t.Error("expected session still present after duplicate recovery")
+	}
+}
+
+// aliveBackend stands in for the subprocess backend after a restart: the
+// runner of the session named alive is still going.
+type aliveBackend struct{ alive string }
+
+func (b *aliveBackend) Name() string { return "subprocess" }
+func (b *aliveBackend) Start(context.Context, execution.Spec) (execution.Handle, error) {
+	return execution.Handle{}, nil
+}
+func (b *aliveBackend) Stop(context.Context, execution.Handle) error { return nil }
+func (b *aliveBackend) Alive(_ context.Context, h execution.Handle) (bool, string, error) {
+	return h.Session == b.alive, "", nil
+}
+
+// A running session whose runner outlived the restart is re-attached, its
+// watcher resumed and nobody told it failed; one whose runner is gone is
+// failed as before.
+func TestRecovery_ReattachesARunningRunner(t *testing.T) {
+	srv := recoveryServer(t)
+	srv.handlers.execEngine.SetBackend(&aliveBackend{alive: "agent-live"})
+	cap := newCaptureHooks()
+	live := sessionjournal.Entry{SessionID: "agent-live", Source: "telegram", ConvID: "1", Message: "keep going", Status: "running", Backend: "subprocess", Ref: "4242", CreatedAt: time.Now()}
+	gone := sessionjournal.Entry{SessionID: "agent-gone", Source: "telegram", ConvID: "2", Message: "lost", Status: "running", Backend: "subprocess", Ref: "4243", CreatedAt: time.Now()}
+	srv.journal.Write(live)
+	srv.journal.Write(gone)
+
+	srv.recoverWith([]sessionjournal.Entry{live, gone}, cap.hooks("telegram"))
+
+	if snap, _ := srv.agentManager.GetSession("agent-live"); snap == nil || snap.Status != agent.SessionStatusRunning {
+		t.Fatalf("re-attached session: %+v", snap)
+	}
+	if snap, _ := srv.agentManager.GetSession("agent-gone"); snap == nil || snap.Status != agent.SessionStatusFailed {
+		t.Fatalf("gone session: %+v", snap)
+	}
+	cap.mu.Lock()
+	defer cap.mu.Unlock()
+	if len(cap.notices["1"]) != 0 || len(cap.notices["2"]) != 1 {
+		t.Errorf("notices %v", cap.notices)
+	}
+	if len(cap.resumed) != 1 || cap.resumed[0] != "1/agent-live" {
+		t.Errorf("resumed %v", cap.resumed)
+	}
+	// The live one stays journaled, for a further restart; the runner's
+	// token is valid for it again.
+	entries, _ := srv.journal.LoadAll()
+	if len(entries) != 1 || entries[0].SessionID != "agent-live" {
+		t.Errorf("journal %v", entries)
+	}
+	eng := srv.handlers.execEngine
+	if _, err := eng.JobSpec("agent-live", eng.SessionToken("agent-live")); err != nil {
+		t.Errorf("the re-attached runner is refused: %v", err)
 	}
 }

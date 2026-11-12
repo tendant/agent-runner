@@ -54,7 +54,7 @@ func StageMemory(memoryDir, dir string) (*MemoryStage, error) {
 		return nil, err
 	}
 	st := &MemoryStage{Dir: dir, memory: memoryDir, base: map[string][]byte{}}
-	err := WithMemoryLock(func() error {
+	err := WithMemoryLock(memoryDir, func() error {
 		ents, err := os.ReadDir(memoryDir)
 		if os.IsNotExist(err) {
 			return nil

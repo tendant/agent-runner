@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"github.com/agent-runner/agent-runner/internal/proactive"
 	"github.com/agent-runner/agent-runner/internal/proposals"
 	"github.com/agent-runner/agent-runner/internal/repos"
@@ -90,11 +91,14 @@ func NewServer(cfg *config.Config) *Server {
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
 
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
-	if secret, err := execution.LoadJobSecret(filepath.Join(cfg.StateRoot, "job-secret")); err != nil {
+	if cfg.StateRoot == "" {
+		slog.Debug("no STATE_ROOT: runners' tokens will not survive a restart")
+	} else if secret, err := execution.LoadJobSecret(filepath.Join(cfg.StateRoot, "job-secret")); err != nil {
 		slog.Warn("job secret not kept: runners' tokens will not survive a restart", "error", err)
 	} else {
 		handlers.execEngine.SetJobSecret(secret)
 	}
+	setExecutionBackend(cfg, handlers.execEngine)
 	upgradeDefaultPrompts(handlers)
 	for _, k := range config.RemovedSettings {
 		if os.Getenv(k) != "" {
@@ -441,20 +445,7 @@ func (s *Server) Start() error {
 			}
 		}()
 
-		if s.stopSweeper != nil {
-			s.stopSweeper()
-		}
-		if s.stopProactive != nil {
-			s.stopProactive()
-		}
-		// Cancel agent/job contexts first so running sessions stop promptly.
-		s.agentManager.Stop()
-		s.jobManager.Stop()
-
-		// Stop runner (it may be executing a task).
-		if s.scheduler != nil {
-			s.scheduler.Stop()
-		}
+		s.StopWork()
 
 		// Stop bots in parallel with a 3-second cap — a hung SSE/poll loop
 		// must not block the whole shutdown past the 5-second force-exit above.
@@ -508,6 +499,9 @@ func (s *Server) Start() error {
 		return err
 	}
 	slog.Info("server listening", "addr", ln.Addr().String())
+	if eng := s.handlers.execEngine; eng.JobDispatcherURL() == "" && eng.Backend().Name() != "local" {
+		eng.SetJobDispatcherURL(loopbackURL(ln.Addr().String()))
+	}
 
 	// Start Telegram bot
 	if s.telegramBot != nil {
@@ -531,9 +525,10 @@ func (s *Server) Start() error {
 	}
 
 	// Recover sessions interrupted by the previous shutdown — after the bots
-	// are up so notifications can reach the originating conversations.
-	s.recoverSessions()
-	s.recoverTasks()
+	// are up so notifications can reach the originating conversations, and
+	// before serving, so a runner that outlived the last server is known
+	// when its next request arrives.
+	s.Recover()
 
 	if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
@@ -644,10 +639,43 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // mountAudit serves the sandbox audit record dir, read-only, at /audit/
 // for agent-gate to pull (GET /audit/segments, /audit/segments/{name}):
 // behind API_KEY like every route but /health and /metrics.
+//
+// Sessions run by a runner process (AGENT_EXECUTION_BACKEND=subprocess)
+// each have a record of their own (RunnerAuditDir): GET /audit/runners lists
+// them, and each is served the same way at /audit/runners/{session}/.
 func mountAudit(mux *http.ServeMux, dir string) {
-	if dir != "" {
-		mux.Handle("/audit/", http.StripPrefix("/audit", audit.DirHandler(dir)))
+	if dir == "" {
+		return
 	}
+	mux.Handle("/audit/", http.StripPrefix("/audit", audit.DirHandler(dir)))
+	runners := filepath.Clean(dir) + "-runners"
+	mux.HandleFunc("/audit/runners", func(w http.ResponseWriter, r *http.Request) {
+		ents, _ := os.ReadDir(runners)
+		list := []string{}
+		for _, e := range ents {
+			if e.IsDir() {
+				list = append(list, e.Name())
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string][]string{"runners": list})
+	})
+	mux.HandleFunc("/audit/runners/", func(w http.ResponseWriter, r *http.Request) {
+		id, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/audit/runners/"), "/")
+		if id == "" || id != filepath.Base(id) || strings.HasPrefix(id, ".") {
+			http.NotFound(w, r)
+			return
+		}
+		sub := RunnerAuditDir(dir, id)
+		if fi, err := os.Stat(sub); err != nil || !fi.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/" + rest
+		r2.URL.RawPath = ""
+		audit.DirHandler(sub).ServeHTTP(w, r2)
+	})
 }
 
 // apiKeyMiddleware validates the X-API-Key header
@@ -692,6 +720,74 @@ func (rw *responseWriter) Flush() {
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
+
+// StopWork stops what runs sessions and jobs, as a shutdown does first:
+// the sweepers, the agent and job managers (in-process sessions stop; runs
+// on another backend are left for the next server), the scheduler.
+func (s *Server) StopWork() {
+	if s.stopSweeper != nil {
+		s.stopSweeper()
+	}
+	if s.stopProactive != nil {
+		s.stopProactive()
+	}
+	// Cancel agent/job contexts first so running sessions stop promptly.
+	s.agentManager.Stop()
+	s.jobManager.Stop()
+
+	// Stop runner (it may be executing a task).
+	if s.scheduler != nil {
+		s.scheduler.Stop()
+	}
+}
+
+// Recover replays the session journal and pauses tasks whose turn did not
+// survive the last shutdown. Start calls it before serving.
+func (s *Server) Recover() {
+	s.recoverSessions()
+	s.recoverTasks()
+}
+
+// setExecutionBackend puts sessions on AGENT_EXECUTION_BACKEND
+// (JOBS_DESIGN.md §6). One that cannot be set up leaves them local.
+func setExecutionBackend(cfg *config.Config, eng *execution.Engine) {
+	switch name := cfg.Agent.ExecutionBackend; name {
+	case "", "local":
+		return
+	case "subprocess":
+		b, err := execution.NewSubprocessBackend(eng, cfg.Agent.JobRunnerBin)
+		if err != nil {
+			slog.Error("subprocess execution backend unavailable; sessions run in process", "error", err)
+			return
+		}
+		eng.SetBackend(b)
+	default:
+		slog.Error("unknown AGENT_EXECUTION_BACKEND; sessions run in process", "backend", name)
+		return
+	}
+	if u := cfg.Agent.JobDispatcherURL; u != "" {
+		eng.SetJobDispatcherURL(u)
+	} else if host, port, err := net.SplitHostPort(cfg.API.Bind); err == nil && port != "0" {
+		eng.SetJobDispatcherURL(loopbackURL(net.JoinHostPort(host, port)))
+	} // else set once the server listens (Start)
+	slog.Info("sessions run on the subprocess backend", "dispatcher_url", eng.JobDispatcherURL())
+}
+
+// loopbackURL is http://addr, with an unspecified host made loopback.
+func loopbackURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+// SetJobDispatcherURL sets the URL runners reach this server at, for a
+// server whose listener is not its own (tests behind httptest).
+func (s *Server) SetJobDispatcherURL(u string) { s.handlers.execEngine.SetJobDispatcherURL(u) }
 
 // Handler returns the HTTP handler for use in tests
 func (s *Server) Handler() http.Handler {

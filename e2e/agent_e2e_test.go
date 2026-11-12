@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +48,7 @@ echo '{"result":"Done","cost_usd":0.01,"duration_ms":500}'
 	cfg.Agent.Author = "test-agent"
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 
 	return &e2eEnv{
 		server:       ts,
@@ -206,7 +205,7 @@ echo '{"result":"Done"}'
 	cfg.Agent.Paths = []string{"*.txt", "*.md"}
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// Start agent with simplified message-only request
@@ -281,7 +280,7 @@ echo '{"result":"Done"}'
 	cfg.Agent.Paths = []string{"*.txt", "*.md"}
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
@@ -347,7 +346,7 @@ func TestE2E_AgentNoProjectNoDefault(t *testing.T) {
 	}
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// No project concept — should work with just a message
@@ -406,7 +405,7 @@ fi
 	cfg.Agent.PlannerEnabled = true
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
@@ -531,7 +530,7 @@ fi
 	cfg.Agent.PlannerEnabled = true
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{
@@ -620,7 +619,7 @@ echo '{"result":"Done"}'
 	cfg.Agent.Author = "test-agent"
 
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	defer ts.Close()
 
 	// Start first agent — should get 202 with status queued

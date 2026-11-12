@@ -120,7 +120,7 @@ func setupIntegrationEnv(t *testing.T, cli string) (ts *httptest.Server, logsDir
 	}
 
 	srv := api.NewServer(cfg)
-	ts = httptest.NewServer(srv.Handler())
+	ts = serve(srv)
 	t.Cleanup(ts.Close)
 	return ts, logsDir, bareRepo
 }
@@ -286,7 +286,7 @@ func TestIntegration_PermanentErrorFastFail(t *testing.T) {
 		JobRetentionSeconds: 3600,
 	}
 	srv := api.NewServer(cfg)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serve(srv)
 	t.Cleanup(ts.Close)
 
 	code, resp := postAgent(t, ts.URL, map[string]interface{}{

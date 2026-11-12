@@ -50,13 +50,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **In-memory (lost on restart):** one-shot jobs.
 - **Task records (`AGENT_TASKS_ENABLED`, on by default):** `STATE_ROOT/tasks` (internal/task), with each task's persistent workspace at `TMP_ROOT/task-*`; see TASKS_DESIGN.md.
-- **Journaled (recovered on restart):** queued/running agent sessions — `STATE_ROOT/sessions` (internal/sessionjournal). On startup, interrupted sessions are failed with a targeted chat notice; never-started queued sessions are re-enqueued with their watcher re-attached (internal/api/recovery.go).
+- **Journaled (recovered on restart):** queued/running agent sessions — `STATE_ROOT/sessions` (internal/sessionjournal). On startup, interrupted sessions are failed with a targeted chat notice; never-started queued sessions are re-enqueued with their watcher re-attached; with `AGENT_EXECUTION_BACKEND=subprocess`, a session whose `run-session` process outlived the restart is re-attached and keeps running (internal/api/recovery.go, JOBS_DESIGN.md §10).
 - **Chat record (`CHATS_ROOT`, DATA_DIR/chats):** every message a thread records, verbatim, one file per thread per day, kept `AGENT_CHAT_RETENTION` (90 days). A chat session's run gets its own chat's threads (an agent-stream channel, or the Telegram/WeChat chat) in `_chats/`; chat commands never reach a thread, so never the record.
 - **Survives restart:** scheduled tasks (`SCHEDULER_DATABASE_URL` DB), conversations (`tmp/conversations`, executing state auto-reset on load), the memory dir (git-synced), `.env.local` (written by `/config set`), audit logs (`logs/`), outputs/uploads, bot event cursors (`tmp/`).
 - All mutable state roots under `DATA_DIR`.
 
 ### Key Patterns
-- Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir mutex in `internal/template`, a per-repo lock around the fetch-only repo cache in `internal/repos`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
+- Session concurrency is opt-in — `AGENT_MAX_CONCURRENT` (default 1) sets how many `agent.Manager.dispatchLoop` workers run; at 1, dispatch is serial as it always was. Shared state is guarded independently of that setting: a memory-dir lock in `internal/template` (a mutex plus an flock on `<MEMORY_DIR>.lock`, for runner processes), a per-repo lock around the fetch-only repo cache in `internal/repos`. Note the scheduler path (`internal/api/runner_bridge.go`) bypasses the queue entirely, so sessions could already overlap before the pool existed.
+- Execution backends (JOBS_DESIGN.md): `AGENT_EXECUTION_BACKEND=local` (default) runs sessions in process; `subprocess` runs each as an `agent-runner run-session` child that talks to `/internal/sessions/*`, survives a server restart, and is supervised by heartbeat (`internal/execution/subprocess.go`, `supervise.go`).
 - Deep copies (snapshots) returned from `Session.Snapshot()` for thread safety.
 - Config load priority: OS env > `DATA_DIR/.env.local` > `.env.<instance>` > `.env`.
 - Agent workspace uses `workspace/` subdirectory as the agent's CWD; every registered repo (`/repo`, `DATA_DIR/repos.json`, REPOS_DESIGN.md) is checked out there from a bare cache in `REPO_CACHE_ROOT` that only fetches.
@@ -94,7 +95,7 @@ curl -X POST localhost:8080/bootstrap
 ```bash
 go test -race ./...
 ```
-- E2E tests in `e2e/` use mock CLI bash scripts prepended to PATH
+- E2E tests in `e2e/` use mock CLI bash scripts prepended to PATH; `AGENT_EXECUTION_BACKEND=subprocess go test ./e2e` runs them all with each session in a runner process (built by TestMain)
 - Multi-turn tasks end to end against a real agent-stream server (both built and run as binaries, fake `claude` in `e2e/testdata/mock-claude-tasks.py`): `AGENT_STREAM_SRC=/abs/path/to/agent-stream/agent-stream go test ./e2e -run TasksOverAgentStream -v` (skipped when unset); add `AGENT_E2E_REAL_CLAUDE=1` and `-run TasksRealClaude -timeout 45m` for the same stack with the real claude CLI (billed, uses the local claude login)
 - The proactive agent end to end on a sample task, on the same stack with the real claude CLI under `AGENT_SANDBOX=strict`. It checks a plan and a yes, a run nobody asked for, a demotion after a revert, and a proposal with its eval. It is billed and needs `CLAUDE_CODE_OAUTH_TOKEN`: `AGENT_E2E_REAL_CLAUDE=1 AGENT_STREAM_SRC=... CLAUDE_CODE_OAUTH_TOKEN=... go test ./e2e -count=1 -run ProactiveRealClaude -v -timeout 75m`
 - Always run with `-race`; CI also gates on `gofmt -l` and `go vet`

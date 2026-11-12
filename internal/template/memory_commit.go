@@ -32,8 +32,7 @@ func CommitMemory(memoryDir, message string) (bool, error) {
 	if !memoryIsRepo(memoryDir) {
 		return false, nil
 	}
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 	return commitAll(memoryDir, message)
 }
 
@@ -44,8 +43,7 @@ func CommitMemoryFiles(memoryDir, message string, files ...string) (bool, error)
 	if !memoryIsRepo(memoryDir) || len(files) == 0 {
 		return false, nil
 	}
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 	return commitPaths(memoryDir, message, files)
 }
 
@@ -141,8 +139,7 @@ func UndoMemorySession(memoryDir, sessionID string) ([]string, error) {
 	if !memoryIsRepo(memoryDir) {
 		return nil, fmt.Errorf("the memory dir is not a git repo, so there is no history to undo")
 	}
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 
 	out, err := gitOutput(memoryDir, "log", "--format=%h %s")
 	if err != nil {
@@ -269,8 +266,7 @@ func memoryIsRepo(memoryDir string) bool {
 // repo commits it alone with message: an operator's edit is never swept
 // into a session's commit, so undoing a session cannot take it back.
 func WriteInstructions(memoryDir, path, content, message string) error {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 	if err := writeMemoryFile(filepath.Dir(path), filepath.Base(path), content); err != nil {
 		return err
 	}
@@ -281,8 +277,7 @@ func WriteInstructions(memoryDir, path, content, message string) error {
 // (the startup upgrade of an unedited default), when it is in a memory git
 // repo.
 func CommitInstructions(memoryDir, path, message string) error {
-	memoryMu.Lock()
-	defer memoryMu.Unlock()
+	defer lockMemory(memoryDir)()
 	return commitInstructions(memoryDir, path, message)
 }
 

@@ -110,6 +110,11 @@ func (h *Engine) GetAgentSession(sessionID string) (*agent.Session, bool) {
 // support steering (one-shot CLIs) — callers fall back to queueing the
 // message for a follow-up run.
 func (h *Engine) Steer(sessionID, text string) error {
+	if _, remote := h.remote.Load(sessionID); remote {
+		// The run is elsewhere: its runner gets it on its next control
+		// poll, if its CLI takes steer messages (JOBS_DESIGN.md §7.3).
+		return h.queueSteer(sessionID, text)
+	}
 	v, ok := h.liveControls.Load(sessionID)
 	if !ok {
 		return fmt.Errorf("session %s has no live executor session", sessionID)
@@ -119,4 +124,15 @@ func (h *Engine) Steer(sessionID, text string) error {
 		return fmt.Errorf("session %s has no live executor session", sessionID)
 	}
 	return sess.Steer(text)
+}
+
+// canSteer reports whether a session running here has a live CLI session
+// that takes steer messages (a persistent backend).
+func (h *Engine) canSteer(sessionID string) bool {
+	v, ok := h.liveControls.Load(sessionID)
+	if !ok {
+		return false
+	}
+	as := v.(*agentSession)
+	return as.backend.Persistent() && as.session() != nil
 }

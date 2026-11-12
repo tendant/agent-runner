@@ -65,12 +65,43 @@ func (s *Server) recoverWith(entries []sessionjournal.Entry, hooks map[string]so
 		case "queued":
 			s.recoverQueued(ctx, entry, hooks)
 		case "running":
-			s.recoverInterrupted(ctx, entry, hooks)
+			if !s.reattach(ctx, entry, hooks) {
+				s.recoverInterrupted(ctx, entry, hooks)
+			}
 		default:
 			slog.Warn("session recovery: unknown journal status, dropping", "session_id", entry.SessionID, "status", entry.Status)
 			s.journal.Remove(entry.SessionID)
 		}
 	}
+}
+
+// reattach takes back a session whose run is on another backend and still
+// going (JOBS_DESIGN.md §10): its runner keeps reporting and sends its
+// result here. It reports whether it did; a run that is gone, or on a
+// backend this server no longer uses, is for recoverInterrupted.
+func (s *Server) reattach(ctx context.Context, entry sessionjournal.Entry, hooks map[string]sourceHooks) bool {
+	eng := s.handlers.execEngine
+	if entry.Backend == "" || entry.Backend == "local" || entry.Backend != eng.Backend().Name() {
+		return false
+	}
+	h := execution.Handle{Backend: entry.Backend, Ref: entry.Ref, Session: entry.SessionID}
+	alive, _, err := eng.Backend().Alive(ctx, h)
+	if err != nil || !alive {
+		slog.Info("session recovery: the run is gone", "session_id", entry.SessionID, "backend", entry.Backend, "ref", entry.Ref, "error", err)
+		return false
+	}
+	session := restoredSession(entry)
+	session.Status = agent.SessionStatusRunning
+	if err := s.agentManager.RestoreSession(session); err != nil {
+		slog.Warn("session recovery: restore failed", "session_id", entry.SessionID, "error", err)
+		return false
+	}
+	eng.Reattach(session, h)
+	slog.Info("session recovery: re-attached to a running session", "session_id", entry.SessionID, "backend", entry.Backend, "ref", entry.Ref)
+	if hk, ok := hooks[entry.Source]; ok && hk.resume != nil && entry.ConvID != "" {
+		hk.resume(entry.ConvID, entry.SessionID)
+	}
+	return true
 }
 
 // recoverInterrupted marks a session that was mid-run as failed and tells the

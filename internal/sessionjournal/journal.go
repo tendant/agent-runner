@@ -19,21 +19,25 @@ import (
 // Entry is the persisted state of one active session — enough to rebuild a
 // queued session or describe an interrupted one.
 type Entry struct {
-	SessionID       string    `json:"session_id"`
-	Source          string    `json:"source"`
-	ConvID          string    `json:"conv_id,omitempty"`
-	Message         string    `json:"message"`
-	Paths           []string  `json:"paths,omitempty"`
-	Author          string    `json:"author,omitempty"`
-	CommitPrefix    string    `json:"commit_prefix,omitempty"`
-	MaxIterations   int       `json:"max_iterations"`
-	MaxTotalSeconds int       `json:"max_total_seconds"`
-	CallbackURL     string    `json:"callback_url,omitempty"`
-	TaskWorkspace   string    `json:"task_workspace,omitempty"` // set for a turn of a multi-turn task
-	TaskFeedback    string    `json:"task_feedback,omitempty"`  // feedback the turn revises the plan with
-	Status          string    `json:"status"`                   // "queued" | "running"
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	SessionID       string   `json:"session_id"`
+	Source          string   `json:"source"`
+	ConvID          string   `json:"conv_id,omitempty"`
+	Message         string   `json:"message"`
+	Paths           []string `json:"paths,omitempty"`
+	Author          string   `json:"author,omitempty"`
+	CommitPrefix    string   `json:"commit_prefix,omitempty"`
+	MaxIterations   int      `json:"max_iterations"`
+	MaxTotalSeconds int      `json:"max_total_seconds"`
+	CallbackURL     string   `json:"callback_url,omitempty"`
+	TaskWorkspace   string   `json:"task_workspace,omitempty"` // set for a turn of a multi-turn task
+	TaskFeedback    string   `json:"task_feedback,omitempty"`  // feedback the turn revises the plan with
+	Status          string   `json:"status"`                   // "queued" | "running"
+	// Backend and Ref name a running session's run when it is not in the
+	// server's own process (JOBS_DESIGN.md §10): "subprocess" and a pid.
+	Backend   string    `json:"backend,omitempty"`
+	Ref       string    `json:"ref,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Journal stores one JSON file per active session under dir.
