@@ -27,10 +27,6 @@ func (s *taskStarter) StartAgent(m, _, _ string) (string, error) {
 }
 func (s *taskStarter) Steer(string, string) error { return errors.New("no steer") }
 
-func (s *taskStarter) AddMessage(string, string) (string, string, error) {
-	return "", "", errors.New("not implemented")
-}
-
 func (s *taskStarter) StartTaskTurn(turn agent.TaskTurn) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

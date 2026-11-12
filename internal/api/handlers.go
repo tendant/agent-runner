@@ -22,7 +22,6 @@ import (
 	"github.com/agent-runner/agent-runner/internal/botcommon"
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/chatcmd"
-	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
 	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/executor"
@@ -260,8 +259,7 @@ func (h *Handlers) PromptPreview(message string) (string, error) {
 }
 
 // AgentStarter returns the session-starting facade (the execution engine).
-// AgentStarter implements botcommon.AgentStarter: delegates most methods to
-// execEngine, but handles AddMessage directly with full /agent/messages logic.
+// Handlers implements botcommon.AgentStarter by delegating to execEngine.
 func (h *Handlers) AgentStarter() botcommon.AgentStarter {
 	return h
 }
@@ -306,73 +304,6 @@ func (h *Handlers) FinishTaskWorkspace(taskDir string) {
 // StopSession delegates to execEngine.
 func (h *Handlers) StopSession(sessionID string) error {
 	return h.execEngine.StopSession(sessionID)
-}
-
-// AddMessage adds a follow-up message to a conversation thread, steering if
-// the session is running or queuing otherwise. convID routes to the right
-// conversation thread.
-func (h *Handlers) AddMessage(convID, text string) (string, string, error) {
-	if strings.TrimSpace(text) == "" {
-		return "", "", fmt.Errorf("message is required")
-	}
-	if strings.TrimSpace(convID) == "" {
-		return "", "", fmt.Errorf("conversation ID is required")
-	}
-
-	// Find running session in this thread
-	runningSession := h.agentManager.FindRunningSessionByConvID(convID)
-
-	if runningSession != nil {
-		// Add to conversation history
-		runningSession.AddMessage("user", text)
-
-		// Session is running — try to steer if backend supports it
-		if err := h.execEngine.Steer(runningSession.ID, text); err == nil {
-			slog.Info("added message to running session via steering", "conv_id", convID, "session_id", runningSession.ID)
-			return runningSession.ID, "steering", nil
-		}
-
-		// Backend doesn't support steering — queue for next iteration
-		runningSession.AppendPendingMessage(text)
-		slog.Info("added message to running session via queueing", "conv_id", convID, "session_id", runningSession.ID)
-		return runningSession.ID, "queued", nil
-	}
-
-	// No running session — create a new queued session
-	paths := h.config.Agent.Paths
-	author := h.config.Agent.Author
-	commitPrefix := h.config.Agent.CommitPrefix
-	maxIter := h.config.Agent.MaxIterations
-	maxSeconds := h.config.Agent.MaxTotalSeconds
-
-	session, err := h.agentManager.CreateSession(
-		text, paths,
-		author, commitPrefix, maxIter, maxSeconds,
-	)
-	if err != nil {
-		return "", "", err
-	}
-	session.Source = "api"
-	session.ConvID = convID
-
-	// Add initial message to conversation history
-	session.AddMessage("user", text)
-
-	warnings := clisetup.BootstrapWarnings(clisetup.ResolveCLI(h.config.Agent.CLI), h.config.Agent.Provider)
-	for _, w := range warnings {
-		session.AddWarning(w)
-	}
-
-	sessionID := session.ID
-	preview := textutil.Truncate(text, 80)
-	slog.Info("created new session from AddMessage", "session_id", sessionID, "conv_id", convID, "message", preview)
-
-	if err := h.agentManager.Enqueue(session, h.execEngine.ExecuteAgent); err != nil {
-		h.execEngine.FailSession(sessionID, "agent queue is full")
-		return "", "", fmt.Errorf("agent queue is full")
-	}
-
-	return sessionID, "queued", nil
 }
 
 // getExecutor returns the current executor, safe for concurrent use.

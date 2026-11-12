@@ -421,28 +421,6 @@ func (m *Manager) GetSessionDirect(sessionID string) (*Session, bool) {
 	return session, exists
 }
 
-// FindRunningSessionByConvID finds the running session in the given conversation thread.
-// Returns the live session pointer (for steering/message injection) or nil if no running session found.
-// An empty convID matches nothing: every session without a conversation (API
-// sessions) has that ID, and none may receive another caller's message.
-func (m *Manager) FindRunningSessionByConvID(convID string) *Session {
-	if convID == "" {
-		return nil
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, s := range m.sessions {
-		s.mu.RLock()
-		status := s.Status
-		sConvID := s.ConvID
-		s.mu.RUnlock()
-		if status == SessionStatusRunning && sConvID == convID {
-			return s
-		}
-	}
-	return nil
-}
-
 // ListSessions returns up to limit session snapshots sorted newest-first.
 // Pass limit <= 0 for all sessions.
 func (m *Manager) ListSessions(limit int) []*Session {

@@ -137,8 +137,13 @@ The sandbox has no direct network. Its ways out are the run's model proxies and 
 gateway (`internal/sandbox/egress`), both in the runner.
 
 **Egress.** Policy `outbound` becomes `restricted` egress through the gateway. The gateway
-resolves names itself and allows ports 443 and 80. By default it allows **any public host**;
-`AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...` narrows that to listed hosts. A
+resolves names itself and allows ports 443 and 80 (`AGENT_SANDBOX_EGRESS_PORTS=443,80,...` to
+change them). By default `permissive` allows **any public host**, and `strict` only a short list:
+`api.anthropic.com`, `api.openai.com`, `api.deepseek.com`, `registry.npmjs.org`, `*.npmjs.org`,
+`pypi.org`, `*.pypi.org`, `files.pythonhosted.org`, `github.com`, `api.github.com`,
+`raw.githubusercontent.com` and `gitlab.com` (`strictModeApprovedHosts` in
+`internal/sandbox/runtime`). `AGENT_SANDBOX_EGRESS_ALLOW=github.com,*.npmjs.org,...` replaces
+either default with the listed hosts. A
 `*.example.com` wildcard grants one label under the domain (`a.example.com`, not `example.com`
 itself nor `a.b.example.com`). Named sets keep a list short: `@github`, `@npm`, `@pypi`, `@go`,
 `@gitlab`, `@cloudflare`, `@anthropic`, `@openai`, `@deepseek` stand for their services' hosts
@@ -152,7 +157,8 @@ enforcing it: a host the list does not grant is reached anyway and recorded as o
 "Outside the allowlist" column), so what enforcing would refuse is on record without breaking
 runs. Ports and internal addresses are refused all the same. `enforce`, the default, refuses
 them; any other value rejects every run. Private, loopback, link-local and metadata addresses are
-refused either way, also when a name resolves to one. git over SSH (port 22) is refused: use HTTPS remotes. How connections reach the gateway,
+refused either way, also when a name resolves to one. git over SSH (port 22) is refused unless
+`AGENT_SANDBOX_EGRESS_PORTS` lists 22: use HTTPS remotes. How connections reach the gateway,
 `AGENT_SANDBOX_EGRESS_MODE`:
 
 * **`transparent`** (Linux; what `auto`, the default, picks where the host supports it):

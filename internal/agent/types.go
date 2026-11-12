@@ -82,7 +82,6 @@ type Session struct {
 	ConvID               string            `json:"-"`                // originating conversation key for chat sessions; "" otherwise. Never exposed over HTTP.
 	Message              string            `json:"message"`
 	Messages             []Message         `json:"-"` // conversation history (user/assistant messages)
-	PendingMsgs          []string          `json:"-"` // messages queued for next iteration
 	Paths                []string          `json:"paths"`
 	Author               string            `json:"author"`
 	CommitMessagePrefix  string            `json:"commit_message_prefix"`
@@ -334,24 +333,6 @@ func (s *Session) AddNote(msg string) {
 	s.mu.Unlock()
 }
 
-// AppendPendingMessage queues a message for the next iteration
-func (s *Session) AppendPendingMessage(msg string) {
-	s.mu.Lock()
-	s.PendingMsgs = append(s.PendingMsgs, msg)
-	s.mu.Unlock()
-	s.notifyUpdate()
-}
-
-// GetAndClearPendingMessages returns and clears pending messages for injection
-func (s *Session) GetAndClearPendingMessages() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	msgs := make([]string, len(s.PendingMsgs))
-	copy(msgs, s.PendingMsgs)
-	s.PendingMsgs = nil
-	return msgs
-}
-
 // AddMessage appends a message to the conversation history.
 // The content is redacted like iteration output: messages are served by
 // GET /agent/{id}, GET /sessions and the webhook payload.
@@ -477,7 +458,6 @@ func (s *Session) Snapshot() *Session {
 		ConvID:               s.ConvID,
 		Message:              s.Message,
 		Messages:             make([]Message, len(s.Messages)),
-		PendingMsgs:          append([]string{}, s.PendingMsgs...),
 		Paths:                append([]string{}, s.Paths...),
 		Author:               s.Author,
 		CommitMessagePrefix:  s.CommitMessagePrefix,

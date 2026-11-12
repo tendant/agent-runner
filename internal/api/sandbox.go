@@ -66,14 +66,12 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 			return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_AUDIT_DIR: %w", err))
 		}
 	}
-	// Apply mode-specific egress port defaults if not explicitly configured
+	// HTTPS and HTTP in every mode unless AGENT_SANDBOX_EGRESS_PORTS says
+	// otherwise. Not SSH (22): repos are pushed from the host, and SSH out to
+	// any host is an easy way to move data out.
 	egressPorts := cfg.Agent.SandboxEgressPorts
 	if len(egressPorts) == 0 {
-		if mode == sandbox.ModePermissive {
-			egressPorts = []int{443, 80, 22} // Allow SSH in permissive mode
-		} else {
-			egressPorts = []int{443, 80} // Strict: HTTPS/HTTP only
-		}
+		egressPorts = []int{443, 80}
 	}
 	rt, err := sandboxrt.New(sandboxrt.Config{
 		Mode:          mode,

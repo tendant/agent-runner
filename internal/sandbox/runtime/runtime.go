@@ -114,8 +114,9 @@ type Config struct {
 	NewBackend func(roots map[string]string) sandbox.Backend
 }
 
-// strictModeApprovedHosts are the default allowed egress hosts in strict mode.
-// Permissive mode allows "*" (any public host).
+// strictModeApprovedHosts are the default allowed egress hosts in strict mode
+// (AGENT_SANDBOX_EGRESS_ALLOW replaces them). Permissive mode allows "*" (any
+// public host). Keep docs/sandbox.md "Network" in step.
 var strictModeApprovedHosts = []string{
 	// Model APIs
 	"api.anthropic.com",
@@ -132,8 +133,6 @@ var strictModeApprovedHosts = []string{
 	"api.github.com",
 	"raw.githubusercontent.com",
 	"gitlab.com",
-	// DNS/CDN
-	"*.cloudflare.com",
 }
 
 // DefaultSystemSpec is the policy used when no PolicyFile is configured: the

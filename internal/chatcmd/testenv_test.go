@@ -55,10 +55,6 @@ func (fakeStarter) GetAgentSession(sessionID string) (*agent.Session, bool) {
 
 func (fakeStarter) Steer(string, string) error { return errors.New("steer unsupported") }
 
-func (fakeStarter) AddMessage(string, string) (string, string, error) {
-	return "", "", errors.New("not implemented")
-}
-
 func setupTestEnv(t *testing.T) *cmdTestEnv {
 	t.Helper()
 	dir := t.TempDir()

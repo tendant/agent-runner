@@ -594,62 +594,6 @@ func TestApiKeyMiddleware_HealthBypass(t *testing.T) {
 	}
 }
 
-func TestHandleAddMessage_NoRunningSession(t *testing.T) {
-	env := setupTestEnv(t)
-
-	data, _ := json.Marshal(map[string]string{"message": "test message"})
-	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Conv-ID", "conv-123")
-
-	w := httptest.NewRecorder()
-	env.handlers.HandleAddMessage(w, req)
-
-	if w.Code != http.StatusAccepted {
-		t.Errorf("expected 202, got %d", w.Code)
-	}
-
-	resp := parseJSON(w)
-	if resp["injection"] != "queued" {
-		t.Errorf("expected injection=queued, got %v", resp["injection"])
-	}
-	if resp["status"] != "queued" {
-		t.Errorf("expected status=queued, got %v", resp["status"])
-	}
-	if resp["session_id"] == "" {
-		t.Errorf("expected session_id to be set")
-	}
-}
-
-func TestHandleAddMessage_MissingMessage(t *testing.T) {
-	env := setupTestEnv(t)
-
-	data, _ := json.Marshal(map[string]string{})
-	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	env.handlers.HandleAddMessage(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleAddMessage_InvalidJSON(t *testing.T) {
-	env := setupTestEnv(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/agent/messages", bytes.NewReader([]byte("not json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	env.handlers.HandleAddMessage(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
-	}
-}
-
 func TestHandleStartAgent_IncludesMessageInHistory(t *testing.T) {
 	env := setupTestEnv(t)
 	// The start preflight wants the agent CLI on PATH: a stub, so the test
