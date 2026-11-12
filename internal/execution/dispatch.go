@@ -16,6 +16,9 @@ import (
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 	"github.com/agent-runner/agent-runner/internal/metrics"
+	"github.com/agent-runner/agent-runner/internal/proposals"
+	"github.com/agent-runner/agent-runner/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // The dispatcher's half of the job protocol (JOBS_DESIGN.md §7): what the
@@ -182,10 +185,13 @@ func (h *Engine) JobReport(sessionID, token string, rep *JobReport) error {
 	return nil
 }
 
-// JobResult takes a runner's result once: the session gets its final state
-// and is finalized here, as a local run is, and the run ends. A repeat of a
-// taken result reports duplicate (the runner's retry after a lost reply).
-func (h *Engine) JobResult(sessionID, token string, w *RunResultWire) (duplicate bool, err error) {
+// JobResult takes a runner's result once: what the runner left to the
+// dispatcher (outputs, proposals, schedules: §8.4) is done here, then the
+// session gets its final state and is finalized, as a local run is, and the
+// run ends. A repeat of a taken result reports duplicate (the runner's retry
+// after a lost reply). ctx carries the runner's span, which the dispatcher's
+// part of the trace joins.
+func (h *Engine) JobResult(ctx context.Context, sessionID, token string, w *RunResultWire) (duplicate bool, err error) {
 	s, run, err := h.authJob(sessionID, token)
 	if err != nil {
 		return false, err
@@ -193,8 +199,7 @@ func (h *Engine) JobResult(sessionID, token string, w *RunResultWire) (duplicate
 	if w.SessionID != sessionID {
 		return false, fmt.Errorf("result for %s sent to %s", w.SessionID, sessionID)
 	}
-	res, err := w.RunResult()
-	if err != nil {
+	if _, err := w.RunResult(); err != nil { // check it before taking it
 		return false, err
 	}
 	run.mu.Lock()
@@ -210,15 +215,55 @@ func (h *Engine) JobResult(sessionID, token string, w *RunResultWire) (duplicate
 	run.mu.Unlock()
 	run.poke()
 
+	ctx, span := tracing.Start(context.WithoutCancel(ctx), "agent.dispatch.finalize", attribute.String("session.id", sessionID))
+	defer span.End()
+	// Notes and warnings from the deferred work go on the final state
+	// before the session turns terminal, as in a local run.
+	h.finishDeferred(ctx, sessionID, w)
+	res, err := w.RunResult()
+	if err != nil {
+		slog.Error("job result: rebuilding it", "session_id", sessionID, "error", err)
+		return false, err
+	}
 	if err := s.ApplyWire(w.Snapshot, DecodeWire); err != nil {
-		// Checked by RunResult above; a failure here is a bug, and the
-		// session must still end.
 		slog.Error("job result: applying the final state", "session_id", sessionID, "error", err)
 	}
 	h.agentManager.Ended(sessionID)
 	h.finalizeSession(res)
 	h.runEnded(sessionID)
 	return false, nil
+}
+
+// finishDeferred does what a runner leaves to the dispatcher (§8.4):
+// persisting the _send/ files, submitting proposals and schedule entries.
+// What it reports goes on w's snapshot.
+func (h *Engine) finishDeferred(ctx context.Context, sessionID string, w *RunResultWire) {
+	snap := w.Snapshot
+	if h.config.OutputsRoot != "" && len(snap.OutputFiles) > 0 {
+		files := make([]agent.OutputFile, len(snap.OutputFiles))
+		for i, f := range snap.OutputFiles {
+			files[i] = f.OutputFile
+			files[i].Data = f.Data
+		}
+		if err := persistOutputFiles(files, h.config.OutputsRoot, sessionID); err != nil {
+			slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
+		}
+	}
+	if len(w.Proposals) > 0 && h.proposals != nil {
+		files := make([]proposals.File, len(w.Proposals))
+		for i, f := range w.Proposals {
+			files[i] = proposals.File{Name: f.Name, Data: f.Data}
+		}
+		// The runner already dropped the files that hold a secret.
+		for _, n := range h.proposals.Submit(ctx, proposals.Submission{SessionID: sessionID, Source: snap.Source, Files: files}) {
+			if n.Dropped {
+				snap.Warnings = append(snap.Warnings, n.Text)
+			} else {
+				snap.Notes = append(snap.Notes, n.Text)
+			}
+		}
+	}
+	h.submitSchedule(ctx, sessionID, w.Schedule)
 }
 
 // JobControl returns the session's stop request and any steer messages

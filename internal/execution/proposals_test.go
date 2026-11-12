@@ -72,3 +72,42 @@ func TestRuntimeInstructionsProposals(t *testing.T) {
 		}
 	}
 }
+
+// In a runner, proposals are kept for the dispatcher, minus any file that
+// holds a secret value (the dispatcher cannot tell one); the dispatcher
+// submits them and their notes go on the session's final state.
+func TestProposalsDeferredToDispatcher(t *testing.T) {
+	work := t.TempDir()
+	dir := filepath.Join(work, proposalsDir)
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("A"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.md"), []byte("B hunter2"), 0o644)
+
+	runner := &Engine{config: &config.Config{}}
+	runner.EnableRunnerMode(true)
+	if !runner.proposalsOn() {
+		t.Fatal("a runner does not tell sessions they may propose")
+	}
+	live := &agent.Session{ID: "s1", Source: "stream"}
+	live.SetRedactor(func(s string) string { return strings.ReplaceAll(s, "hunter2", "[secret]") })
+	runner.collectProposals(context.Background(), "s1", live, work)
+	kept := runner.deferred("s1").Proposals
+	if len(kept) != 1 || kept[0].Name != "a.md" {
+		t.Fatalf("kept %+v", kept)
+	}
+	if w := live.Snapshot().Warnings; len(w) != 1 || !strings.Contains(w[0], "b.md") {
+		t.Fatalf("warnings %v", w)
+	}
+
+	sink := &fakeSink{on: true}
+	dispatcher := &Engine{config: &config.Config{}, proposals: sink}
+	w := &RunResultWire{SessionID: "s1", Snapshot: &agent.SessionWire{ID: "s1", Source: "stream"},
+		Proposals: []ProposalFileWire{{Name: "a.md", Data: []byte("A")}}}
+	dispatcher.finishDeferred(context.Background(), "s1", w)
+	if len(sink.got) != 1 || len(sink.got[0].Files) != 1 || sink.got[0].Source != "stream" {
+		t.Fatalf("submitted %+v", sink.got)
+	}
+	if len(w.Snapshot.Notes) != 1 || len(w.Snapshot.Warnings) != 1 {
+		t.Errorf("notes %v warnings %v", w.Snapshot.Notes, w.Snapshot.Warnings)
+	}
+}

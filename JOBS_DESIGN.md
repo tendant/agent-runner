@@ -335,7 +335,39 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   - The result shares the server's 32 MiB body cap, so `_send/` files over roughly 24 MiB do not
     fit; `AGENT_JOB_MAX_OUTPUT_BYTES` and the other `AGENT_JOB_*` settings come with 2d and 2e.
   - With no API key, the loopback-Host check still applies, which suits `subprocess` but not k8s.
-- **2d:** `agent-runner run-session`.
+- **2d, the runner (built).** `agent-runner run-session -session <id> -dispatcher <url>`, with the
+  token in `AGENT_JOB_TOKEN` (`cmd/server/runsession.go`). It builds an engine from the
+  dispatcher's configuration with no server, bots, journal or proposals service
+  (`api.NewRunner`), then calls `Engine.RunRemote`, which:
+  - fetches the session (`spec`, retried);
+  - runs it with today's `runSession`;
+  - reports on every change, at most every 2s, with a sequence number;
+  - long-polls `control`: a stop becomes `RequestStop`, a steer goes to `Engine.Steer`;
+  - sends the result, retried for `AGENT_JOB_REPORT_RETRY` (15m).
+
+  It exits 0 once the result is delivered and 1 if it is not. A 410 from any route ends the run.
+  SIGTERM ends it like a shutdown, and the result is still sent.
+
+  What only the dispatcher can do travels in the result and is done in `JobResult` before the
+  session turns terminal (§8.4): persisting `_send/` files, submitting `_schedule.json` entries
+  and `_proposals/` files. The runner drops a proposal that holds a secret value, since the
+  dispatcher cannot tell one. `_send/` files past `AGENT_JOB_MAX_OUTPUT_BYTES` (24 MiB, under
+  the 32 MiB request cap) go back without content, with a warning.
+
+  Tracing: the runner's `agent.session` span is the root, as in a local run, and begins when the
+  session was queued. The runner sends its context as `traceparent` on the result, and the
+  dispatcher's `agent.dispatch.finalize` joins that trace.
+
+  The runner records its sandbox runs in `<AGENT_SANDBOX_AUDIT_DIR>-runners/<session>`, because a
+  record directory has one writer.
+
+  Tested in process (`execution/runner_test.go`): a dispatcher serving the endpoints over HTTP
+  and a runner engine, covering a completed run (one audit log, one trace), stop and steer, a run
+  the dispatcher ended, client retries and the output cap. Open for 2e:
+  - The `-runners` audit directories are not yet served at `/audit/`.
+  - The memory-dir lock is in-process: a runner's memory merge and the dispatcher's daily log for
+    another session could overlap with `AGENT_MAX_CONCURRENT` > 1.
+  - `Engine.Steer` on the dispatcher still reaches only local runs.
 - **2e:** the `subprocess` backend; the mock-CLI e2e suites again with
   `AGENT_EXECUTION_BACKEND=subprocess`, plus stop, steer, a killed runner and a dispatcher restart.
 

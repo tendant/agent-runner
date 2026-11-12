@@ -68,6 +68,20 @@ func (h *Engine) collectProposals(ctx context.Context, sessionID string, live *a
 		}
 		files = append(files, proposals.File{Name: e.Name(), Data: data})
 	}
+	if h.runnerMode {
+		// The dispatcher submits them. It cannot tell a secret value, so a
+		// file holding one is dropped here.
+		var keep []proposals.File
+		for _, f := range files {
+			if live.Redact(string(f.Data)) != string(f.Data) {
+				live.AddWarning("_proposals/" + f.Name + ": dropped, it holds a secret value")
+				continue
+			}
+			keep = append(keep, f)
+		}
+		h.deferred(sessionID).Proposals = keep
+		return
+	}
 	snap := live.Snapshot()
 	notes := h.proposals.Submit(ctx, proposals.Submission{
 		SessionID: sessionID,

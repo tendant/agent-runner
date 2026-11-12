@@ -16,7 +16,7 @@ type captureReporter struct {
 	workspaceWas bool
 }
 
-func (c *captureReporter) Finish(res *RunResult) {
+func (c *captureReporter) Finish(_ context.Context, res *RunResult) {
 	c.res = res
 	if ws := c.live.WorkspacePath; ws != "" {
 		_, err := os.Stat(ws)

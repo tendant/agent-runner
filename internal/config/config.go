@@ -143,6 +143,8 @@ type AgentConfig struct {
 	// Multi-turn tasks (TASKS_DESIGN.md). Off by default: each chat message
 	// then starts an independent run, as before.
 	TasksEnabled      bool          // AGENT_TASKS_ENABLED (default true; false = one-shot runs)
+	JobReportRetry    time.Duration // AGENT_JOB_REPORT_RETRY — how long a runner keeps retrying the dispatcher (JOBS_DESIGN.md §7.2; default 15m)
+	JobMaxOutputBytes int           // AGENT_JOB_MAX_OUTPUT_BYTES — cap on the _send/ files a runner sends in its result (default 24 MiB)
 	TaskRetention     time.Duration // AGENT_TASK_RETENTION — keep a done task's workspace this long for feedback (default 24h)
 	TaskMaxTurns      int           // AGENT_TASK_MAX_TURNS — turns before a task pauses for a go-ahead (default 10; 0 = no limit)
 	TaskMaxSeconds    time.Duration // AGENT_TASK_MAX_SECONDS — working time before a task pauses (default 4h; 0 = no limit)
@@ -324,6 +326,8 @@ func defaultConfigForDataDir(data string) *Config {
 			MaxConcurrent:       1,
 			TasksEnabled:        true,
 			TaskRetention:       24 * time.Hour,
+			JobReportRetry:      15 * time.Minute,
+			JobMaxOutputBytes:   24 << 20,
 			TaskIdleTTL:         7 * 24 * time.Hour,
 			ProactiveInterval:   30 * time.Minute,
 			ProactiveMaxPosts:   10,
@@ -542,6 +546,8 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.MaxConcurrent = envIntOrDefault("AGENT_MAX_CONCURRENT", cfg.Agent.MaxConcurrent)
 	cfg.Agent.TasksEnabled = envBoolOrDefault("AGENT_TASKS_ENABLED", cfg.Agent.TasksEnabled)
 	cfg.Agent.TaskRetention = envDurationOrDefault("AGENT_TASK_RETENTION", cfg.Agent.TaskRetention)
+	cfg.Agent.JobReportRetry = envDurationOrDefault("AGENT_JOB_REPORT_RETRY", cfg.Agent.JobReportRetry)
+	cfg.Agent.JobMaxOutputBytes = envIntOrDefault("AGENT_JOB_MAX_OUTPUT_BYTES", cfg.Agent.JobMaxOutputBytes)
 	cfg.Agent.TaskIdleTTL = envDurationOrDefault("AGENT_TASK_IDLE_TTL", cfg.Agent.TaskIdleTTL)
 	cfg.Agent.Proactive = envOnOff("AGENT_PROACTIVE", cfg.Agent.Proactive)
 	cfg.Agent.Proposals = envOnOff("AGENT_PROPOSALS", cfg.Agent.Proposals)

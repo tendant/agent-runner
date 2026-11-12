@@ -48,7 +48,15 @@ type RunResultWire struct {
 	MemorySaved    []string                   `json:"memory_saved,omitempty"`
 	MemorySkipped  []string                   `json:"memory_skipped,omitempty"`
 	Egress         []logging.EgressLog        `json:"egress,omitempty"`
+	Schedule       []ScheduleEntry            `json:"schedule,omitempty"`
+	Proposals      []ProposalFileWire         `json:"proposals,omitempty"`
 	Redacted       bool                       `json:"redacted"`
+}
+
+// ProposalFileWire is a _proposals/ file in a result.
+type ProposalFileWire struct {
+	Name string `json:"name"`
+	Data []byte `json:"data"`
 }
 
 // Wire returns the result as a runner sends it. What finalization would
@@ -67,6 +75,10 @@ func (r *RunResult) Wire() (*RunResultWire, error) {
 		snap.Iterations[i].Prompt = redact(snap.Iterations[i].Prompt)
 	}
 	snap.Error = redact(snap.Error) // the daily log, pushed with memory, quotes it
+	var props []ProposalFileWire
+	for _, f := range r.Proposals {
+		props = append(props, ProposalFileWire{Name: f.Name, Data: f.Data})
+	}
 	return &RunResultWire{
 		SessionID:      r.SessionID,
 		Source:         r.Source,
@@ -81,6 +93,8 @@ func (r *RunResult) Wire() (*RunResultWire, error) {
 		MemorySaved:    r.MemorySaved,
 		MemorySkipped:  r.MemorySkipped,
 		Egress:         r.Egress,
+		Schedule:       r.Schedule,
+		Proposals:      props,
 		Redacted:       true,
 	}, nil
 }
@@ -112,5 +126,6 @@ func (w *RunResultWire) RunResult() (*RunResult, error) {
 		MemorySaved:    w.MemorySaved,
 		MemorySkipped:  w.MemorySkipped,
 		Egress:         w.Egress,
+		Schedule:       w.Schedule,
 	}, nil
 }

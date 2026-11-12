@@ -18,6 +18,9 @@ type scriptedSession struct {
 	outputs []string // response per prompt; last entry repeats
 	dieOn   int      // 1-based prompt index returning ErrSessionDead; 0 = never
 	blockOn int      // 1-based prompt index that blocks until Abort; 0 = never
+	// steerable sessions take Steer and record it in steered.
+	steerable bool
+	steered   chan string
 
 	events    chan executor.Event
 	abortCh   chan struct{}
@@ -81,7 +84,13 @@ func (s *scriptedSession) prompt(i int) executor.PromptRequest {
 	return s.prompts[i]
 }
 
-func (s *scriptedSession) Steer(string) error    { return executor.ErrUnsupported }
+func (s *scriptedSession) Steer(text string) error {
+	if !s.steerable {
+		return executor.ErrUnsupported
+	}
+	s.steered <- text
+	return nil
+}
 func (s *scriptedSession) FollowUp(string) error { return executor.ErrUnsupported }
 func (s *scriptedSession) Abort() error {
 	s.abortOnce.Do(func() { close(s.abortCh) })

@@ -27,6 +27,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/chatlog"
 	"github.com/agent-runner/agent-runner/internal/clisetup"
 	"github.com/agent-runner/agent-runner/internal/config"
+	"github.com/agent-runner/agent-runner/internal/execution"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"github.com/agent-runner/agent-runner/internal/git"
 	"github.com/agent-runner/agent-runner/internal/jobs"
@@ -89,6 +90,11 @@ func NewServer(cfg *config.Config) *Server {
 	runLogger := logging.NewRunLogger(cfg.LogsRoot)
 
 	handlers := NewHandlers(cfg, jobManager, agentManager, gitOps, exec, validator, workspaceManager, runLogger)
+	if secret, err := execution.LoadJobSecret(filepath.Join(cfg.StateRoot, "job-secret")); err != nil {
+		slog.Warn("job secret not kept: runners' tokens will not survive a restart", "error", err)
+	} else {
+		handlers.execEngine.SetJobSecret(secret)
+	}
 	upgradeDefaultPrompts(handlers)
 	for _, k := range config.RemovedSettings {
 		if os.Getenv(k) != "" {
@@ -131,7 +137,7 @@ func NewServer(cfg *config.Config) *Server {
 	mux.HandleFunc("/lock", handlers.HandleLock)
 	mux.HandleFunc("/lock/", handlers.HandleUnlock)
 	mux.HandleFunc("/locks", handlers.HandleListLocks)
-	mux.HandleFunc(internalSessionsPrefix, handlers.HandleInternalSession)
+	mux.Handle(execution.JobPathPrefix, handlers.execEngine.JobHandler())
 	mountAudit(mux, cfg.Agent.SandboxAuditDir)
 
 	// Apply middleware
@@ -648,8 +654,8 @@ func mountAudit(mux *http.ServeMux, dir string) {
 func apiKeyMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Runners authenticate with their session's token instead
-		// (HandleInternalSession).
-		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, internalSessionsPrefix) {
+		// (execution.JobHandler).
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, execution.JobPathPrefix) {
 			next.ServeHTTP(w, r)
 			return
 		}

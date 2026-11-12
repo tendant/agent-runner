@@ -135,6 +135,12 @@ type Engine struct {
 	jobSecret []byte
 	jobURL    string
 	remote    sync.Map
+
+	// runnerMode: this engine runs one session for a dispatcher (run-session,
+	// runner.go). What only the dispatcher can do is kept in deferredOutputs
+	// by session ID and sent in the result.
+	runnerMode      bool
+	deferredOutputs sync.Map
 }
 
 // SetLockManager wires the advisory lock manager, so leases a session took out

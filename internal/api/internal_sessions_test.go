@@ -108,7 +108,7 @@ func TestInternalSessionRoutes(t *testing.T) {
 func TestInternalSessionsSkipAPIKey(t *testing.T) {
 	reached := false
 	mux := http.NewServeMux()
-	mux.HandleFunc(internalSessionsPrefix, func(w http.ResponseWriter, r *http.Request) { reached = true })
+	mux.HandleFunc(execution.JobPathPrefix, func(w http.ResponseWriter, r *http.Request) { reached = true })
 	mux.HandleFunc("/agent", func(w http.ResponseWriter, r *http.Request) { reached = true })
 	h := apiKeyMiddleware("k", mux)
 
@@ -122,5 +122,20 @@ func TestInternalSessionsSkipAPIKey(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/agent", nil))
 	if reached || rec.Code != http.StatusUnauthorized {
 		t.Errorf("/agent passed without the API key: %d", rec.Code)
+	}
+}
+
+// A runner is built from the dispatcher's configuration, in runner mode,
+// recording its sandbox runs apart from the dispatcher's record.
+func TestNewRunner(t *testing.T) {
+	srv := recoveryServer(t)
+	cfg := *srv.handlers.config
+	cfg.Agent.SandboxAuditDir = "/var/lib/agent-runner/audit"
+	eng := NewRunner(&cfg, "agent-1")
+	if !eng.RunnerMode() {
+		t.Error("not in runner mode")
+	}
+	if want := "/var/lib/agent-runner/audit-runners/agent-1"; cfg.Agent.SandboxAuditDir != want {
+		t.Errorf("audit dir %q, want %q", cfg.Agent.SandboxAuditDir, want)
 	}
 }

@@ -420,7 +420,11 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 				res.Egress = append(res.Egress, logging.EgressLog{Host: e.Host, Allowed: e.Allowed, Outside: e.Outside, Denied: e.Denied})
 			}
 		}
-		rep.Finish(res)
+		if d, ok := h.deferredOutputs.LoadAndDelete(sessionID); ok {
+			res.Schedule = d.(*deferredOutputs).Schedule
+			res.Proposals = d.(*deferredOutputs).Proposals
+		}
+		rep.Finish(context.WithoutCancel(ctx), res)
 
 		// Cleanup workspace after pushing and logging are done. A task's
 		// workspace is kept for its next turn.
@@ -1317,7 +1321,7 @@ func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liv
 	} else if len(outputFiles) > 0 {
 		slog.Info("collected output files", "session_id", sessionID, "count", len(outputFiles))
 		liveSession.SetOutputFiles(outputFiles)
-		if h.config.OutputsRoot != "" {
+		if h.config.OutputsRoot != "" && !h.runnerMode { // a runner's go to the dispatcher in its result
 			if err := persistOutputFiles(outputFiles, h.config.OutputsRoot, sessionID); err != nil {
 				slog.Warn("failed to persist output files", "session_id", sessionID, "error", err)
 			}
@@ -1335,14 +1339,26 @@ func (h *Engine) finalizeAgentOutputs(ctx context.Context, sessionID string, liv
 		for _, r := range refused {
 			liveSession.AddWarning("_schedule.json: " + r)
 		}
-		if len(schedEntries) > 0 && h.deps.WorkflowClient() != nil {
-			slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
-			if err := h.deps.WorkflowClient().SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
-				slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
-			}
-		} else if len(schedEntries) > 0 {
-			slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
+		if h.runnerMode {
+			h.deferred(sessionID).Schedule = schedEntries // the dispatcher submits them
+		} else {
+			h.submitSchedule(ctx, sessionID, schedEntries)
 		}
+	}
+}
+
+// submitSchedule submits a session's _schedule.json entries.
+func (h *Engine) submitSchedule(ctx context.Context, sessionID string, schedEntries []ScheduleEntry) {
+	if len(schedEntries) == 0 {
+		return
+	}
+	if h.deps.WorkflowClient() == nil {
+		slog.Warn("schedule entries found but no workflow client configured", "session_id", sessionID, "count", len(schedEntries))
+		return
+	}
+	slog.Info("submitting schedule entries", "session_id", sessionID, "count", len(schedEntries))
+	if err := h.deps.WorkflowClient().SubmitSchedule(ctx, schedEntries, h.config.Scheduler.TypePrefix); err != nil {
+		slog.Warn("failed to submit schedule entries", "session_id", sessionID, "error", err)
 	}
 }
 

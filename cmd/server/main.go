@@ -22,6 +22,9 @@ import (
 var buildTime = "unknown"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "run-session" {
+		os.Exit(runSession(os.Args[2:]))
+	}
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)

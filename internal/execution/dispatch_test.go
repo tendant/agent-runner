@@ -151,10 +151,10 @@ func TestJobResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := e.JobResult(s.ID, "x", rw); !errors.Is(err, ErrJobAuth) {
+	if _, err := e.JobResult(context.Background(), s.ID, "x", rw); !errors.Is(err, ErrJobAuth) {
 		t.Fatalf("bad token: %v", err)
 	}
-	dup, err := e.JobResult(s.ID, spec.Token, rw)
+	dup, err := e.JobResult(context.Background(), s.ID, spec.Token, rw)
 	if err != nil || dup {
 		t.Fatalf("result dup %v err %v", dup, err)
 	}
@@ -171,7 +171,7 @@ func TestJobResult(t *testing.T) {
 		t.Errorf("%d audit logs, want 1", len(logs))
 	}
 
-	if dup, err := e.JobResult(s.ID, spec.Token, rw); err != nil || !dup {
+	if dup, err := e.JobResult(context.Background(), s.ID, spec.Token, rw); err != nil || !dup {
 		t.Errorf("retried result dup %v err %v", dup, err)
 	}
 	logs, _ = filepath.Glob(filepath.Join(e.config.LogsRoot, "*.md"))
