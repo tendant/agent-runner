@@ -52,6 +52,10 @@ type Config struct {
 	StateDir      string // sandbox state root (leases, per-run dirs)
 	Instance      string // runner instance id
 	AgentboxRunsc string // Linux: agentbox's runsc (default /usr/local/bin/runsc, else PATH)
+	// Services are the fixed upstreams runs may reach by name
+	// (AGENT_SANDBOX_SERVICES), on the system layer: a run whose policy has
+	// network gets them, and lower layers may only drop some.
+	Services []sandbox.Service
 	// EgressAllow is what "outbound" policy becomes: restricted egress
 	// through the run's gateway to these hosts (default "*": any public
 	// host; private and metadata addresses never).
@@ -373,6 +377,13 @@ func New(cfg Config) (*Runtime, error) {
 			return nil, fmt.Errorf("sandbox egress allow: %w (sets: %s)", err, sandbox.SetNames())
 		}
 	}
+	if len(cfg.Services) > 0 {
+		r.system.Network.Services = cfg.Services
+		if err := r.system.Validate(); err != nil {
+			return nil, fmt.Errorf("sandbox services: %w", err)
+		}
+		slog.Info("sandbox services", "services", serviceNames(cfg.Services))
+	}
 	switch cfg.EgressMode {
 	case "", abadapter.EgressAuto, abadapter.EgressTransparent, abadapter.EgressProxy:
 	default:
@@ -446,6 +457,7 @@ type Run struct {
 	started  time.Time
 	backend  string
 	model    *modelRun // the run's model channels, if any
+	services *serviceRun
 	egress   *egressLog
 	usageMu  sync.Mutex
 	usage    *audit.ResourceUsage // over the run's measured sandboxes
@@ -700,6 +712,42 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "model proxy: " + err.Error()})
 		return nil, &RejectedError{fmt.Errorf("model proxy: %w", err)}
 	}
+	// The service ports, beside the model channels' addresses.
+	reserved := map[string]bool{}
+	for a := range modelRoutes {
+		reserved[a] = true
+	}
+	services, err := r.startServices(spec, req.RunID, req.ThreadID, reserved)
+	if err != nil {
+		if model != nil {
+			model.close()
+		}
+		cancel()
+		_ = r.store.Release(name, r.owner)
+		releaseThread()
+		r.emit(Event{Kind: "sandbox.rejected", RunID: req.RunID, ThreadID: req.ThreadID, Detail: "services: " + err.Error()})
+		return nil, &RejectedError{fmt.Errorf("services: %w", err)}
+	}
+	run.services = services
+	if rs := services.routes(); len(rs) > 0 {
+		if modelRoutes == nil {
+			modelRoutes = map[string]string{}
+		}
+		for a, sock := range rs {
+			modelRoutes[a] = sock
+		}
+	}
+	modelPorts = append(modelPorts, services.hostPorts()...)
+	// Where each service is: its port here, or nothing for one this run's
+	// policy does not grant (over the host's address, set for unsandboxed
+	// runs).
+	serviceEnv := services.env()
+	for _, sv := range r.cfg.Services {
+		if services == nil || services.inSandbox[sv.Name] == "" {
+			serviceEnv = append(serviceEnv, ServiceEnv(sv.Name, "")...)
+		}
+	}
+
 	if model != nil {
 		run.model = model
 		envAllow = model.envAllow(envAllow)
@@ -734,7 +782,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 			"CODEX_HOME=" + codexDir,
 			"PI_CODING_AGENT_DIR=" + piDir,
 			"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(home, ".pi", "sessions"),
-		}, trustEnv...),
+		}, append(trustEnv, serviceEnv...)...),
 		OnUsage: run.addUsage,
 		OnCheck: func(cr sandbox.CheckResult, err error) {
 			if err != nil || (r.cfg.Mode == sandbox.ModeStrict && len(cr.Gaps) > 0) {
@@ -837,6 +885,7 @@ func (run *Run) Finish() {
 		if run.model != nil {
 			run.model.close()
 		}
+		run.services.close()
 		_ = run.rt.store.Release("sandbox:"+run.req.RunID, run.rt.owner)
 		_ = os.RemoveAll(filepath.Dir(run.roots[sandbox.RootTmp])) // runs/<id>
 		if run.releaseT != nil {
@@ -934,4 +983,12 @@ func underAny(p string, dirs []string) bool {
 		}
 	}
 	return false
+}
+
+func serviceNames(svs []sandbox.Service) []string {
+	out := make([]string, len(svs))
+	for i, sv := range svs {
+		out[i] = sv.Name + "=" + sv.Upstream
+	}
+	return out
 }

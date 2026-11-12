@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"path"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -118,6 +121,60 @@ type NetworkPolicy struct {
 	DNS                 DNSMode  `json:"dns,omitempty"`
 	Listen              *bool    `json:"listen,omitempty"` // nil = inherit; root default false
 	Expose              []int    `json:"expose,omitempty"`
+	// Services are fixed upstreams the run may reach by name, outside the
+	// egress gateway (AGENT_SANDBOX_SERVICES): a database, a cache, an
+	// internal API. Each is one host:port, so granting one opens nothing
+	// else, internal addresses included. nil = inherit; a run with no
+	// network (egress none) has none.
+	Services []Service `json:"services,omitempty"`
+}
+
+// Service is one named upstream (NetworkPolicy.Services).
+type Service struct {
+	Name     string `json:"name"`     // [a-z][a-z0-9_]*, at most 32: the agent's AGENT_SERVICE_<NAME>_ADDR
+	Upstream string `json:"upstream"` // host:port the runner connects to
+}
+
+var serviceName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+// Validate checks a service's name and upstream.
+func (sv Service) Validate() error {
+	if !serviceName.MatchString(sv.Name) {
+		return fmt.Errorf("service name %q: want lowercase letters, digits and _, starting with a letter (at most 32)", sv.Name)
+	}
+	host, port, err := net.SplitHostPort(sv.Upstream)
+	if err != nil || host == "" {
+		return fmt.Errorf("service %s: upstream %q is not host:port", sv.Name, sv.Upstream)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("service %s: bad port in %q", sv.Name, sv.Upstream)
+	}
+	return nil
+}
+
+// ParseServices reads AGENT_SANDBOX_SERVICES: name=host:port, comma-separated.
+func ParseServices(v string) ([]Service, error) {
+	var out []Service
+	seen := map[string]bool{}
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item == "" {
+			continue
+		}
+		name, up, ok := strings.Cut(item, "=")
+		sv := Service{Name: strings.TrimSpace(name), Upstream: strings.TrimSpace(up)}
+		if !ok {
+			return nil, fmt.Errorf("service %q: want name=host:port", item)
+		}
+		if err := sv.Validate(); err != nil {
+			return nil, err
+		}
+		if seen[sv.Name] {
+			return nil, fmt.Errorf("service %s named twice", sv.Name)
+		}
+		seen[sv.Name] = true
+		out = append(out, sv)
+	}
+	return out, nil
 }
 
 // ResourcePolicy caps resources; zero means unset (inherit / unlimited at root).
@@ -186,6 +243,16 @@ func (s SandboxSpec) Validate() error {
 		if p < 1 || p > 65535 {
 			return fmt.Errorf("sandbox spec: bad expose port %d", p)
 		}
+	}
+	seenSvc := map[string]bool{}
+	for _, sv := range n.Services {
+		if err := sv.Validate(); err != nil {
+			return fmt.Errorf("sandbox spec: %w", err)
+		}
+		if seenSvc[sv.Name] {
+			return fmt.Errorf("sandbox spec: service %s named twice", sv.Name)
+		}
+		seenSvc[sv.Name] = true
 	}
 	r := s.Resources
 	if r.CPUs < 0 || r.MemoryBytes < 0 || r.DiskBytes < 0 || r.PIDs < 0 || r.OutputBytes < 0 || r.TimeoutSec < 0 || r.GraceSec < 0 {

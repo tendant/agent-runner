@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/agent-runner/agent-runner/internal/gitsafe"
+	"github.com/agent-runner/agent-runner/internal/sandbox"
 	sandboxrt "github.com/agent-runner/agent-runner/internal/sandbox/runtime"
 	"io"
 	"log/slog"
@@ -175,6 +176,37 @@ func (h *Engine) SetProposals(p ProposalSink) { h.proposals = p }
 // SetSandbox installs the sandbox runtime (nil = host execution).
 func (h *Engine) SetSandbox(rt *sandboxrt.Runtime) { h.sandbox = rt }
 
+// configuredServices are AGENT_SANDBOX_SERVICES (none when malformed: the
+// sandbox then rejects every run, and an unsandboxed one gets no services).
+func (h *Engine) configuredServices() []sandbox.Service {
+	svs, err := sandbox.ParseServices(h.config.Agent.SandboxServices)
+	if err != nil {
+		return nil
+	}
+	return svs
+}
+
+// sessionServices names the services a session may reach: those its
+// sandbox's policy grants, or all of them unsandboxed; none for an eval
+// replay.
+func (h *Engine) sessionServices(run *sandboxrt.Run, eval bool) []string {
+	svs := h.configuredServices()
+	if eval {
+		return nil
+	}
+	if h.sandboxed() {
+		svs = nil
+		if run != nil {
+			svs = run.Spec.Network.Services
+		}
+	}
+	var names []string
+	for _, sv := range svs {
+		names = append(names, sv.Name)
+	}
+	return names
+}
+
 // sandboxed reports whether sessions run their agent CLIs in the sandbox.
 func (h *Engine) sandboxed() bool { return h.sandbox != nil && h.sandbox.Mode() != "off" }
 
@@ -196,7 +228,13 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 	if live.TaskWorkspace != "" {
 		thread = filepath.Base(live.TaskWorkspace) // all turns of a task share a Thread
 	}
-	run, err := h.sandbox.Begin(ctx, sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds})
+	req := sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds}
+	if live.Eval != nil {
+		// An eval replay reaches nothing outside its workspace: no services.
+		req.Layers = []sandbox.Layer{{Name: sandbox.LayerRun, Spec: sandbox.SandboxSpec{Version: sandbox.SpecVersion,
+			Network: sandbox.NetworkPolicy{Services: []sandbox.Service{}}}}}
+	}
+	run, err := h.sandbox.Begin(ctx, req)
 	if err != nil {
 		h.FailSession(sessionID, "sandbox: "+err.Error())
 		return ctx, nil, true
@@ -494,7 +532,17 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 		// would reach: no secrets, and no self-push (evalRepos).
 		agentSecrets = nil
 	}
-	ctx = executor.WithSessionEnv(ctx, agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), agentSecrets...), h.config.Agent.CLI))
+	// Where the network services are (AGENT_SANDBOX_SERVICES): their own
+	// addresses; a sandbox sets its service ports over them.
+	sessionEnv := agentsecrets.EnvFor(append(append([]agentsecrets.Secret{}, agentPlain...), agentSecrets...), h.config.Agent.CLI)
+	for _, sv := range h.configuredServices() {
+		addr := sv.Upstream
+		if eval != nil {
+			addr = "" // an eval replay reaches nothing outside its workspace
+		}
+		sessionEnv = append(sessionEnv, sandboxrt.ServiceEnv(sv.Name, addr)...)
+	}
+	ctx = executor.WithSessionEnv(ctx, sessionEnv)
 	// What the agent says is recorded and forwarded without secret values.
 	redactor := agentsecrets.NewRedactor(agentSecrets)
 	liveSession.SetRedactor(redactor.Redact)
@@ -531,7 +579,7 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 		return
 	}
 
-	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: evalRepos(h.registeredRepos(), eval), ChatThread: chatThread, Proposals: proposalTargetsFor(h, eval)})
+	preamble += runtimeInstructions(runtimeFacts{Sandboxed: h.sandboxed(), MemoryDir: memoryDir, MemoryCopy: memoryStage != nil, Agenda: h.config.Agent.Proactive, Secrets: agentSecrets, Env: agentPlain, Repos: evalRepos(h.registeredRepos(), eval), ChatThread: chatThread, Proposals: proposalTargetsFor(h, eval), Services: h.sessionServices(sandboxRun, eval != nil)})
 	promptSections = tmpl.Outline(preamble)
 	slog.Info("resolved preamble", "session_id", sessionID, "chars", len(preamble))
 

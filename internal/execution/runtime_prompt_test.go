@@ -293,3 +293,36 @@ func TestRuntimeInstructionsAgenda(t *testing.T) {
 		t.Errorf("no agenda instructions:\n%s", on)
 	}
 }
+
+// The prompt names each service the session may reach by the variables
+// that hold its address, not by an address, which differs by where the
+// agent runs.
+func TestRuntimeInstructionsServices(t *testing.T) {
+	if got := runtimeInstructions(runtimeFacts{}); strings.Contains(got, "### Services") {
+		t.Error("services section without services")
+	}
+	got := runtimeInstructions(runtimeFacts{Services: []string{"pg", "cache"}})
+	for _, want := range []string{"### Services", "`pg`: `$AGENT_SERVICE_PG_ADDR`", "`$AGENT_SERVICE_PG_PORT`", "`cache`: `$AGENT_SERVICE_CACHE_ADDR`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt lacks %q", want)
+		}
+	}
+}
+
+// Unsandboxed, a session reaches every configured service at its own
+// address; an eval replay reaches none.
+func TestSessionServices(t *testing.T) {
+	env := setupTestEnv(t)
+	e := env.handlers.Engine
+	e.config.Agent.SandboxServices = "pg=10.0.0.5:5432,cache=10.0.0.6:6379"
+	if got := e.sessionServices(nil, false); len(got) != 2 || got[0] != "pg" || got[1] != "cache" {
+		t.Errorf("unsandboxed: %v", got)
+	}
+	if got := e.sessionServices(nil, true); got != nil {
+		t.Errorf("eval: %v", got)
+	}
+	e.config.Agent.SandboxServices = "bad"
+	if got := e.configuredServices(); got != nil {
+		t.Errorf("malformed: %v", got)
+	}
+}

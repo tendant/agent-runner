@@ -49,6 +49,9 @@ func finalize(s SandboxSpec) SandboxSpec {
 	if s.Network.Egress == "" {
 		s.Network.Egress = EgressNone
 	}
+	if s.Network.Egress == EgressNone {
+		s.Network.Services = nil // no network, no services
+	}
 	if s.Network.DNS == "" {
 		switch s.Network.Egress {
 		case EgressNone:
@@ -98,6 +101,23 @@ func tighten(p, c SandboxSpec) (SandboxSpec, error) {
 			}
 		}
 		out.Network.EgressAllow = c.Network.EgressAllow
+	}
+	// Services: a layer may keep some of its parent's, never add one or
+	// point one elsewhere; a run with no network has none.
+	switch {
+	case effEgress(ce) == EgressNone:
+		out.Network.Services = nil
+	case c.Network.Services != nil:
+		granted := map[string]string{}
+		for _, sv := range p.Network.Services {
+			granted[sv.Name] = sv.Upstream
+		}
+		for _, sv := range c.Network.Services {
+			if up, ok := granted[sv.Name]; !ok || up != sv.Upstream {
+				bad("service %s (%s) not granted by parent", sv.Name, sv.Upstream)
+			}
+		}
+		out.Network.Services = c.Network.Services
 	}
 	if c.Network.DNS != "" {
 		if effDNS(p.Network.DNS, p.Network.Egress).rank() < c.Network.DNS.rank() {

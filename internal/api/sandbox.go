@@ -69,6 +69,14 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	// HTTPS and HTTP in every mode unless AGENT_SANDBOX_EGRESS_PORTS says
 	// otherwise. Not SSH (22): repos are pushed from the host, and SSH out to
 	// any host is an easy way to move data out.
+	services, err := sandbox.ParseServices(cfg.Agent.SandboxServices)
+	if err != nil {
+		if rec != nil {
+			rec.Close()
+		}
+		slog.Error("sandbox misconfigured; all agent runs will be rejected", "mode", mode, "error", err)
+		return sandboxrt.Failed(fmt.Errorf("AGENT_SANDBOX_SERVICES: %w", err))
+	}
 	egressPorts := cfg.Agent.SandboxEgressPorts
 	if len(egressPorts) == 0 {
 		egressPorts = []int{443, 80}
@@ -84,6 +92,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		Disk:          cfg.Agent.SandboxDisk,
 		ScopedReads:   scoped,
 		EgressAllow:   cfg.Agent.SandboxEgressAllow,
+		Services:      services,
 		EgressReport:  cfg.Agent.SandboxEgressEnforce == "report",
 		EgressInspect: cfg.Agent.SandboxEgressInspect == "on",
 		InspectExcept: cfg.Agent.SandboxInspectExcept,

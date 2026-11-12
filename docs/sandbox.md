@@ -53,7 +53,7 @@ Other settings:
   (`usage`) over its sandboxes, one per agent CLI launch. A launch that lost processes to the memory
   cap is also recorded as `resource_limit_hit` (`memory`, reason `oom_kill`). Measure first, then
   set caps from what runs actually use.
-* `AGENT_SANDBOX_EGRESS_ALLOW` and `AGENT_SANDBOX_EGRESS_MODE`: see [Network](#network).
+* `AGENT_SANDBOX_EGRESS_ALLOW`, `AGENT_SANDBOX_EGRESS_MODE` and `AGENT_SANDBOX_SERVICES`: see [Network](#network).
 * `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
 * `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain
   settings; model credentials are never passed while the model proxy is on. Credentials an
@@ -177,6 +177,25 @@ refused either way, also when a name resolves to one. git over SSH (port 22) is 
   and curl honour. On Linux the gateway is a socket mounted into the sandbox and served at
   `127.0.0.1:3128` by the forwarder; on macOS it is a port on the host's loopback that the
   sandbox may connect to. A program that ignores the proxy settings gets no connection at all.
+
+**Services.** A database, a cache or an internal API is not a host to open in the allowlist:
+`AGENT_SANDBOX_SERVICES=pg=10.0.0.5:5432,redis=127.0.0.1:6379` names fixed upstreams a run may
+reach, by any TCP protocol, outside the egress gateway. Internal and loopback addresses are
+included, since each grant is one host:port and opens nothing else. Each run gets a listener per
+service and relays each connection to that one upstream:
+* **Linux (gVisor):** a Unix socket mounted into the sandbox, served at `127.0.0.1:<the upstream's
+  port>` inside it by the forwarder (a port from 15000 when that one is taken).
+* **macOS (Seatbelt):** a port on the host's loopback that the sandbox may connect to.
+
+The agent connects at `$AGENT_SERVICE_<NAME>_ADDR` (also `_HOST` and `_PORT`), which its prompt
+names. Unsandboxed, these hold the upstream's own address. A login the service needs goes in the
+agent's environment (`/env secret`), as with any other credential.
+
+The services are in each run's policy (`network.services`, so on its `policy_snapshot`). A lower
+policy layer may drop some but never add or repoint one, and a run with no network (egress `none`)
+has none; an eval replay has none either. Each connection is a `network_allowed` event with
+`service`, `destination`, `port` and `protocol: tcp`. The upstream must still be reachable from
+the runner's host. A malformed `AGENT_SANDBOX_SERVICES` rejects every sandboxed run.
 
 **What it did.** Each run tallies the gateway's decisions by host. The first time a run reaches
 or is refused a host, the runner logs `sandbox.egress_allowed` or `sandbox.egress_denied` with

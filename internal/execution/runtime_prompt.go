@@ -30,6 +30,7 @@ type runtimeFacts struct {
 	Repos      []repos.Repo          // the registered repos in the workspace
 	ChatThread string                // the session's thread in _chats/ ("": no chat record)
 	Proposals  []proposalTarget      // what may be proposed (_proposals/); nil: proposals are off
+	Services   []string              // the network services the session may reach (AGENT_SANDBOX_SERVICES)
 }
 
 func runtimeInstructions(f runtimeFacts) string {
@@ -139,6 +140,17 @@ func runtimeInstructions(f runtimeFacts) string {
 				line += ": " + s.Description
 			}
 			b.WriteString(line + "\n")
+		}
+	}
+
+	if len(f.Services) > 0 {
+		b.WriteString("\n### Services\n\n")
+		b.WriteString("Network services set up for you (a database, a cache, an internal API). Connect to each at the\n" +
+			"address in your environment, not at a hostname from code or docs: from where you run, that is how\n" +
+			"it is reached. A login it needs is among your secrets.\n\n")
+		for _, name := range f.Services {
+			k := "$AGENT_SERVICE_" + strings.ToUpper(name)
+			b.WriteString("- `" + name + "`: `" + k + "_ADDR` (host:port; also `" + k + "_HOST`, `" + k + "_PORT`)\n")
 		}
 	}
 
