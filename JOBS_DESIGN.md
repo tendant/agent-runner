@@ -302,6 +302,20 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   the merge.
 - `RunResult` is plain data except `Redact`. Step 2 has the runner redact before it reports.
 
+### 15.2 Step 2, in parts
+
+- **2a, the wire (built).** `agent.SessionWire` carries every `Session` field, the hidden ones
+  included (iteration prompts, `_send/` contents, the turn's state). The plan and review travel as
+  JSON and come back typed through `execution.DecodeWire`. `TestSessionWireCoversSession` fails
+  when a `Session` field has no wire counterpart. `execution.RunResultWire` is the result a runner
+  sends: no redactor, so the runner redacts what finalization would (message, planner and
+  iteration prompts, error) before it sends.
+- **2b:** the `Backend` interface (§6), with `local` behind the manager's worker.
+- **2c:** `/internal/sessions/{id}/spec|report|result|control` and per-session tokens (§7, §11).
+- **2d:** `agent-runner run-session`.
+- **2e:** the `subprocess` backend; the mock-CLI e2e suites again with
+  `AGENT_EXECUTION_BACKEND=subprocess`, plus stop, steer, a killed runner and a dispatcher restart.
+
 Steps 1–2 are useful without Kubernetes (a crashed CLI no longer takes the bots down with `subprocess`).
 
 ## 16. Open questions
