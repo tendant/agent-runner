@@ -105,9 +105,27 @@ func Init(ctx context.Context, cfg Config) (shutdown func(context.Context) error
 // Tracer is the one tracer the engine uses.
 func Tracer() trace.Tracer { return otel.Tracer("agent-runner") }
 
-// Start opens a span under ctx.
+// Start opens a span under ctx. Under a Redaction (WithRedaction) the span
+// redacts what it is given, attrs included, and so do the spans opened
+// under the returned context.
 func Start(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
-	return Tracer().Start(ctx, name, trace.WithAttributes(attrs...))
+	return start(ctx, name, attrs)
+}
+
+// StartAt is Start for a span that began at an earlier time: a session's
+// root span begins when it was queued, before its run.
+func StartAt(ctx context.Context, name string, at time.Time, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return start(ctx, name, attrs, trace.WithTimestamp(at))
+}
+
+func start(ctx context.Context, name string, attrs []attribute.KeyValue, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	r := redactionFrom(ctx)
+	if r == nil {
+		return Tracer().Start(ctx, name, append(opts, trace.WithAttributes(attrs...))...)
+	}
+	ctx, span := Tracer().Start(ctx, r.redact(name), append(opts, trace.WithAttributes(r.attrs(attrs)...))...)
+	rs := redactingSpan{Span: span, r: r}
+	return trace.ContextWithSpan(ctx, rs), rs
 }
 
 // End closes span, recording err as the span status when non-nil.

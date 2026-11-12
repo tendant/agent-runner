@@ -2,6 +2,7 @@ package sessionjournal
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
 )
@@ -33,7 +34,7 @@ func (m *ManagerJournal) record(snap *agent.Session, status string) {
 		TaskWorkspace:   snap.TaskWorkspace,
 		TaskFeedback:    snap.TaskFeedback,
 		Status:          status,
-		CreatedAt:       snap.StartedAt,
+		CreatedAt:       createdAt(snap),
 	}
 	if err := m.journal.Write(entry); err != nil {
 		slog.Warn("session journal: write failed", "session_id", snap.ID, "error", err)
@@ -47,4 +48,13 @@ func (m *ManagerJournal) Remove(sessionID string) {
 	if err := m.journal.Remove(sessionID); err != nil {
 		slog.Warn("session journal: remove failed", "session_id", sessionID, "error", err)
 	}
+}
+
+// createdAt is when the session was queued; StartedAt, for sessions made
+// before QueuedAt existed.
+func createdAt(snap *agent.Session) time.Time {
+	if !snap.QueuedAt.IsZero() {
+		return snap.QueuedAt
+	}
+	return snap.StartedAt
 }

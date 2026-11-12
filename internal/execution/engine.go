@@ -34,6 +34,7 @@ import (
 	"github.com/agent-runner/agent-runner/internal/textutil"
 	"github.com/agent-runner/agent-runner/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -338,12 +339,23 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 	var promptSections []tmpl.Section                   // the composed prompt, for the audit log
 	var promptCuts []string                             // what the memory budget cut from it
 
-	// Root span for the run; every phase below is a child. The trace id is
-	// stored on the session so API responses and logs can be joined to it.
-	ctx, sessionSpan := tracing.Start(ctx, "agent.session",
+	// Root span for the session; every phase below is a child. The trace id
+	// is stored on the session so API responses and logs can be joined to it.
+	// Its spans redact the agent's secrets once they are loaded (below), so
+	// nothing that may hold one (the message) goes on a span before that.
+	// It begins when the session was queued, with the wait as its first
+	// child, so a trace shows how long a session sat in the queue.
+	ctx, spanRedaction := tracing.WithRedaction(ctx)
+	queuedAt := session.Snapshot().QueuedAt
+	if queuedAt.IsZero() || queuedAt.After(startTime) {
+		queuedAt = startTime // run directly (the scheduler's path), never queued
+	}
+	queueWait := startTime.Sub(queuedAt)
+	metrics.QueueWaitSeconds.WithLabelValues(source).Observe(queueWait.Seconds())
+	ctx, sessionSpan := tracing.StartAt(ctx, "agent.session", queuedAt,
 		attribute.String("session.id", sessionID),
 		attribute.String("session.source", source),
-		attribute.String("session.message", textutil.Truncate(message, 200)),
+		attribute.Float64("session.queue_wait_s", queueWait.Seconds()),
 		attribute.Int("session.max_iterations", maxIter),
 		attribute.Int("session.max_seconds", maxSeconds),
 		attribute.String("agent.cli", h.config.Agent.CLI),
@@ -352,6 +364,10 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 	if tid := tracing.TraceID(ctx); tid != "" {
 		liveSession.SetTraceID(tid)
 		slog.Info("session trace", "session_id", sessionID, "trace_id", tid)
+	}
+	if queueWait > 0 {
+		_, queueSpan := tracing.StartAt(ctx, "agent.queue", queuedAt)
+		queueSpan.End(trace.WithTimestamp(startTime))
 	}
 	toolSpans := tracing.NewToolSpans(ctx)
 	defer toolSpans.Close()
@@ -479,6 +495,8 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 	redactor := agentsecrets.NewRedactor(agentSecrets)
 	liveSession.SetRedactor(redactor.Redact)
 	sessionRedact = redactor.Redact
+	spanRedaction.Set(redactor.Redact)
+	sessionSpan.SetAttributes(attribute.String("session.message", textutil.Truncate(message, 200)))
 	memoryDir := h.config.MemoryDir // what the prompt points the agent at
 	if sandboxRun != nil {
 		finishedRun = sandboxRun

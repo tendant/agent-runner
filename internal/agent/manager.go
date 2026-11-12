@@ -293,6 +293,7 @@ func (m *Manager) ListActiveSessions() []*Session {
 // CreateSession creates a new agent session
 func (m *Manager) CreateSession(message string, paths []string, author, commitPrefix string, maxIter, maxSeconds int) (*Session, error) {
 	sessionID := "agent-" + uuid.New().String()
+	now := time.Now()
 
 	session := &Session{
 		ID:                  sessionID,
@@ -304,7 +305,8 @@ func (m *Manager) CreateSession(message string, paths []string, author, commitPr
 		MaxTotalSeconds:     maxSeconds,
 		Status:              SessionStatusQueued,
 		Iterations:          []IterationResult{},
-		StartedAt:           time.Now(),
+		QueuedAt:            now,
+		StartedAt:           now,
 		notify:              make(chan struct{}, 1),
 	}
 

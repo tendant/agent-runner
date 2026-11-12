@@ -82,7 +82,8 @@ curl http://localhost:8080/logs/{session_id}     # the full log as text/markdown
 **Traces** — set `TRACING_ENABLED=true` plus the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` if your collector isn't on HTTP) and every run becomes one trace, exported over OTLP to Tempo, Jaeger, Honeycomb, Datadog, etc.:
 
 ```
-agent.session            session.id, source, cli, model, status, cost_usd, iterations
+agent.session            session.id, source, queue_wait_s, cli, model, status, cost_usd, iterations
+├── agent.queue          from queued to running (absent when the session never waited)
 ├── agent.prompt.resolve
 ├── agent.workspace.prepare
 ├── agent.planner        planner.steps
@@ -94,9 +95,9 @@ agent.session            session.id, source, cli, model, status, cost_usd, itera
 └── agent.finalize
 ```
 
-Failed sessions, errored iterations and errored tool calls carry error status, so "show me every trace where a `Bash` span failed inside a retry iteration" is a query, not a log grep. The trace id is returned as `trace_id` on `GET /agent/{id}`, in the webhook payload, and logged as `session trace` at start so you can jump from any of them into the trace backend. Off by default; when off the span calls are the SDK's no-ops.
+Failed sessions, errored iterations and errored tool calls carry error status, so "show me every trace where a `Bash` span failed inside a retry iteration" is a query, not a log grep. The root span begins when the session was queued, so its length is what the requester waited, and `agent.queue` shows the part spent waiting for a free worker (`AGENT_MAX_CONCURRENT`). Every text on a span (names, attributes, statuses, events) goes through the session's redactor first, so the agent's `/env` secret values never reach the collector; the message is added once the secrets are loaded. The trace id is returned as `trace_id` on `GET /agent/{id}`, in the webhook payload, and logged as `session trace` at start so you can jump from any of them into the trace backend. Off by default; when off the span calls are the SDK's no-ops.
 
-**Metrics** — `GET /metrics` (Prometheus): `agent_sessions_total{status,source}`, `agent_iterations_total{status,source}`, `agent_active_sessions`, `agent_queue_depth`, `agent_cost_usd_total`, `agent_iteration_duration_seconds`, and `agent_tool_calls_total{tool,outcome}` for where the time goes. `rate(agent_sessions_total{status="failed"}[15m]) > 0` is the one alert to start with.
+**Metrics** — `GET /metrics` (Prometheus): `agent_sessions_total{status,source}`, `agent_iterations_total{status,source}`, `agent_active_sessions`, `agent_queue_depth`, `agent_queue_wait_seconds{source}`, `agent_cost_usd_total`, `agent_iteration_duration_seconds`, and `agent_tool_calls_total{tool,outcome}` for where the time goes. `rate(agent_sessions_total{status="failed"}[15m]) > 0` is the one alert to start with.
 
 ## Error handling
 

@@ -37,6 +37,12 @@ var (
 		Help: "Current number of agent sessions waiting in the queue.",
 	})
 
+	QueueWaitSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "agent_queue_wait_seconds",
+		Help:    "How long agent sessions waited in the queue before running, by source.",
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 15), // 0.1s to ~27m
+	}, []string{"source"})
+
 	MaxConcurrentSessions = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "agent_max_concurrent_sessions",
 		Help: "Configured ceiling on simultaneously running agent sessions (AGENT_MAX_CONCURRENT).",

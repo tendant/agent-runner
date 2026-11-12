@@ -59,6 +59,7 @@ func fullSession() *Session {
 		CurrentIteration:     2,
 		SuccessfulIterations: 1,
 		Iterations:           []IterationResult{{Iteration: 1, Status: IterationStatusSuccess, Output: "ok", Prompt: "the prompt", CostUSD: 0.5}},
+		QueuedAt:             at.Add(-time.Second),
 		StartedAt:            at,
 		CompletedAt:          &done,
 		Error:                "e",

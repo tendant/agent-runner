@@ -91,6 +91,7 @@ type Session struct {
 	CurrentIteration     int               `json:"current_iteration"`
 	SuccessfulIterations int               `json:"successful_iterations"`
 	Iterations           []IterationResult `json:"iterations"`
+	QueuedAt             time.Time         `json:"queued_at,omitempty"` // when it was created and queued; StartedAt is when it began to run
 	StartedAt            time.Time         `json:"started_at"`
 	CompletedAt          *time.Time        `json:"completed_at,omitempty"`
 	Error                string            `json:"error,omitempty"`
@@ -467,6 +468,7 @@ func (s *Session) Snapshot() *Session {
 		CurrentIteration:     s.CurrentIteration,
 		SuccessfulIterations: s.SuccessfulIterations,
 		Iterations:           make([]IterationResult, len(s.Iterations)),
+		QueuedAt:             s.QueuedAt,
 		StartedAt:            s.StartedAt,
 		CompletedAt:          s.CompletedAt,
 		Error:                s.Error,
@@ -529,6 +531,9 @@ func (s *Session) ToResponse() map[string]any {
 		"max_iterations":        s.MaxIterations,
 		"elapsed_seconds":       s.ElapsedSeconds,
 		"started_at":            s.StartedAt.Format(time.RFC3339),
+	}
+	if !s.QueuedAt.IsZero() {
+		resp["queued_at"] = s.QueuedAt.Format(time.RFC3339)
 	}
 
 	if s.TotalCostUSD > 0 {

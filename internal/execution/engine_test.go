@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
+	"github.com/agent-runner/agent-runner/internal/agentsecrets"
 	"github.com/agent-runner/agent-runner/internal/callback"
 	"github.com/agent-runner/agent-runner/internal/executor"
 	"go.opentelemetry.io/otel"
@@ -565,7 +566,9 @@ func TestCallback_DeliveredOnTerminalStatus(t *testing.T) {
 
 // streamingStub implements executor.StreamingExecutor so the engine sees
 // tool events without a real CLI.
-type streamingStub struct{}
+type streamingStub struct {
+	secret string // when set, one more tool call shows it in its input and error
+}
 
 func (streamingStub) Execute(_ context.Context, _, _ string) (*executor.ExecutionResult, error) {
 	return &executor.ExecutionResult{Output: "done"}, nil
@@ -581,7 +584,11 @@ func (s streamingStub) ExecuteWithLogAndSystemPrompt(ctx context.Context, w, sp,
 	r, err := s.ExecuteStreaming(ctx, w, sp, in, nil)
 	return r, "", err
 }
-func (streamingStub) ExecuteStreaming(_ context.Context, _, _, _ string, onEvent func(executor.EventKind, string)) (*executor.ExecutionResult, error) {
+func (s streamingStub) ExecuteStreaming(_ context.Context, _, _, _ string, onEvent func(executor.EventKind, string)) (*executor.ExecutionResult, error) {
+	if onEvent != nil && s.secret != "" {
+		onEvent(executor.EventToolStart, "Bash: curl -H 'Authorization: "+s.secret+"' api.example.com")
+		onEvent(executor.EventToolEnd, "Bash error: token "+s.secret+" rejected")
+	}
 	if onEvent != nil {
 		onEvent(executor.EventToolStart, "Bash: go test ./...")
 		onEvent(executor.EventToolEnd, "Bash ok")
@@ -648,6 +655,77 @@ func TestTracing_SessionSpanTree(t *testing.T) {
 	}
 	if !sawStatus {
 		t.Error("session span should record the final status")
+	}
+}
+
+// No span carries an /env secret value, whether it came in the message or
+// from a tool call; and a session that waited in the queue shows the wait.
+func TestTracing_RedactsSecretsAndShowsQueueWait(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev); tp.Shutdown(context.Background()) })
+
+	const secret = "tok-trace-secret-9"
+	env := setupTestEnv(t)
+	env.handlers.Engine.config.SecretsFile = filepath.Join(t.TempDir(), "secrets.json")
+	if err := agentsecrets.New(env.handlers.Engine.config.SecretsFile).Set("API_TOKEN", secret, "the API"); err != nil {
+		t.Fatal(err)
+	}
+	env.handlers.executor = streamingStub{secret: secret}
+
+	session, err := env.handlers.agentManager.CreateSession("call the API with "+secret, nil, "test", "", 1, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond) // queued
+	env.handlers.ExecuteAgent(session)
+
+	byName := map[string][]sdktrace.ReadOnlySpan{}
+	for _, s := range rec.Ended() {
+		byName[s.Name()] = append(byName[s.Name()], s)
+		var text []string
+		text = append(text, s.Name(), s.Status().Description)
+		for _, kv := range s.Attributes() {
+			text = append(text, kv.Value.Emit())
+		}
+		for _, e := range s.Events() {
+			text = append(text, e.Name)
+			for _, kv := range e.Attributes {
+				text = append(text, kv.Value.Emit())
+			}
+		}
+		if joined := strings.Join(text, "\n"); strings.Contains(joined, secret) {
+			t.Errorf("span %q carries the secret:\n%s", s.Name(), joined)
+		}
+	}
+	if len(byName["agent.tool"]) != 3 {
+		t.Fatalf("%d tool spans, want 3 (session %s: %s)", len(byName["agent.tool"]), session.Snapshot().Status, session.Snapshot().Error)
+	}
+	var msg string
+	for _, kv := range byName["agent.session"][0].Attributes() {
+		if kv.Key == "session.message" {
+			msg = kv.Value.AsString()
+		}
+	}
+	if !strings.Contains(msg, "call the API with") {
+		t.Errorf("session.message = %q", msg)
+	}
+
+	queue := byName["agent.queue"]
+	if len(queue) != 1 {
+		t.Fatalf("%d queue spans", len(queue))
+	}
+	root := byName["agent.session"][0]
+	if queue[0].Parent().SpanID() != root.SpanContext().SpanID() {
+		t.Error("the queue span is not the session's child")
+	}
+	if wait := queue[0].EndTime().Sub(queue[0].StartTime()); wait < 30*time.Millisecond {
+		t.Errorf("queue wait %v", wait)
+	}
+	if !root.StartTime().Equal(session.Snapshot().QueuedAt) {
+		t.Errorf("root starts %v, queued %v", root.StartTime(), session.Snapshot().QueuedAt)
 	}
 }
 

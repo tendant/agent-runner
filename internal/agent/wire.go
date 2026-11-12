@@ -26,6 +26,7 @@ type SessionWire struct {
 	CurrentIteration     int              `json:"current_iteration"`
 	SuccessfulIterations int              `json:"successful_iterations"`
 	Iterations           []IterationWire  `json:"iterations,omitempty"`
+	QueuedAt             time.Time        `json:"queued_at,omitempty"`
 	StartedAt            time.Time        `json:"started_at"`
 	CompletedAt          *time.Time       `json:"completed_at,omitempty"`
 	Error                string           `json:"error,omitempty"`
@@ -95,6 +96,7 @@ func (s *Session) Wire() (*SessionWire, error) {
 		Status:               s.Status,
 		CurrentIteration:     s.CurrentIteration,
 		SuccessfulIterations: s.SuccessfulIterations,
+		QueuedAt:             s.QueuedAt,
 		StartedAt:            s.StartedAt,
 		Error:                s.Error,
 		Warnings:             append([]string(nil), s.Warnings...),
@@ -185,6 +187,7 @@ func (s *Session) ApplyWire(w *SessionWire, decode WireDecoder) error {
 		r.Prompt = it.Prompt
 		s.Iterations = append(s.Iterations, r)
 	}
+	s.QueuedAt = w.QueuedAt
 	s.StartedAt = w.StartedAt
 	s.CompletedAt = nil
 	if w.CompletedAt != nil {

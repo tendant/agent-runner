@@ -160,6 +160,7 @@ func restoredSession(entry sessionjournal.Entry) *agent.Session {
 		Source:              entry.Source,
 		ConvID:              entry.ConvID,
 		CallbackURL:         entry.CallbackURL,
+		QueuedAt:            entry.CreatedAt,
 		StartedAt:           entry.CreatedAt,
 		TaskWorkspace:       entry.TaskWorkspace,
 		TaskFeedback:        entry.TaskFeedback,

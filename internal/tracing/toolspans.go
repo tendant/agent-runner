@@ -43,10 +43,10 @@ func (t *ToolSpans) Start(text string) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_, span := Tracer().Start(t.parent, "agent.tool", trace.WithAttributes(
+	_, span := Start(t.parent, "agent.tool",
 		attribute.String("tool.name", name),
 		attribute.String("tool.input", detail),
-	))
+	)
 	t.open[name] = append(t.open[name], span)
 }
 
