@@ -47,6 +47,17 @@ type JobReport struct {
 	// persistent backend, between its start and end), so the dispatcher's
 	// Steer can queue them instead of failing (§7.3).
 	Steerable bool `json:"steerable,omitempty"`
+	// EventsFrom > 0: Session.AgentEvents holds only the exec events after
+	// that Seq, the last one the dispatcher acknowledged (§7.4); 0: all.
+	EventsFrom uint64 `json:"events_from,omitempty"`
+}
+
+// JobReportAck answers a report. EventsSeq is the newest exec event the
+// dispatcher holds: the runner sends the events after it next time. A
+// dispatcher that does not send it takes no deltas, only whole reports.
+type JobReportAck struct {
+	Seq       uint64  `json:"seq"`
+	EventsSeq *uint64 `json:"events_seq,omitempty"`
 }
 
 // JobControl answers a runner's control poll (§7.3).
@@ -63,6 +74,7 @@ type remoteRun struct {
 	result    bool      // the result was taken
 	closed    bool      // finalized here: the result taken, or the run failed without one
 	steerable bool      // as of the last report
+	overdue   bool      // went past its time limit and was stopped from here
 	lastSeen  time.Time // the runner's last request, for the heartbeat (§9)
 	steer     []string  // steer messages for the next control poll
 	wake      chan struct{}
@@ -173,27 +185,43 @@ func (h *Engine) JobSpec(sessionID, token string) (*agent.SessionWire, error) {
 
 // JobReport applies a runner's report to the session, unless a report as
 // new was already applied (then it is a no-op).
-func (h *Engine) JobReport(sessionID, token string, rep *JobReport) error {
+func (h *Engine) JobReport(sessionID, token string, rep *JobReport) (*JobReportAck, error) {
 	s, run, err := h.authJob(sessionID, token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if rep.Session == nil {
-		return fmt.Errorf("report without a session")
+		return nil, fmt.Errorf("report without a session")
 	}
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	if run.ended {
-		return ErrJobEnded
+		return nil, ErrJobEnded
 	}
+	have := agent.LastExecSeq(s.Snapshot().AgentEvents)
 	if rep.Seq <= run.seq {
-		return nil
+		return &JobReportAck{Seq: rep.Seq, EventsSeq: &have}, nil
 	}
-	if err := s.ApplyWire(rep.Session, DecodeWire); err != nil {
-		return err
+	// The exec events: all of them (events_from 0), or only the new ones,
+	// added to those held when they start where those end. A delta from
+	// elsewhere (this dispatcher restarted, a report was lost) leaves the
+	// events as they are; the ack says where they end, and the runner
+	// sends from there.
+	w := *rep.Session
+	if rep.EventsFrom > 0 {
+		cur := s.Snapshot().AgentEvents
+		if rep.EventsFrom == have {
+			w.AgentEvents = agent.MergeExecEvents(cur, rep.Session.AgentEvents)
+		} else {
+			w.AgentEvents, w.ExecEventSeq = cur, have
+		}
+	}
+	if err := s.ApplyWire(&w, DecodeWire); err != nil {
+		return nil, err
 	}
 	run.seq, run.steerable = rep.Seq, rep.Steerable
-	return nil
+	have = agent.LastExecSeq(w.AgentEvents)
+	return &JobReportAck{Seq: rep.Seq, EventsSeq: &have}, nil
 }
 
 // JobResult takes a runner's result once: what the runner left to the

@@ -160,8 +160,10 @@ func (c *JobClient) Spec(ctx context.Context) (*agent.SessionWire, error) {
 }
 
 // Report sends one progress report (§7.2), once.
-func (c *JobClient) Report(ctx context.Context, rep *JobReport) error {
-	return c.do(ctx, http.MethodPost, "report", rep, nil)
+func (c *JobClient) Report(ctx context.Context, rep *JobReport) (*JobReportAck, error) {
+	var ack JobReportAck
+	err := c.do(ctx, http.MethodPost, "report", rep, &ack)
+	return &ack, err
 }
 
 // Result sends the result (§7.2), retried.
@@ -219,6 +221,10 @@ func (h *Engine) RunRemote(ctx context.Context, c *JobClient) error {
 // the newer state anyway.
 func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session, endRun context.CancelFunc) {
 	var seq uint64
+	// The exec events go whole until the dispatcher says where its copy
+	// ends (an ack with events_seq), then only those after it (§7.4).
+	var deltas bool
+	var acked uint64
 	tick := time.NewTicker(reportInterval)
 	defer tick.Stop()
 	changed := true // the dispatcher has not seen the runner's own state yet
@@ -242,9 +248,15 @@ func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session,
 			continue
 		}
 		seq++
-		switch err := c.Report(ctx, &JobReport{Seq: seq, Session: w, Steerable: now}); {
+		rep := withEventDelta(&JobReport{Seq: seq, Session: w, Steerable: now}, deltas, acked)
+		ack, err := c.Report(ctx, rep)
+		switch {
 		case err == nil:
 			changed, steerable = false, now
+			deltas = ack.EventsSeq != nil
+			if deltas {
+				acked = *ack.EventsSeq
+			}
 		case errors.Is(err, ErrJobEnded), errors.Is(err, ErrJobAuth):
 			slog.Warn("runner: the dispatcher ended this run", "session_id", s.ID, "error", err)
 			endRun()
@@ -253,6 +265,22 @@ func (h *Engine) reportLoop(ctx context.Context, c *JobClient, s *agent.Session,
 			slog.Warn("runner: report failed", "session_id", s.ID, "error", err)
 		}
 	}
+}
+
+// withEventDelta trims rep to the exec events after acked when the
+// dispatcher takes deltas; a dispatcher holding none (acked 0) gets them all.
+func withEventDelta(rep *JobReport, deltas bool, acked uint64) *JobReport {
+	if !deltas || acked == 0 {
+		return rep
+	}
+	var newer []agent.ExecEvent
+	for _, e := range rep.Session.AgentEvents {
+		if e.Seq > acked {
+			newer = append(newer, e)
+		}
+	}
+	rep.Session.AgentEvents, rep.EventsFrom = newer, acked
+	return rep
 }
 
 // controlLoop follows the dispatcher's stop and steer messages.

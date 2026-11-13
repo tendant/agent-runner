@@ -256,3 +256,29 @@ func decodePart(decode WireDecoder, field string, raw json.RawMessage) (any, err
 	}
 	return v, nil
 }
+
+// LastExecSeq is the Seq of the newest of events, 0 for none.
+func LastExecSeq(events []ExecEvent) uint64 {
+	if len(events) == 0 {
+		return 0
+	}
+	return events[len(events)-1].Seq
+}
+
+// MergeExecEvents is have followed by the events of delta newer than it,
+// kept to the session's ring size: how a report that carries only the new
+// events (JOBS_DESIGN.md §7.4) adds them to the events already held.
+func MergeExecEvents(have, delta []ExecEvent) []ExecEvent {
+	last := LastExecSeq(have)
+	out := append([]ExecEvent(nil), have...)
+	for _, e := range delta {
+		if e.Seq > last {
+			out = append(out, e)
+			last = e.Seq
+		}
+	}
+	if len(out) > maxExecEvents {
+		out = out[len(out)-maxExecEvents:]
+	}
+	return out
+}

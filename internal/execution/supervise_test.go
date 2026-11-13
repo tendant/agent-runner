@@ -180,7 +180,7 @@ func TestReattach(t *testing.T) {
 	token := e.SessionToken(s.ID)
 	w := mustWire(t, s)
 	w.CurrentIteration = 2
-	if err := e.JobReport(s.ID, token, &JobReport{Seq: 9, Session: w}); err != nil {
+	if _, err := e.JobReport(s.ID, token, &JobReport{Seq: 9, Session: w}); err != nil {
 		t.Fatal(err)
 	}
 	if s.Snapshot().CurrentIteration != 2 {
@@ -207,4 +207,83 @@ func mustWire(t *testing.T, s *agent.Session) *agent.SessionWire {
 		t.Fatal(err)
 	}
 	return w
+}
+
+// A runner alive but past its session's time limit is stopped from here,
+// then ended after the grace; its session fails for running too long, not
+// as if a person had stopped it.
+func TestOverdueRunnerIsEnded(t *testing.T) {
+	env := setupTestEnv(t)
+	env.handlers.Engine.config.Agent.JobStopGrace = 50 * time.Millisecond
+	env.handlers.Engine.config.Agent.JobHeartbeat = 300 * time.Millisecond
+	b := &lifeBackend{started: make(chan Spec, 1)}
+	env.handlers.SetBackend(b)
+	env.handlers.SetJobDispatcherURL("http://127.0.0.1:1")
+	s, _ := env.handlers.agentManager.CreateSession("long job", nil, "alice", "", 3, 1) // 1s limit
+	returned := make(chan struct{})
+	if err := env.handlers.agentManager.Enqueue(s, func(s *agent.Session) { env.handlers.RunQueued(s); close(returned) }); err != nil {
+		t.Fatal(err)
+	}
+	<-b.started
+	deadline := time.Now().Add(10 * time.Second)
+	for b.stops.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the overdue runner was never ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !s.StopRequested() {
+		t.Error("no stop was asked of the overdue run first")
+	}
+	b.alive.Store(false) // ended
+	waitClosed(t, returned, "worker not let go")
+	snap := s.Snapshot()
+	if snap.Status != agent.SessionStatusFailed || !strings.Contains(snap.Error, "time limit") {
+		t.Errorf("status %s error %q", snap.Status, snap.Error)
+	}
+	found := false
+	for _, w := range snap.Warnings {
+		found = found || strings.Contains(w, "past its time limit")
+	}
+	if !found {
+		t.Errorf("warnings %v", snap.Warnings)
+	}
+}
+
+// A run taken back holds a queue worker: a queued session waits for it.
+func TestReattachHoldsAWorker(t *testing.T) {
+	env := setupTestEnv(t)
+	e := env.handlers.Engine
+	b := &lifeBackend{started: make(chan Spec, 1)}
+	b.alive.Store(true)
+	e.SetBackend(b)
+	s := &agent.Session{ID: "agent-back", Message: "job", Status: agent.SessionStatusRunning, StartedAt: time.Now()}
+	if err := env.handlers.agentManager.RestoreSession(s); err != nil {
+		t.Fatal(err)
+	}
+	e.Reattach(s, Handle{Backend: "life", Ref: "7", Session: s.ID})
+	deadline := time.Now().Add(5 * time.Second)
+	for env.handlers.agentManager.RunningCount() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the re-attached run holds no worker")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ran := make(chan struct{})
+	q, _ := env.handlers.agentManager.CreateSession("next", nil, "alice", "", 3, 60)
+	if err := env.handlers.agentManager.Enqueue(q, func(*agent.Session) { close(ran) }); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ran:
+		t.Fatal("a queued session ran while the re-attached run held the only worker")
+	case <-time.After(200 * time.Millisecond):
+	}
+	e.endRemote(s.ID)
+	e.runEnded(s.ID) // the run ends
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the queued session never ran after the re-attached run ended")
+	}
 }

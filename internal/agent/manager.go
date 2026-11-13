@@ -40,9 +40,12 @@ type Manager struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	queue                   chan *queueItem
-	queueSize               int
-	maxConcurrent           int
-	journal                 Journal // optional; see SetJournal
+	// adopted are runs already going elsewhere that a worker must hold
+	// (Adopt): taken before any queued session.
+	adopted       chan *queueItem
+	queueSize     int
+	maxConcurrent int
+	journal       Journal // optional; see SetJournal
 
 	workers   sync.WaitGroup // dispatch goroutines, so Stop can wait for them
 	drainOnce sync.Once      // only one worker drains the queue on shutdown
@@ -73,6 +76,7 @@ func NewManager(sessionRetentionSeconds, maxQueueSize, maxConcurrent int) *Manag
 		ctx:                     ctx,
 		cancel:                  cancel,
 		queue:                   make(chan *queueItem, maxQueueSize),
+		adopted:                 make(chan *queueItem, maxQueueSize+maxConcurrent),
 		queueSize:               maxQueueSize,
 		maxConcurrent:           maxConcurrent,
 	}
@@ -178,6 +182,14 @@ func (m *Manager) cleanupExpiredSessions() {
 func (m *Manager) dispatchLoop() {
 	defer m.workers.Done()
 	for {
+		// A run taken back (Adopt) comes before any queued session: it is
+		// running already, and has to count against the limit first.
+		select {
+		case item := <-m.adopted:
+			m.hold(item)
+			continue
+		default:
+		}
 		select {
 		case <-m.stopCh:
 			// Exactly one worker drains; the rest return immediately. Without
@@ -185,6 +197,8 @@ func (m *Manager) dispatchLoop() {
 			// and can Fail an already-failed session.
 			m.drainOnce.Do(m.drainQueue)
 			return
+		case item := <-m.adopted:
+			m.hold(item)
 		case item := <-m.queue:
 			// Transition from queued to running
 			item.session.mu.Lock()
@@ -198,10 +212,29 @@ func (m *Manager) dispatchLoop() {
 			}
 
 			// Run synchronously — this worker takes nothing else until it returns
-			m.running.Add(1)
-			item.startFunc(item.session)
-			m.running.Add(-1)
+			m.hold(item)
 		}
+	}
+}
+
+// hold runs item on this worker, which takes nothing else until it returns.
+func (m *Manager) hold(item *queueItem) {
+	m.running.Add(1)
+	item.startFunc(item.session)
+	m.running.Add(-1)
+}
+
+// Adopt has a worker hold a session that is already running elsewhere, a
+// run taken back after a restart (JOBS_DESIGN.md §10): run is called on the
+// worker and holds it until the run ends, so the run counts against
+// AGENT_MAX_CONCURRENT like any other. The session's status and journal
+// entry are left as they are. Adopted runs go before queued sessions; one
+// with no room even to wait runs on its own, over the limit.
+func (m *Manager) Adopt(session *Session, run func(*Session)) {
+	select {
+	case m.adopted <- &queueItem{session: session, startFunc: run}:
+	default:
+		go run(session)
 	}
 }
 

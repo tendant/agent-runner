@@ -429,3 +429,54 @@ func TestQueueLength(t *testing.T) {
 
 	close(blocker)
 }
+
+// A run taken back after a restart holds a worker like any session, and
+// gets one before the sessions already queued.
+func TestAdoptHoldsAWorkerFirst(t *testing.T) {
+	m := NewManager(3600, 10, 1)
+	defer m.Stop()
+	var mu sync.Mutex
+	var order []string
+	release := map[string]chan struct{}{"busy": make(chan struct{}), "adopted": make(chan struct{}), "queued": make(chan struct{})}
+	started := make(chan string, 3)
+	run := func(name string) func(*Session) {
+		return func(*Session) {
+			mu.Lock()
+			order = append(order, name)
+			mu.Unlock()
+			started <- name
+			<-release[name]
+		}
+	}
+	busy, _ := m.CreateSession("busy", nil, "a", "", 1, 60)
+	queued, _ := m.CreateSession("queued", nil, "a", "", 1, 60)
+	adopted, _ := m.CreateSession("adopted", nil, "a", "", 1, 60)
+	if err := m.Enqueue(busy, run("busy")); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-started; got != "busy" {
+		t.Fatalf("first %s", got)
+	}
+	if err := m.Enqueue(queued, run("queued")); err != nil {
+		t.Fatal(err)
+	}
+	m.Adopt(adopted, run("adopted"))
+	close(release["busy"])
+	if got := <-started; got != "adopted" {
+		t.Fatalf("after the busy one, %s ran before the adopted run", got)
+	}
+	// The adopted run holds the only worker: the queued one waits.
+	select {
+	case got := <-started:
+		t.Fatalf("%s started while the adopted run held the worker", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if n := m.RunningCount(); n != 1 {
+		t.Errorf("running %d", n)
+	}
+	close(release["adopted"])
+	if got := <-started; got != "queued" {
+		t.Fatalf("then %s", got)
+	}
+	close(release["queued"])
+}

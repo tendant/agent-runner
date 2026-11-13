@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/agent-runner/agent-runner/internal/agent"
@@ -60,6 +61,9 @@ func (s *Server) recoverSessions() {
 // Split from recoverSessions so tests can inject entries and hooks.
 func (s *Server) recoverWith(entries []sessionjournal.Entry, hooks map[string]sourceHooks) {
 	ctx := context.Background()
+	// Running sessions first: a run re-attached takes a worker ahead of the
+	// queued sessions re-enqueued after it (Manager.Adopt).
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Status == "running" && entries[j].Status != "running" })
 	for _, entry := range entries {
 		switch entry.Status {
 		case "queued":

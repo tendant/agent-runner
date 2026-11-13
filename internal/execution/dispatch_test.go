@@ -70,7 +70,8 @@ func TestJobReportSequence(t *testing.T) {
 	report := func(seq uint64, iter int) error {
 		w, _ := s.Wire()
 		w.CurrentIteration = iter
-		return e.JobReport(s.ID, spec.Token, &JobReport{Seq: seq, Session: w})
+		_, err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: seq, Session: w})
+		return err
 	}
 	if err := report(2, 2); err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestJobReportSequence(t *testing.T) {
 	if got := s.Snapshot().CurrentIteration; got != 2 {
 		t.Errorf("iteration %d, want 2", got)
 	}
-	if err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 3}); err == nil {
+	if _, err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 3}); err == nil {
 		t.Error("accepted a report without a session")
 	}
 }
@@ -110,7 +111,7 @@ func TestJobControl(t *testing.T) {
 		t.Error("steer queued for a runner that has not said it can take it")
 	}
 	w, _ := s.Wire()
-	if err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 1, Session: w, Steerable: true}); err != nil {
+	if _, err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 1, Session: w, Steerable: true}); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
@@ -190,7 +191,7 @@ func TestJobResult(t *testing.T) {
 	if _, err := e.JobSpec(s.ID, spec.Token); !errors.Is(err, ErrJobEnded) {
 		t.Errorf("spec after the result: %v", err)
 	}
-	if err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 99, Session: w}); !errors.Is(err, ErrJobEnded) {
+	if _, err := e.JobReport(s.ID, spec.Token, &JobReport{Seq: 99, Session: w}); !errors.Is(err, ErrJobEnded) {
 		t.Errorf("report after the result: %v", err)
 	}
 	if _, err := e.JobControl(context.Background(), s.ID, spec.Token, time.Second); !errors.Is(err, ErrJobEnded) {
@@ -214,5 +215,61 @@ func TestLoadJobSecret(t *testing.T) {
 	}
 	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", fi.Mode().Perm())
+	}
+}
+
+// Exec events travel as deltas once the dispatcher has said where its copy
+// ends: a delta from there is added; one from elsewhere (a restart, a lost
+// report) leaves the events as they are, and the ack tells the runner where
+// to send from. A report without events_from replaces them, as before.
+func TestJobReportEventDeltas(t *testing.T) {
+	env := setupTestEnv(t)
+	e := env.handlers.Engine
+	s, _ := env.handlers.agentManager.CreateSession("do it", nil, "alice", "", 3, 60)
+	spec, _ := startRemote(t, env, s)
+	runner, _ := agent.NewSessionFromWire(mustWire(t, s), DecodeWire)
+	at := time.Now()
+	for i := 0; i < 3; i++ {
+		runner.AppendExecEvent("tool_start", "step", at)
+	}
+	report := func(seq uint64, deltas bool, acked uint64) *JobReportAck {
+		t.Helper()
+		ack, err := e.JobReport(s.ID, spec.Token, withEventDelta(&JobReport{Seq: seq, Session: mustWire(t, runner)}, deltas, acked))
+		if err != nil || ack.EventsSeq == nil {
+			t.Fatalf("report %d: %+v %v", seq, ack, err)
+		}
+		return ack
+	}
+	seqs := func() []uint64 {
+		var out []uint64
+		for _, ev := range s.Snapshot().AgentEvents {
+			out = append(out, ev.Seq)
+		}
+		return out
+	}
+
+	if ack := report(1, false, 0); *ack.EventsSeq != 3 || len(seqs()) != 3 {
+		t.Fatalf("whole report: ack %d, events %v", *ack.EventsSeq, seqs())
+	}
+	runner.AppendExecEvent("tool_end", "step", at)
+	runner.AppendExecEvent("tool_start", "step", at)
+	rep := withEventDelta(&JobReport{Seq: 2, Session: mustWire(t, runner)}, true, 3)
+	if rep.EventsFrom != 3 || len(rep.Session.AgentEvents) != 2 {
+		t.Fatalf("the delta carries %d events from %d", len(rep.Session.AgentEvents), rep.EventsFrom)
+	}
+	if ack, err := e.JobReport(s.ID, spec.Token, rep); err != nil || *ack.EventsSeq != 5 {
+		t.Fatalf("delta: %+v %v", ack, err)
+	}
+	if got := seqs(); len(got) != 5 || got[4] != 5 {
+		t.Errorf("after the delta: %v", got)
+	}
+	// A delta from a point the dispatcher does not end at changes nothing.
+	runner.AppendExecEvent("tool_end", "step", at)
+	if ack := report(3, true, 2); *ack.EventsSeq != 5 || len(seqs()) != 5 {
+		t.Errorf("mismatched delta: ack %d, events %v", *ack.EventsSeq, seqs())
+	}
+	// From where the ack said, it goes through.
+	if ack := report(4, true, 5); *ack.EventsSeq != 6 || len(seqs()) != 6 {
+		t.Errorf("resent delta: ack %d, events %v", *ack.EventsSeq, seqs())
 	}
 }

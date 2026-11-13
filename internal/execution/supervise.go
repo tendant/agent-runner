@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -32,12 +33,14 @@ func (h *Engine) recordStarted(sessionID string, handle Handle) {
 // Reattach takes back a run of session that a previous server started on
 // this backend and that is still going (§10). The session is the one
 // rebuilt from the journal; the runner's next report brings it up to date,
-// and its result is finalized here. It does not hold a queue worker.
+// and its result is finalized here. Its runner is served at once; the run
+// then holds a queue worker (Manager.Adopt), ahead of queued sessions, so
+// it counts against AGENT_MAX_CONCURRENT.
 func (h *Engine) Reattach(session *agent.Session, handle Handle) {
 	done := h.runStarted(session.ID)
 	h.registerRemote(session.ID)
 	countRemoteStart(session)
-	go h.superviseRemote(session, h.backend, handle, done)
+	h.agentManager.Adopt(session, func(s *agent.Session) { h.superviseRemote(s, h.backend, handle, done) })
 }
 
 // superviseRemote returns when the run has ended, or when this server shuts
@@ -65,6 +68,12 @@ func (h *Engine) superviseRemote(session *agent.Session, b Backend, handle Handl
 
 	var stopBy time.Time // when a stopped run is ended, if still going
 	killed := false
+	// The session's own time limit, which its runner enforces; past it and
+	// the grace, a runner that is alive but stuck is stopped from here.
+	var overdueAt time.Time
+	if snap := session.Snapshot(); snap.MaxTotalSeconds > 0 {
+		overdueAt = snap.StartedAt.Add(time.Duration(snap.MaxTotalSeconds)*time.Second + grace)
+	}
 	for {
 		select {
 		case <-done:
@@ -77,6 +86,15 @@ func (h *Engine) superviseRemote(session *agent.Session, b Backend, handle Handl
 				stopBy = time.Now().Add(grace)
 			}
 		case <-tick.C:
+		}
+
+		if !overdueAt.IsZero() && time.Now().After(overdueAt) {
+			overdueAt = time.Time{}
+			h.markOverdue(session.ID)
+			limit := session.Snapshot().MaxTotalSeconds
+			slog.Warn("remote run past its time limit; stopping it", "session_id", session.ID, "max_total_seconds", limit)
+			session.AddWarning(fmt.Sprintf("the run went on past its time limit (%ds): agent-runner stopped it", limit))
+			session.RequestStop() // stopBy follows, then Stop after the grace
 		}
 
 		if !stopBy.IsZero() && !killed && time.Now().After(stopBy) {
@@ -100,6 +118,17 @@ func (h *Engine) superviseRemote(session *agent.Session, b Backend, handle Handl
 			}
 			h.failRemote(session.ID, "the session's runner stopped without a result: "+failure)
 		}
+	}
+}
+
+// markOverdue records that a remote run went past its time limit: if it
+// then ends without a result, it failed for that, not stopped as asked.
+func (h *Engine) markOverdue(sessionID string) {
+	if v, ok := h.remote.Load(sessionID); ok {
+		r := v.(*remoteRun)
+		r.mu.Lock()
+		r.overdue = true
+		r.mu.Unlock()
 	}
 }
 
@@ -143,6 +172,7 @@ func (h *Engine) failRemote(sessionID, reason string) bool {
 		return false
 	}
 	r.closed, r.ended = true, true
+	overdue := r.overdue
 	r.mu.Unlock()
 	r.poke()
 	defer h.runEnded(sessionID)
@@ -154,6 +184,8 @@ func (h *Engine) failRemote(sessionID, reason string) bool {
 	}
 	switch st := live.Snapshot().Status; {
 	case st == agent.SessionStatusCompleted || st == agent.SessionStatusFailed || st == agent.SessionStatusStopped:
+	case overdue:
+		h.FailSession(sessionID, reason+"; it had run past its time limit")
 	case live.StopRequested():
 		// Asked to stop, and ended for not stopping: stopped, as asked.
 		h.agentManager.MarkSessionStopped(sessionID, reason)

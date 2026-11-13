@@ -418,10 +418,22 @@ A namespace `ResourceQuota` (`count/jobs.batch`, CPU, memory) is the cluster-wid
   - Steer through a real runner needs a persistent CLI: it is covered in process
     (`TestRunRemoteStopAndSteer`), not end to end.
 
+  Closed after 2e:
+  - Exec events travel as deltas (§7.4). A runner's first report carries them all. Once the
+    dispatcher's ack says where its copy ends (`events_seq`), each report carries only the events
+    after that (`events_from`). The dispatcher adds them if they start where its copy ends, and
+    otherwise keeps its copy and acks where it ends, so the runner resends from there (after a
+    restart, a lost report). A dispatcher that never acks a sequence gets whole reports.
+  - A runner alive but past its session's time limit (`MaxTotalSeconds` and the stop grace) is
+    stopped from the dispatcher, then ended after the grace. Its session fails for running too long,
+    with a warning, not as stopped by a person.
+  - A re-attached run holds a queue worker (`Manager.Adopt`), ahead of queued sessions; recovery
+    takes back running sessions before it re-enqueues queued ones. So it counts against
+    `AGENT_MAX_CONCURRENT`. More re-attached runs than room to wait (the limit lowered across the
+    restart) run over it.
+
   Open:
   - agent-gate does not pull the `-runners` records yet.
-  - Exec events still travel whole in each report, not as a delta (§7.4).
-  - A runner that is alive but wedged is not ended: only its own deadline stops it.
   - `Alive` after a restart relies on `ps` (Linux and macOS).
 
 Steps 1–2 are useful without Kubernetes (a crashed CLI no longer takes the bots down with `subprocess`).

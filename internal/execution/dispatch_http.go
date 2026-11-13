@@ -51,11 +51,12 @@ func (h *Engine) serveJob(w http.ResponseWriter, r *http.Request) {
 			writeJobJSON(w, http.StatusBadRequest, map[string]string{"error": "bad report: " + err.Error()})
 			return
 		}
-		if err := h.JobReport(id, token, &rep); err != nil {
+		ack, err := h.JobReport(id, token, &rep)
+		if err != nil {
 			writeJobError(w, err)
 			return
 		}
-		writeJobJSON(w, http.StatusOK, map[string]any{"seq": rep.Seq})
+		writeJobJSON(w, http.StatusOK, ack)
 	case "result":
 		// A result carries the run's _send/ files: give its upload longer
 		// than the server's read timeout.
