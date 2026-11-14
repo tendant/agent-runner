@@ -133,6 +133,13 @@ func testModelChannelsKeepCredentialsOutOfTheSandbox(t *testing.T) {
 	if code := post(t, fromHost(run, claude["ANTHROPIC_BASE_URL"])+"/v1/messages", claude["ANTHROPIC_AUTH_TOKEN"]); code != 200 || *anthropicGot != "Bearer real-claude-token" {
 		t.Errorf("claude through its proxy: %d, upstream got %q", code, *anthropicGot)
 	}
+	// The claude CLI's start-up check carries no token: answered by the
+	// proxy itself, not refused (no model_denied) and not forwarded.
+	if resp, err := http.Get(fromHost(run, claude["ANTHROPIC_BASE_URL"]) + "/api/hello"); err != nil || resp.StatusCode != 200 {
+		t.Errorf("claude's /api/hello without a token: %v %v", resp, err)
+	} else {
+		resp.Body.Close()
+	}
 	codex := launch(t, run, got, "codex")
 	codexToken := codex[codexKeyEnv]
 	conf, err := os.ReadFile(filepath.Join(codex["CODEX_HOME"], "config.toml"))

@@ -240,6 +240,7 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 			Credential:      ch.Credential,
 			Headers:         headers,
 			PathPrefixes:    ch.Paths,
+			LocalReplies:    localReplies(name),
 			MaxRequestB:     64 << 20, // a long conversation's request is several MB
 			RatePerMinute:   600,
 			RequestIDHeader: requestHeader,
@@ -558,3 +559,13 @@ func (m *modelRun) names() string {
 // on Linux it uses the Unix sockets. A proxy accepts only its run's token,
 // which lives as long as the run.
 func modelListenHost() string { return "127.0.0.1" }
+
+// localReplies are the requests a channel answers itself: the claude CLI's
+// unauthenticated GET /api/hello at start, which carries no run token and
+// would otherwise be refused (a model_denied on every sandboxed start).
+func localReplies(provider string) map[string]string {
+	if provider == ProviderAnthropic {
+		return map[string]string{"/api/hello": `{"message":"hello"}`}
+	}
+	return nil
+}
