@@ -65,11 +65,16 @@ type IterationResult struct {
 	Retry        bool            `json:"retry,omitempty"` // true if this iteration retried after a previous failure
 	Commit       string          `json:"commit,omitempty"`
 	ChangedFiles []string        `json:"changed_files,omitempty"`
-	Output       string          `json:"output,omitempty"` // Claude's result text
+	Output       string          `json:"output,omitempty"` // the model's reply text, nothing else
 	Error        string          `json:"error,omitempty"`
-	DurationSecs int             `json:"duration_seconds"`
-	CostUSD      float64         `json:"cost_usd,omitempty"`
-	Prompt       string          `json:"-"` // prompt sent to Claude (excluded from API response)
+	// Diagnostics is a failed iteration's raw CLI output (pi's RPC stream,
+	// a CLI's stderr), for the session log's details only. It is not the
+	// model's reply: it can echo the whole prompt, so it never reaches the
+	// chat, the conversation history or the API response.
+	Diagnostics  string  `json:"-"`
+	DurationSecs int     `json:"duration_seconds"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+	Prompt       string  `json:"-"` // prompt sent to Claude (excluded from API response)
 }
 
 // Session represents an agent session that runs multiple iterations
@@ -258,6 +263,7 @@ func (s *Session) AddIteration(result IterationResult) {
 	s.mu.Lock()
 	if s.redact != nil {
 		result.Output, result.Error = s.redact(result.Output), s.redact(result.Error)
+		result.Diagnostics = s.redact(result.Diagnostics)
 	}
 	s.Iterations = append(s.Iterations, result)
 	s.CurrentIteration = result.Iteration

@@ -776,6 +776,7 @@ func (h *Engine) finalizeSession(res *RunResult) {
 			CostUSD:      iter.CostUSD,
 			Prompt:       sessionRedact(iter.Prompt),
 			Output:       iter.Output,
+			Diagnostics:  iter.Diagnostics,
 		})
 	}
 	logData.PlannerPrompt = res.PlannerPrompt
@@ -1710,16 +1711,7 @@ func (h *Engine) executePrompt(
 		died = errors.Is(execErr, executor.ErrSessionDead)
 		result.Status = agent.IterationStatusError
 		result.Error = fmt.Sprintf("agent execution failed: %v", normalizePromptError(iterCtx, execErr))
-		if execResult != nil {
-			// Prefer structured output; fall back to raw terminal output so the
-			// full CLI error appears in the audit log's details block.
-			if execResult.Output != "" {
-				result.Output = execResult.Output
-			} else if execResult.RawOutput != "" {
-				result.Output = execResult.RawOutput
-			}
-			result.CostUSD = execResult.CostUSD
-		}
+		recordFailedOutput(&result, execResult)
 		return result, died
 	}
 
@@ -1729,6 +1721,20 @@ func (h *Engine) executePrompt(
 	}
 	result.Status = agent.IterationStatusSuccess
 	return result, false
+}
+
+// recordFailedOutput keeps what a failed prompt produced: the model's text,
+// if any, as Output, and the raw CLI output as Diagnostics for the session
+// log. The raw output used to go into Output, where the chat report and the
+// conversation history read it as the agent's reply: for pi, whose raw
+// output is its RPC stream, that posted the whole prompt to the chat.
+func recordFailedOutput(result *agent.IterationResult, execResult *executor.ExecutionResult) {
+	if execResult == nil {
+		return
+	}
+	result.Output = execResult.Output
+	result.Diagnostics = execResult.RawOutput
+	result.CostUSD = execResult.CostUSD
 }
 
 // normalizePromptError maps raw context errors (from session backends that
@@ -1872,7 +1878,9 @@ func (h *Engine) notifySessionResult(snap *agent.Session) {
 		}
 	case agent.SessionStatusFailed:
 		errPreview := snap.Error
-		errPreview = textutil.Truncate(errPreview, 120)
+		// The friendly line alone is ~100 characters: 120 cut off the
+		// details that say what actually failed.
+		errPreview = textutil.Truncate(errPreview, 400)
 		if output := lastAgentOutput(snap); output != "" {
 			msg = fmt.Sprintf("%s\n\n---\nAgent failed — %s", output, errPreview)
 		} else {

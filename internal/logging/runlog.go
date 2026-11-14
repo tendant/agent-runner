@@ -96,6 +96,7 @@ type AgentIterationLog struct {
 	CostUSD      float64
 	Prompt       string // prompt sent to Claude for this iteration (for debugging)
 	Output       string // Claude's response text
+	Diagnostics  string // a failed iteration's raw CLI output, shown apart from Output
 }
 
 // RunLogger handles markdown run log generation
@@ -404,6 +405,14 @@ func (l *RunLogger) generateAgentMarkdown(data *AgentLogData, timestamp string) 
 				sb.WriteString(fmt.Sprintf("<summary>Output (%d chars)</summary>\n\n", len(iter.Output)))
 				sb.WriteString("```\n")
 				sb.WriteString(iter.Output)
+				sb.WriteString("\n```\n\n")
+				sb.WriteString("</details>\n")
+			}
+			if iter.Diagnostics != "" {
+				sb.WriteString("\n<details>\n")
+				sb.WriteString(fmt.Sprintf("<summary>CLI output (diagnostics, %d chars)</summary>\n\n", len(iter.Diagnostics)))
+				sb.WriteString("```\n")
+				sb.WriteString(iter.Diagnostics)
 				sb.WriteString("\n```\n\n")
 				sb.WriteString("</details>\n")
 			}
