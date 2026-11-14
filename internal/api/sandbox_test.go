@@ -209,7 +209,9 @@ func TestSandboxDeepSeekChannel(t *testing.T) {
 		t.Fatalf("deepseek channel %+v", ch)
 	}
 	t.Setenv("DEEPSEEK_BASE_URL", "https://proxy.example/v1")
-	if ch := sandboxModelChannels(cfg)["deepseek"]; ch == nil || ch.Upstream.String() != "https://proxy.example" {
+	// The base URL's path is kept (pi sends /chat/completions with no /v1);
+	// the proxy joins it once even for a client that sends /v1/... itself.
+	if ch := sandboxModelChannels(cfg)["deepseek"]; ch == nil || ch.Upstream.String() != "https://proxy.example/v1" {
 		t.Errorf("DEEPSEEK_BASE_URL: %+v", ch)
 	}
 	t.Setenv("DEEPSEEK_API_KEY", "")

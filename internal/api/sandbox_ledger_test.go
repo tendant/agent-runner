@@ -89,3 +89,27 @@ func TestDowngradeChannels(t *testing.T) {
 		t.Error("an entry for a provider without a channel added one")
 	}
 }
+
+// An OpenAI-compatible provider's base URL keeps its path: pi sends
+// /chat/completions, so a base written with /v1 must reach /v1/... (an
+// upstream serving only /v1, like vLLM or ledger-gate before it took both,
+// answered 404 when the /v1 was dropped).
+func TestCompatChannelKeepsBasePath(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
+	for base, wantPath := range map[string]string{
+		"http://gateway.internal/v1":  "/v1",
+		"http://gateway.internal/v1/": "/v1",
+		"https://api.deepseek.com":    "",
+	} {
+		t.Setenv("DEEPSEEK_BASE_URL", base)
+		ch := withCompatChannels(map[string]*sandboxrt.ModelChannel{})["deepseek"]
+		if ch == nil || ch.Upstream.Path != wantPath {
+			t.Errorf("%s: channel %+v, want upstream path %q", base, ch, wantPath)
+		}
+	}
+	// OpenAI's channel still drops it: codex and pi send /v1/... themselves.
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	if u := upstreamURL("OPENAI_BASE_URL", ""); u == nil || u.Path != "" {
+		t.Errorf("openai upstream %v, want no /v1", u)
+	}
+}

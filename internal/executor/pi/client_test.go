@@ -62,6 +62,17 @@ func fakePi() {
 				os.Exit(1)
 			case "ui":
 				emit(`{"type":"extension_ui_request","id":"ui-1"}`)
+			case "model-error":
+				// What pi does when every model call fails (here a 404 from
+				// a gateway): the turn ends with stopReason "error", no text.
+				emit(`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"404 status code (no body)"}}`)
+				emit(`{"type":"agent_settled"}`)
+			case "retry-ok":
+				// A failed attempt, then pi's retry succeeds: the turn is fine.
+				emit(`{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"503 overloaded"}}`)
+				emit(`{"type":"auto_retry_start"}`)
+				emit(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done after retry"}],"stopReason":"stop"}}`)
+				emit(`{"type":"agent_settled"}`)
 			case "hang-abort":
 				// settle only on abort
 			default:
@@ -71,7 +82,7 @@ func fakePi() {
 			emit(`{"type":"response","id":%q,"command":"abort","success":true}`, req.ID)
 			emit(`{"type":"agent_settled"}`)
 		case "get_last_assistant_text":
-			if mode == "nolast" {
+			if mode == "nolast" || mode == "model-error" {
 				emit(`{"type":"response","id":%q,"command":"get_last_assistant_text","success":false,"error":"unavailable"}`, req.ID)
 			} else {
 				emit(`{"type":"response","id":%q,"command":"get_last_assistant_text","success":true,"data":{"text":"authoritative text"}}`, req.ID)
@@ -136,6 +147,37 @@ func TestPromptTextFallback(t *testing.T) {
 	}
 	if res.Text != "fallback text" {
 		t.Errorf("text = %q, want fallback text from message_end", res.Text)
+	}
+}
+
+// A turn whose model call failed is an error, with the provider's message;
+// before, it was a successful turn with no text, and a session whose every
+// call 404'd was reported completed.
+func TestModelErrorFailsThePrompt(t *testing.T) {
+	c := startFake(t, "model-error")
+	res, err := c.Prompt(context.Background(), "x")
+	if err == nil {
+		t.Fatalf("prompt succeeded (text %q); want the model error", res.Text)
+	}
+	if !errors.Is(err, ErrModelCall) || !strings.Contains(err.Error(), "404 status code") {
+		t.Errorf("err = %v, want ErrModelCall with pi's errorMessage", err)
+	}
+	// The client is reusable: the next prompt starts clean.
+	if _, err := c.Prompt(context.Background(), "again"); err == nil {
+		t.Error("second prompt on the failing fake should fail too")
+	}
+}
+
+// Only the final assistant message decides: an attempt that pi retried
+// successfully is not a failure.
+func TestModelErrorThenRetrySucceeds(t *testing.T) {
+	c := startFake(t, "retry-ok")
+	res, err := c.Prompt(context.Background(), "x")
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if res.Text != "authoritative text" {
+		t.Errorf("text = %q", res.Text)
 	}
 }
 

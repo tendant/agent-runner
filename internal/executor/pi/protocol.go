@@ -75,6 +75,20 @@ func extractText(raw json.RawMessage) string {
 	return ""
 }
 
+// extractStop is an assistant message's stopReason ("stop", "length",
+// "toolUse", "error", "aborted") and errorMessage, set when it is "error" or
+// "aborted".
+func extractStop(raw json.RawMessage) (stopReason, errorMessage string) {
+	var msg struct {
+		StopReason   string `json:"stopReason"`
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &msg) != nil {
+		return "", ""
+	}
+	return msg.StopReason, msg.ErrorMessage
+}
+
 // extractMessage pulls role, concatenated text content, and the usage
 // payload out of a message object. Content may be a bare string or a list
 // of typed blocks; usage (token counts + computed cost) is nested inside

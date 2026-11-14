@@ -73,9 +73,14 @@ type Client struct {
 	settled chan struct{} // closed when the in-flight prompt settles
 	text    string        // last assistant text seen via message_end
 	cost    float64       // accumulated cost from usage payloads
-	seq     uint64
-	dead    bool
-	deadErr error
+	// stopReason and stopError are the last assistant message's: pi ends a
+	// turn whose model call failed (after its own retries) with stopReason
+	// "error" and the provider's errorMessage, and still settles normally.
+	stopReason string
+	stopError  string
+	seq        uint64
+	dead       bool
+	deadErr    error
 
 	deadCh    chan struct{} // closed when the reader loop ends
 	closeOnce sync.Once
@@ -192,6 +197,7 @@ func (c *Client) Prompt(ctx context.Context, message string) (*Result, error) {
 	settled := make(chan struct{})
 	c.settled = settled
 	c.text = ""
+	c.stopReason, c.stopError = "", ""
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
@@ -239,9 +245,24 @@ func (c *Client) collect(ctx context.Context) (*Result, error) {
 		text = c.text
 	}
 	cost := c.cost
+	stopReason, stopError := c.stopReason, c.stopError
 	c.mu.Unlock()
+	if stopReason == "error" {
+		// The turn ended on a failed model call. Without this it read as a
+		// successful turn that said nothing, and a session whose every call
+		// failed was reported completed.
+		if stopError == "" {
+			stopError = "no error message"
+		}
+		return nil, fmt.Errorf("%w: %s", ErrModelCall, stopError)
+	}
 	return &Result{Text: strings.TrimSpace(text), CostUSD: cost}, nil
 }
+
+// ErrModelCall is a turn that ended because the model call failed (pi's
+// stopReason "error"): a bad key, an unknown model, a provider or gateway
+// error. Its message is pi's errorMessage.
+var ErrModelCall = errors.New("pi: model call failed")
 
 // abortAndReap tries a graceful abort, then kills the process group.
 func (c *Client) abortAndReap(settled chan struct{}) {
@@ -391,6 +412,7 @@ func (c *Client) dispatch(l *line) {
 		}
 	case "message_end":
 		role, text, usage := extractMessage(l.Message)
+		stopReason, stopError := extractStop(l.Message)
 		cost := extractCost(usage)
 		if cost == 0 {
 			cost = extractCost(l.Usage)
@@ -398,6 +420,9 @@ func (c *Client) dispatch(l *line) {
 		c.mu.Lock()
 		if role == "assistant" && text != "" {
 			c.text = text
+		}
+		if role == "assistant" {
+			c.stopReason, c.stopError = stopReason, stopError
 		}
 		if cost > 0 {
 			c.cost += cost

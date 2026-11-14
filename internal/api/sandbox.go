@@ -423,12 +423,31 @@ func withCompatChannels(out map[string]*sandboxrt.ModelChannel) map[string]*sand
 		if key == "" {
 			continue
 		}
-		if u := upstreamURL(p.BaseEnv, p.Upstream); u != nil {
+		if u := baseURL(p.BaseEnv, p.Upstream); u != nil {
 			out[p.Name] = &sandboxrt.ModelChannel{Upstream: u, Paths: sandboxrt.CompatPaths,
 				AuthHeader: "Authorization", AuthValue: "Bearer " + key}
 		}
 	}
 	return out
+}
+
+// baseURL is env's base URL, or def, with its path kept: an OpenAI-compatible
+// provider's clients (pi's DeepSeek provider) send /chat/completions with no
+// /v1, so DEEPSEEK_BASE_URL=https://host/v1 must reach /v1/chat/completions.
+// (Dropping the /v1, as upstreamURL does, sent them to /chat/completions,
+// which an upstream serving only /v1, such as vLLM, answers 404.) The proxy
+// adds the base path once even when a client sends /v1/... itself.
+func baseURL(env, def string) *url.URL {
+	v := os.Getenv(env)
+	if v == "" {
+		v = def
+	}
+	u, err := url.Parse(strings.TrimSuffix(v, "/"))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		slog.Warn("sandbox: model proxy: bad "+env+"; that provider is not proxied", "value", v)
+		return nil
+	}
+	return u
 }
 
 // upstreamURL is env's base URL, or def. The proxy's paths start at /v1, so a
