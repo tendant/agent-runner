@@ -48,6 +48,7 @@ import (
 type Config struct {
 	Roots    map[string]string // logical root -> host directory
 	Readable []string          // more host paths readable (memory, uploads, the CLIs' installs)
+	Writable []string          // more host paths readable and writable (AGENT_SANDBOX_WRITE_ALLOW)
 	// ReadDeny are host paths the sandbox must never read (the runner's .env,
 	// state, logs, other sessions): covered wherever a mount exposes them,
 	// e.g. through a broad Readable parent.
@@ -265,6 +266,16 @@ func (b *Backend) Prepare(ctx context.Context, spec sandbox.SandboxSpec) (sandbo
 			s.ReadOnly = append(s.ReadOnly, m)
 		}
 		mounted[h] = true
+	}
+	for _, w := range b.cfg.Writable {
+		if mounted[w] || underAny(w, mounted) {
+			continue
+		}
+		if _, err := os.Stat(w); err != nil {
+			continue
+		}
+		s.Writable = append(s.Writable, ab.Mount{Source: w})
+		mounted[w] = true
 	}
 	for _, r := range b.cfg.Readable {
 		if mounted[r] || underAny(r, mounted) {

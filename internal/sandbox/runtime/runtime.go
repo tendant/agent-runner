@@ -94,9 +94,15 @@ type Config struct {
 	DiskPoll time.Duration
 	// ScopedReads limits every run's host reads to its roots, the system
 	// paths, the agent CLIs' installs and ReadAllow (else: host minus denies).
-	ScopedReads  bool
-	ReadAllow    []string // host paths readable under ScopedReads (memory, uploads, ...)
-	EvidenceFile string   // optional conformance report; claims limited to proven caps
+	ScopedReads bool
+	ReadAllow   []string // host paths readable under ScopedReads (memory, uploads, ...)
+	// WriteAllow are host paths every run may read and write (a mail store):
+	// mounted read-write, never one under PrivatePaths.
+	WriteAllow []string
+	// Hide are host paths no run may see, even inside ReadAllow or
+	// WriteAllow (the credentials beside a mail store), like PrivatePaths.
+	Hide         []string
+	EvidenceFile string // optional conformance report; claims limited to proven caps
 	EnvAllow     []string
 	// PrivatePaths are the runner's own host files and directories (its .env
 	// files, state, logs, ...). Every run is read-denied them, except for the
@@ -303,11 +309,14 @@ func New(cfg Config) (*Runtime, error) {
 	if r.cfg.StateDir, err = filepath.Abs(cfg.StateDir); err != nil {
 		return nil, err
 	}
-	r.cfg.ReadAllow = make([]string, len(cfg.ReadAllow))
-	for i, p := range cfg.ReadAllow {
-		if r.cfg.ReadAllow[i], err = filepath.Abs(p); err != nil {
-			return nil, err
+	for _, l := range []*[]string{&r.cfg.ReadAllow, &r.cfg.WriteAllow, &r.cfg.Hide} {
+		abs := make([]string, len(*l))
+		for i, p := range *l {
+			if abs[i], err = filepath.Abs(p); err != nil {
+				return nil, err
+			}
 		}
+		*l = abs
 	}
 	r.cfg.PrivatePaths = make([]string, len(cfg.PrivatePaths))
 	for i, p := range cfg.PrivatePaths {
@@ -614,12 +623,18 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 	// Scoped reads: the configured paths and the agent CLIs' installs, looked
 	// up per run (a CLI installed with /install-cli is found without a restart).
 	// A private path is never made readable.
-	var readable []string
+	var readable, writable []string
 	for _, p := range append(slices.Clone(r.cfg.ReadAllow), toolReadable()...) {
 		if !underAny(p, r.cfg.PrivatePaths) {
 			readable = append(readable, p)
 		}
 	}
+	for _, p := range r.cfg.WriteAllow {
+		if !underAny(p, r.cfg.PrivatePaths) {
+			writable = append(writable, p)
+		}
+	}
+	deny = append(deny, hidden(r.cfg.Hide)...)
 	// Inspection: the run's certificate authority, and the trust files and
 	// variables that make the sandbox's tools accept it. A host with no
 	// system root bundle to add it to cannot inspect: the run goes on with
@@ -655,7 +670,7 @@ func (r *Runtime) Begin(ctx context.Context, req BeginReq) (*Run, error) {
 		if r.cfg.NewBackend != nil {
 			return diskWatched{r.cfg.NewBackend(roots)}
 		}
-		return diskWatched{abadapter.New(abadapter.Config{Roots: roots, Readable: readable, ReadDeny: deny, Routes: modelRoutes,
+		return diskWatched{abadapter.New(abadapter.Config{Roots: roots, Readable: readable, Writable: writable, ReadDeny: deny, Routes: modelRoutes,
 			HostPorts: modelPorts, OnEgress: egress.record, Evidence: r.evidence, Runsc: r.cfg.AgentboxRunsc,
 			StateDir: filepath.Join(r.cfg.StateDir, "agentbox"), EgressMode: r.cfg.EgressMode, EgressPorts: r.cfg.EgressPorts,
 			Inspect: inspector, InspectExcept: spec.Network.EgressInspectExcept, Inject: injectRules,
@@ -1077,4 +1092,21 @@ func (r *Runtime) injectRules(spec *sandbox.SandboxSpec, req BeginReq) ([]abegre
 		spec.Network.EgressInspect, spec.Network.EgressInspectOnly = true, hosts
 	}
 	return rules, values
+}
+
+// hidden returns the Hide paths that exist, each also by its resolved path
+// (a symlinked mail store), for the backend to cover wherever a mount
+// exposes them.
+func hidden(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Lstat(p); err != nil {
+			continue
+		}
+		out = append(out, p)
+		if real, err := filepath.EvalSymlinks(p); err == nil && real != p {
+			out = append(out, real)
+		}
+	}
+	return out
 }

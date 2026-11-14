@@ -54,7 +54,7 @@ Other settings:
   cap is also recorded as `resource_limit_hit` (`memory`, reason `oom_kill`). Measure first, then
   set caps from what runs actually use.
 * `AGENT_SANDBOX_EGRESS_ALLOW`, `AGENT_SANDBOX_EGRESS_MODE`, `AGENT_SANDBOX_SERVICES` and `AGENT_SANDBOX_INJECT`: see [Network](#network).
-* `AGENT_SANDBOX_READ_ALLOW`: see [What the sandbox can read](#what-the-sandbox-can-read).
+* `AGENT_SANDBOX_READ_ALLOW`, `AGENT_SANDBOX_WRITE_ALLOW` and `AGENT_SANDBOX_HIDE`: see [What the sandbox can read](#what-the-sandbox-can-read).
 * `AGENT_SANDBOX_ENV_ALLOW`: host env var names to pass in (comma-separated), for plain
   settings; model credentials are never passed while the model proxy is on. Credentials an
   agent needs for its tasks go in with `/env` instead (see [Secrets](#secrets)).
@@ -308,6 +308,17 @@ stay denied).
 
 A tool that fails reading something outside the allowlist (a cache, a toolchain in your home)
 needs that path in `AGENT_SANDBOX_READ_ALLOW`.
+
+**Writing outside the run.** `AGENT_SANDBOX_WRITE_ALLOW` (comma-separated host paths) mounts each
+read-write into every run, at its own path: data the agent keeps up across runs, e.g. a mail store
+it indexes and drafts into. A path under the runner's own files is never mounted. Keep these out
+of `AGENT_SANDBOX_READ_ALLOW` paths (a read-only parent is not made writable).
+
+`AGENT_SANDBOX_HIDE` (comma-separated host paths) hides files and directories even where a
+readable or writable path covers them, as the runner's own files are: the credentials kept beside
+such data (an OAuth token, a `.env`). Each is covered by an empty read-only file or directory; a
+path that does not exist when the run starts is skipped, so list files that are only created later
+by their directory.
 
 ## Memory
 

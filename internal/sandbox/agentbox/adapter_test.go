@@ -329,3 +329,37 @@ func TestOnEgress(t *testing.T) {
 		t.Fatal("no egress decision reported")
 	}
 }
+
+func TestPrepareWritable(t *testing.T) {
+	f := &fakeAB{caps: ab.Capabilities{Rootless: true, ModelSocket: true, PIDLimit: true, MemoryLimit: true}}
+	r := roots(t)
+	mail := filepath.Join(t.TempDir(), "mail")
+	mkdir(t, mail)
+	b := New(Config{Roots: r, Backend: f,
+		Writable: []string{mail, filepath.Join(r[sandbox.RootTmp], "x"), filepath.Join(t.TempDir(), "missing")},
+		Readable: []string{filepath.Join(mail, "inbox")},
+		ReadDeny: []string{filepath.Join(mail, "oauth-token.json")}})
+	if _, err := b.Prepare(context.Background(), spec()); err != nil {
+		t.Fatal(err)
+	}
+	s := f.specs[0]
+	// Mounted read-write once; one inside a grant or missing is skipped, and
+	// a Readable path inside it is not mounted again read-only.
+	n := 0
+	for _, m := range s.Writable {
+		if m.Source == mail {
+			n++
+		}
+	}
+	if n != 1 || len(s.Writable) != 3 {
+		t.Errorf("writable %v", s.Writable)
+	}
+	for _, m := range s.ReadOnly {
+		if strings.HasPrefix(m.Source, mail) {
+			t.Errorf("read-only %v", s.ReadOnly)
+		}
+	}
+	if !slices.Contains(s.Deny, filepath.Join(mail, "oauth-token.json")) {
+		t.Errorf("deny %v", s.Deny)
+	}
+}
