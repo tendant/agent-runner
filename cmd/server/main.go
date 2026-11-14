@@ -22,8 +22,11 @@ import (
 var buildTime = "unknown"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "run-session" {
+	switch cmd, code := parseArgs(os.Args[1:], os.Stdout); cmd {
+	case cmdRunSession:
 		os.Exit(runSession(os.Args[2:]))
+	case cmdExit:
+		os.Exit(code)
 	}
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
