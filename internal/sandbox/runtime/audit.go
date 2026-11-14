@@ -1,7 +1,12 @@
 package runtime
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
+	"time"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agent-runner/agent-runner/internal/sandbox"
 	"github.com/tendant/agentbox/pkg/agentbox/audit"
@@ -150,4 +155,32 @@ func (r *Runtime) auditModel(runID, provider, kind, reason, path string) {
 		typ = audit.TypeModelLimitHit
 	}
 	r.audit(runID, typ, audit.ModelDetail{Provider: provider, Reason: reason, Path: path})
+}
+
+// BackendNone is the backend an unsandboxed run's record names.
+const BackendNone = "none"
+
+// Unsandboxed records a run that runs without the sandbox (mode off), so
+// agent-gate lists it instead of never hearing of it: a policy snapshot
+// that says so (backend "none", mode "off", nothing enforced), its start
+// with whose run it is, and, through the returned func, its end. Nil when
+// there is no record, or the sandbox is on (Begin records those runs).
+func (r *Runtime) Unsandboxed(ctx context.Context, req BeginReq) func() {
+	if r == nil || r.cfg.Audit == nil || r.cfg.Mode != sandbox.ModeOff || req.RunID == "" {
+		return nil
+	}
+	if req.ThreadID == "" {
+		req.ThreadID = req.RunID
+	}
+	if sc := trace.SpanContextFromContext(ctx); req.TraceID == "" && sc.HasTraceID() {
+		req.TraceID = sc.TraceID().String()
+	}
+	r.auditPolicy(req, sandbox.SandboxSpec{Version: sandbox.SpecVersion}, sandbox.CheckResult{Backend: BackendNone})
+	detail := "unsandboxed (AGENT_SANDBOX=off): nothing is enforced"
+	r.emit(Event{Kind: "sandbox.started", RunID: req.RunID, ThreadID: req.ThreadID, Backend: BackendNone, Detail: detail})
+	started := time.Now()
+	return func() {
+		r.emit(Event{Kind: "sandbox.finished", RunID: req.RunID, ThreadID: req.ThreadID, Backend: BackendNone,
+			Detail: fmt.Sprintf("elapsed=%s", time.Since(started).Round(time.Millisecond))})
+	}
 }

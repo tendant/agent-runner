@@ -27,7 +27,7 @@ import (
 func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 	mode := sandbox.Mode(cfg.Agent.SandboxMode)
 	if mode == "" || mode == sandbox.ModeOff {
-		return nil
+		return unsandboxedRuntime(cfg)
 	}
 	scoped, err := clisetup.SandboxScopedReads(cfg.Agent.SandboxRead)
 	if err == nil && cfg.Agent.SandboxBackend != "" && cfg.Agent.SandboxBackend != "agentbox" {
@@ -493,4 +493,38 @@ func runnerSecret(cfg *config.Config) func(string) (string, bool) {
 		v, ok := os.LookupEnv(name)
 		return v, ok && v != ""
 	}
+}
+
+// unsandboxedRuntime is the runtime with the sandbox off: it confines
+// nothing, but keeps the audit record, where each run is listed as
+// unsandboxed (Runtime.Unsandboxed), so agent-gate sees the agent and that
+// its runs had no sandbox. Without a record it is nil, as before. A record
+// that cannot be opened is reported and the agent runs without one: with
+// the sandbox off nothing else would have stopped it.
+func unsandboxedRuntime(cfg *config.Config) *sandboxrt.Runtime {
+	dir := cfg.Agent.SandboxAuditDir
+	if dir == "" {
+		return nil
+	}
+	host, _ := os.Hostname()
+	opts, err := auditOptions(cfg.Agent.SandboxAuditSegment, cfg.Agent.SandboxAuditKeep)
+	var rec *audit.Recorder
+	if err == nil {
+		rec, err = audit.OpenDirRecorder(dir, auditSource(host, cfg.Agent.Name), opts)
+	}
+	if err != nil {
+		slog.Error("audit record unusable; unsandboxed runs are not recorded", "dir", dir, "error", err)
+		return nil
+	}
+	rt, err := sandboxrt.New(sandboxrt.Config{Mode: sandbox.ModeOff, Audit: rec, Agent: cfg.Agent.Name,
+		OnEvent: func(e sandboxrt.Event) {
+			slog.Info(e.Kind, "run", e.RunID, "thread", e.ThreadID, "backend", e.Backend, "detail", e.Detail)
+		}})
+	if err != nil {
+		rec.Close()
+		slog.Error("audit record unusable; unsandboxed runs are not recorded", "error", err)
+		return nil
+	}
+	slog.Info("sandbox off; runs are recorded as unsandboxed", "audit_dir", dir)
+	return rt
 }

@@ -61,11 +61,17 @@ Other settings:
 * `AGENT_SANDBOX_MODEL_PROXY` (default `true`) and `AGENT_SANDBOX_CODEX_LOGIN`: see
   [Claude credentials and config](#claude-credentials-and-config).
 * `AGENT_SANDBOX_EVIDENCE`: a conformance report; only the capabilities it proves are claimed.
-* `AGENT_SANDBOX_AUDIT_DIR`: a directory recording every sandbox run for agent-gate (agentbox's
+* `AGENT_SANDBOX_AUDIT_DIR`: a directory recording every run for agent-gate (agentbox's
   `audit` schema, JSON Lines): its policy snapshot (the resolved spec and what the backend
   enforces), lifecycle, and every egress and model-channel decision. Names and ids only, never
-  credentials or payloads. Unset: no record. A directory that cannot be opened rejects every
-  run. One agent-runner per directory; it is read-denied to runs.
+  credentials or payloads. Unset: `DATA_DIR/audit`; `off`: no record. With the sandbox on, a
+  directory that cannot be opened rejects every run. One agent-runner per directory; it is
+  read-denied to runs.
+  With the sandbox off (`AGENT_SANDBOX=off`) the record is kept too: each run is on it as
+  unsandboxed, as a policy snapshot with backend `none` and mode `off` (nothing enforced), then
+  its start (agent, project, trace) and end. agent-gate lists the run and judges the sandbox's
+  controls failed, instead of never hearing of it. A directory that cannot be opened is logged,
+  and such runs go unrecorded.
   The record is kept as numbered segments (`00000000`, `00000001`, ...), as Prometheus keeps
   its write-ahead log: appended to the newest, never renamed or rewritten. agent-gate pulls it
   from the API, read-only and behind `API_KEY`: `GET /audit/segments` lists the segments,

@@ -665,3 +665,25 @@ func TestAPIConfig_ExposedWithoutKey(t *testing.T) {
 		t.Errorf("Validate: %v", err)
 	}
 }
+
+// The audit record is kept by default, in DATA_DIR; "off" keeps none.
+func TestLoadFromEnv_AuditDirDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DATA_DIR", dir)
+	t.Setenv("AGENT_SANDBOX_AUDIT_DIR", "")
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "audit"); cfg.Agent.SandboxAuditDir != want {
+		t.Errorf("default %q, want %q", cfg.Agent.SandboxAuditDir, want)
+	}
+	t.Setenv("AGENT_SANDBOX_AUDIT_DIR", "off")
+	if cfg, _ = LoadFromEnv(); cfg.Agent.SandboxAuditDir != "" {
+		t.Errorf("off: %q", cfg.Agent.SandboxAuditDir)
+	}
+	t.Setenv("AGENT_SANDBOX_AUDIT_DIR", "/var/audit/x")
+	if cfg, _ = LoadFromEnv(); cfg.Agent.SandboxAuditDir != "/var/audit/x" {
+		t.Errorf("set: %q", cfg.Agent.SandboxAuditDir)
+	}
+}

@@ -215,6 +215,15 @@ func (h *Engine) sessionServices(run *sandboxrt.Run, eval bool) []string {
 	return names
 }
 
+// sandboxThread is the sandbox Thread a session runs in: all turns of a
+// task share one.
+func sandboxThread(sessionID string, live *agent.Session) string {
+	if live.TaskWorkspace != "" {
+		return filepath.Base(live.TaskWorkspace)
+	}
+	return sessionID
+}
+
 // sandboxed reports whether sessions run their agent CLIs in the sandbox.
 func (h *Engine) sandboxed() bool { return h.sandbox != nil && h.sandbox.Mode() != "off" }
 
@@ -232,10 +241,7 @@ func (h *Engine) beginSandbox(ctx context.Context, sessionID string, live *agent
 		h.FailSession(sessionID, "sandbox: claude has no credentials: "+clisetup.SandboxedClaudeAuthHelp)
 		return ctx, nil, true
 	}
-	thread := sessionID
-	if live.TaskWorkspace != "" {
-		thread = filepath.Base(live.TaskWorkspace) // all turns of a task share a Thread
-	}
+	thread := sandboxThread(sessionID, live)
 	// An eval replay acts on nothing outside its workspace: no credentials.
 	req := sandboxrt.BeginReq{ThreadID: thread, RunID: sessionID, Workspace: checkoutPath, MaxSecond: maxSeconds, Inject: live.Eval == nil}
 	if live.Eval != nil {
@@ -540,6 +546,13 @@ func (h *Engine) runSession(ctx context.Context, session *agent.Session, rep Rep
 	ctx, sandboxRun, sandboxAborted := h.beginSandbox(ctx, sessionID, liveSession, checkoutPath, maxSeconds)
 	if sandboxAborted {
 		return
+	}
+	// Without the sandbox the run is still on the audit record, as
+	// unsandboxed, so it is not invisible there.
+	if h.sandbox != nil && !h.sandboxed() {
+		if end := h.sandbox.Unsandboxed(ctx, sandboxrt.BeginReq{ThreadID: sandboxThread(sessionID, liveSession), RunID: sessionID}); end != nil {
+			defer end()
+		}
 	}
 	// Where the network services are (AGENT_SANDBOX_SERVICES): their own
 	// addresses; a sandbox sets its service ports over them.

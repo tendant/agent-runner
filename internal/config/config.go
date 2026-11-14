@@ -121,7 +121,7 @@ type AgentConfig struct {
 	SandboxDisk          string   // AGENT_SANDBOX_DISK — disk cap on what a sandbox run's workspace, home and tmp hold ("20g"); overrides the policy's disk_bytes
 	SandboxEvidence      string   // AGENT_SANDBOX_EVIDENCE — conformance report; only proven capabilities are claimed
 	Name                 string   // AGENT_NAME — this agent's name, on every sandboxed run's audit record (default: INSTANCE)
-	SandboxAuditDir      string   // AGENT_SANDBOX_AUDIT_DIR — security record of every sandbox run (for agent-gate), as JSONL segments; unset: none
+	SandboxAuditDir      string   // AGENT_SANDBOX_AUDIT_DIR — security record of every run (for agent-gate), as JSONL segments; unset: DATA_DIR/audit; "off": none
 	SandboxAuditSegment  string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
 	SandboxAuditKeep     string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
 	SandboxLedgerURL     string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
@@ -476,7 +476,12 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxDisk = envOrDefault("AGENT_SANDBOX_DISK", cfg.Agent.SandboxDisk)
 	cfg.Agent.SandboxEvidence = envOrDefault("AGENT_SANDBOX_EVIDENCE", cfg.Agent.SandboxEvidence)
 	cfg.Agent.Name = envOrDefault("AGENT_NAME", envOrDefault("INSTANCE", cfg.Agent.Name))
-	cfg.Agent.SandboxAuditDir = envOrDefault("AGENT_SANDBOX_AUDIT_DIR", cfg.Agent.SandboxAuditDir)
+	// The audit record is kept by default, beside the agent's other state:
+	// a run without one is invisible to agent-gate. "off" keeps none.
+	cfg.Agent.SandboxAuditDir = envOrDefault("AGENT_SANDBOX_AUDIT_DIR", filepath.Join(dataDir, "audit"))
+	if strings.EqualFold(cfg.Agent.SandboxAuditDir, "off") {
+		cfg.Agent.SandboxAuditDir = ""
+	}
 	cfg.Agent.SandboxAuditSegment = envOrDefault("AGENT_SANDBOX_AUDIT_SEGMENT", cfg.Agent.SandboxAuditSegment)
 	cfg.Agent.SandboxAuditKeep = envOrDefault("AGENT_SANDBOX_AUDIT_KEEP", cfg.Agent.SandboxAuditKeep)
 	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)

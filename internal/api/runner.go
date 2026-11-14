@@ -43,6 +43,14 @@ func NewRunner(cfg *config.Config, sessionID string) *execution.Engine {
 
 // RunnerAuditDir is where a runner of sessionID records its sandbox runs,
 // given the dispatcher's record directory.
+//
+// A dispatcher directory that is a symlink (into a host's shared audit root,
+// which agent-gate reads) is followed, so the runners' records land beside
+// the record itself there, not beside the link.
 func RunnerAuditDir(dispatcherDir, sessionID string) string {
-	return filepath.Join(filepath.Clean(dispatcherDir)+"-runners", sessionID)
+	dir := filepath.Clean(dispatcherDir)
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	return filepath.Join(dir+"-runners", sessionID)
 }

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -137,5 +139,23 @@ func TestNewRunner(t *testing.T) {
 	}
 	if want := "/var/lib/agent-runner/audit-runners/agent-1"; cfg.Agent.SandboxAuditDir != want {
 		t.Errorf("audit dir %q, want %q", cfg.Agent.SandboxAuditDir, want)
+	}
+}
+
+// A record directory that is a symlink into a shared root puts its runners'
+// records beside the record there.
+func TestRunnerAuditDirFollowsALink(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "shared", "agent-x")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "workdir-audit")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	realResolved, _ := filepath.EvalSymlinks(real)
+	if got, want := RunnerAuditDir(link, "agent-1"), filepath.Join(realResolved+"-runners", "agent-1"); got != want {
+		t.Errorf("runner dir %q, want %q", got, want)
 	}
 }

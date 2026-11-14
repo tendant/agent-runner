@@ -569,3 +569,57 @@ func TestAuditEgressReportOnly(t *testing.T) {
 		t.Error("an enforced allowlist recorded as report only")
 	}
 }
+
+// With the sandbox off, a run is still on the record, as unsandboxed: a
+// snapshot that says so, its start with whose run it is, and its end.
+func TestAuditRecordsAnUnsandboxedRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	rec, err := audit.OpenFileRecorder(path, "test-host", audit.FileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rec.Close()
+	rt, err := New(Config{Mode: sandbox.ModeOff, Audit: rec, Agent: "stock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := rt.Unsandboxed(tracedCtx(), BeginReq{RunID: "r1"})
+	if end == nil {
+		t.Fatal("no record of the unsandboxed run")
+	}
+	end()
+	f, _ := os.Open(path)
+	defer f.Close()
+	var evs []audit.Event
+	d := audit.NewDecoder(f, 0)
+	for {
+		e, err := d.Next()
+		if err != nil {
+			break
+		}
+		evs = append(evs, e)
+	}
+	if got := types(evs); len(got) != 3 || got[0] != audit.TypePolicySnapshot || got[1] != audit.TypeSandboxCreated || got[2] != audit.TypeSandboxClosed {
+		t.Fatalf("events %v", got)
+	}
+	var snap struct{ Backend, Mode string }
+	json.Unmarshal(evs[0].Detail, &snap)
+	if snap.Backend != BackendNone || snap.Mode != "off" {
+		t.Errorf("snapshot %+v", snap)
+	}
+	var created audit.LifecycleDetail
+	json.Unmarshal(evs[1].Detail, &created)
+	if created.Agent != "stock" || created.Backend != BackendNone || created.TraceID != testTraceID || evs[1].PolicyID != evs[0].PolicyID {
+		t.Errorf("created %s", evs[1].Detail)
+	}
+
+	// Nothing without a record, or with the sandbox on (Begin records those).
+	plain, _ := New(Config{Mode: sandbox.ModeOff})
+	if plain.Unsandboxed(context.Background(), BeginReq{RunID: "r2"}) != nil {
+		t.Error("recorded with no record")
+	}
+	on, _, _ := auditRT(t, sandbox.ModePermissive, nil, Config{})
+	if on.Unsandboxed(context.Background(), BeginReq{RunID: "r3"}) != nil {
+		t.Error("an unsandboxed record with the sandbox on")
+	}
+}
