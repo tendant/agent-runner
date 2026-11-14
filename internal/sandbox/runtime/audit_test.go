@@ -623,3 +623,56 @@ func TestAuditRecordsAnUnsandboxedRun(t *testing.T) {
 		t.Error("an unsandboxed record with the sandbox on")
 	}
 }
+
+// Only the run's policy decides whether ledger-gate may downgrade a call:
+// the proxy sends X-Allow-Model-Fallback on channels allowed it and strips
+// the sandbox's own from every other, and the snapshot names the allowed.
+func TestDowngradeOptInOnlyByPolicy(t *testing.T) {
+	allowed, allowedGot := upstream(t, FallbackHeader)
+	denied, deniedGot := upstream(t, FallbackHeader)
+	direct, directGot := upstream(t, FallbackHeader)
+	rt, read, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Models: map[string]*ModelChannel{
+		ProviderAnthropic: {Upstream: allowed, AuthHeader: "x-api-key", AuthValue: "k", Paths: AnthropicPaths, Ledger: true, AllowDowngrade: true},
+		ProviderOpenAI:    {Upstream: denied, AuthHeader: "Authorization", AuthValue: "Bearer k", Paths: OpenAIPaths, Ledger: true},
+		// Allowed, but not a ledger: nothing there acts on the header.
+		"deepseek": {Upstream: direct, AuthHeader: "Authorization", AuthValue: "Bearer k", Paths: OpenAIPaths, AllowDowngrade: true},
+	}})
+	run, err := rt.Begin(context.Background(), BeginReq{RunID: "r1", ThreadID: "t1", Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(name, path, value string) {
+		t.Helper()
+		p := run.model.proxies[name]
+		req, _ := http.NewRequest("POST", p.BaseURL()+path, strings.NewReader("{}"))
+		if name == ProviderAnthropic {
+			req.Header.Set("x-api-key", p.Token())
+		} else {
+			req.Header.Set("Authorization", "Bearer "+p.Token())
+		}
+		req.Header.Set(FallbackHeader, value)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("%s: %v %v", name, err, resp)
+		}
+		resp.Body.Close()
+	}
+	send(ProviderAnthropic, "/v1/messages", "false") // the policy's value wins
+	send(ProviderOpenAI, "/v1/chat/completions", "true")
+	send("deepseek", "/v1/chat/completions", "true")
+	run.Finish()
+
+	if *allowedGot != "true" {
+		t.Errorf("allowed ledger channel got %s %q, want true", FallbackHeader, *allowedGot)
+	}
+	if *deniedGot != "" {
+		t.Errorf("the sandbox opted itself into downgrades: %s %q reached ledger-gate", FallbackHeader, *deniedGot)
+	}
+	if *directGot != "" {
+		t.Errorf("a non-ledger channel got %s %q", FallbackHeader, *directGot)
+	}
+	snap, _, _ := modelEvents(read())
+	if len(snap.ModelDowngrade) != 1 || snap.ModelDowngrade[0] != ProviderAnthropic {
+		t.Errorf("snapshot model_downgrade %v, want [anthropic]", snap.ModelDowngrade)
+	}
+}

@@ -72,3 +72,20 @@ func TestAuditOptions(t *testing.T) {
 		}
 	}
 }
+
+// AGENT_SANDBOX_MODEL_DOWNGRADE allows downgrades only on ledger channels;
+// other names change nothing.
+func TestDowngradeChannels(t *testing.T) {
+	chs := map[string]*sandboxrt.ModelChannel{
+		"anthropic": {Ledger: true},
+		"openai":    {Ledger: true},
+		"deepseek":  {},
+	}
+	downgradeChannels(chs, []string{" anthropic", "deepseek", "gemini", ""})
+	if !chs["anthropic"].AllowDowngrade || chs["openai"].AllowDowngrade || chs["deepseek"].AllowDowngrade {
+		t.Errorf("allow: anthropic %v openai %v deepseek %v", chs["anthropic"].AllowDowngrade, chs["openai"].AllowDowngrade, chs["deepseek"].AllowDowngrade)
+	}
+	if _, ok := chs["gemini"]; ok {
+		t.Error("an entry for a provider without a channel added one")
+	}
+}

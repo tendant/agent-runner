@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -41,11 +42,15 @@ func (r *Runtime) auditPolicy(req BeginReq, spec sandbox.SandboxSpec, res sandbo
 		snap.Metering = map[string]string{}
 		for name, ch := range r.cfg.Models {
 			snap.Metering[name] = ch.MeteringMode()
+			if ch.downgradeAllowed() {
+				snap.ModelDowngrade = append(snap.ModelDowngrade, name)
+			}
 			if r.cfg.ModelBudget > 0 && ch.MeteringMode() == audit.MeteringBroker {
 				snap.ModelBudget = &audit.ModelBudget{USDMicros: r.cfg.ModelBudget, Prices: pricing.Default().Version}
 			}
 		}
 	}
+	sort.Strings(snap.ModelDowngrade) // map order would change the digest
 	var id string
 	if err == nil {
 		id, err = r.cfg.Audit.RecordPolicy(req.RunID, snap)

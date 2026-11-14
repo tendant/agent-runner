@@ -115,7 +115,7 @@ func newSandboxRuntime(cfg *config.Config) *sandboxrt.Runtime {
 		PrivatePaths: sandboxPrivatePaths(cfg),
 		Claude:       sandboxClaudeSeed(cfg),
 		ModelBudget:  sandboxrt.BudgetMicros(cfg.Agent.SandboxModelBudget),
-		Models:       meteredChannels(ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL), cfg.Agent.SandboxMetering),
+		Models:       downgradeChannels(meteredChannels(ledgerChannels(sandboxModelChannels(cfg), cfg.Agent.SandboxLedgerURL), cfg.Agent.SandboxMetering), cfg.Agent.SandboxDowngrade),
 		CodexSeed:    sandboxSeedDir(cfg, ".codex", "codex"),
 		PiSeed:       sandboxSeedDir(cfg, filepath.Join(".pi", "agent"), filepath.Join("pi", "agent")),
 		Audit:        rec,
@@ -390,6 +390,26 @@ func meteredChannels(chs map[string]*sandboxrt.ModelChannel, entries []string) m
 				slog.Warn("sandbox: AGENT_SANDBOX_METERING declares ledger metering for a channel that does not go to AGENT_SANDBOX_LEDGER_URL: agent-gate will find its calls missing from the ledger", "provider", name)
 			}
 			ch.Metering = mode
+		}
+	}
+	return chs
+}
+
+// downgradeChannels allows downgrade fallbacks for the providers
+// AGENT_SANDBOX_MODEL_DOWNGRADE names. Only a ledger-gate upstream acts on
+// the opt-in, so naming another channel is a no-op worth a warning.
+func downgradeChannels(chs map[string]*sandboxrt.ModelChannel, providers []string) map[string]*sandboxrt.ModelChannel {
+	for _, p := range providers {
+		name := strings.TrimSpace(p)
+		ch := chs[name]
+		switch {
+		case name == "":
+		case ch == nil:
+			slog.Warn("sandbox: AGENT_SANDBOX_MODEL_DOWNGRADE names a provider with no model channel", "provider", name)
+		case !ch.Ledger:
+			slog.Warn("sandbox: AGENT_SANDBOX_MODEL_DOWNGRADE names a channel that does not go to AGENT_SANDBOX_LEDGER_URL; only ledger-gate acts on it", "provider", name)
+		default:
+			ch.AllowDowngrade = true
 		}
 	}
 	return chs

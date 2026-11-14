@@ -75,7 +75,17 @@ type ModelChannel struct {
 	// run's policy snapshot (audit.MeteringLedger, MeteringBroker,
 	// MeteringNone). Empty: see MeteringMode.
 	Metering string
+	// AllowDowngrade lets a ledger-gate upstream serve the channel's calls
+	// with a cheaper fallback model when the requested one fails: the proxy
+	// then sends FallbackHeader. Otherwise it strips the header, so the
+	// sandbox can never opt itself in. Declared in each run's policy
+	// snapshot (model_downgrade). Only meaningful with Ledger.
+	AllowDowngrade bool
 }
+
+// downgradeAllowed reports whether the proxy sends FallbackHeader for the
+// channel.
+func (ch *ModelChannel) downgradeAllowed() bool { return ch.Ledger && ch.AllowDowngrade }
 
 // MeteringMode is the channel's metering: Metering when set, else ledger
 // for a ledger-gate upstream and broker for any other, since the proxy reads
@@ -112,6 +122,13 @@ func usageFormat(name string) broker.UsageFormat {
 // sets it, replacing any the sandbox sent; ledger-gate trusts it only from
 // keys marked to assert it.
 const RunHeader = "Agentbox-Run-Id"
+
+// FallbackHeader is ledger-gate's opt-in to downgrade fallbacks (a
+// different, cheaper model when the requested one fails). The proxy sets it
+// for channels whose policy allows downgrades and strips it from every other
+// request: a sandboxed agent must not change which model serves it, and at
+// what price, on its own.
+const FallbackHeader = "X-Allow-Model-Fallback"
 
 // RequestHeader carries the proxy's id for one call to a ledger-gate
 // upstream, as RunHeader does the run's: the id on the call's
@@ -201,7 +218,10 @@ func (r *Runtime) startModels(spec sandbox.SandboxSpec, runID, threadID string) 
 		}
 		// Only the proxy says which run a request is: the sandbox's own
 		// RunHeader is always dropped, and only a ledger gets one.
-		headers := http.Header{RunHeader: nil}
+		headers := http.Header{RunHeader: nil, FallbackHeader: nil}
+		if ch.downgradeAllowed() {
+			headers[FallbackHeader] = []string{"true"}
+		}
 		var requestHeader string
 		if ch.Ledger {
 			// The broker sets the call's id, replacing any the sandbox sent.

@@ -95,6 +95,27 @@ Other settings:
   `Agentbox-Run-Id: <run id>`, so ledger-gate can link its cost records to runs, and
   `Agentbox-Request-Id: <the call's id>`, the id on the call's `model_forwarded` event. The proxy
   always drops either header the sandbox sends; other channels never carry them.
+
+  Connecting a channel to ledger-gate, all four or agent-gate flags every call:
+  1. In ledger-gate, create the client key the channel will use (`ledgergate-admin api-keys
+     create -name <agent>-broker`) and mark it to assert run ids
+     (`POST /api/provider/api-keys/asserts-run {"key_id", "asserts_run": true}`). Without that
+     mark ledger-gate ignores `Agentbox-Run-Id`, so no row carries the run and agent-gate reports
+     every call `model_calls_unmatched`.
+  2. Point the provider's base URL here at ledger-gate (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`,
+     ...) with that key as the provider key, and set `AGENT_SANDBOX_LEDGER_URL` to the same scheme
+     and host; the server logs a warning when no channel matches it.
+  3. Make sure ledger-gate serves the model names the agent asks for (its admin UI, "Models &
+     Fallback Chain"), and that agent-gate's `AGENTGATE_LEDGER_URL`/`AGENTGATE_LEDGER_TOKEN`
+     reach the same ledger-gate.
+  4. Run one call and check its run on agent-gate: a model call with the run id, matched to its
+     `model_forwarded` by request id.
+* `AGENT_SANDBOX_MODEL_DOWNGRADE`: providers (comma-separated) whose calls ledger-gate may serve
+  with a cheaper fallback model when the requested one fails. For those the proxy sends
+  `X-Allow-Model-Fallback: true`; from every other request it strips the header, so a sandboxed
+  agent cannot opt itself into a different model and price. Default none. Only a ledger channel
+  acts on it. Each run's policy snapshot lists the providers (`model_downgrade`), and agent-gate
+  flags a downgraded call the policy did not allow.
 * `AGENT_SANDBOX_METERING`: how each model channel's calls are metered on the record
   (`provider=ledger|broker|none`, comma-separated). By default a channel to
   `AGENT_SANDBOX_LEDGER_URL` is `ledger` (ledger-gate's row is the evidence) and every other is

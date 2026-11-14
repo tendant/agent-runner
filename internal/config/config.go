@@ -125,6 +125,7 @@ type AgentConfig struct {
 	SandboxAuditSegment  string   // AGENT_SANDBOX_AUDIT_SEGMENT — size of one audit segment ("10m", the default)
 	SandboxAuditKeep     string   // AGENT_SANDBOX_AUDIT_KEEP — audit segments kept, the newest ("10", the default; "0": all)
 	SandboxLedgerURL     string   // AGENT_SANDBOX_LEDGER_URL — ledger-gate's base URL: model channels to it carry the run id (Agentbox-Run-Id)
+	SandboxDowngrade     []string // AGENT_SANDBOX_MODEL_DOWNGRADE — providers whose calls a ledger-gate upstream may serve with a cheaper fallback model (X-Allow-Model-Fallback); default none, and the proxy strips the header the sandbox sends
 	SandboxMetering      []string // AGENT_SANDBOX_METERING — provider=ledger|broker|none, how a channel's calls are metered on the audit record (default: ledger for a ledger-gate upstream, else broker)
 	SandboxModelBudget   float64  // AGENT_SANDBOX_MODEL_BUDGET_USD — per run, what broker-metered model calls may use at list price; the proxy refuses calls once it is spent (0: no budget)
 	SandboxEnvAllow      []string // AGENT_SANDBOX_ENV_ALLOW — host env var names passed into the sandbox
@@ -486,6 +487,7 @@ func LoadFromEnv() (*Config, error) {
 	cfg.Agent.SandboxAuditKeep = envOrDefault("AGENT_SANDBOX_AUDIT_KEEP", cfg.Agent.SandboxAuditKeep)
 	cfg.Agent.SandboxLedgerURL = envOrDefault("AGENT_SANDBOX_LEDGER_URL", cfg.Agent.SandboxLedgerURL)
 	cfg.Agent.SandboxMetering = envSliceOrDefault("AGENT_SANDBOX_METERING", cfg.Agent.SandboxMetering)
+	cfg.Agent.SandboxDowngrade = envSliceOrDefault("AGENT_SANDBOX_MODEL_DOWNGRADE", cfg.Agent.SandboxDowngrade)
 	cfg.Agent.SandboxModelBudget = envFloatOrDefault("AGENT_SANDBOX_MODEL_BUDGET_USD", cfg.Agent.SandboxModelBudget)
 	cfg.Agent.SandboxEnvAllow = envSliceOrDefault("AGENT_SANDBOX_ENV_ALLOW", cfg.Agent.SandboxEnvAllow)
 	cfg.Agent.SandboxRead = envOrDefault("AGENT_SANDBOX_READ", cfg.Agent.SandboxRead)
