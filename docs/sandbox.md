@@ -167,6 +167,23 @@ baseline, `.github/sandbox-baselines/agentbox-gvisor.json` and `agentbox-seatbel
 The sandbox has no direct network. Its ways out are the run's model proxies and its egress
 gateway (`internal/sandbox/egress`), both in the runner.
 
+**Which way for a service.** Pick by what the service is, so that the agent holds no
+credential wherever it can be avoided:
+
+| The service | How the run reaches it | Who holds the credential | On the run's record |
+|---|---|---|---|
+| A model provider (Claude, OpenAI, DeepSeek) | its model channel: the run's proxy, to ledger-gate where `AGENT_SANDBOX_LEDGER_URL` names it | agent-runner; the sandbox has a per-run token | every call, with the run's id on ledger-gate |
+| Any HTTP API, public or ours (GitHub, ledger-gate's `/v1/decisions`, an internal tool) | egress (`AGENT_SANDBOX_EGRESS_ALLOW`) with the credential added by the gateway (`AGENT_SANDBOX_INJECT`; `http://` for a service on this machine or the tailnet without HTTPS) | agent-runner (`/config secret`, or its deployment's secrets) | every request: method, host, path, status, the credential's name |
+| A protocol that is not HTTP (Postgres, Redis, SSH) | a service (`AGENT_SANDBOX_SERVICES`) | the agent (`/env secret`): its own, narrow, revocable login | every connection |
+| Work that needs a powerful credential (a mailbox login, payments, deploys) | not from the sandbox: a host-side job does it and leaves the agent the data (agent-mail's mail sync) | the host alone | the job's own log |
+
+Throughout: one credential per agent and service, named after the agent, so it can be revoked
+alone and its use read by name (a ledger-gate key also gets a small daily budget when the agent
+needs only its free models); a credential crosses a network only over TLS, or in the clear only
+to loopback or a Tailscale address (an `http://` rule); reach our own HTTP services by name
+through egress, not by LAN address through a service; and enforce the egress allowlist
+(`AGENT_SANDBOX_EGRESS_ENFORCE`) once an agent's record shows what it needs.
+
 **Egress.** Policy `outbound` becomes `restricted` egress through the gateway. The gateway
 resolves names itself and allows ports 443 and 80 (`AGENT_SANDBOX_EGRESS_PORTS=443,80,...` to
 change them). By default `permissive` allows **any public host**, and `strict` only a short list:
