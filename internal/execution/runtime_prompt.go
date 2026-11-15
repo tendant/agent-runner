@@ -147,8 +147,12 @@ func runtimeInstructions(f runtimeFacts) string {
 
 	if len(f.Injected) > 0 {
 		b.WriteString("\nSigned in for you: agent-runner adds its own credential to each HTTPS request to these hosts.\n" +
-			"Send them without one (it would be replaced), over https:\n\n")
+			"Send them without one (it would be replaced), over https (or http where a host says so):\n\n")
 		for _, g := range f.Injected {
+			if g.Plain {
+				b.WriteString("- `" + g.Host + "` (" + g.Header + "; over http too: an internal service)\n")
+				continue
+			}
 			b.WriteString("- `" + g.Host + "` (" + g.Header + ")\n")
 		}
 	}

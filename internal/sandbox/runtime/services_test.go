@@ -202,6 +202,22 @@ func TestInjectRules(t *testing.T) {
 		}
 	}
 
+	// An http:// rule is marked plain on the run's record and its rule.
+	plainIns, _ := sandbox.ParseInjects("http://ledger.example:Authorization=Bearer $GITHUB_API_TOKEN")
+	prt, _, _ := auditRT(t, sandbox.ModePermissive, nil, Config{Inject: plainIns, InjectSecret: lookup})
+	prun, err := prt.Begin(context.Background(), BeginReq{RunID: "r3", Workspace: t.TempDir(), Inject: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prun.Finish()
+	if g := prun.Spec.Network.Inject; len(g) != 1 || !g[0].Plain || g[0].Host != "ledger.example" {
+		t.Errorf("plain grant %+v", g)
+	}
+	if rules, _ := prt.injectRules(&sandbox.SandboxSpec{Network: sandbox.NetworkPolicy{Egress: sandbox.EgressRestricted}},
+		BeginReq{RunID: "r4", Inject: true}); len(rules) != 1 || !rules[0].Plain {
+		t.Errorf("plain rule %+v", rules)
+	}
+
 	// Not a session (the model fallback, an eval replay): no injection.
 	other, err := rt.Begin(context.Background(), BeginReq{RunID: "r2", Workspace: t.TempDir()})
 	if err != nil {

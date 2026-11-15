@@ -241,15 +241,29 @@ each run, so a new one applies from the next session), else in agent-runner's ow
   To give the agent the token as well, add it with `/env secret` too.
 * An injected value is redacted from what the agent says, as its own secrets are, since a service
   can echo it back.
-* A credential never goes out over plain HTTP, and never to a host the gateway does not inspect.
+* A credential never goes out over plain HTTP, and never to a host the gateway does not inspect,
+  except by an `http://` rule (below).
 * Injection turns inspection on for just those hosts when `AGENT_SANDBOX_EGRESS_INSPECT` is off.
   A host in `AGENT_SANDBOX_EGRESS_INSPECT_EXCEPT` never gets the credential, and neither does one
   whose client refuses the run's certificate.
 * The hosts must be in the egress allowlist; agent-runner warns at start-up when one is not.
 
-On the record, the run's policy lists each rule (`network.inject`: host, header and credential
-name), and each `http_request` the gateway authenticated names its `credentials`. Values are
-never recorded.
+**Internal services over plain HTTP.** An internal service without HTTPS (ledger-gate on this
+machine, a service on the tailnet) gets a rule written `http://host:Header=value`:
+```
+AGENT_SANDBOX_INJECT=http://ledger-gate-go.100.98.79.90.nip.io:Authorization=Bearer $LEDGER_GATE_KEY
+```
+The header then goes on the host's plain HTTP requests too, but only when the address the gateway
+actually dialled is loopback or a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48), where
+it never crosses a network in the clear: this machine, or WireGuard. The gateway checks the
+connection before sending, then sends that request over it alone, so a name that resolves
+elsewhere (renamed, rebound, a LAN or public address) does not get it: the request goes out
+without it, and its `http_request` names the rule in `credentials_withheld`. The rule covers the
+host's HTTPS as any rule does.
+
+On the record, the run's policy lists each rule (`network.inject`: host, header, credential
+name, and `plain` for an `http://` rule), and each `http_request` the gateway authenticated names
+its `credentials`. Values are never recorded.
 
 A rule whose secret agent-runner lacks is skipped (`sandbox.inject_unavailable`), and so is every
 rule when inspection is unavailable on the host: the agent's requests go out unauthenticated.

@@ -344,4 +344,9 @@ func TestRuntimeInstructionsInjected(t *testing.T) {
 	if !strings.Contains(got, "- `$NPM_TOKEN`") {
 		t.Error("the agent's own secret is not listed")
 	}
+	plain := runtimeInstructions(runtimeFacts{Injected: []sandbox.InjectGrant{
+		{Host: "ledger.example", Header: "Authorization", Credentials: []string{"LEDGER_KEY"}, Plain: true}}})
+	if !strings.Contains(plain, "- `ledger.example` (Authorization; over http too: an internal service)") {
+		t.Errorf("plain grant in the prompt:\n%s", plain)
+	}
 }

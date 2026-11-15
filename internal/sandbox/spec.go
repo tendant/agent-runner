@@ -138,19 +138,24 @@ type NetworkPolicy struct {
 }
 
 // InjectGrant is one credential a run's gateway adds: to Host's HTTPS
-// requests, as Header, from the agent's secrets named in Credentials.
+// requests, as Header, from the agent's secrets named in Credentials; with
+// Plain, to its plain HTTP requests too, over loopback or Tailscale only.
 type InjectGrant struct {
 	Host        string   `json:"host"`
 	Header      string   `json:"header"`
 	Credentials []string `json:"credentials"`
+	Plain       bool     `json:"plain,omitempty"`
 }
 
 // Inject is one AGENT_SANDBOX_INJECT rule: Template is the header's value,
-// with the agent's secrets as $NAME or ${NAME}.
+// with the agent's secrets as $NAME or ${NAME}. Plain (an http:// host)
+// also covers plain HTTP to a loopback or Tailscale address: an internal
+// service on this machine or the tailnet (agentbox egress.TrustedPlain).
 type Inject struct {
 	Host     string
 	Header   string
 	Template string
+	Plain    bool
 }
 
 var secretRef = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
@@ -186,15 +191,24 @@ func (in Inject) Expand(secrets map[string]string) (string, bool) {
 // host:Header=value, e.g.
 // "api.github.com:Authorization=Bearer $GITHUB_TOKEN; *.gitea.example:Authorization=token ${GITEA_TOKEN}".
 // The host is a name or *.wildcard; the value must use at least one secret.
+// "http://host:Header=value" also covers the host's plain HTTP, sent only to
+// a loopback or Tailscale address (Inject.Plain).
 func ParseInjects(v string) ([]Inject, error) {
 	var out []Inject
 	for _, item := range strings.Split(v, ";") {
 		if item = strings.TrimSpace(item); item == "" {
 			continue
 		}
-		host, rest, ok := strings.Cut(item, ":")
+		plain := false
+		spec := item
+		if rest, ok := strings.CutPrefix(spec, "http://"); ok {
+			plain, spec = true, rest
+		} else if rest, ok := strings.CutPrefix(spec, "https://"); ok {
+			spec = rest
+		}
+		host, rest, ok := strings.Cut(spec, ":")
 		header, tmpl, ok2 := strings.Cut(rest, "=")
-		in := Inject{Host: strings.ToLower(strings.TrimSpace(host)), Header: strings.TrimSpace(header), Template: strings.TrimSpace(tmpl)}
+		in := Inject{Host: strings.ToLower(strings.TrimSpace(host)), Header: strings.TrimSpace(header), Template: strings.TrimSpace(tmpl), Plain: plain}
 		switch {
 		case !ok || !ok2 || in.Host == "" || in.Header == "" || in.Template == "":
 			return nil, fmt.Errorf("inject %q: want host:Header=value", item)

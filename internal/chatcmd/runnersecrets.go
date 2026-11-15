@@ -91,5 +91,7 @@ agent can call an API without holding its token. The agent's own secrets are /en
 
   /config secret GITHUB_API_TOKEN ghp_... GitHub API, added for the agent
   /config set AGENT_SANDBOX_INJECT "api.github.com:Authorization=Bearer $GITHUB_API_TOKEN"
+  An internal service on plain HTTP (this machine or the tailnet only):
+  /config set AGENT_SANDBOX_INJECT "http://ledger-gate-go.100.98.79.90.nip.io:Authorization=Bearer $LEDGER_GATE_KEY"
 
 **See them:** /config secrets (names only) · **Remove one:** /config unset NAME`

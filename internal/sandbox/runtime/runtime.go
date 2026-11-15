@@ -1084,8 +1084,8 @@ func (r *Runtime) injectRules(spec *sandbox.SandboxSpec, req BeginReq) ([]abegre
 			values[n] = secrets[n]
 		}
 		header := http.CanonicalHeaderKey(in.Header)
-		rules = append(rules, abegress.InjectRule{Host: in.Host, Header: header, Value: v, Name: strings.Join(names, ",")})
-		spec.Network.Inject = append(spec.Network.Inject, sandbox.InjectGrant{Host: in.Host, Header: header, Credentials: names})
+		rules = append(rules, abegress.InjectRule{Host: in.Host, Header: header, Value: v, Name: strings.Join(names, ","), Plain: in.Plain})
+		spec.Network.Inject = append(spec.Network.Inject, sandbox.InjectGrant{Host: in.Host, Header: header, Credentials: names, Plain: in.Plain})
 		hosts = append(hosts, in.Host)
 	}
 	if len(rules) > 0 && !spec.Network.EgressInspect {

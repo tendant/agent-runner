@@ -79,6 +79,21 @@ func TestParseInjects(t *testing.T) {
 	if _, ok := ins[1].Expand(map[string]string{"GITEA_TOKEN": "a"}); ok {
 		t.Error("expanded with a secret missing")
 	}
+	plain, err := ParseInjects("http://Ledger.example:Authorization=Bearer $LEDGER_KEY; https://api.github.com:Authorization=Bearer $T")
+	if err != nil || len(plain) != 2 {
+		t.Fatalf("%+v %v", plain, err)
+	}
+	if plain[0] != (Inject{Host: "ledger.example", Header: "Authorization", Template: "Bearer $LEDGER_KEY", Plain: true}) {
+		t.Errorf("http:// rule %+v", plain[0])
+	}
+	if plain[1].Plain || plain[1].Host != "api.github.com" {
+		t.Errorf("https:// rule %+v", plain[1])
+	}
+	for _, bad := range []string{"http://*:Authorization=$T", "http://10.0.0.5:Authorization=$T", "http://:Authorization=$T"} {
+		if _, err := ParseInjects(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
 	for _, bad := range []string{"api.github.com", "api.github.com:Authorization", "api.github.com:Authorization=Bearer fixed",
 		"*:Authorization=$T", "@github:Authorization=$T", "10.0.0.5:Authorization=$T", ":Authorization=$T", "a b:Authorization=$T"} {
 		if _, err := ParseInjects(bad); err == nil {
