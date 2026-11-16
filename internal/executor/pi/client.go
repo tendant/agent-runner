@@ -142,7 +142,7 @@ func Start(opts Options) (*Client, error) {
 	c := &Client{
 		opts:    opts,
 		cmd:     cmd,
-		release: release,
+		release: sync.OnceFunc(release), // from the reader loop's end or from Close, whichever is first
 		events:  make(chan Event, 256),
 		pending: make(map[string]chan line),
 		deadCh:  make(chan struct{}),
@@ -296,10 +296,28 @@ func (c *Client) Abort(ctx context.Context) error {
 	return err
 }
 
+// closeGrace is how long Close waits for the killed process to end before
+// releasing what it runs in.
+var closeGrace = 2 * time.Second
+
 // Close kills the process group and waits briefly for the reader to drain.
+//
+// Killing the process is not always the end of pi: in a sandbox the process
+// is the sandbox's exec client (runsc exec), and pi goes on inside, its
+// stdout held open by the sandbox. The reader then never sees EOF, so it
+// never reaches the release that destroys the sandbox, and the sandbox
+// outlived the run (with pi in it). So when the process has not ended after
+// closeGrace, Close releases it itself: destroying the sandbox ends pi and
+// closes its pipes, and the reader finishes as usual.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.kill()
+		select {
+		case <-c.deadCh:
+			return
+		case <-time.After(closeGrace):
+		}
+		c.release()
 		select {
 		case <-c.deadCh:
 		case <-time.After(10 * time.Second):

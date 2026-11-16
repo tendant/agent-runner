@@ -9,7 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -17,6 +20,10 @@ import (
 // TestMain re-execs the test binary as a fake pi process when GO_WANT_FAKE_PI
 // is set, so Client tests exercise real pipes and process lifecycle.
 func TestMain(m *testing.M) {
+	if os.Getenv("GO_WANT_FAKE_PI_HOLDER") == "1" {
+		time.Sleep(time.Hour) // holds the stdout it inherited, as a sandbox does
+		os.Exit(0)
+	}
 	if os.Getenv("GO_WANT_FAKE_PI") == "1" {
 		fakePi()
 		os.Exit(0)
@@ -36,6 +43,20 @@ func fakePi() {
 		emit(`{"type":"tool_execution_end","toolName":"bash"}`)
 		emit(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"fallback text"}],"usage":{"input":982,"output":15,"cost":{"input":0.0003,"output":0.00002,"total":0.05}}}}`)
 		emit(`{"type":"agent_settled"}`)
+	}
+
+	if mode == "holder" {
+		// pi in a sandbox: what the client kills is the sandbox's exec
+		// client; pi itself goes on, and the sandbox, in a process group of
+		// its own, keeps the stdout pipe open.
+		h := exec.Command(os.Args[0])
+		h.Env = append(os.Environ(), "GO_WANT_FAKE_PI_HOLDER=1", "GO_WANT_FAKE_PI=")
+		h.Stdout = os.Stdout
+		h.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := h.Start(); err != nil {
+			os.Exit(2)
+		}
+		_ = os.WriteFile(os.Getenv("FAKE_PI_HOLDER_PID"), []byte(strconv.Itoa(h.Process.Pid)), 0o600)
 	}
 
 	if mode == "malformed" {
@@ -260,5 +281,84 @@ func TestStartTrustAndSkillFlags(t *testing.T) {
 		if hasSkill := strings.Contains(joined, "--skill .agents/skills"); hasSkill != withSkills {
 			t.Errorf("skills dir present=%v, args %q", withSkills, joined)
 		}
+	}
+}
+
+// Close releases the sandbox when killing the process does not end pi: the
+// leak where a failed run left its gVisor sandbox (and pi in it) running.
+func TestCloseReleasesWhatKillDoesNotEnd(t *testing.T) {
+	old := closeGrace
+	closeGrace = 200 * time.Millisecond
+	t.Cleanup(func() { closeGrace = old })
+
+	pidFile := filepath.Join(t.TempDir(), "holder.pid")
+	holderPid := func() int {
+		b, _ := os.ReadFile(pidFile)
+		pid, _ := strconv.Atoi(string(b))
+		return pid
+	}
+	var releases atomic.Int32
+	c, err := Start(Options{
+		Binary:    os.Args[0],
+		Workspace: t.TempDir(),
+		Command: func(name string, args []string, dir string, env []string) (*exec.Cmd, func(), error) {
+			cmd := exec.Command(name)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "GO_WANT_FAKE_PI=1", "FAKE_PI_MODE=holder", "FAKE_PI_HOLDER_PID="+pidFile)
+			// The sandbox's destroy: what is left of pi goes with it.
+			return cmd, func() {
+				releases.Add(1)
+				if pid := holderPid(); pid > 0 {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Prompt(context.Background(), "x"); err != nil { // the holder is up once pi answers
+		t.Fatal(err)
+	}
+	pid := holderPid()
+	if pid <= 0 {
+		t.Fatal("fake pi did not start its holder")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	start := time.Now()
+	c.Close()
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Close took %v: it waited out the reader instead of releasing", elapsed)
+	}
+	select {
+	case <-c.deadCh:
+	default:
+		t.Fatal("reader still running after Close")
+	}
+	if n := releases.Load(); n != 1 {
+		t.Fatalf("release ran %d times, want once", n)
+	}
+}
+
+// A process that ends on the kill is released once, by the reader.
+func TestCloseReleasesOnce(t *testing.T) {
+	var releases atomic.Int32
+	c, err := Start(Options{
+		Binary:    os.Args[0],
+		Workspace: t.TempDir(),
+		Command: func(name string, args []string, dir string, env []string) (*exec.Cmd, func(), error) {
+			cmd := exec.Command(name)
+			cmd.Dir, cmd.Env = dir, append(os.Environ(), "GO_WANT_FAKE_PI=1")
+			return cmd, func() { releases.Add(1) }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	c.Close()
+	if n := releases.Load(); n != 1 {
+		t.Fatalf("release ran %d times, want once", n)
 	}
 }
